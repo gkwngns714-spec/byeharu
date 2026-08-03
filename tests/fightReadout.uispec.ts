@@ -21,6 +21,10 @@ import { ENCOUNTER_ID } from './harness/fightFixtures'
 //
 // Run: `npx playwright test --config playwright.osnui.config.ts fightReadout.uispec.ts`
 
+// THE FLEET FOLD: four combat_units rows render as ONE actor, keyed by its encounter.
+const FLEET_KEY = `fleet-${ENCOUNTER_ID}`
+const FLEET = `spatial-combat-unit-${FLEET_KEY}`
+
 const MAP_SVG = '#map-host svg'
 const CAMERA_G = `${MAP_SVG} > g[transform]`
 
@@ -54,11 +58,11 @@ test.beforeEach(async ({ page }) => {
 // the map's own content-fit camera renders that ring at single-digit pixels — narrower than the
 // hitsplat disc drawn over it. This is the measurement, not the assertion of a belief about it.
 test('the battle is FRAMED, not left as a few pixels of the default camera', async ({ page }) => {
-  // p1 and p3 are on opposite sides of the formation ring: 12 world units apart.
-  const gap = apart(await centre(page, 'spatial-combat-unit-p1'), await centre(page, 'spatial-combat-unit-p3'))
+  // The fleet glyph stands on the hull nearest the enemy; e1 is one of the pirates closing on it.
+  const gap = apart(await centre(page, FLEET), await centre(page, 'spatial-combat-unit-unit-e1'))
   // A 390px-wide map: anything under ~40px is a fight the player cannot read or aim at. Before the
   // focus control this measured in the single digits.
-  expect(gap, 'the formation must span a readable part of the screen').toBeGreaterThan(80)
+  expect(gap, 'the fight must span a readable part of the screen').toBeGreaterThan(40)
   // …and it got there by MOVING THE CAMERA, not by drawing the ships further apart than they are:
   // the camera scale is far above the content-fit scale a two-location world would produce.
   expect(await cameraScale(page)).toBeGreaterThan(50)
@@ -72,8 +76,8 @@ test('the focus control is offered while a battle has ships on the map', async (
   await page.mouse.move(20, 640)
   await page.mouse.up()
   await page.getByTestId('map-focus-fight').click()
-  const gap = apart(await centre(page, 'spatial-combat-unit-p1'), await centre(page, 'spatial-combat-unit-p3'))
-  expect(gap).toBeGreaterThan(80)
+  const gap = apart(await centre(page, FLEET), await centre(page, 'spatial-combat-unit-unit-e1'))
+  expect(gap).toBeGreaterThan(40)
 })
 
 // ── EVERY HIT SHOWS ITS OWN NUMBER ─────────────────────────────────────────────────────────────────
@@ -103,15 +107,35 @@ test('the KILLING BLOW renders — both its damage and its kill mark', async ({ 
 })
 
 test('a destroyed unit still draws NO glyph — it is gone, only its last blow shows', async ({ page }) => {
-  await expect(page.getByTestId('spatial-combat-unit-e3')).toHaveCount(0)
-  await expect(page.getByTestId('spatial-combat-unit-e1')).toHaveCount(1)
+  await expect(page.getByTestId('spatial-combat-unit-unit-e3')).toHaveCount(0)
+  await expect(page.getByTestId('spatial-combat-unit-unit-e1')).toHaveCount(1)
 })
 
-test('every living hull carries its own health, as a bar and not a shade', async ({ page }) => {
-  // p2 is at 41/120 and p1 at 120/120 — the pip widths must differ in the same proportion.
-  const hurt = await page.getByTestId('spatial-combat-hull-p2').boundingBox()
-  const whole = await page.getByTestId('spatial-combat-hull-p1').boundingBox()
-  expect(hurt!.width).toBeLessThan(whole!.width * 0.5)
+// ── "SHOW ONLY FLEET. IT IS AS A WHOLE." ───────────────────────────────────────────────────────────
+// The owner's law, measured in the DOM: four combat_units rows, ONE glyph.
+test('FOUR ships, ONE glyph — the player sees their fleet, not its crew', async ({ page }) => {
+  await expect(page.locator('[data-testid^="spatial-combat-unit-"][data-side="player"]')).toHaveCount(1)
+  const fleet = page.getByTestId(FLEET)
+  await expect(fleet).toHaveAttribute('data-kind', 'fleet')
+  await expect(fleet).toHaveAttribute('data-ships', '4')
+  await expect(fleet).toHaveAttribute('data-ships-alive', '4')
+  // …and no glyph is drawn for any individual hull of it.
+  for (const id of ['p1', 'p2', 'p3', 'p4']) {
+    await expect(page.getByTestId(`spatial-combat-unit-${id}`)).toHaveCount(0)
+  }
+  // The pirates are NOT folded: three hostiles, one of them destroyed, so two glyphs.
+  await expect(page.locator('[data-testid^="spatial-combat-unit-"][data-side="enemy"]')).toHaveCount(2)
+})
+
+test('the fleet states its hulls — "4/4" beside the glyph, so a loss cannot hide in the fold', async ({ page }) => {
+  await expect(page.getByTestId(`spatial-combat-hulls-${FLEET_KEY}`)).toHaveText('4/4')
+})
+
+test('the fleet carries ONE health bar, summed off its own hulls', async ({ page }) => {
+  // 120 + 41 + 96 + 22 of 480 = 58%. The bar is the fleet's, not any one ship's.
+  const track = await page.getByTestId(FLEET).locator('rect').first().boundingBox()
+  const fill = await page.getByTestId(`spatial-combat-hull-${FLEET_KEY}`).boundingBox()
+  expect(fill!.width / track!.width).toBeCloseTo((120 + 41 + 96 + 22) / 480, 1)
 })
 
 // ── TWO FIGHTS AT ONCE ─────────────────────────────────────────────────────────────────────────────
@@ -164,4 +188,68 @@ test('Retreat is on the MAP, next to the battle it ends', async ({ page }) => {
   expect(await retreat.evaluate((el) => el.tagName)).toBe('BUTTON')
   await expect(retreat).toHaveText('Retreat')
   await expect(retreat).toBeEnabled()
+})
+
+// ── COMBAT THAT FLOWS: THE STEP IS CROSSED, NOT JUMPED ─────────────────────────────────────────────
+// The owner: "all the combat looks so laggy, not smooth." The server tick is 3 s (pg_cron, verified
+// active on production) and nothing interpolated between two of them, so a ship was drawn at A for
+// three seconds and then at B. tests/combatMotion.spec.ts proves the math over a clock it passes in;
+// these two prove it reaches the SCREEN — the browser's own placement of a real glyph, mid-step.
+test('a server step is CROSSED — mid-tick the glyph is strictly between its two observed points', async ({ page }) => {
+  const before = await centre(page, 'spatial-combat-unit-unit-e1')
+  // The next tick's rows land. e1 has closed 3.5 world units; at this camera that is a wide gap.
+  await page.getByTestId('advance-tick').click()
+  // Sampled immediately: the step is played over the server's own 3 s, so almost none of it is done.
+  const during = await centre(page, 'spatial-combat-unit-unit-e1')
+  await expect
+    .poll(async () => apart(await centre(page, 'spatial-combat-unit-unit-e1'), before), { timeout: 6000 })
+    .toBeGreaterThan(0)
+  // …and it settles exactly on the new observed point and STOPS there — no drift past it.
+  await page.waitForTimeout(3400)
+  const after = await centre(page, 'spatial-combat-unit-unit-e1')
+  const travelled = apart(before, after)
+  expect(travelled).toBeGreaterThan(20) // it really did move, in CSS px
+  // The sample taken at the very start of the window is nearer where it WAS than where it ended:
+  // that is the whole claim — the position between two ticks is between the two positions.
+  expect(apart(during, before)).toBeLessThan(travelled)
+  await page.waitForTimeout(1200)
+  const settled = await centre(page, 'spatial-combat-unit-unit-e1')
+  expect(apart(settled, after)).toBeLessThan(1) // a stopped unit does not drift
+})
+
+// ── ORDNANCE: THE FIGHT IS SOMETHING TO WATCH, NOT A NUMBER GOING DOWN ─────────────────────────────
+// The owner: "i see nothing, i see just numbers, a health bar going down. I want to see an ammo of
+// some sort - based on what i fit, if nothing, default by command ship."
+test('a round is drawn for each of this tick\'s real shots, between the two hulls', async ({ page }) => {
+  await page.reload()
+  await page.waitForSelector(CAMERA_G)
+  // Three salvos resolved on tick 17 (e1→p2, e2→p2, p1→e3) and each is one round in the air.
+  const rounds = page.locator('[data-testid^="spatial-combat-shot-"]')
+  await expect(rounds).toHaveCount(3)
+  // p1's round is between p1 and its target e3 — a real lane, not a decoration parked on a hull.
+  const fleet = await centre(page, FLEET)
+  const shot = await centre(page, 'spatial-combat-shot-12')
+  expect(apart(shot, fleet)).toBeGreaterThan(0)
+  // Every round is bounded: they land, and the map is clear of them shortly after.
+  await expect(rounds).toHaveCount(0, { timeout: 4000 })
+})
+
+test('the round names its own shot — firer, target, and where its description came from', async ({ page }) => {
+  await page.reload()
+  await page.waitForSelector(CAMERA_G)
+  const shot = page.getByTestId('spatial-combat-shot-12')
+  // The round leaves the FLEET (one actor) and flies at the pirate it was aimed at.
+  await expect(shot).toHaveAttribute('data-source', FLEET_KEY)
+  await expect(shot).toHaveAttribute('data-target', 'unit-e3')
+  // p1 carries its OWN fitted autocannon, so the round is described by that fitting, not by a
+  // fallback and not by a client-side weapon table.
+  await expect(shot).toHaveAttribute('data-profile', 'own')
+})
+
+test('every damage number still arrives — the round carries it, it is never lost', async ({ page }) => {
+  await page.reload()
+  await page.waitForSelector(CAMERA_G)
+  // Both hits on p2 and the killing blow on e3 land once their rounds do (Playwright retries).
+  await expect(page.locator('[data-testid^="spatial-combat-splat-"][data-unit="p2"]')).toHaveCount(2)
+  await expect(page.locator('[data-testid^="spatial-combat-splat-"][data-unit="e3"]')).toHaveCount(2)
 })

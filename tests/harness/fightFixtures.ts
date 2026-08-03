@@ -12,6 +12,15 @@
 //     the target's alive_count to 0 — which is why the killing blow used to render nothing.
 //   · `total_rewards_json` is `{metal, items:[{item_id, quantity}]}` (0299:1006-1010), the payload
 //     that rendered as `Items ×[object Object]`.
+//   · `weapons_json` entries carry the WHOLE frozen object the server writes — {module_type_id,
+//     range, projectile_speed, power, …} (0234:367, powers rewritten by 0331) — not just `range`.
+//     The values are the live catalog's, read off production: autocannon_battery 5/60/10, the 0262
+//     player fallback `basic_player_weapon` 5/60/15, `pirate_synthetic_weapon` 4/50/5.
+//   · `aggro_priority` is 100 on exactly ONE player hull and 0 on the rest — 0315's elected lead, as
+//     production carries it — and NULL on every enemy row, which elects none.
+//   · a spatial `missile_salvo` carries `projectile_type` = the firing weapon's own module_type_id
+//     and `impact_delay_ms` = the server's 1000*distance/projectile_speed (0299:878-881; verified
+//     against the live process_combat_ticks source and against real event rows, which run 0-120 ms).
 // No production access; nothing here connects to anything.
 import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from '../../src/features/combat/combatTypes'
 import type { MapLocation } from '../../src/features/map/mapTypes'
@@ -68,24 +77,56 @@ const unit = (o: Partial<CombatUnit> & { id: string }): CombatUnit => ({
   pos_y: FIGHT_Y,
   move_speed: 4,
   side: 'player',
-  weapons_json: [{ range: 5.5 }],
+  // 0262's synthetic stand-in for a ship with nothing fitted — which is what the owner's own fleet
+  // carries in production today (four rows, all `basic_player_weapon`).
+  weapons_json: [{ module_type_id: 'basic_player_weapon', range: 5.5, projectile_speed: 60, power: 15 }],
+  aggro_priority: 0,
+  updated_at: '2026-08-03T12:00:00Z',
   ...o,
 })
+
+/** The pirate gun, verbatim from production's `pirate_synthetic_weapon`. */
+const PIRATE_GUN = { module_type_id: 'pirate_synthetic_weapon', range: 5, projectile_speed: 50, power: 5 }
 
 /** Four hulls in a 6-unit formation ring against three pirates closing on the anchor — the
  *  production geometry. `p2` is the hull that takes two hits this tick; `e3` is the pirate the
  *  killing blow lands on. */
 export const UNITS: CombatUnit[] = [
-  unit({ id: 'p1', pos_x: FIGHT_X - 6, pos_y: FIGHT_Y, hp_current: 120 }),
+  // p1 is 0315's elected LEAD (aggro_priority 100) and the only hull carrying a real fitted gun, so
+  // the ordnance fallback has something to fall back TO and something to differ from.
+  unit({
+    id: 'p1',
+    pos_x: FIGHT_X - 6,
+    pos_y: FIGHT_Y,
+    hp_current: 120,
+    aggro_priority: 100,
+    weapons_json: [{ module_type_id: 'autocannon_battery', range: 5.5, projectile_speed: 60, power: 10 }],
+  }),
   unit({ id: 'p2', pos_x: FIGHT_X, pos_y: FIGHT_Y - 6, hp_current: 41 }),
   unit({ id: 'p3', pos_x: FIGHT_X + 6, pos_y: FIGHT_Y, hp_current: 96 }),
   unit({ id: 'p4', pos_x: FIGHT_X, pos_y: FIGHT_Y + 6, hp_current: 22 }),
-  unit({ id: 'e1', side: 'enemy', pos_x: FIGHT_X + 2, pos_y: FIGHT_Y - 3, hp_max: 60, hp_current: 44, weapons_json: [{ range: 5 }] }),
-  unit({ id: 'e2', side: 'enemy', pos_x: FIGHT_X + 3, pos_y: FIGHT_Y - 1, hp_max: 60, hp_current: 12, weapons_json: [{ range: 5 }] }),
+  unit({ id: 'e1', side: 'enemy', pos_x: FIGHT_X + 2, pos_y: FIGHT_Y - 3, hp_max: 60, hp_current: 44, aggro_priority: null, weapons_json: [PIRATE_GUN] }),
+  unit({ id: 'e2', side: 'enemy', pos_x: FIGHT_X + 3, pos_y: FIGHT_Y - 1, hp_max: 60, hp_current: 12, aggro_priority: null, weapons_json: [PIRATE_GUN] }),
   // THE KILL: alive_count 0 and hp_current 0 — this is exactly the row state at the tick that
   // destroys a stack, and it is why the old splat resolver dropped both its number and its ✕.
-  unit({ id: 'e3', side: 'enemy', pos_x: FIGHT_X + 1, pos_y: FIGHT_Y + 2, hp_max: 60, hp_current: 0, alive_count: 0, weapons_json: [{ range: 5 }] }),
+  unit({ id: 'e3', side: 'enemy', pos_x: FIGHT_X + 1, pos_y: FIGHT_Y + 2, hp_max: 60, hp_current: 0, alive_count: 0, aggro_priority: null, weapons_json: [PIRATE_GUN] }),
 ]
+
+/** THE NEXT SERVER TICK, 3.0 s later — production's measured cadence (3014-3042 ms).
+ *
+ *  The same rows, with the two living pirates having CLOSED on the formation and their `updated_at`
+ *  advanced by exactly one tick, which is how the client learns how long the step took. It exists so
+ *  the rendered proof can watch a step being CROSSED: a static fixture can only ever show a unit
+ *  standing still, and "the position jumps once every three seconds" is precisely the defect. */
+export const UNITS_NEXT_TICK: CombatUnit[] = UNITS.map((u) => {
+  const moved =
+    u.id === 'e1'
+      ? { pos_x: FIGHT_X + 2, pos_y: FIGHT_Y - 6.5 }
+      : u.id === 'e2'
+        ? { pos_x: FIGHT_X - 3.5, pos_y: FIGHT_Y - 1 }
+        : {}
+  return { ...u, ...moved, updated_at: '2026-08-03T12:00:03.000Z' }
+})
 
 const ev = (o: Partial<CombatEvent> & { id: number; event_type: CombatEvent['event_type'] }): CombatEvent => ({
   encounter_id: ENCOUNTER_ID,
@@ -106,9 +147,9 @@ export const EVENTS: CombatEvent[] = [
   ev({ id: 1, event_type: 'wave_spawned', tick_number: 0, seq: 0, payload_json: { wave: 1, danger: 12, hp: 180 } }),
   ev({ id: 2, event_type: 'wave_spawned', tick_number: 1, seq: 0, payload_json: { wave: 1, danger: 12, hp: 180 } }),
   // this tick's salvos
-  ev({ id: 10, event_type: 'missile_salvo', tick_number: 17, seq: 0, source: 'pirate', payload_json: { unit_id: 'e1', target_id: 'p2' } }),
-  ev({ id: 11, event_type: 'missile_salvo', tick_number: 17, seq: 1, source: 'pirate', payload_json: { unit_id: 'e2', target_id: 'p2' } }),
-  ev({ id: 12, event_type: 'missile_salvo', tick_number: 17, seq: 2, source: 'player', payload_json: { unit_id: 'p1', target_id: 'e3' } }),
+  ev({ id: 10, event_type: 'missile_salvo', tick_number: 17, seq: 0, source: 'pirate', projectile_type: 'pirate_synthetic_weapon', projectile_count: 1, impact_delay_ms: 120, payload_json: { unit_id: 'e1', target_id: 'p2' } }),
+  ev({ id: 11, event_type: 'missile_salvo', tick_number: 17, seq: 1, source: 'pirate', projectile_type: 'pirate_synthetic_weapon', projectile_count: 1, impact_delay_ms: 100, payload_json: { unit_id: 'e2', target_id: 'p2' } }),
+  ev({ id: 12, event_type: 'missile_salvo', tick_number: 17, seq: 2, source: 'player', projectile_type: 'autocannon_battery', projectile_count: 1, impact_delay_ms: 118, payload_json: { unit_id: 'p1', target_id: 'e3' } }),
   // TWO HITS ON ONE HULL, one tick — the production pair the map printed as a single "4"
   ev({ id: 20, event_type: 'hull_damage', tick_number: 17, seq: 3, source: 'pirate', payload_json: { unit_id: 'p2', damage: 4.136 } }),
   ev({ id: 21, event_type: 'hull_damage', tick_number: 17, seq: 4, source: 'pirate', payload_json: { unit_id: 'p2', damage: 4.286 } }),

@@ -22,15 +22,30 @@
 // and glyph size divide by `k` (line weight / glyph are presentation, pinned to a screen size).
 //
 // ── WHAT ANIMATES, AND HOW ───────────────────────────────────────────────────────────────────────────
-// This layer holds no clock. It re-renders whenever `units` / `events` change, and useCombat (mounted
-// once in AppShell, exposed via useShellState) re-polls both every ~1.5s — the combat tick cadence. So:
-//   • enemy pirates spawn at the location centre and CLOSE toward the fleet → their pos_x/pos_y update
-//     each tick → the dots visibly march inward each poll (the "spawn from centre → approach" beat).
-//   • kiting player ships back away to their range edge → their dots slide out each tick.
+// THIS LAYER STILL HOLDS NO CLOCK — it is handed one. Everything below is a function of the rows in
+// hand and the `nowMs` the caller passes, so the specs drive it with their own clock.
+//
+// The motion itself is NOT done here and is not done twice: map/combatMotion.ts folds each poll into
+// a keyframe ledger and hands this layer rows whose pos_x/pos_y have ALREADY been moved to where they
+// are at `nowMs`, by composing the one interpolation primitive in map/movementInterpolation.ts. That
+// is deliberate — see smoothCombatUnits' header for why the ROWS are smoothed and not the glyphs (the
+// fleet badge composes resolveSpatialUnits too, and a badge on the raw point beside a glyph on the
+// tweened one is the same fleet drawn twice in two places). So:
+//   • enemy pirates spawn at the location centre and CLOSE toward the fleet → each tick's step is
+//     played out over the server's own measured tick interval, so they are SEEN crossing.
+//   • kiting player ships back away to their range edge → likewise, a slide rather than a jump.
 //   • a weapon that fired THIS tick emits a combat_event (missile_salvo, payload {unit_id,target_id})
-//     → a fire line is drawn source→target for the latest tick's shots, fading with the next poll.
+//     → a fire line marks the lane and a ROUND travels along it, drawn from the firing ship's own
+//     weapons_json, arriving exactly when its damage number appears.
+// Before this, a position updated on tick arrival was a step function: three seconds at A, then B.
 import { createElement, type ReactElement } from 'react'
 import type { CombatEvent, CombatUnit } from '../combat/combatTypes'
+import type { CombatActorView } from './combatActors'
+import {
+  resolveOrdnance,
+  resolveShotArrivals,
+  type ShotSightings,
+} from './combatMotion'
 import { WORLD_TO_VIEWBOX_SCALE } from './openSpaceTransform'
 
 /** The minimal spatial view of a combat unit — the subset the layer projects. Any CombatUnit with a
@@ -97,6 +112,26 @@ export function resolveSpatialUnits(units: readonly CombatUnit[]): SpatialUnitVi
   return resolvePositionedUnits(units).filter((u) => u.alive)
 }
 
+/** WHERE ONE UNIT'S THINGS RENDER — its actor's point. The ONE substitution that makes the fold
+ *  total: a shot leaves the FLEET, a shot lands on the FLEET, and a damage number floats over the
+ *  FLEET, because every one of them looks the unit up here instead of reading its own row. */
+export interface RenderPoint {
+  /** the ACTOR's key — what groups two hits, or two rounds, that belong to the same glyph. */
+  key: string
+  side: 'player' | 'enemy'
+  x: number
+  y: number
+}
+
+/** PURE: unit id → the point its actor stands on. */
+export function resolveRenderPoints(actors: readonly CombatActorView[]): ReadonlyMap<string, RenderPoint> {
+  const out = new Map<string, RenderPoint>()
+  for (const a of actors) {
+    for (const id of a.unitIds) out.set(id, { key: a.key, side: a.side, x: a.x, y: a.y })
+  }
+  return out
+}
+
 /** A fire line to draw this tick: source→target world segment + the firing side (for tone). */
 export interface FireLineView {
   key: string
@@ -114,7 +149,7 @@ export interface FireLineView {
  *  simultaneous fights do not share a tick counter — so with an older encounter at t80 and a fresh
  *  one at t2, the global max was 80 and the new battle drew no fire lines and no damage numbers at
  *  all. "The latest exchange" is a question about one fight; it is answered per fight. */
-function latestTickByEncounter(
+export function latestTickByEncounter(
   events: readonly CombatEvent[],
   accept: (e: CombatEvent) => boolean,
 ): Map<string, number> {
@@ -127,30 +162,36 @@ function latestTickByEncounter(
   return out
 }
 
-/** PURE: combat_events + the current unit positions → the fire lines for the latest tick OF EACH
- *  ENCOUNTER. A spatial fire event is a 'missile_salvo' whose payload carries {unit_id, target_id}
- *  (0234's spatial fire hunk); the aggregate-combat missile_salvo (dark path) has no unit_id, so it
- *  is naturally ignored. Both endpoints must resolve to a POSITIONED unit — a shot at a unit that
- *  was never on the map draws nothing (never a guessed line), but a shot at one that DIED this tick
+/** A SPATIAL fire event: a missile_salvo naming the unit that fired. The aggregate-combat salvo
+ *  (dark path) carries no unit_id and is therefore not one. Exported because the fire lines, the
+ *  ordnance and the splat-arrival pairing must all be looking at the SAME set of shots — three
+ *  copies of this predicate is how they would drift apart. */
+export const isSpatialSalvo = (e: CombatEvent): boolean =>
+  e.event_type === 'missile_salvo' && !!e.payload_json && e.payload_json['unit_id'] != null
+
+/** PURE: combat_events + the render points → the fire lines for the latest tick OF EACH ENCOUNTER.
+ *  A spatial fire event is a 'missile_salvo' whose payload carries {unit_id, target_id} (0234's
+ *  spatial fire hunk). Both endpoints must resolve to a RENDERED point — a shot at a unit that was
+ *  never on the map draws nothing (never a guessed line), but a shot at one that DIED this tick
  *  still draws, because that is the shot the player most wants to see. Only each encounter's highest
- *  tick_number is drawn, so old salvos fade as the poll advances. */
+ *  tick_number is drawn, so old salvos fade as the poll advances.
+ *
+ *  Since the fleet fold, a player ship's endpoint is its FLEET's point, so a lane runs between the
+ *  two things the player can actually see rather than to a hull that is no longer drawn alone. Two
+ *  ships of one fleet firing at one target therefore share a lane — which is what a volley is. */
 export function resolveFireLines(
   events: readonly CombatEvent[],
-  units: readonly SpatialUnitView[],
+  points: ReadonlyMap<string, RenderPoint>,
 ): FireLineView[] {
-  const posById = new Map(units.map((u) => [u.id, u]))
-  const latest = latestTickByEncounter(
-    events,
-    (e) => e.event_type === 'missile_salvo' && !!e.payload_json && e.payload_json['unit_id'] != null,
-  )
+  const latest = latestTickByEncounter(events, isSpatialSalvo)
   if (latest.size === 0) return []
   const out: FireLineView[] = []
   for (const e of events) {
     if (e.event_type !== 'missile_salvo') continue
     if (latest.get(e.encounter_id) !== e.tick_number) continue
     const p = e.payload_json ?? {}
-    const src = posById.get(String(p['unit_id'] ?? ''))
-    const tgt = posById.get(String(p['target_id'] ?? ''))
+    const src = points.get(String(p['unit_id'] ?? ''))
+    const tgt = points.get(String(p['target_id'] ?? ''))
     if (!src || !tgt) continue // one endpoint gone → no line
     out.push({ key: `${e.id}`, sourceSide: src.side, x1: src.x, y1: src.y, x2: tgt.x, y2: tgt.y })
   }
@@ -173,10 +214,16 @@ export interface HitSplatView {
   side: 'player' | 'enemy'
   /** this splat IS the kill mark — the blow that emptied the stack */
   destroyed: boolean
-  /** 0-based slot among the splats landing on THIS unit this tick, and how many there are. Two hits
-   *  on one hull must read as two numbers side by side, so the layer fans them from these. */
+  /** 0-based slot among the splats landing on THIS GLYPH this tick, and how many there are. Two hits
+   *  must read as two numbers side by side, so the layer fans them from these. Grouped by the ACTOR,
+   *  not by the unit: since the fleet fold, four hulls' damage lands on one glyph, and fanning per
+   *  hull would stack every number at the same point. */
   index: number
   count: number
+  /** Local clock ms at which the ROUND that carried this hit arrives, when this splat could be
+   *  paired with a real salvo (combatMotion.resolveShotArrivals). null = unpaired, and an unpaired
+   *  damage row is shown at once — a real hit is never hidden waiting on a visual. */
+  arrivesAtMs: number | null
 }
 
 /** PURE: combat_events + the positioned units → this tick's damage numbers, ONE PER HIT.
@@ -206,9 +253,11 @@ export interface HitSplatView {
  *  ignored — they have no position to float over. */
 export function resolveHitSplats(
   events: readonly CombatEvent[],
-  units: readonly SpatialUnitView[],
+  points: ReadonlyMap<string, RenderPoint>,
+  /** WHEN each shot lands, keyed `${victimId}#${ordinal}` (combatMotion.resolveShotArrivals). Omitted
+   *  → every splat is unpaired and shows immediately, which is exactly the pre-ordnance behaviour. */
+  arrivals?: ReadonlyMap<string, number>,
 ): HitSplatView[] {
-  const posById = new Map(units.map((u) => [u.id, u]))
   const isHit = (e: CombatEvent) =>
     (e.event_type === 'hull_damage' || e.event_type === 'unit_destroyed') &&
     !!e.payload_json &&
@@ -222,20 +271,27 @@ export function resolveHitSplats(
     .filter((e) => isHit(e) && latest.get(e.encounter_id) === e.tick_number)
     .sort((a, b) => a.seq - b.seq || a.id - b.id)
 
-  const out: HitSplatView[] = []
+  const out: (HitSplatView & { anchorKey: string })[] = []
+  // TWO counters, on purpose. The FAN is grouped by the glyph the number lands on (four hulls, one
+  // fleet glyph, four numbers side by side). The shot PAIRING is per victim unit, because that is
+  // what the server aimed at and what resolveShotArrivals keyed.
+  const perAnchor = new Map<string, number>()
   const perUnit = new Map<string, number>()
   for (const e of landed) {
     const p = e.payload_json ?? {}
     const id = String(p['unit_id'] ?? '')
-    const u = posById.get(id)
+    const u = points.get(id)
     if (!u) continue
-    const index = perUnit.get(id) ?? 0
-    perUnit.set(id, index + 1)
+    const index = perAnchor.get(u.key) ?? 0
+    perAnchor.set(u.key, index + 1)
+    const shotIndex = perUnit.get(id) ?? 0
+    perUnit.set(id, shotIndex + 1)
     const destroyed = e.event_type === 'unit_destroyed'
     const raw = Number(p['damage'])
     out.push({
       key: `splat-${e.id}`,
       unitId: id,
+      anchorKey: u.key,
       x: u.x,
       y: u.y,
       // A destroy event carries a `count`, never a damage figure — it is a kill MARK, not a number.
@@ -243,10 +299,13 @@ export function resolveHitSplats(
       side: u.side,
       destroyed,
       index,
-      count: 0, // filled below, once every splat on this unit is known
+      count: 0, // filled below, once every splat on this glyph is known
+      // The k-th hit on this hull was carried by the k-th round aimed at it — the server's own
+      // (seq, id) order on both sides, paired in combatMotion.resolveShotArrivals.
+      arrivesAtMs: arrivals?.get(`${id}#${shotIndex}`) ?? null,
     })
   }
-  for (const s of out) s.count = perUnit.get(s.unitId) ?? 1
+  for (const s of out) s.count = perAnchor.get(s.anchorKey) ?? 1
   return out
 }
 
@@ -322,6 +381,12 @@ const GLYPH_PX = 7
 const PIP_W_PX = 22
 const PIP_H_PX = 3.5
 const PIP_LIFT_PX = 13
+/** A round's radius, in CSS px, at the two ends of a weapon's share of its ship's volley (0331). A
+ *  lone gun throws the whole volley in one round (share 1 → the larger); two guns throw half each. */
+const SHOT_MIN_R_PX = 2.2
+const SHOT_MAX_R_PX = 5
+/** Perpendicular spacing between rounds sharing one lane — a volley reads as several rounds. */
+const SHOT_LANE_GAP_PX = 7
 
 /** The pure, hook-free GalaxyMap spatial-combat layer (the element-helper convention). Returns element
  *  DESCRIPTORS only — no hooks — so the unit spec calls this SAME function and inspects the tree. No
@@ -329,6 +394,11 @@ const PIP_LIFT_PX = 13
  *  (scenery), then fire lines, then unit glyphs + their hull pips, then this tick's damage numbers on
  *  the very top. */
 export function spatialCombatLayer(args: {
+  /** the ACTORS — one glyph per player FLEET, one per living enemy hull (combatActors.ts). The layer
+   *  renders what it is given: it neither folds nor places, so there is one authority for each. */
+  actors: readonly CombatActorView[]
+  /** the rows ALREADY smoothed to `nowMs` by combatMotion.smoothCombatUnits — read here only for the
+   *  weapons the ordnance is drawn from and the lead it falls back to. */
   units: readonly CombatUnit[]
   events: readonly CombatEvent[]
   norm: (p: { x: number; y: number }) => { x: number; y: number }
@@ -336,17 +406,37 @@ export function spatialCombatLayer(args: {
   /** CSS px per viewBox unit — `viewBoxDisplayRect(rect).scale`, measured by GalaxyMap from its own
    *  element. Omitted / non-positive → 1, i.e. the historic ÷k sizing. */
   pxScale?: number
+  /** When each fire event was first seen (combatMotion.observeShots) + the clock to render at.
+   *  Omitted → no ordnance and no splat delay, i.e. byte-identical to the pre-ordnance layer. */
+  sightings?: ShotSightings
+  nowMs?: number
 }): ReactElement[] {
   // viewBox units per CSS pixel, at the current camera and letterbox. The ONE place this layer turns
   // a wanted screen size into the number an SVG attribute takes.
   const scale = args.pxScale && Number.isFinite(args.pxScale) && args.pxScale > 0 ? args.pxScale : 1
   const px = (cssPx: number) => cssPx / (args.k * scale)
-  // TWO SETS, ONE FILTER. `positioned` is every row that has a place on the map; `views` is the
-  // living subset that draws a glyph. Splats and fire lines anchor on the former so the blow that
-  // KILLS a ship still lands somewhere visible — see resolveHitSplats' header.
-  const positioned = resolvePositionedUnits(args.units)
-  if (positioned.length === 0) return [] // dark / no active spatial battle → nothing
-  const views = positioned.filter((u) => u.alive)
+  const actors = args.actors
+  if (actors.length === 0) return [] // dark / no active spatial battle → nothing
+  // TWO SETS, ONE FOLD. `actors` is every glyph the fight has; `views` is the living subset that
+  // draws one. An all-destroyed fleet keeps its entry so the blow that emptied it still lands
+  // somewhere visible — see resolveHitSplats' header.
+  const views = actors.filter((a) => a.alive)
+
+  // ONE decision about which exchange is "the latest", shared by the lines, the rounds and the
+  // numbers. `points` is the ONE substitution behind the fleet fold: every shot and every damage
+  // number looks its unit up here, so nothing can render at a hull that is no longer drawn alone.
+  const nowMs = args.nowMs ?? 0
+  const sightings = args.sightings ?? {}
+  const latestSalvoTick = latestTickByEncounter(args.events, isSpatialSalvo)
+  const points = resolveRenderPoints(actors)
+  const shotArgs = {
+    events: args.events,
+    latestTick: latestSalvoTick,
+    endpoints: points,
+    units: args.units,
+    sightings,
+  }
+  const arrivals = args.sightings ? resolveShotArrivals(shotArgs) : undefined
 
   const out: ReactElement[] = []
 
@@ -358,8 +448,8 @@ export function spatialCombatLayer(args: {
     const color = SIDE_COLOR[u.side]
     out.push(
       createElement('circle', {
-        key: `spatial-range-${u.id}`,
-        'data-testid': `spatial-combat-range-${u.id}`,
+        key: `spatial-range-${u.key}`,
+        'data-testid': `spatial-combat-range-${u.key}`,
         cx: p.x,
         cy: p.y,
         r: ringR,
@@ -374,7 +464,7 @@ export function spatialCombatLayer(args: {
   }
 
   // ── 2) FIRE lines (source→target, this tick's salvos), over rings, under glyphs ──
-  const lines = resolveFireLines(args.events, positioned)
+  const lines = resolveFireLines(args.events, points)
   if (lines.length > 0) {
     out.push(
       createElement(
@@ -400,19 +490,23 @@ export function spatialCombatLayer(args: {
     )
   }
 
-  // ── 3) Unit GLYPHS on top: player = accent chevron, enemy = danger triangle (screen-constant /k),
-  // each under its own HULL PIP — a two-tone bar of the server's hp_current/hp_max.
+  // ── 3) ACTOR GLYPHS on top: ONE per player fleet, one per living enemy hull. Player = accent
+  // chevron, enemy = danger triangle (screen-constant /k), each under its own HULL PIP — a two-tone
+  // bar of the server's own hp columns, summed across the actor.
   //
-  // The pip exists because "am I winning?" is a per-hull question as well as a per-fleet one, and
-  // the fill-opacity dimming that used to be the only per-unit health cue is not readable as a
-  // QUANTITY: a 30%-hull ship and a 60%-hull ship differ by a shade. The card's two bars say how
-  // the fleets stand; these say which ship is about to go. Both read the same server columns.
+  // The pip exists because "am I winning?" needs a QUANTITY, and the fill-opacity dimming that used
+  // to be the only cue is not one: a 30%-hull actor and a 60%-hull actor differ by a shade. The
+  // card's two bars say how the sides stand; this says how close this actor is to going.
+  //
+  // A FLEET ALSO STATES ITS HULLS — "3/4" beside the glyph. Folding four ships into one glyph must
+  // not hide that one of them is gone: the pip already falls by the dead ship's full share (the
+  // aggregate counts its max and none of its current), and the count says it in words as well.
   for (const u of views) {
     const p = args.norm({ x: u.x, y: u.y })
-    const r = px(GLYPH_PX)
+    const r = px(GLYPH_PX) * (u.kind === 'fleet' ? 1.35 : 1) // a fleet is a bigger thing than a hull
     const color = SIDE_COLOR[u.side]
     // Enemy pirates point DOWN (inbound from centre); player ships point UP — a distinct silhouette at
-    // a glance, not just a hue. Health dims the fill (a battered unit reads as failing).
+    // a glance, not just a hue. Health dims the fill (a battered actor reads as failing).
     const points =
       u.side === 'enemy'
         ? `${p.x},${p.y + r} ${p.x + r},${p.y - r} ${p.x - r},${p.y - r}` // down-pointing triangle
@@ -424,10 +518,13 @@ export function spatialCombatLayer(args: {
       createElement(
         'g',
         {
-          key: `spatial-unit-${u.id}`,
-          'data-testid': `spatial-combat-unit-${u.id}`,
+          key: `spatial-actor-${u.key}`,
+          'data-testid': `spatial-combat-unit-${u.key}`,
           'data-side': u.side,
+          'data-kind': u.kind,
           'data-hp-frac': u.hpFrac.toFixed(3),
+          'data-ships': String(u.ships),
+          'data-ships-alive': String(u.shipsAlive),
           style: { pointerEvents: 'none' as const },
         },
         createElement('polygon', {
@@ -448,12 +545,98 @@ export function spatialCombatLayer(args: {
           opacity: 0.75,
         }),
         createElement('rect', {
-          'data-testid': `spatial-combat-hull-${u.id}`,
+          'data-testid': `spatial-combat-hull-${u.key}`,
           x: p.x - pipW / 2,
           y: pipY,
           width: pipW * u.hpFrac,
           height: pipH,
           fill: u.hpFrac > 0.5 ? 'var(--color-success)' : u.hpFrac > 0.25 ? 'var(--color-warning)' : 'var(--color-danger)',
+        }),
+        ...(u.kind === 'fleet'
+          ? [
+              createElement(
+                'text',
+                {
+                  key: 'hulls',
+                  'data-testid': `spatial-combat-hulls-${u.key}`,
+                  x: p.x + pipW / 2 + px(4),
+                  y: pipY + pipH,
+                  fontSize: px(11),
+                  textAnchor: 'start' as const,
+                  fill: color,
+                  fontWeight: 700,
+                  style: { userSelect: 'none' as const },
+                },
+                `${u.shipsAlive}/${u.ships}`,
+              ),
+            ]
+          : []),
+      ),
+    )
+  }
+
+  // ── 3b) ORDNANCE: the rounds themselves, over the hulls that threw them ──
+  // "i see nothing, i see just numbers, a health bar going down. I want to see an ammo of some sort."
+  // One round per REAL salvo of the latest tick (combatMotion.resolveOrdnance), travelling between
+  // its two endpoints' current positions and drawn from the firing ship's own weapons_json — the
+  // gun's projectile_speed decides how fast it crosses, its share of the ship's volley how heavy it
+  // is, and a ship with nothing this map can describe borrows the elected LEAD's ordnance. The trail
+  // is the round's own recent path, not a second effect: its tail is where the same interpolation
+  // says the round was a fraction of its flight ago.
+  const rounds = args.sightings ? resolveOrdnance({ ...shotArgs, nowMs }) : []
+  if (rounds.length > 0) {
+    out.push(
+      createElement(
+        'g',
+        {
+          key: 'spatial-ordnance',
+          'data-testid': 'spatial-combat-ordnance',
+          style: { pointerEvents: 'none' as const },
+        },
+        ...rounds.flatMap((s, i) => {
+          // A VOLLEY, NOT A STACK. Since the fleet fold, four hulls shooting one target all leave
+          // the same glyph along the same lane, so rounds sharing a lane are spread across it —
+          // a perpendicular offset, centred, in screen pixels. Nothing about WHERE the round starts
+          // or ends changes; this only stops N rounds drawing on top of each other.
+          const lane = rounds.filter((o) => o.sourceKey === s.sourceKey && o.targetKey === s.targetKey)
+          const slot = lane.indexOf(s)
+          const dx = s.x - s.tailX
+          const dy = s.y - s.tailY
+          const len = Math.hypot(dx, dy)
+          const spread = len > 0 ? (slot - (lane.length - 1) / 2) * px(SHOT_LANE_GAP_PX) : 0
+          const nx = len > 0 ? -(dy / len) * spread : 0
+          const ny = len > 0 ? (dx / len) * spread : 0
+          const head = args.norm({ x: s.x, y: s.y })
+          const tail = args.norm({ x: s.tailX, y: s.tailY })
+          const color = SIDE_COLOR[s.side]
+          const r = px(SHOT_MIN_R_PX + (SHOT_MAX_R_PX - SHOT_MIN_R_PX) * Math.max(0, Math.min(1, s.share)))
+          return [
+            createElement('line', {
+              key: `${s.key}-trail-${i}`,
+              x1: tail.x + nx,
+              y1: tail.y + ny,
+              x2: head.x + nx,
+              y2: head.y + ny,
+              stroke: color,
+              strokeWidth: 2.5,
+              strokeOpacity: 0.55,
+              strokeLinecap: 'round' as const,
+              vectorEffect: 'non-scaling-stroke' as const,
+            }),
+            createElement('circle', {
+              key: s.key,
+              'data-testid': `spatial-combat-shot-${s.eventId}`,
+              'data-source': s.sourceKey,
+              'data-target': s.targetKey,
+              'data-profile': s.profileSource,
+              cx: head.x + nx,
+              cy: head.y + ny,
+              r,
+              fill: color,
+              stroke: 'var(--color-app)',
+              strokeWidth: px(0.8),
+            }),
+          ]
         }),
       ),
     )
@@ -464,7 +647,10 @@ export function spatialCombatLayer(args: {
   // legible at any zoom. Drawn last so a number is never hidden behind the ship it belongs to.
   // A hull hit TWICE this tick shows BOTH numbers, fanned about the hull's centre in the server's
   // own seq order — one splat per hit is the whole point (see resolveHitSplats).
-  for (const s of resolveHitSplats(args.events, positioned)) {
+  // A number appears when the ROUND that carried it arrives — damage never precedes its own shell.
+  // Unpaired splats (arrivesAtMs null) show at once, so no real damage row can be hidden.
+  for (const s of resolveHitSplats(args.events, points, arrivals)) {
+    if (s.arrivesAtMs !== null && nowMs < s.arrivesAtMs) continue
     const p = args.norm({ x: s.x, y: s.y })
     // Coloured by who is BLEEDING — red on your own ship is the RS read: this is hurting you.
     const color = s.side === 'player' ? 'var(--color-danger)' : 'var(--color-accent)'
