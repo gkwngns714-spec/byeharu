@@ -358,10 +358,20 @@ set local statement_timeout = '120s';
 
 -- ── 0. PRECONDITIONS (read-only) — refuse to build on a base we did not slice from ──────────────
 do $pre$
-declare v_src text;
+declare v_src text; v_n integer;
 begin
-  if to_regprocedure('public.combat_create_group_encounter(uuid)') is null then
-    raise exception '0316 PRECONDITION FAIL: public.combat_create_group_encounter(uuid) is absent';
+  -- BY NAME, never by a typed signature: 0301 gave this function TWO more parameters
+  -- (p_engagement_x/p_engagement_y), so to_regprocedure('…(uuid)') answers NULL on the very chain
+  -- this migration is built for. The rewrite loop below locates the same way, and the overload
+  -- count is what makes "by name" safe.
+  select count(*) into v_n
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'combat_create_group_encounter';
+  if v_n = 0 then
+    raise exception '0316 PRECONDITION FAIL: public.combat_create_group_encounter is absent';
+  end if;
+  if v_n <> 1 then
+    raise exception '0316 PRECONDITION FAIL: public.combat_create_group_encounter is overloaded (% definitions) — refusing to guess which one the slice belongs to', v_n;
   end if;
   select pg_get_functiondef(p.oid) into v_src
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -382,8 +392,11 @@ begin
   if position('combat_player_speed_scale' in v_src) > 0 then
     raise exception '0316 PRECONDITION FAIL: the deployed builder already carries the combat speed scale — refusing to re-emit over an unknown edit';
   end if;
-  -- the catalog rows and the weapon authority this migration reasons about must exist.
-  if to_regprocedure('public.module_is_firing_weapon(public.module_types)') is null then
+  -- the 0308 weapon authority this migration asserts against must exist. By name again, for the same
+  -- reason: its one argument is the composite row type public.module_types, whose spelling inside a
+  -- to_regprocedure signature is exactly the kind of thing that answers NULL for the wrong reason.
+  if not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname = 'public' and p.proname = 'module_is_firing_weapon') then
     raise exception '0316 PRECONDITION FAIL: public.module_is_firing_weapon is absent — the 0308 weapon authority this migration asserts against does not exist';
   end if;
 end $pre$;
