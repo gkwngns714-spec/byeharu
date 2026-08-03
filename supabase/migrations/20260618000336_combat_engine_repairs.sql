@@ -930,10 +930,16 @@ begin
   if v_guard = 0 then
     raise exception '0336 ASSERT (e) FAIL: the retreat guard is not the FIRST branch of the wave-spawn decision — a retreating fleet could still be sent a fresh wave';
   end if;
-  v_spawn := position('delete from combat_units where encounter_id = e.id and side = ''enemy'';
-          for v_spawn_i in 1 .. v_enemy_count loop' in v_code);
+  -- Located by each spawn arm's OWN insert row rather than by the lines around it: this slice
+  -- inserts the slot counter and the formation-point read between the delete and the loop, so a
+  -- locator built from adjacency would be invalidated by the very change it is checking.
+  v_spawn := position('e.id, e.player_id, ''pirate_synthetic'', ''enemy'', v_enemy_unit_hp, 1, 1,' in v_code);
   if v_spawn = 0 or v_guard >= v_spawn then
-    raise exception '0336 ASSERT (e) FAIL: the retreat guard does not precede the synthetic spawn (% vs %)', v_guard, v_spawn;
+    raise exception '0336 ASSERT (e) FAIL: the retreat guard does not precede the SYNTHETIC spawn (% vs %) — a retreating fleet could still be sent a fresh wave', v_guard, v_spawn;
+  end if;
+  v_spawn := position('e.id, e.player_id, v_weapon->>''unit_type_id'', ''enemy'', v_enemy_unit_hp, 1, 1,' in v_code);
+  if v_spawn = 0 or v_guard >= v_spawn then
+    raise exception '0336 ASSERT (e) FAIL: the retreat guard does not precede the RESOLVED spawn (% vs %) — an authored wave could still be spawned on a retreating fleet', v_guard, v_spawn;
   end if;
   -- the loop order is no longer heap order
   if position('''main_ship_id'', cu2.main_ship_id) order by cu2.id), ''[]''::jsonb)' in v_code) = 0 then
@@ -946,9 +952,21 @@ begin
   if position('coalesce(v_target_range,0));' in v_code) = 0 then
     raise exception '0336 ASSERT (e) FAIL: the target''s reach is no longer passed to the mover';
   end if;
+  -- THE SHORTEST GUN MUST TRAVEL THE WHOLE WAY — three sites in the tick, and no more: the freeze
+  -- KEY that computes it, the actor loop's recordset COLUMN so it survives jsonb_to_recordset, and
+  -- the MOVER ARGUMENT that consumes it. Counted on comment-stripped text. The targeting CTE's own
+  -- column list is deliberately NOT a fourth site: it moved into combat_acquire_target, which is
+  -- checked separately just below. A value computed and never read IS this defect's shape, so both
+  -- ends are pinned rather than only the count.
   v_n := (length(v_code) - length(replace(v_code, 'my_min_range', ''))) / length('my_min_range');
-  if v_n <> 4 then
-    raise exception '0336 ASSERT (e) FAIL: my_min_range appears % time(s) (want 4: the freeze key, the two recordset column lists it must travel through, and the mover argument)', v_n;
+  if v_n <> 3 then
+    raise exception '0336 ASSERT (e) FAIL: my_min_range appears % time(s) in the tick (want 3: the freeze key, the actor recordset column it must survive, and the mover argument)', v_n;
+  end if;
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'combat_acquire_target';
+  if position('my_min_range double precision' in v_code) = 0 then
+    raise exception '0336 ASSERT (e) FAIL: the targeting leaf''s recordset list does not name my_min_range — the leaf and the frozen snapshot would disagree about the record shape';
   end if;
 end $e$;
 
