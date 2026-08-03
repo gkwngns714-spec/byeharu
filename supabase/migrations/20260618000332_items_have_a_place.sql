@@ -82,11 +82,15 @@
 --
 -- ── BACKFILL / DAY-ONE OVER-CAPACITY (nobody loses an item) ──────────────────────────────────────
 -- No row moves. All 312 `player_inventory` rows stay exactly where they are — they ARE the hold.
--- Measured on production with the volumes set below: the largest single hold is 22.7 m3 (the owner:
--- 15 pirate_alloy + 28 scrap + 6 weapon_parts) against a 250 m3 fleet capacity. Of the 24 players
--- who signed in within 30 days, exactly FOUR are over capacity on day one, each holding 0.5 m3
--- (one `scrap`) with zero ship capacity because they own no ship. Across all 469 accounts, 155
--- item-holders own no ship.
+-- Measured on production with the exact volumes set below (2026-08-03):
+--   · the largest hold anywhere is 23.0 m3 (`ore x10, scrap x6`), held by several DORMANT accounts
+--     that own no ship — so they are over capacity, at 23 m3 against 0;
+--   · the owner's own hold is 22.7 m3 (15 pirate_alloy + 28 scrap + 6 weapon_parts) against a
+--     250 m3 fleet capacity — 9% full, nowhere near the cap;
+--   · of the 24 accounts that signed in within 30 days, exactly FOUR are over capacity on day one,
+--     and every one of them holds the same thing: a single `scrap`, 0.5 m3, against 0 capacity
+--     because they own no ship;
+--   · across all 469 accounts, 155 of the 157 item-holders own no ship at all.
 -- WHAT HAPPENS TO THEM: nothing is deleted, nothing is confiscated, nothing raises. Over capacity
 -- is a legal STATE, not an error. They can deposit every item they hold into their port's storage
 -- (that direction is always allowed — it only ever REDUCES the load); they cannot withdraw until
