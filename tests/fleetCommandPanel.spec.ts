@@ -10,6 +10,8 @@ import type { FleetMovement } from '../src/features/fleets/fleetTypes'
 import type { GroupRow, ShipGroupMapEntry } from '../src/features/command/teamRoster'
 import type { UnifiedGroupFleetLite } from '../src/features/command/teamApi'
 import type { MapLocation } from '../src/features/map/mapTypes'
+import type { DangerZoneLite } from '../src/features/map/pirateApi'
+import { huntSiteActionLabel } from '../src/features/command/howAFightStarts'
 
 // S5 MAP-UX — the FleetCommandPanel contract, pinned at the PURE composition model (the panel is a
 // SHELL that renders `sections` in array order and submits each row's `wire` verbatim, so these
@@ -75,6 +77,27 @@ const parked = (gid: string, x: number, y: number, over: Partial<UnifiedGroupFle
 
 const member = (groupId: string): ShipGroupMapEntry => ({ group_id: groupId, captain_slots: null, is_command_ship: false })
 
+/** A closed square ring (first point repeated), exactly the shape get_danger_zones returns. */
+const ringAround = (cx: number, cy: number, half = 50): [number, number][] => [
+  [cx - half, cy - half],
+  [cx + half, cy - half],
+  [cx + half, cy + half],
+  [cx - half, cy + half],
+  [cx - half, cy - half],
+]
+
+const zone = (over: Partial<DangerZoneLite> & { id: string }): DangerZoneLite => ({
+  name: over.id,
+  source: 'drawn',
+  location_id: null,
+  ring: ringAround(0, 0),
+  revision: 1,
+  ...over,
+})
+
+/** The blob wrapped around the hunt site at (300, 300) — the shape the owner kept flying into. */
+const HUNT_ZONE = zone({ id: 'z-hunt', name: 'Deadwake', location_id: 'hunt-1', ring: ringAround(300, 300) })
+
 const base = (over: Partial<FleetCommandModelInput> = {}): FleetCommandModelInput => ({
   target: null,
   movements: [],
@@ -84,6 +107,7 @@ const base = (over: Partial<FleetCommandModelInput> = {}): FleetCommandModelInpu
   unifiedFleets: [],
   rollups: [],
   locations: LOCS,
+  dangerZones: [],
   ships: [],
   membership: {},
   launchFromDock: false,
@@ -152,6 +176,126 @@ test('(c) NO dock row: open space, a non-port territory, a moving fleet, or a do
   }
 })
 
+// ── (f) STANDING HUNT: the fight under the fleet's feet ──────────────────────────────────────────
+// Owner, 2026-08-04, the SECOND report of the same thing: "i am in combat zone, and the fight does
+// not start." The rule is unchanged and correct — a fight starts only by selecting the hunt SITE,
+// and standing in the shaded zone does nothing. What was broken was that a fleet parked INSIDE the
+// blob was never offered the site it was sitting on: the signpost lived four steps deep in the hub.
+// These pins hold the offer to the dock section's shape — state-predicated, target-independent, and
+// carrying NO wire of its own.
+
+test('(f) a fleet parked INSIDE a zone that wraps a hunt site is offered that site, by name', () => {
+  const m = buildFleetCommandModel(base({ unifiedFleets: [parked('g1', 300, 320)], dangerZones: [HUNT_ZONE] }))
+  expect(m.mount).toBe(true) // the standing leg alone mounts the panel — no target, nothing in flight
+  expect(kinds(m.sections)).toEqual(['zoneHunt'])
+  const s = m.sections[0]
+  if (s.kind !== 'zoneHunt') throw new Error('unreachable')
+  // The row selects the SITE (never the zone) and carries NO wire — a signpost, not a fourth verb.
+  expect(s.rows).toEqual([
+    { groupId: 'g1', name: 'Alpha', locationId: 'hunt-1', siteName: 'Deadwake', label: 'Hunt at Deadwake' },
+  ])
+  // The words come from the ONE hunt-copy authority, not from this section.
+  expect(s.rows[0].label).toBe(huntSiteActionLabel('Deadwake'))
+})
+
+test('(f) NO offer: outside every zone, a zone with no huntable site, in flight, docked, or nowhere', () => {
+  const cases: [string, Partial<FleetCommandModelInput>][] = [
+    ['outside the ring', { unifiedFleets: [parked('g1', 900, 900)], dangerZones: [HUNT_ZONE] }],
+    ['no zones loaded at all', { unifiedFleets: [parked('g1', 300, 320)], dangerZones: [] }],
+    // A zone bound to nothing, and a zone bound to a PORT: neither wraps a legal hunt destination,
+    // and an offer that leads nowhere is worse than no offer.
+    ['a loose zone with no site', { unifiedFleets: [parked('g1', 10, 10)], dangerZones: [zone({ id: 'z-loose' })] }],
+    [
+      'a zone around a port',
+      {
+        unifiedFleets: [parked('g1', 100, 100)],
+        dangerZones: [zone({ id: 'z-port', location_id: 'port-1', ring: ringAround(100, 100) })],
+      },
+    ],
+    [
+      'a zone whose site this client never loaded',
+      {
+        unifiedFleets: [parked('g1', 10, 10)],
+        dangerZones: [zone({ id: 'z-ghost', location_id: 'loc-missing' })],
+      },
+    ],
+    // A fleet in flight is not STANDING anywhere — the crossing may or may not roll an ambush, and
+    // its business is the brake, not a hunt order.
+    ['a fleet in flight', { unifiedFleets: [parked('g1', 300, 320, { status: 'moving' })], dangerZones: [HUNT_ZONE] }],
+    [
+      'a docked fleet',
+      {
+        unifiedFleets: [parked('g1', 300, 320, { location_mode: 'location', current_location_id: 'port-1' })],
+        dangerZones: [HUNT_ZONE],
+      },
+    ],
+    [
+      'a fleet with no coordinates',
+      { unifiedFleets: [parked('g1', 0, 0, { space_x: null, space_y: null })], dangerZones: [HUNT_ZONE] },
+    ],
+    ['no fleet row at all', { unifiedFleets: [], dangerZones: [HUNT_ZONE] }],
+  ]
+  for (const [why, over] of cases) {
+    const m = buildFleetCommandModel(base(over))
+    expect(kinds(m.sections), why).not.toContain('zoneHunt')
+  }
+})
+
+test('(f) the offer RETIRES itself once taken — never two "Hunt at …" affordances on one panel', () => {
+  // Pressing it selects the site, which is what mounts the real hunt section. The signpost must not
+  // survive beside the control it points at.
+  const m = buildFleetCommandModel(
+    base({
+      unifiedFleets: [parked('g1', 300, 320)],
+      dangerZones: [HUNT_ZONE],
+      target: { kind: 'port', locationId: 'hunt-1' },
+      unifiedEnabled: false,
+    }),
+  )
+  expect(kinds(m.sections)).toContain('hunt')
+  expect(kinds(m.sections)).not.toContain('zoneHunt')
+})
+
+test('(f) NO-SOFTLOCK holds: the brake still comes FIRST with a standing offer live', () => {
+  const m = buildFleetCommandModel(
+    base({
+      groups: [G1, G2],
+      movements: [mov('g1')],
+      unifiedFleets: [parked('g2', 300, 320)],
+      dangerZones: [HUNT_ZONE],
+    }),
+  )
+  expect(m.sections[0].kind).toBe('stop')
+  expect(kinds(m.sections)).toEqual(['stop', 'zoneHunt'])
+})
+
+test('(f) the offer is target-INDEPENDENT, exactly like the dock row it is shaped after', () => {
+  const noTarget = buildFleetCommandModel(base({ unifiedFleets: [parked('g1', 300, 320)], dangerZones: [HUNT_ZONE] }))
+  const withPoint = buildFleetCommandModel(
+    base({
+      unifiedFleets: [parked('g1', 300, 320)],
+      dangerZones: [HUNT_ZONE],
+      target: { kind: 'point', view: fleetGoTargetView({ x: 10, y: 10 }) },
+    }),
+  )
+  expect(withPoint.sections.find((s) => s.kind === 'zoneHunt')).toEqual(
+    noTarget.sections.find((s) => s.kind === 'zoneHunt'),
+  )
+})
+
+test('(f) a standing offer is ranked above the dock row, and never before Stop', () => {
+  // Both are parked-fleet affordances in a capped, scrolling body; the fight the owner twice failed
+  // to find is the one that must not be the thing that scrolls away.
+  const m = buildFleetCommandModel(
+    base({
+      groups: [G1, G2],
+      unifiedFleets: [parked('g1', 300, 320), parked('g2', 120, 120)],
+      dangerZones: [HUNT_ZONE],
+    }),
+  )
+  expect(kinds(m.sections)).toEqual(['zoneHunt', 'dock'])
+})
+
 // ── (e) DISCOVERABILITY: the "send a fleet" prompt fills the otherwise-empty state ───────────────
 
 test('(e) a fleet owner with no flight, no dockable fleet, and no target gets the prompt (panel is NOT empty)', () => {
@@ -170,6 +314,10 @@ test('(e) the prompt yields to a live section — target, in-flight, or dockable
   // a dockable parked fleet → dock, no prompt
   const dockable = buildFleetCommandModel(base({ unifiedFleets: [parked('g1', 120, 120)] }))
   expect(kinds(dockable.sections)).not.toContain('prompt')
+  // a fleet standing in a huntable zone → the offer, no prompt: the prose that names the gesture
+  // must not sit under a button that already IS the gesture.
+  const standing = buildFleetCommandModel(base({ unifiedFleets: [parked('g1', 300, 320)], dangerZones: [HUNT_ZONE] }))
+  expect(kinds(standing.sections)).not.toContain('prompt')
 })
 
 test('(e) a player with NO fleet never gets the prompt (that is the groupless guidance branch)', () => {

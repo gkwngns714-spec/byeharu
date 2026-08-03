@@ -62,6 +62,36 @@ export interface ZoneInfo {
 const UNNAMED = 'Unnamed danger zone'
 
 /**
+ * THE ONE ANSWER to "does this zone wrap a site a fleet can actually be sent to fight at?"
+ *
+ * WHY IT IS ITS OWN FUNCTION (owner, 2026-08-04, second report: "i am in combat zone, and the fight
+ * does not start"): the offer now has to be made in TWO places — the zone panel a player reaches by
+ * asking "what is this place", and the fleet command panel for a fleet already PARKED inside the
+ * blob (fleetCommandModel's standing-hunt section). Two places asking the same question is exactly
+ * how the site/zone copy became three different answers in the first place. So the predicate is
+ * extracted rather than repeated: `buildZoneInfo` composes it, the command model composes it, and a
+ * change to what counts as huntable lands in both surfaces at once. tests/zoneInfoModel.spec.ts pins
+ * that the two agree on every case.
+ *
+ * `teamDestinationKind` is the SAME classifier the map uses to decide whether selecting a marker
+ * opens the hunt section — asked here rather than re-tested, so no surface can offer a hunt the
+ * command surface would then refuse to render. 'expedition' (a port) and null (not a legal
+ * destination, e.g. an inactive site) both yield no offer: only a real hunt site earns one.
+ *
+ * Fails closed: no attached location, or a location this client has not loaded, is NO offer — an
+ * offer that leads nowhere is worse than no offer.
+ */
+export function zoneHuntSite(
+  zone: DangerZoneLite,
+  locations: readonly MapLocation[],
+): ZoneHuntSite | null {
+  const near = zone.location_id ? locations.find((l) => l.id === zone.location_id) : undefined
+  return near && teamDestinationKind(near) === 'hunt'
+    ? { locationId: near.id, name: near.name, label: huntSiteActionLabel(near.name) }
+    : null
+}
+
+/**
  * WHY THE WARNING IS NOT A PERCENTAGE: the risk is computed per crossing from exposure and fleet
  * strength, and the client cannot read it — printing a number would be inventing precision.
  *
@@ -113,14 +143,9 @@ export function buildZoneInfo(
   const size = describeSize(zone.ring)
   if (size) rows.push({ label: 'Size', value: size })
 
-  // THE SIGNPOST. `teamDestinationKind` is the SAME classifier the map uses to decide whether
-  // selecting a marker opens the hunt section — asked here rather than re-tested, so the panel can
-  // never offer a hunt the command surface would then refuse to render. 'expedition' (a port) and
-  // null (not a legal destination) both yield no offer: only a real hunt site earns one.
-  const huntSite: ZoneHuntSite | null =
-    near && teamDestinationKind(near) === 'hunt'
-      ? { locationId: near.id, name: near.name, label: huntSiteActionLabel(near.name) }
-      : null
+  // THE SIGNPOST — composed from the ONE huntable-site authority above, never re-tested here. This
+  // panel and the fleet command panel's standing-hunt section must agree by construction.
+  const huntSite: ZoneHuntSite | null = zoneHuntSite(zone, locations)
   // Say HOW, right where the confusion happens, but only when there is somewhere to say it about —
   // a loose zone with no site would be handed an instruction it cannot act on.
   const warning = huntSite ? `${WARNING} ${HOW_A_FIGHT_STARTS}` : WARNING

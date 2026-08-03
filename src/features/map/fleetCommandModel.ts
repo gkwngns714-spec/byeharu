@@ -10,7 +10,8 @@
 // The stop section is derived from movement STATE ONLY (resolveStoppableFleets) — independent of
 // target/tap/selection — and is ALWAYS the FIRST section whenever any owned fleet is in flight, so
 // the brake can never hide behind a target gate or a scroll. The mount predicate deliberately ORs
-// three independent legs: `stop rows ∨ target ∨ dockable parked fleets`.
+// independent legs: `stop rows ∨ target ∨ dockable parked fleets ∨ fleets standing in a huntable
+// pirate zone` — a new leg may ADD a reason to mount, never take one away.
 //
 // ── THE RAW-COORDS LAW (fleetGoTarget.ts, restated) ──────────────────────────────────────────────
 // A point row's wire target is fleetGoRpcTarget(view) — the RAW tapped point, never the canonical
@@ -36,6 +37,8 @@ import {
 } from './fleetGoTarget'
 import { territoryAt } from './territoryAt'
 import { isDockablePortForDisplay, type MapLocation } from './mapTypes'
+import type { DangerZoneLite } from './pirateApi'
+import { zoneAtPoint, zoneHuntSite } from './zoneInfoModel'
 
 // ── THE ONE selection source (charter: kill the two-selection-source spaghetti) ───────────────────
 // MapScreen owns this union: a double-tap yields 'point' (GalaxyMap's onDoubleTapPoint → the RAW world
@@ -70,6 +73,30 @@ export interface FleetCommandDockRow {
   wire: { locationId: string }
 }
 
+/**
+ * THE STANDING-HUNT ROW — one fleet parked inside a danger zone that wraps a huntable site.
+ *
+ * WHY (owner, 2026-08-04, the SECOND report of the same thing: "i am in combat zone, and the fight
+ * does not start"). A fleet sitting inside the Snare's blob was offered nothing: the only signpost
+ * to the site lived four steps away (double-tap → hub → What's here → zone panel → the button), and
+ * the map's idle prompt described the gesture in prose without saying one was under their feet.
+ *
+ * It carries NO wire of its own. `locationId` is handed back to the map's marker selection, exactly
+ * as tapping that marker would — which swings the hub onto its fleet stage and renders the EXISTING
+ * hunt section, with its two-click armed confirm and its return-port picker. One hunt control,
+ * reached from one more place; never a second path to the hunt RPC (tests/howAFightStarts.spec.ts
+ * proves there is still exactly one submit site in src/).
+ */
+export interface FleetCommandZoneHuntRow {
+  groupId: string
+  name: string
+  /** The SITE to select — never the zone: a zone is not a destination (howAFightStarts). */
+  locationId: string
+  siteName: string
+  /** The signpost's words, from the ONE hunt-copy authority (huntSiteActionLabel). */
+  label: string
+}
+
 export interface FleetCommandHuntRow {
   groupId: string
   name: string
@@ -89,11 +116,15 @@ export type FleetCommandSection =
   | { kind: 'context'; target: { kind: 'point'; view: FleetGoTargetView } | { kind: 'port'; locationId: string; locationName: string } }
   | { kind: 'go'; destination: { kind: 'point'; view: FleetGoTargetView } | { kind: 'port'; locationId: string; locationName: string }; rows: FleetCommandGoRow[] }
   | { kind: 'dock'; rows: FleetCommandDockRow[] }
+  /** Parked INSIDE a pirate zone that wraps a huntable site — the fight that is already under the
+   *  fleet's feet, offered as an action instead of described in prose. Target-independent. */
+  | { kind: 'zoneHunt'; rows: FleetCommandZoneHuntRow[] }
   | { kind: 'hunt'; locationId: string; locationName: string; rows: FleetCommandHuntRow[] }
 
 export interface FleetCommandModel {
-  /** `stop rows ∨ target ∨ dockable parked fleets` (with groups), or the M2 groupless-guidance leg
-   *  (`ships ∧ target` with zero groups) — the panel renders nothing when false. */
+  /** `stop rows ∨ target ∨ dockable parked fleets ∨ fleets standing in a huntable zone` (with
+   *  groups), or the M2 groupless-guidance leg (`ships ∧ target` with zero groups) — the panel
+   *  renders nothing when false. */
   mount: boolean
   /** Render IN ORDER. Stop (when present) is ALWAYS index 0 — the NO-SOFTLOCK pin. */
   sections: FleetCommandSection[]
@@ -137,6 +168,10 @@ export interface FleetCommandModelInput {
   unifiedFleets: readonly UnifiedGroupFleetLite[]
   rollups: readonly DockedTeamRollup[]
   locations: readonly MapLocation[]
+  /** The live danger zones (the shell's get_danger_zones read, already loaded for the map layer) —
+   *  the containment side of the standing-hunt offer. Empty ⇔ no offer, so a failed/dark read
+   *  simply yields today's panel. */
+  dangerZones: readonly DangerZoneLite[]
   /** The shell's ONE ship list (selection.ships) — hunt-readiness statuses. */
   ships: readonly { main_ship_id: string; status: string }[]
   /** The live membership map (main_ship_id → group/command flags), from the shell's polled read. */
@@ -180,6 +215,26 @@ export function buildFleetCommandModel(input: FleetCommandModelInput): FleetComm
     const orbit = territoryAt({ x: fleet.space_x, y: fleet.space_y }, locations)
     if (!orbit || !isDockablePortForDisplay(orbit.location_type)) return []
     return [{ groupId: g.group_id, name: g.name, portId: orbit.id, portName: orbit.name, wire: { locationId: orbit.id } }]
+  })
+
+  // 4b · STANDING HUNT — "i am in combat zone, and the fight does not start" (owner, 2026-08-04,
+  // the second time). Shaped as the DOCK row above on purpose: state-predicated, target-independent,
+  // over fleets parked in space, decided by an EXISTING pure containment test. Nothing here is new
+  // geometry and nothing here is a new verb.
+  //   · containment  — zoneAtPoint, the map's own ray-cast (the same one that answers "What's here"
+  //                    for a double-tap and mirrors the server's PostGIS zone test).
+  //   · huntability  — zoneHuntSite, the ONE authority the zone panel asks (teamDestinationKind).
+  // HONEST AT THE EDGES, the dock guards verbatim: a fleet in flight is not standing anywhere, a
+  // docked fleet is not in space, and a fleet with no coordinates is nowhere this can speak about.
+  const zoneHuntRows: FleetCommandZoneHuntRow[] = groups.flatMap((g) => {
+    const fleet = input.unifiedFleets.find((f) => f.group_id === g.group_id)
+    if (!fleet || fleet.status === 'moving' || fleet.location_mode !== 'space') return []
+    if (fleet.space_x === null || fleet.space_y === null) return []
+    const zone = zoneAtPoint({ x: fleet.space_x, y: fleet.space_y }, input.dangerZones)
+    if (!zone) return []
+    const site = zoneHuntSite(zone, locations)
+    if (!site) return [] // a zone with no huntable site offers nothing at all
+    return [{ groupId: g.group_id, name: g.name, locationId: site.locationId, siteName: site.name, label: site.label }]
   })
 
   // 2/3/5 · the target-dependent sections. A port target is resolved through the ONE destination
@@ -286,18 +341,32 @@ export function buildFleetCommandModel(input: FleetCommandModelInput): FleetComm
   // empty state with a calm prompt that names the gesture. Scoped to the otherwise-empty case (no
   // stop, no dock, no target → context/go/hunt are all null when target is null), so it never
   // competes with a live section. groups.length > 0 here (the groupless branch returned above).
-  const promptable = target === null && stopRows.length === 0 && dockRows.length === 0
+  const promptable =
+    target === null && stopRows.length === 0 && dockRows.length === 0 && zoneHuntRows.length === 0
+
+  // The standing offer RETIRES ITSELF once it has been taken: selecting the site is what mounts the
+  // hunt section, and leaving the signpost up beside the control it points at would be two "Hunt at
+  // Snare" affordances on one panel — the duplication this whole slice exists to avoid.
+  const standingHuntRows = hunt ? zoneHuntRows.filter((r) => r.locationId !== hunt.locationId) : zoneHuntRows
 
   const sections: FleetCommandSection[] = []
   if (stopRows.length > 0) sections.push({ kind: 'stop', rows: stopRows }) // ALWAYS first
   if (context) sections.push(context)
   if (go) sections.push(go)
   if (promptable) sections.push({ kind: 'prompt' })
+  // Above dock: the panel body is capped and scrolls, and a fight the owner twice failed to find
+  // outranks an orbit-docking convenience for the space directly under Stop.
+  if (standingHuntRows.length > 0) sections.push({ kind: 'zoneHunt', rows: standingHuntRows })
   if (dockRows.length > 0) sections.push({ kind: 'dock', rows: dockRows })
   if (hunt) sections.push(hunt)
 
   return {
-    mount: stopRows.length > 0 || context !== null || dockRows.length > 0 || promptable,
+    mount:
+      stopRows.length > 0 ||
+      context !== null ||
+      dockRows.length > 0 ||
+      standingHuntRows.length > 0 ||
+      promptable,
     sections,
   }
 }
