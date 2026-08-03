@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react'
 import type { UnitType } from '../../lib/catalog'
 import { CombatEventLayer } from './CombatEventLayer'
 import { RoundLog } from './RoundLog'
-import { requestRetreat } from './combatApi'
-import { retreatErrorMessage } from './combatReasonMessage'
+import { RetreatControl } from './RetreatControl'
 import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './combatTypes'
 import { combatUnitLabel } from './combatLabels'
 import { selectCombatPhase, nextWaveSeconds, nextWaveText } from './combatPhase'
-import { Card, Button, Notice, Meter, SectionLabel, type MeterTone } from '../../components/ui'
+import { resolveAutoExitLine, type AutoExitSetting } from './autoExitLine'
+import { resolveRewardEntries } from './rewardPayload'
+import { Card, Notice, Meter, SectionLabel, type MeterTone } from '../../components/ui'
 import { ItemChip } from '../../components/items'
 
 // Display-only combat panel. All values are server-authoritative; the only action
@@ -21,6 +22,7 @@ export function ActiveCombatPanel({
   events,
   ticks,
   retreatDelaySeconds,
+  autoExit,
   onChanged,
 }: {
   encounter: CombatEncounter
@@ -30,10 +32,10 @@ export function ActiveCombatPanel({
   events: CombatEvent[]
   ticks: CombatTick[]
   retreatDelaySeconds: number
+  /** the fleet's 0310 safety line, if it could be read. Absent → nothing is said about it. */
+  autoExit?: AutoExitSetting
   onChanged: () => void
 }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const iv = setInterval(() => setNow(Date.now()), 1000)
@@ -49,7 +51,10 @@ export function ActiveCombatPanel({
   // the ONE combatUnitLabel helper (catalog name first, uuid-shaped member key → "Team ship" label).
   // Data-dark: member rows/keys can't exist in prod today, so legacy rendering is byte-identical.
   const typeName = (id: string) => combatUnitLabel(id, unitTypes)
-  const rewards = Object.entries(encounter.total_rewards_json ?? {})
+  // The pending haul, read through the ONE payload reader. The inline `Object.entries(...)` this
+  // replaces mapped EVERY key to an ItemChip — including `items`, whose value is an array — so a
+  // looted hold rendered as the literal string `Items ×[object Object]`.
+  const rewards = resolveRewardEntries(encounter.total_rewards_json)
 
   const playerPct = encounter.player_integrity_max > 0
     ? (encounter.player_integrity_current / encounter.player_integrity_max) * 100 : 0
@@ -67,20 +72,9 @@ export function ActiveCombatPanel({
     retreatLeft = Math.ceil(retreatDelaySeconds - (now - new Date(encounter.retreat_started_at).getTime()) / 1000)
   }
 
-  async function handleRetreat() {
-    setBusy(true)
-    setError(null)
-    try {
-      await requestRetreat(encounter.presence_id)
-      onChanged()
-    } catch (e) {
-      // 0307: raise text → player copy via the ONE combat reject map. A double-pressed Retreat used
-      // to render `request_retreat: presence not active (is retreating)` verbatim.
-      setError(retreatErrorMessage(e instanceof Error ? e.message : String(e)))
-    } finally {
-      setBusy(false)
-    }
-  }
+  // THE SAFETY LINE (0310) — the ONE derivation, shared with the map card. Null when the setting is
+  // unknown or off, and then this panel says nothing about it rather than implying there is none.
+  const exit = resolveAutoExitLine(encounter, autoExit)
 
   return (
     // UI R4: the existing bh-fade-in entrance when a battle takes the screen (one-shot, no loop);
@@ -96,16 +90,14 @@ export function ActiveCombatPanel({
             <span className="text-ink">{phase.label}</span>
           </p>
         </div>
-        <Button
-          variant="warning"
-          size="sm"
-          onClick={handleRetreat}
-          disabled={retreating}
-          busy={busy}
-          busyLabel="Working…"
-        >
-          {retreating ? 'Retreating…' : 'Retreat'}
-        </Button>
+        {/* THE ONE retreat control (combat/RetreatControl) — the same component the map card
+            mounts, so the verb, its busy state and its reject copy exist once. */}
+        <RetreatControl
+          presenceId={encounter.presence_id}
+          retreating={retreating}
+          onChanged={onChanged}
+          testId="combat-panel-retreat"
+        />
       </div>
 
       {retreating && (
@@ -114,15 +106,19 @@ export function ActiveCombatPanel({
           Warning: it can still take damage until it escapes.
         </Notice>
       )}
-      {error && (
-        <Notice tone="danger" className="mb-3">
-          {error}
-        </Notice>
-      )}
 
       {/* Fleet (total) + pirate wave */}
       <div className="mb-4 space-y-3">
         <Bar label="Fleet integrity" pct={playerPct} text={`${playerPct.toFixed(0)}% · ${Math.round(encounter.player_integrity_current).toLocaleString()} / ${Math.round(encounter.player_integrity_max).toLocaleString()}`} tone="accent" />
+        {/* THE SAFETY LINE, IN WORDS. 0310 has been ending fights silently since it deployed. */}
+        {exit && (
+          <p
+            data-testid="combat-panel-auto-exit"
+            className={`text-xs ${exit.reached || exit.close ? 'text-warning' : 'text-ink-faint'}`}
+          >
+            {exit.text}
+          </p>
+        )}
         {phase.betweenWaves ? (
           <div>
             <div className="mb-1 text-xs text-ink-muted">Pirate wave</div>
@@ -188,8 +184,8 @@ export function ActiveCombatPanel({
           {/* ITEM-VIZ: pending reward codes as ItemChips (glyph + humanized name + mono qty)
               instead of the raw `code: amount` strings; unknown codes degrade gracefully. */}
           {rewards.length === 0 ? <span className="text-ink-faint">none yet</span>
-            : rewards.map(([code, amt]) => (
-                <ItemChip key={code} id={code} kind="resource" qty={amt} className="mr-2" />
+            : rewards.map((r) => (
+                <ItemChip key={r.id} id={r.id} qty={r.qty} className="mr-2" />
               ))}
         </p>
         <p className="mt-1 text-[11px] text-ink-faint">

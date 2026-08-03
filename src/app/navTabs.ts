@@ -55,3 +55,13 @@ export const NAV_TABS: readonly NavTab[] = ALL_TABS.filter((t) => t.enabled).map
 export function navGridClass(count: number): 'grid-cols-4' | 'grid-cols-5' {
   return count === 5 ? 'grid-cols-5' : 'grid-cols-4'
 }
+
+/** WHERE A LIVE BATTLE LIVES — the destination the combat alert dot marks.
+ *
+ *  A fight can start anywhere: an ambush fires mid-leg, and a hunt's combat opens on arrival. A
+ *  player sitting on Ships or Port had NOTHING telling them a battle had begun — no badge, no dot,
+ *  nothing — so the first they knew of it was a destroyed fleet in the reports. The nav is the only
+ *  chrome present on every screen, so that is where the alert belongs. Exported as a constant rather
+ *  than compared inline in AppShell, so this table stays the ONE authority on which destination
+ *  owns combat. */
+export const COMBAT_TAB_TO = '/mission'

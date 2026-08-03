@@ -350,7 +350,13 @@ export function MapScreen() {
                   <p className="text-xs font-semibold text-danger">{n.text}</p>
                 </OverlayPanel>
               ))}
-              <CombatMapCard encounters={combat.encounters} units={combat.units} />
+              <CombatMapCard
+                encounters={combat.encounters}
+                units={combat.units}
+                ticks={combat.ticks}
+                autoExit={combat.autoExit}
+                onChanged={() => void combat.refresh()}
+              />
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />

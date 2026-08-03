@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fight readout harness (test only)</title>
+    <style>
+      /* A PHONE. 390px is the width the owner tests at, and it is the width at which the map's
+         screen-constant (÷k) glyph and text sizes are smallest — the letterbox scale under
+         `preserveAspectRatio="xMidYMid meet"` is set by min(width, height), so a narrow box makes
+         every map label and every hitsplat as small as it will ever be. Measuring anywhere wider
+         would flatter the readout. The host is offset from the origin so `rect.left/top` stays
+         load-bearing, exactly as camera.html does. */
+      body { margin: 0; background: #05080f; }
+      #map-host { position: absolute; left: 0; top: 0; width: 390px; height: 700px; }
+      #map-host > div { width: 100%; height: 100%; }
+      #map-host svg { display: block; width: 100%; height: 100%; }
+      #controls { position: absolute; left: 400px; top: 20px; color: #e6edf8; font: 12px sans-serif; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./fightHarness.tsx"></script>
+  </body>
+</html>

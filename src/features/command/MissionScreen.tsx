@@ -77,6 +77,7 @@ export function MissionScreen() {
                 events={combat.events.filter((e) => e.encounter_id === enc.id)}
                 ticks={combat.ticks.filter((t) => t.encounter_id === enc.id)}
                 retreatDelaySeconds={game.config['retreat_delay_seconds'] ?? 20}
+                autoExit={combat.autoExit[enc.id]}
                 onChanged={() => {
                   void combat.refresh()
                   void game.refresh()

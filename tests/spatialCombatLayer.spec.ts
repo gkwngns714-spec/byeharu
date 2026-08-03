@@ -1,7 +1,11 @@
 import { test, expect } from '@playwright/test'
 import type { ReactElement } from 'react'
 import {
+  ARENA_MIN_RADIUS,
+  combatFocusWorldPoints,
+  focusableEncounterId,
   spatialCombatLayer,
+  resolvePositionedUnits,
   resolveSpatialUnits,
   resolveFireLines,
   resolveHitSplats,
@@ -127,10 +131,33 @@ test('layer: player vs enemy glyphs are visually distinct (tone + silhouette) an
   expect((pg.props as Props)['data-side']).toBe('player')
   expect((eg.props as Props)['data-side']).toBe('enemy')
   expect((pg.props as { style: { pointerEvents: string } }).style.pointerEvents).toBe('none')
-  const poly = (g: ReactElement) => (g.props as { children: ReactElement }).children.props as { fill: string; points: string }
+  // The glyph group is [polygon, hull-track, hull-fill] since the per-unit hull pip landed; the
+  // silhouette is the FIRST child. Reading children[0] rather than `children` keeps this test about
+  // the silhouette instead of about how many things a unit draws.
+  const poly = (g: ReactElement) =>
+    (g.props as { children: ReactElement[] }).children[0].props as { fill: string; points: string }
   expect(poly(pg).fill).toBe('var(--color-accent)')
   expect(poly(eg).fill).toBe('var(--color-danger)')
   expect(poly(pg).points).not.toBe(poly(eg).points) // up- vs down-pointing triangle
+})
+
+// ── the per-unit HULL PIP: health as a quantity, not a shade ──────────────────────────────────────
+// The glyph's fill opacity was the only per-unit health cue, and a 30%-hull ship differs from a
+// 60%-hull one by a shade nobody can read mid-fight. The pip is the server's own hp_current/hp_max.
+test('layer: each living unit draws a hull pip whose width is its remaining fraction', () => {
+  const els = spatialCombatLayer({
+    units: [unit({ id: 'a', hp_current: 25, hp_max: 100 }), unit({ id: 'b', hp_current: 100, hp_max: 100 })],
+    events: [],
+    norm,
+    k: 1,
+  })
+  const pip = (id: string) => {
+    const g = byTestId(els, `spatial-combat-unit-${id}`)!
+    const kids = (g.props as { children: ReactElement[] }).children
+    return kids.find((c) => (c.props as Props)['data-testid'] === `spatial-combat-hull-${id}`)!
+      .props as { width: number }
+  }
+  expect(pip('a').width).toBeCloseTo(pip('b').width * 0.25, 6)
 })
 
 test('layer: positions project through norm (non-identity proves projection)', () => {
@@ -147,8 +174,8 @@ test('layer: positions project through norm (non-identity proves projection)', (
 // ── resolveFireLines: latest-tick spatial salvos only ──
 test('resolveFireLines: draws the latest tick, resolving both endpoints to live positions', () => {
   const views: SpatialUnitView[] = [
-    { id: 'u1', side: 'player', x: 0, y: 0, range: 300, hpFrac: 1 },
-    { id: 'u2', side: 'enemy', x: 100, y: 0, range: 120, hpFrac: 1 },
+    { id: 'u1', encounterId: 'e1', side: 'player', x: 0, y: 0, range: 300, hpFrac: 1, alive: true },
+    { id: 'u2', encounterId: 'e1', side: 'enemy', x: 100, y: 0, range: 120, hpFrac: 1, alive: true },
   ]
   const events = [
     salvo({ id: 1, tick_number: 6, payload_json: { unit_id: 'u1', target_id: 'u2' } }), // older tick
@@ -160,7 +187,9 @@ test('resolveFireLines: draws the latest tick, resolving both endpoints to live 
 })
 
 test('resolveFireLines: ignores dark-path salvos (no unit_id) and shots at vanished targets', () => {
-  const views: SpatialUnitView[] = [{ id: 'u1', side: 'player', x: 0, y: 0, range: 300, hpFrac: 1 }]
+  const views: SpatialUnitView[] = [
+    { id: 'u1', encounterId: 'e1', side: 'player', x: 0, y: 0, range: 300, hpFrac: 1, alive: true },
+  ]
   const aggregate = salvo({ id: 3, tick_number: 7, payload_json: { damage: 42, wave: 1 } }) // dark path
   const orphan = salvo({ id: 4, tick_number: 7, payload_json: { unit_id: 'u1', target_id: 'gone' } })
   expect(resolveFireLines([aggregate, orphan], views)).toEqual([])
@@ -218,16 +247,99 @@ test('AGGREGATE damage events are ignored — they carry `group`, not a position
   expect(resolveHitSplats([aggregate], views)).toEqual([])
 })
 
-test('damage AND destruction in one tick collapse to ONE splat marked destroyed', () => {
-  const views = resolveSpatialUnits([unit({ id: 'a', pos_x: 0, pos_y: 0 })])
+// REPOINTED, and STRENGTHENED. This test used to REQUIRE the collapse — "damage AND destruction in
+// one tick collapse to ONE splat" — which is the defect stated as a property. Collapsing is what
+// hid the killing blow's number behind the ✕ and, in the multi-hit case below, hid an entire hit.
+// The RS3 read is one splat per hit: the number that killed, AND the mark that it killed.
+test('the killing blow shows BOTH: the damage that landed and the kill mark', () => {
+  const views = resolvePositionedUnits([unit({ id: 'a', pos_x: 0, pos_y: 0, alive_count: 0, hp_current: 0 })])
   const splats = resolveHitSplats(
-    [dmg({ id: 1, payload_json: { unit_id: 'a', damage: 20 } }),
-     dmg({ id: 2, event_type: 'unit_destroyed', payload_json: { unit_id: 'a', count: 1 } })],
+    [dmg({ id: 1, seq: 0, payload_json: { unit_id: 'a', damage: 20 } }),
+     dmg({ id: 2, seq: 1, event_type: 'unit_destroyed', payload_json: { unit_id: 'a', count: 1 } })],
     views,
   )
+  expect(splats).toHaveLength(2)
+  expect(splats[0]).toMatchObject({ damage: 20, destroyed: false, index: 0, count: 2 })
+  expect(splats[1]).toMatchObject({ damage: null, destroyed: true, index: 1, count: 2 })
+})
+
+// ── THE DEFECTS THE OLD RESOLVER SHIPPED ──────────────────────────────────────────────────────────
+test('TWO hits on one hull in one tick are TWO numbers — never the last one alone', () => {
+  const views = resolvePositionedUnits([unit({ id: 'a', pos_x: 0, pos_y: 0 })])
+  // the production pair from tick 17: 4.136 + 4.286 = 8.4 taken, rendered as a single "4"
+  const splats = resolveHitSplats(
+    [dmg({ id: 1, seq: 0, payload_json: { unit_id: 'a', damage: 4.136 } }),
+     dmg({ id: 2, seq: 1, payload_json: { unit_id: 'a', damage: 4.286 } })],
+    views,
+  )
+  expect(splats.map((s) => s.damage)).toEqual([4.136, 4.286])
+  expect(splats.map((s) => s.index)).toEqual([0, 1])
+  expect(splats.every((s) => s.count === 2)).toBe(true)
+})
+
+test('a unit that DIED this tick still carries its splats — it is not silently gone', () => {
+  // alive_count 0 is the row state at the very tick that kills a stack, so an alive-only anchor
+  // lookup dropped both the final number and the ✕. resolveSpatialUnits must still hide the GLYPH.
+  const dead = [unit({ id: 'a', pos_x: 3, pos_y: 4, alive_count: 0, hp_current: 0 })]
+  expect(resolveSpatialUnits(dead)).toEqual([])
+  const splats = resolveHitSplats([dmg({ payload_json: { unit_id: 'a', damage: 9 } })], resolvePositionedUnits(dead))
   expect(splats).toHaveLength(1)
-  expect(splats[0].destroyed).toBe(true)
-  expect(splats[0].damage).toBe(20)
+  expect(splats[0]).toMatchObject({ x: 3, y: 4, damage: 9 })
+})
+
+test('LATEST TICK is per ENCOUNTER — a second, higher-tick fight cannot blank a newer one', () => {
+  const views = resolvePositionedUnits([
+    unit({ id: 'a', encounter_id: 'new', pos_x: 0, pos_y: 0 }),
+    unit({ id: 'z', encounter_id: 'old', pos_x: 50, pos_y: 50 }),
+  ])
+  const splats = resolveHitSplats(
+    [dmg({ id: 1, encounter_id: 'new', tick_number: 2, payload_json: { unit_id: 'a', damage: 7 } }),
+     dmg({ id: 2, encounter_id: 'old', tick_number: 80, payload_json: { unit_id: 'z', damage: 3 } })],
+    views,
+  )
+  // a global max of 80 used to erase the new fight's only splat
+  expect(splats.map((s) => s.unitId).sort()).toEqual(['a', 'z'])
+})
+
+test('fire lines are per-encounter too, and the KILLING salvo still draws', () => {
+  const views = resolvePositionedUnits([
+    unit({ id: 'p', encounter_id: 'new', pos_x: 0, pos_y: 0 }),
+    unit({ id: 'e', encounter_id: 'new', side: 'enemy', pos_x: 5, pos_y: 0, alive_count: 0 }), // died this tick
+    unit({ id: 'o', encounter_id: 'old', pos_x: 90, pos_y: 90 }),
+  ])
+  const lines = resolveFireLines(
+    [salvo({ id: 1, encounter_id: 'new', tick_number: 2, payload_json: { unit_id: 'p', target_id: 'e' } }),
+     salvo({ id: 2, encounter_id: 'old', tick_number: 80, payload_json: { unit_id: 'o', target_id: 'o' } })],
+    views,
+  )
+  expect(lines).toHaveLength(2)
+  expect(lines[0]).toMatchObject({ x1: 0, y1: 0, x2: 5, y2: 0 })
+})
+
+// ── FRAMING THE FIGHT (the camera answer, not a drawing one) ──────────────────────────────────────
+test('combatFocusWorldPoints: pads each hull by its own reach, scoped to ONE encounter', () => {
+  const units = [
+    unit({ id: 'a', encounter_id: 'e1', pos_x: 100, pos_y: 100, weapons_json: [{ range: 6 }] }),
+    unit({ id: 'b', encounter_id: 'e2', pos_x: 9000, pos_y: 9000, weapons_json: [{ range: 6 }] }),
+  ]
+  const pts = combatFocusWorldPoints(units, 'e1')
+  // the other fight contributes nothing — framing two distant battles frames neither
+  expect(pts.every((p) => Math.abs(p.x - 100) <= ARENA_MIN_RADIUS)).toBe(true)
+  // a hull with no weapon still gets the arena floor, so a degenerate fight is not framed to a point
+  const bare = combatFocusWorldPoints([unit({ id: 'c', pos_x: 0, pos_y: 0, weapons_json: [] })], 'e1')
+  expect(bare).toContainEqual({ x: -ARENA_MIN_RADIUS, y: -ARENA_MIN_RADIUS })
+  expect(combatFocusWorldPoints(units, null)).toEqual([])
+})
+
+test('focusableEncounterId: the NEWEST live fight that actually has ships on the map', () => {
+  const units = [unit({ id: 'a', encounter_id: 'e2', pos_x: 1, pos_y: 1 })]
+  const encounters = [
+    { id: 'e1', status: 'active' }, // live but aggregate — nothing to frame
+    { id: 'e2', status: 'active' },
+  ]
+  expect(focusableEncounterId(encounters, units)).toBe('e2')
+  expect(focusableEncounterId([{ id: 'e2', status: 'completed' }], units)).toBeNull()
+  expect(focusableEncounterId(encounters, [])).toBeNull()
 })
 
 test('the layer renders a splat element per damaged unit, on top of the glyphs', () => {
