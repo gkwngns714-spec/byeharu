@@ -369,6 +369,23 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "a zero-cooldown weapon must stay ready every tick"     "$SQL" || fail "harness lacks the fail-open zero-cooldown assert (today's cadence must survive for cooldowns at or under the tick)"
   grep -q "the wave is too small to exercise the roll spread"     "$SQL" || fail "harness lacks the multi-unit-volley vacuity guard"
   grep -q "silence would be vacuous"                              "$SQL" || fail "harness lacks the tick-2 silence vacuity guard (live wave, active fight)"
+  # 0336 RSFEEL re-premise, in assert form. The volley is no longer on tick 1 — a wave arrives at
+  # (measured player extent + its own range + 1), so it is SILENT on its spawn tick and the volley is
+  # OBSERVED by driving ticks. Every 0314 clause above is unchanged; these are the lines the repoint
+  # added, and each pattern is worded so it matches exactly ONE line (PIRATEFIRE carries its own
+  # near-identical wording a thousand lines up — a shortened pattern here would match THAT line and
+  # this block could then be gutted with the grep still passing).
+  grep -q "pirate salvo(s) on the tick the wave arrived on"       "$SQL" || fail "harness lacks the RSFEEL wave-is-SILENT-on-its-spawn-tick assert (the property only 0336 makes statable)"
+  grep -q "the arrival tick is numbered"                          "$SQL" || fail "harness lacks the RSFEEL arrival-tick-is-tick-1 pin (the silence assert must read the tick the wave actually arrived on)"
+  grep -q "no pirate volley in 12 ticks after the spawn"          "$SQL" || fail "harness lacks the RSFEEL bounded closing-loop failure (a wave that never fires must fail loudly, not hang)"
+  grep -q "the volley loop observed nothing"                      "$SQL" || fail "harness lacks the RSFEEL non-vacuity pin (the volley must land strictly after the silent spawn tick)"
+  grep -q "the encounter went % while the wave was closing"       "$SQL" || fail "harness lacks the RSFEEL approach-not-interrupted guard"
+  grep -q "pirate salvo(s) on the volley tick"                    "$SQL" || fail "harness lacks the RSFEEL full-volley vacuity guard (the measured tick must carry a real volley)"
+  grep -q "the tick after the volley did not advance"             "$SQL" || fail "harness lacks the RSFEEL cadence pin (the silence tick must be the volley tick + 1)"
+  grep -q "set_game_config('combat_player_speed_scale',       '0'" "$SQL" \
+    || fail "harness lost RSFEEL's held-anchor precondition — a KITING hull makes one arc of the wave's ring arrive before another, and \"six identical guns in ONE tick\" becomes a statement about a split volley"
+  grep -q "set_game_config('combat_player_speed_scale',        to_jsonb(v_ps_before))" "$SQL" \
+    || fail "RSFEEL borrows combat_player_speed_scale without giving it back (every block after it would inherit a frozen player fleet)"
   # 0312 — the no-living-ships properties are asserted in assert-form too (gutting any block fails here).
   grep -q "a dead fleet was ordered onto the map"                 "$SQL" || fail "harness lacks the dead-fleet refusal assert (the pre-0312 red)"
   grep -q "minted a fleet or a leg"                               "$SQL" || fail "harness lacks the refused-volley-writes-nothing assert (the pre-0312 bootstrap mint)"

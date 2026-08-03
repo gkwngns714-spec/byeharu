@@ -299,8 +299,11 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks the TEAMHUNT hp_current NULL-pin (a NULL makes the screened-rows count 0 and PASSES while proving nothing)"
   grep -qF "the wave was destroyed before it closed" "$SQL" \
     || fail "harness lacks the TEAMHUNT wave-survives-its-approach guard"
-  grep -qF "perform public.set_game_config('enemy_hp_base', v_ehp_before);" "$SQL" \
-    || fail "harness borrows enemy_hp_base for the 0336 approach without giving it back (every later block would inherit an unkillable enemy)"
+  # TWO blocks borrow enemy_hp_base for the 0336 approach (TEAMHUNT and SHIELD1: a wave that arrives
+  # outside its own reach has to survive the ticks it spends closing, under the fleet's own fire), so
+  # BOTH give-backs are counted rather than one being witnessed for the other.
+  n="$(grep -c "perform public.set_game_config('enemy_hp_base', v_ehp_before);" "$SQL" || true)"
+  [ "$n" = "2" ] || fail "expected exactly 2 enemy_hp_base give-backs (TEAMHUNT + SHIELD1), found $n — a block that borrows the knob and fails to give it back leaves every later block with an unkillable enemy"
   # The manifest-wins pin. 0216 turned a mid-sortie unassign from "allowed, and the frozen manifest
   # governs anyway" into an outright refusal, so what is pinned is now the refusal itself plus the
   # untouched manifest — the same law, enforced one step earlier.
@@ -703,6 +706,41 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not raise the combat regen knob via the real set_game_config (in-txn)"
   grep -qF "set_game_config('shield_regen_combat_pct', '0'::jsonb)" "$SQL" \
     || fail "harness does not restore the combat regen knob to the dark seed in-txn"
+  # 0336 SHIELD1 re-premise, in assert form. The wave arrives OUTSIDE its own reach, so the absorb
+  # tick is OBSERVED and the three pinned ticks are offset by it; every arithmetic identity above is
+  # unchanged. These are the lines the repoint added — dropping one drops a real property.
+  grep -qF "the wave landed no hit within 12 ticks of the spawn" "$SQL" \
+    || fail "harness does not bound SHIELD1's 0336 closing loop with a loud failure (a wave that never closes must fail here, not hang)"
+  grep -qF "a silent closing tick moved the fixture" "$SQL" \
+    || fail "harness does not ASSERT that every silent closing tick leaves the fixture at its ENTRY state (the absorb arithmetic is derived from that state)"
+  grep -qF "so it cannot hit on the tick it arrived" "$SQL" \
+    || fail "harness lacks SHIELD1's non-vacuity pin (the first hit must land strictly after the silent spawn tick)"
+  grep -qF "the encounter went % before the wave landed a hit" "$SQL" \
+    || fail "harness lacks SHIELD1's approach-not-interrupted guard"
+  grep -qF "and tick_number = v_t0 + 1" "$SQL" \
+    || fail "harness reads a HARD-CODED tick number for the integrity pin — 0336 moved the sequence off tick 1, so it must be offset by the observed absorb tick"
+  # ── THE OTHER HALF OF A KNOB GIVE-BACK (0336): a wave freezes enemy_hp_base into its own rows at
+  #    SPAWN, so restoring the knob does not give back the wave the borrowed value already minted.
+  #    ONE authority spends it, composed by wipe_tick and by TEAMHUNT's give-back.
+  grep -qF "create or replace function pg_temp.spend_wave(p_enc uuid)" "$SQL" \
+    || fail "harness lost the ONE authority for spending a live wave (pg_temp.spend_wave)"
+  n="$(grep -c 'perform pg_temp\.spend_wave(' "$SQL" || true)"
+  [ "$n" = "2" ] || fail "expected exactly 2 pg_temp.spend_wave() call sites (wipe_tick + TEAMHUNT's give-back), found $n"
+  grep -qF "enemy row(s) survived the wave spend" "$SQL" \
+    || fail "harness does not ASSERT that TEAMHUNT's give-back really removed the wave minted at the borrowed enemy_hp_base (the TEAMSETTLE 'two waves not cleared' root cause)"
+  grep -qF "the lethal wave never closed into its own range" "$SQL" \
+    || fail "harness does not bound wipe_tick's 0336 loop with a loud failure (one tick is no longer lethal — it must drive until the wave is spent)"
+  grep -qF "there is no live fight to make lethal" "$SQL" \
+    || fail "harness lacks wipe_tick's entry precondition (a helper that no-ops would leave both callers asserting a fleet it never touched)"
+  # ── TEAMSETTLE's tick budget must be DERIVED, never a raised round number ────────────────────────
+  grep -qF "for i in 1..v_bound loop" "$SQL" \
+    || fail "TEAMSETTLE's clear loop is bounded by a literal again — 0336 added closing ticks, and the extra must be derived from the encounter's own rows"
+  grep -qF "the closing budget would be a default rather than a measurement" "$SQL" \
+    || fail "harness lacks TEAMSETTLE's positioned-living-member non-vacuity guard (a defaulted extent looks exactly like a real measurement)"
+  grep -qF "neither side can move (member speed %, wave speed %)" "$SQL" \
+    || fail "harness lacks TEAMSETTLE's closing-speed guard (a bound divided by zero closure would not be honest)"
+  grep -qF "derived closing, from extent % / wave range % / weakest member reach %" "$SQL" \
+    || fail "harness lacks TEAMSETTLE's diagnosable clear-loop failure (waves_cleared, enemy hp, status and every derived input must be in the message)"
 
   # ── DECKS3 (0196 / DECKS-3) pins, in assert form (a gutted .sql that only mentions them in
   #    prose cannot false-green): the committed knob seed '0'; the knob-0 parity assert (the
@@ -946,7 +984,7 @@ captain_assignment_enabled captain_growth_enabled module_crafting_enabled module
 ship_traits_enabled launch_from_dock_enabled fleet_control_enabled command_buffs_enabled
 shipyard_enabled captain_shard_drop_rate captain_xp_per_combat_grant blueprint_fragment_drop_rate
 station_affinity_bonus shield_regen_combat_pct shield_regen_idle_pct enemy_attack_base
-combat_damage_variance_pct combat_tick_logging"
+combat_damage_variance_pct combat_tick_logging enemy_hp_base spatial_formation_ring_radius"
 
 tp_guarded_snapshot() {
   local k list=""
