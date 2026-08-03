@@ -21,8 +21,18 @@ import { SpaceMoveTargetMarker } from './SpaceMoveTarget'
 import { classifyPointerGesture } from './spaceMoveCommand'
 import { isMapBackground } from './mapBackground'
 import { type FleetGoTargetView } from './fleetGoTarget'
-import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTransform'
-import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
+import { screenDeltaToViewBox, screenToWorld, worldToViewBox, type ViewBoxCoord, type WorldCoord } from './openSpaceTransform'
+import {
+  VIEW,
+  BUTTON_ZOOM_STEP,
+  clampPan,
+  focusCamera,
+  focusWorldPoints,
+  zoomCameraAbout,
+  type Camera,
+  type FocusInputs,
+} from './galaxyCamera'
+import { useWheelZoom } from './useWheelZoom'
 import { labelVisible } from './markerStyle'
 import { Button, OverlayPanel, OverlayRail } from '../../components/ui'
 
@@ -136,6 +146,15 @@ export function GalaxyMap({
   onPirateTap?: (world: WorldCoord) => void
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
+  // The SAME element, held BOTH ways on purpose: the ref for the imperative readers that run inside
+  // event handlers (they must not re-render anything), and the state for `useWheelZoom`, which must
+  // react to the element MOUNTING rather than sample a ref once. One assignment site keeps them from
+  // diverging. (Same idiom as WorldEditor's attachSvg.)
+  const [svgEl, setSvgEl] = useState<SVGSVGElement | null>(null)
+  const attachSvg = useCallback((el: SVGSVGElement | null) => {
+    svgRef.current = el
+    setSvgEl(el)
+  }, [])
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
 
@@ -208,12 +227,6 @@ export function GalaxyMap({
     setView(focusCamera(focusInputs))
   }, [focusSignature, focusInputs])
 
-  const toSvgUnits = (dxPx: number) => {
-    const rect = svgRef.current?.getBoundingClientRect()
-    const w = rect?.width || 1
-    return (dxPx * VIEW) / w
-  }
-
   // ── pan / zoom handlers (read-only camera; no data mutation) ──
   const onPointerDown = (e: RPointerEvent) => {
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
@@ -229,8 +242,14 @@ export function GalaxyMap({
     const d = drag.current
     if (!d) return
     if (tap.current) tap.current.maxPointers = Math.max(tap.current.maxPointers, pointers.current.size)
-    const dx = toSvgUnits(e.clientX - d.x)
-    const dy = toSvgUnits(e.clientY - d.y)
+    // Pan through the ONE shared pan scale. The old local `toSvgUnits` divided by rect.WIDTH, but the
+    // svg is `xMidYMid meet`, so px-per-viewBox-unit is set by min(width,height) — on any landscape
+    // viewport the map crawled behind the pointer (0.5625× on 1600×900).
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (!rect || rect.width === 0 || rect.height === 0) return
+    const vp = { width: rect.width, height: rect.height }
+    const dx = screenDeltaToViewBox(e.clientX - d.x, vp)
+    const dy = screenDeltaToViewBox(e.clientY - d.y, vp)
     if (dx !== 0 || dy !== 0) userMovedRef.current = true // player took camera control → freeze auto-fit
     setView((v) => ({ ...v, ...clampPan(d.tx + dx, d.ty + dy, v.k) }))
   }
@@ -288,32 +307,17 @@ export function GalaxyMap({
     drag.current = null
     tap.current = null
   }
-  // Zoom by a factor around the viewBox centre (shared by the wheel + the +/− buttons).
-  const zoomByFactor = useCallback((factor: number) => {
+  // Zoom by a factor about an ANCHOR — the cursor for a wheel notch, the viewBox centre for the +/−
+  // buttons (no anchor). All the camera math lives in galaxyCamera.zoomCameraAbout; this only records
+  // that the player took camera control.
+  const zoomByFactor = useCallback((factor: number, anchor?: ViewBoxCoord | null) => {
     userMovedRef.current = true // player took camera control → freeze auto-fit
-    setView((v) => {
-      const k = clampK(v.k * factor)
-      const ratio = k / v.k
-      // zoom around viewBox centre (500,500) — keeps it simple + stable on mobile.
-      const cx = VIEW / 2
-      const cy = VIEW / 2
-      return { k, ...clampPan(cx - (cx - v.tx) * ratio, cy - (cy - v.ty) * ratio, k) }
-    })
+    setView((v) => zoomCameraAbout(v, factor, anchor))
   }, [])
 
-  // Wheel zoom via a NATIVE, non-passive listener so we can preventDefault — otherwise the wheel event
-  // bubbles to the browser and scrolls/zooms the whole page while the pointer is over the map. (React's
-  // synthetic onWheel is registered passive, so preventDefault there is ignored — hence the manual bind.)
-  useEffect(() => {
-    const svg = svgRef.current
-    if (!svg) return
-    const onWheelNative = (e: WheelEvent) => {
-      e.preventDefault()
-      zoomByFactor(e.deltaY < 0 ? 1.15 : 1 / 1.15)
-    }
-    svg.addEventListener('wheel', onWheelNative, { passive: false })
-    return () => svg.removeEventListener('wheel', onWheelNative)
-  }, [zoomByFactor])
+  // Cursor-anchored wheel zoom — the ONE binding, shared with the World Editor. The map now zooms
+  // toward the point under the pointer instead of the viewBox centre.
+  useWheelZoom(svgEl, zoomByFactor)
   // Reset re-enables the deterministic content-fit camera (frames the player ship / active movement,
   // else named content). NOT k=1/origin — at k=1 the fixed frame would show current seed content as a
   // tiny central cluster.
@@ -327,7 +331,7 @@ export function GalaxyMap({
   return (
     <div className="relative h-full w-full overflow-hidden rounded-card border border-edge bg-app shadow-card">
       <svg
-        ref={svgRef}
+        ref={attachSvg}
         viewBox={`0 0 ${VIEW} ${VIEW}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
@@ -591,8 +595,8 @@ export function GalaxyMap({
           stack here moved into the ONE bottom-center FleetCommandPanel (MapScreen). */}
       <OverlayRail slot="top-right">
         <OverlayPanel className="flex flex-col gap-1">
-          <Button size="icon" onClick={() => zoomByFactor(1.25)} aria-label="Zoom in">+</Button>
-          <Button size="icon" onClick={() => zoomByFactor(1 / 1.25)} aria-label="Zoom out">−</Button>
+          <Button size="icon" onClick={() => zoomByFactor(BUTTON_ZOOM_STEP)} aria-label="Zoom in">+</Button>
+          <Button size="icon" onClick={() => zoomByFactor(1 / BUTTON_ZOOM_STEP)} aria-label="Zoom out">−</Button>
           <Button size="icon" onClick={reset} aria-label="Reset view" className="text-xs">⟲</Button>
         </OverlayPanel>
       </OverlayRail>

@@ -7,7 +7,15 @@ import {
   type PointerEvent as RPointerEvent,
 } from 'react'
 import { fetchDevZoneEditorEnabled, fetchIsOwner } from '../../lib/catalog'
-import { VIEW, clampK, clampPan, fitCameraToWorldPoints, type Camera } from '../map/galaxyCamera'
+import {
+  VIEW,
+  BUTTON_ZOOM_STEP,
+  clampPan,
+  fitCameraToWorldPoints,
+  zoomCameraAbout,
+  type Camera,
+} from '../map/galaxyCamera'
+import { useWheelZoom } from '../map/useWheelZoom'
 import { smoothClosedPathD } from '../map/smoothPolygon'
 import { fetchWorldEditorData, type WorldEditorData } from './worldEditorData'
 import { fetchWorldEditorCatalog } from './worldEditorCatalogData'
@@ -70,7 +78,12 @@ import { revertCommandEnvelope } from './worldEditorHistoryRevert'
 import { invokeWorldEditorCommand, type WorldEditorCommandResult } from './commandClient'
 import type { WorldEditorAuditEntry } from './worldEditorAuditTypes'
 import { CombatContentPanel } from './CombatContentPanel'
-import { worldToViewBox } from '../map/openSpaceTransform'
+import {
+  screenDeltaToViewBox,
+  screenToWorld,
+  worldToViewBox,
+  type ViewBoxCoord,
+} from '../map/openSpaceTransform'
 import { Button } from '../../components/ui'
 import { WorldEditorDock, WorldEditorFirstRunHint, WorldEditorToolRail } from './WorldEditorDock'
 import { shouldShowFirstRunHint, worldEditorHintDismissKey } from './worldEditorFirstRunHint'
@@ -81,7 +94,7 @@ import {
   primaryCandidate,
   type HitCandidate,
 } from './worldEditorHitTest'
-import { WORLD_TO_VIEWBOX_SCALE, viewBoxToWorld } from './worldEditorCoordinates'
+import { WORLD_TO_VIEWBOX_SCALE } from './worldEditorCoordinates'
 import type { WorldPoint } from './worldEditorTypes'
 /** The marker hit radius the point layer draws (r = 19 / k). One constant, shared by draw and pick. */
 const MARKER_HIT_RADIUS = 19
@@ -342,8 +355,9 @@ export function WorldEditor() {
 
   const svgRef = useRef<SVGSVGElement | null>(null)
   // The SAME element, held BOTH ways on purpose: the ref for the imperative readers that run inside
-  // event handlers (screenToWorld, toSvgUnits — they must not re-render anything), and the state for
-  // effects that need to react to it MOUNTING. One assignment site keeps them from diverging.
+  // event handlers (pointerToWorld and the pan reader — they must not re-render anything), and the
+  // state for useWheelZoom, which must react to the element MOUNTING rather than sample a ref once.
+  // One assignment site keeps them from diverging.
   const [svgEl, setSvgEl] = useState<SVGSVGElement | null>(null)
   const attachSvg = useCallback((el: SVGSVGElement | null) => {
     svgRef.current = el
@@ -444,12 +458,7 @@ export function WorldEditor() {
     setView(fitCameraToWorldPoints(pts))
   }, [itemsByLayer])
 
-  const toSvgUnits = (dxPx: number) => {
-    const rect = svgRef.current?.getBoundingClientRect()
-    return (dxPx * VIEW) / (rect?.width || 1)
-  }
-
-  // ── pan / zoom (read-only camera; identical math to GalaxyMap; no data mutation) ──
+  // ── pan / zoom (read-only camera; the SAME shared primitives GalaxyMap uses; no data mutation) ──
   const onPointerDown = (e: RPointerEvent) => {
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
     drag.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty }
@@ -457,8 +466,14 @@ export function WorldEditor() {
   const onPointerMove = (e: RPointerEvent) => {
     const d = drag.current
     if (!d) return
-    const dx = toSvgUnits(e.clientX - d.x)
-    const dy = toSvgUnits(e.clientY - d.y)
+    // Pan through the ONE shared pan scale. The old local `toSvgUnits` divided by rect.WIDTH, but the
+    // svg is `xMidYMid meet`, so px-per-viewBox-unit is set by min(width,height) — on any landscape
+    // viewport the map crawled behind the pointer (0.5625× on 1600×900).
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (!rect || rect.width === 0 || rect.height === 0) return
+    const vp = { width: rect.width, height: rect.height }
+    const dx = screenDeltaToViewBox(e.clientX - d.x, vp)
+    const dy = screenDeltaToViewBox(e.clientY - d.y, vp)
     if (dx !== 0 || dy !== 0) userMovedRef.current = true
     setView((v) => ({ ...v, ...clampPan(d.tx + dx, d.ty + dy, v.k) }))
   }
@@ -466,64 +481,18 @@ export function WorldEditor() {
     drag.current = null
   }
 
-  /** Screen point → VIEWBOX point. The ONE screen→viewBox projection: pointerToWorld undoes the camera
-   *  on top of this, and wheel-zoom anchors on it. Depends on nothing but the element, so the camera
-   *  can move without re-binding it. */
-  const pointerToViewBox = useCallback(
-    (clientX: number, clientY: number): { x: number; y: number } | null => {
-      const rect = svgRef.current?.getBoundingClientRect()
-      if (!rect || rect.width === 0 || rect.height === 0) return null
-      // the svg is xMidYMid meet, so the rendered viewBox is a centred square of side = min(w,h)
-      const side = Math.min(rect.width, rect.height)
-      const originX = rect.left + (rect.width - side) / 2
-      const originY = rect.top + (rect.height - side) / 2
-      return { x: ((clientX - originX) / side) * VIEW, y: ((clientY - originY) / side) * VIEW }
-    },
-    [],
-  )
-
-  /** Zoom about an ANCHOR in viewBox space — the cursor for a wheel gesture, the viewport centre for
-   *  the +/- buttons. The point under the anchor keeps its world position, which is what makes
-   *  wheel-zoom feel like it is pulling the map toward the pointer instead of drifting away from it.
-   *  (clampPan may still pull the result back at the world edges; the anchor is honoured up to that.) */
-  const zoomByFactor = useCallback((factor: number, anchor?: { x: number; y: number } | null) => {
+  /** Zoom about an ANCHOR — the cursor for a wheel notch, the viewBox centre for the +/− buttons (no
+   *  anchor). All the camera math lives in galaxyCamera.zoomCameraAbout; this only records that the
+   *  owner took camera control. */
+  const zoomByFactor = useCallback((factor: number, anchor?: ViewBoxCoord | null) => {
     userMovedRef.current = true
-    setView((v) => {
-      const k = clampK(v.k * factor)
-      const ratio = k / v.k
-      const ax = anchor?.x ?? VIEW / 2
-      const ay = anchor?.y ?? VIEW / 2
-      return { k, ...clampPan(ax - (ax - v.tx) * ratio, ay - (ay - v.ty) * ratio, k) }
-    })
+    setView((v) => zoomCameraAbout(v, factor, anchor))
   }, [])
 
-  // WHEEL ZOOM must attach to the SVG ELEMENT ITSELF, non-passively: React routes onWheel through a
-  // PASSIVE root listener, where preventDefault is ignored — so the browser would page-zoom (or
-  // scroll) instead of the map zooming. That is why this is a manual addEventListener.
-  //
-  // It is keyed off the mounted element rather than svgRef.current: the map renders behind the
-  // owner + flag gate and a data fetch, so on first run the ref is still null. Depending on the ref
-  // alone, this effect bailed once and never re-ran when the SVG finally appeared — the listener was
-  // never attached and every wheel gesture fell through to the browser. The ref callback below makes
-  // the element a reactive value, so attachment happens exactly when the SVG exists.
-  useEffect(() => {
-    if (!svgEl) return
-    // Per-notch step. Kept gentle on purpose: a wheel gesture is many notches, so a step that feels
-    // right for ONE click of the +/- buttons (1.25) overshoots badly here. 1.07 needs ~10 notches to
-    // double, which is roughly one comfortable scroll.
-    const WHEEL_ZOOM_STEP = 1.07
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault() // also swallows ctrl+wheel, so the page never zooms over the map
-      // Anchor on the CURSOR: the world point under the pointer stays put, so the map zooms toward
-      // what you are looking at rather than toward the viewport centre.
-      zoomByFactor(
-        e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP,
-        pointerToViewBox(e.clientX, e.clientY),
-      )
-    }
-    svgEl.addEventListener('wheel', onWheel, { passive: false })
-    return () => svgEl.removeEventListener('wheel', onWheel)
-  }, [svgEl, zoomByFactor, pointerToViewBox])
+  // Cursor-anchored wheel zoom — the ONE binding, shared with the game map. It takes the mounted
+  // ELEMENT (not svgRef) because this map renders behind the owner + flag gate and a data fetch: a
+  // ref-keyed effect ran once while the ref was null and never re-attached. See useWheelZoom.
+  useWheelZoom(svgEl, zoomByFactor)
 
   // Reset stays the ALL-domains content fit (cameraForDomain 'all' — identical camera; empty world
   // yields the identity camera via the fit's own empty rule).
@@ -814,15 +783,18 @@ export function WorldEditor() {
   // thing, ASKS rather than guessing.
   const [pick, setPick] = useState<{ x: number; y: number; candidates: HitCandidate[] } | null>(null)
 
-  /** Screen point → world point, undoing the viewBox mapping and then the camera transform. */
+  /** Screen point → world point through the ONE shared inverse (openSpaceTransform.screenToWorld —
+   *  the same projection ZoneGeometryHandles picks with). Null only while the SVG has no box yet. */
   const pointerToWorld = useCallback(
     (clientX: number, clientY: number): WorldPoint | null => {
-      const vb = pointerToViewBox(clientX, clientY)
-      if (!vb) return null
-      // undo translate(tx ty) scale(k)
-      return viewBoxToWorld({ x: (vb.x - view.tx) / view.k, y: (vb.y - view.ty) / view.k })
+      const rect = svgRef.current?.getBoundingClientRect()
+      if (!rect || rect.width === 0 || rect.height === 0) return null
+      return screenToWorld({ x: clientX - rect.left, y: clientY - rect.top }, view, {
+        width: rect.width,
+        height: rect.height,
+      })
     },
-    [view.tx, view.ty, view.k, pointerToViewBox],
+    [view],
   )
 
   const pickAtPointer = useCallback(
@@ -1137,8 +1109,8 @@ export function WorldEditor() {
         )}
         {chrome.railVisible && (
           <div className="pointer-events-auto flex flex-col gap-1">
-            <Button size="icon" onClick={() => zoomByFactor(1.25)} aria-label="Zoom in">+</Button>
-            <Button size="icon" onClick={() => zoomByFactor(1 / 1.25)} aria-label="Zoom out">−</Button>
+            <Button size="icon" onClick={() => zoomByFactor(BUTTON_ZOOM_STEP)} aria-label="Zoom in">+</Button>
+            <Button size="icon" onClick={() => zoomByFactor(1 / BUTTON_ZOOM_STEP)} aria-label="Zoom out">−</Button>
             <Button size="icon" onClick={resetView} aria-label="Reset view" className="text-xs">⟲</Button>
           </div>
         )}
