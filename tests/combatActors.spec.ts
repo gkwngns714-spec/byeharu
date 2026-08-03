@@ -112,16 +112,26 @@ for (const n of [1, 2, 3, 4, 5, 8, 12]) {
 }
 
 test('the fleet glyph STANDS ON A REAL SHIP — the same point fleetFightPosition gives its badge', () => {
-  // resolveFleetFightPosition's rule: our own living hull NEAREST the enemy. p1 is that hull here.
+  // resolveFleetFightPosition's rule: the fleet's own 0315-ELECTED LEAD (`aggro_priority` 100 on
+  // exactly one hull, as production writes it). p0 is that hull here — and it is deliberately the one
+  // FURTHEST from the enemy, so this fixture tells the authority apart from a local rule of the
+  // glyph's own: "nearest the enemy" would answer p1, a centroid would answer 15.
   const rows = [
-    unit({ id: 'p0', pos_x: 0, pos_y: 0 }),
+    unit({ id: 'p0', pos_x: 0, pos_y: 0, aggro_priority: 100 }),
     unit({ id: 'p1', pos_x: 30, pos_y: 0 }),
     unit({ id: 'foe', side: 'enemy', aggro_priority: null, pos_x: 40, pos_y: 0 }),
   ]
   const fleet = resolveCombatActors(rows, [encounter()]).find((a) => a.side === 'player')!
-  expect({ x: fleet.x, y: fleet.y }).toEqual({ x: 30, y: 0 })
+  expect({ x: fleet.x, y: fleet.y }).toEqual({ x: 0, y: 0 })
   // A MEMBER of the input set, never a mean: (0+30)/2 = 15 is what a centroid would have said.
   expect(rows.some((r) => r.pos_x === fleet.x && r.pos_y === fleet.y)).toBe(true)
+  // …and killing the hostile does not move it — the owner's "when enemy ship is destroyed, i
+  // teleport to some random place inside the zone" (see tests/fleetFightPosition.spec.ts).
+  const cleared = resolveCombatActors(
+    rows.map((r) => (r.side === 'enemy' ? { ...r, alive_count: 0, hp_current: 0 } : r)),
+    [encounter()],
+  ).find((a) => a.side === 'player')!
+  expect({ x: cleared.x, y: cleared.y }).toEqual({ x: fleet.x, y: fleet.y })
 })
 
 test('with NO encounter row in hand the fleet still stands on one of its own hulls', () => {

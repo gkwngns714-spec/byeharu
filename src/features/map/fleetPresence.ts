@@ -46,8 +46,9 @@ import type { MapLocation } from './mapTypes'
 //   · locations  — port coordinates + names, and the territory read for the orbit clause.
 //
 // ── COMPOSED, NEVER RE-DERIVED ─────────────────────────────────────────────────────────────────────
-//   · a fighting fleet's point → map/fleetFightPosition (THE authority: a real hull, nearest the
-//     enemy — never a mean, never a synthesised point). This module does not re-derive one pixel of it.
+//   · a fighting fleet's point → map/fleetFightPosition (THE authority: a real hull — the fleet's own
+//     elected LEAD, never a mean and never a synthesised point). This module does not re-derive one
+//     pixel of it, which is why killing an enemy cannot move this badge either.
 //   · a moving fleet's point   → movementInterpolation.interpolateMovementPoint (the ONE segment math)
 //   · which fight is ours      → combat/encounterAnchor.liveEncounterForFleet
 //   · "in orbit of X"          → map/territoryAt (the ONE containment test)
