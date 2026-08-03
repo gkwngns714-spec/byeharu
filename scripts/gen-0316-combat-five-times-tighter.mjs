@@ -56,7 +56,13 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // the gate protects is "never cut a NEW slice from a head that has moved", and 0316 cuts nothing
   // new. Naming each known later rewriter keeps the protection live for 0318 and everything after
   // it; raising the version floor would not.
-  const KNOWN_LATER_REWRITERS = new Set(['20260618000331']);
+  // 0338 JOINS THE EXEMPTION — by name, never by widening the window. It rewrites exactly TWO lines:
+  // the PHASE argument handed to combat_formation_point at each of the two wave-spawn arms, so an
+  // enemy wave arrives on the bearing to the zone's own settlement instead of on a bare constant.
+  // Those two call sites did not exist before 0336 CREATED them, so no slice this file takes from a
+  // pre-0336 head can overlap them: the disjointness is structural, not a judgement. 0338 moves no
+  // radius, no knob, no guard and no branch. Naming it here keeps this gate live for 0339 and after.
+  const KNOWN_LATER_REWRITERS = new Set(['20260618000331', '20260618000336', '20260618000338']);
   const reHunkRow = /\(\s*\d+\s*,\s*'combat_create_group_encounter'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000315'
     && !KNOWN_LATER_REWRITERS.has(version(f))

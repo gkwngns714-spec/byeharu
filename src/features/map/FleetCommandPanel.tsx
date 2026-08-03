@@ -9,6 +9,7 @@ import {
   type TeamRpcResult,
 } from '../command/teamApi'
 import { teamReasonMessage } from '../command/teamReasonMessage'
+import { A_ZONE_IS_NOT_A_HUNT } from '../command/howAFightStarts'
 import { unifiedStopOutcomeMessage } from '../command/teamStop'
 import { fleetRetreatOutcomeMessage } from '../command/teamMove'
 import { fleetGoOrderOutcomeMessage } from '../command/fleetOrderOutcome'
@@ -167,12 +168,18 @@ export function FleetCommandPanel({
         // send flow reads as an intentional step instead of appearing out of nowhere on a tap.
         // BOTH gestures are named (owner play-test: the copy used to mention only the double-tap,
         // so a player looking for "send a ship to Haven" was told to tap empty space instead).
+        //
+        // HOW-A-FIGHT-STARTS (owner, 2026-08-03): the third gesture — tapping a pirate SITE — was
+        // missing from the only copy that lists them, so the map's idle state named two ways to
+        // travel and no way to fight. This prompt renders in exactly the state the owner was in
+        // (a fleet, nothing picked), which makes it the cheapest place in the game to say it.
         return (
           <div key="prompt" data-testid="fleet-command-prompt">
-            <SectionLabel>Send a fleet</SectionLabel>
+            <SectionLabel>Give a fleet an order</SectionLabel>
             <p className="mt-1 text-sm text-ink-muted">
-              Tap a port, or double-tap open space, to set a destination — then send a fleet there.
+              Tap a port to trade, tap a pirate site to hunt, or double-tap open space to travel there.
             </p>
+            <p className="mt-1 text-sm text-ink-faint">{A_ZONE_IS_NOT_A_HUNT}</p>
           </div>
         )
       case 'stop':

@@ -83,10 +83,20 @@ jobs:
       # playwright.osnui.config.ts matches **/*.uispec.ts and starts the tests/harness Vite server
       # itself. Today: dockServicesUi.uispec.ts (the real docked-port surface),
       # cameraWiring.uispec.ts (the real <GalaxyMap> + useWheelZoom under a real pointer),
-      # collapsibleUi.uispec.ts (the real <ReportsSection> — the Collapsible fold contract) and
+      # collapsibleUi.uispec.ts (the real <ReportsSection> — the Collapsible fold contract),
       # repairSurface.uispec.ts (the real <RepairPanel> — that ONE repair action renders for a
       # wreck and a dent alike, that the tow survives for an adrift wreck, and that a wreck's
-      # recovery outlives a dark flag and a failed hull read).
+      # recovery outlives a dark flag and a failed hull read), and fightReadout.uispec.ts (the
+      # real <GalaxyMap> + <CombatMapCard> over a live battle at a 390px phone width — it MEASURES
+      # the rendered fight, which is the only way to see a battle that occupies fewer pixels than
+      # the damage number drawn over it, two hits collapsed into one splat, or a killing blow that
+      # renders nothing), navFits.uispec.ts (the real <NavBar> MEASURED at the 320px floor — every
+      # cell ≥ 44px, no label clipped, no sideways scroll; it REPLACED an unrendered width estimate
+      # in a comment that turned out to be wrong, and it is the gate on adding a destination), and
+      # assetsLedger.uispec.ts (the real <AssetsLedgerView> across every price-coverage state,
+      # proving an item no port buys reaches the SCREEN as "No price here" and never as a 0 — a
+      # fabricated valuation is the worst thing an assets screen can render, and only a DOM proof
+      # can catch a null becoming a zero on its way out of the model).
       - name: Rendered UI proofs (tests/*.uispec.ts)
         run: npx playwright test --config playwright.osnui.config.ts
 

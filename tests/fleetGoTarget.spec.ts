@@ -193,9 +193,12 @@ test('success copy names the fleet + the CANONICAL destination, redirect-aware f
 test('routeCombatOutcomeMessage: combat-time route outcomes name leg 1’s target, canonicalized', () => {
   // Leg 1 of a route composes command_ship_group_go, so the server aimed the retreat/reposition at
   // the FIRST plotted point — the copy must name that point, in its canonical (server-rounded) view.
-  expect(routeCombatOutcomeMessage('repositioned', { x: 310.4, y: 455.5 })).toBe(
-    'The fleet moved to open space at (310, 456) — still in the fight.',
+  expect(routeCombatOutcomeMessage('repositioning', { x: 310.4, y: 455.5 })).toBe(
+    'The fleet is moving to open space at (310, 456) — still in the fight.',
   )
+  // 0337 retired 'repositioned' with the teleport it described; the route surface must not resurrect
+  // it either, since it composes the one combat-copy authority rather than carrying its own.
+  expect(routeCombatOutcomeMessage('repositioned', { x: 310.4, y: 455.5 })).toBeNull()
   expect(routeCombatOutcomeMessage('retreat_started', { x: -10.5, y: 20 })).toBe(
     'The fleet is breaking off the fight and heading for open space at (-11, 20).',
   )

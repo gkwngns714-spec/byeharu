@@ -11,13 +11,33 @@
 -- encounter_profile_create / location_encounter_binding_create). combat_damage_variance_pct is pinned 0
 -- (v_variance=1) for determinism; no session RNG (the 0041 law).
 --
--- SCENARIO GEOMETRY: a SINGLE armed command ship spawns at the hunt location center; the synthetic /
--- resolved pirate ALSO spawns at that center (dist 0) — so both HOLD (never move), keeping the enemy AT
--- the location center after the spawn tick (the exact position the pre-E3 spawn writes). enemy_attack_base
--- is zeroed so the player never dies; to force a deterministic wave-clear (for the reward assertions) the
--- surviving enemy's hp_current is set to 1 and the tick re-run — the CLEAR still runs through the real
--- process_combat_ticks path (the clock-rewind idiom's sibling, a sanctioned surgery, not a fabricated
--- combat write).
+-- SCENARIO GEOMETRY (re-premised by migration 0336): a SINGLE armed command ship spawns at the hunt
+-- location center and STAYS there; the synthetic / resolved pirate spawns on its own slot of a
+-- formation ring around that center and STAYS there. Nothing moves, which is what makes every position
+-- below exact. enemy_attack_base is zeroed so the player never dies; to force a deterministic
+-- wave-clear (for the reward assertions) the surviving enemy's hp_current is set to 1 and the tick
+-- re-run — the CLEAR still runs through the real process_combat_ticks path (the clock-rewind idiom's
+-- sibling, a sanctioned surgery, not a fabricated combat write), and it needs the PLAYER to be able to
+-- reach the enemy, which is what the geometry below is chosen for.
+--
+-- ── WHY 0336 CHANGED THIS FILE, WRITTEN DOWN SO NOBODY RE-CHASES IT ─────────────────────────────────
+-- Before 0336 both spawn arms inserted every enemy AT the engagement anchor, i.e. on top of the
+-- player's lead ship, at distance 0. This file leaned on that twice: it asserted "the enemy is at the
+-- location center", and it set `enemy_synthetic_range_base = 10000` with the comment "in range at dist
+-- 0" so the enemy would fire (for zero damage) from where it stood.
+-- 0336 gives each unit of a wave its own slot on a ring at
+--     radius = (the MEASURED extent of the player formation from the anchor) + (that wave's own weapon
+--              range) + 1
+-- so a wave arrives strictly OUTSIDE its own reach of every player ship, BY CONSTRUCTION, at every
+-- difficulty. Two consequences hit this harness, and BOTH are the rule working:
+--   1. "at the location center" is dead. It is replaced, below, by the ring the tick actually composes
+--      — combat_formation_point(anchor, extent + the row's own frozen range + 1, slot, 0.5) — with
+--      every input derived from this encounter's own rows rather than typed in.
+--   2. THE 10000 BECAME A 10,001-UNIT EXILE. A 10,000-reach enemy now spawns 10,001 units out, and the
+--      player's autocannon reaches 5 — so the player could never fire, no forced wave-clear could ever
+--      complete, and every reward assertion downstream would die. That enormous spawn coordinate is
+--      NOT a runaway: it is exactly (extent 0 + 10000.4 + 1) evaluated at slot 0, phase 0.5. The knob
+--      is repointed below to a range whose structural clearance still fits inside the player's gun.
 --
 -- Self-rolling-back (begin;...rollback;): flips every gate flag ONLY inside the txn, keeps ZERO state.
 --
@@ -152,9 +172,24 @@ begin
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
   perform public.set_game_config('enemy_hp_base',        '500'::jsonb);       -- enemy survives the spawn tick comfortably
   perform public.set_game_config('enemy_attack_base',    '0'::jsonb);         -- enemy does 0 damage (player never dies)
-  perform public.set_game_config('enemy_synthetic_range_base', '10000'::jsonb); -- in range at dist 0 (fires, 0 damage)
+  -- 0336: this knob is now the wave's STAND-OFF distance, not "how far it reaches from dist 0" — see
+  -- the header. A wave spawns at (measured player extent + this range + 1), so the whole clearance has
+  -- to fit inside the PLAYER's own gun or the player can never fire and no wave in this file can ever
+  -- be cleared. 3 + base_difficulty*0.04 is 3.2-3.4 at the difficulties this file touches: a spawn
+  -- radius of 4.2-4.4 against the 5-unit autocannon these fixtures carry. The old 10000 put the wave
+  -- 10,001 units out and made the player unable to reach it at all.
+  perform public.set_game_config('enemy_synthetic_range_base', '3'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_base', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  -- 0336: AND THE PLAYER HOLDS TOO. A wave standing outside its own reach means every player ship can
+  -- hit it while it cannot hit back — which is exactly the KITE arm of combat_unit_decide_move, so the
+  -- player would now retreat to the edge of its own range on every tick. That drags the MEASURED
+  -- formation extent up tick by tick, pushing the NEXT wave's spawn radius further out until it leaves
+  -- the player's gun and the multi-wave run stalls. This file's declared geometry has always been
+  -- "nothing moves"; under 0336 that costs BOTH speeds, not just the enemy's. Zeroing the scale makes
+  -- every player row's combat_units.move_speed 0, so the KITE step is least(0, ...) = 0 — the ship
+  -- holds where the creator placed it, and still fires.
+  perform public.set_game_config('combat_player_speed_scale', '0'::jsonb);
 end $$;
 
 -- ════════ AUTHOR E0-E2 content through the REAL owner RPCs ═══════════════════════════════════════════
@@ -584,19 +619,45 @@ update public.game_config set value='false'::jsonb where key='encounter_resolver
 do $$
 declare uZ uuid := (select v from erfx where k='uZ'); g1 uuid := (select v from erfx where k='g1');
   v_hunt uuid := (select v from erfx where k='hunt'); v_enc uuid;
-  v_lx double precision; v_ly double precision; n int;
+  n int; n_players int;
   v_hpmax double precision; v_exp_hp double precision; v_px double precision; v_py double precision;
   v_metal double precision; v_exp_metal double precision; v_tier int;
+  v_ax double precision; v_ay double precision; v_extent double precision; v_erange double precision;
+  v_sx double precision; v_sy double precision;  -- (0338) the encounter's own site: where a wave comes FROM
+  v_fx double precision; v_fy double precision; v_slot int; v_slot_found int := null;
 begin
-  select x, y, reward_tier into v_lx, v_ly, v_tier from public.locations where id = v_hunt;
+  select reward_tier into v_tier from public.locations where id = v_hunt;
   v_enc := pg_temp.send_and_settle(uZ, g1, v_hunt);
   insert into erfx values ('enc1', v_enc);
+
+  -- ── 0336: THE ANCHOR AND THE PLAYER EXTENT, READ BEFORE THE WAVE EXISTS ───────────────────────
+  -- The tick lays a wave out around coalesce(combat_encounters.engagement_x, locations.x) — composed
+  -- here as that same expression, never as a literal — at radius (MEASURED player extent + that unit's
+  -- own weapon range + 1). The extent must be read BEFORE the spawn tick: the spawn arm measures it
+  -- before anything moves inside that tick, so a reading taken afterwards would describe a formation
+  -- that has already acted.
+  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), l.x, l.y into v_ax, v_ay, v_sx, v_sy
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
+  if v_ax is null or v_ay is null then
+    raise exception 'ER PROOF FAIL FLAGOFF: the encounter has no engagement anchor (engagement_x/y and the location centre are both NULL) — the spawn geometry below would be measured from nothing';
+  end if;
+  select count(*), coalesce(max(public.osn_distance(v_ax, v_ay, u.pos_x, u.pos_y)), 0)
+    into n_players, v_extent
+    from public.combat_units u
+   where u.encounter_id = v_enc and u.side='player' and u.alive_count > 0
+     and u.pos_x is not null and u.pos_y is not null;
+  -- NON-VACUITY: with no positioned living player row that coalesce hands back a DEFAULT 0 that is
+  -- indistinguishable from a real measurement of a lone hull standing on the anchor.
+  if n_players < 1 then
+    raise exception 'ER PROOF FAIL FLAGOFF: no positioned living player unit before the spawn tick — the extent would be a default rather than a measurement and the radius assert would prove nothing';
+  end if;
 
   -- tick 1: the synthetic wave spawns (resolver OFF ⇒ the pre-E3 arm).
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
 
-  -- exactly ONE synthetic enemy, side=enemy, pirate_synthetic, at the location center, resolved_plan_json NULL.
+  -- exactly ONE synthetic enemy, side=enemy, pirate_synthetic, on its own formation slot, resolved_plan_json NULL.
   select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
   if n <> 1 then raise exception 'ER PROOF FAIL FLAGOFF: % enemy rows (want 1)', n; end if;
   select hp_max, pos_x, pos_y into v_hpmax, v_px, v_py from public.combat_units
@@ -605,14 +666,39 @@ begin
               * coalesce(public.cfg_num('enemy_hp_base'),14)
               * (1 + 1 * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;
   if abs(v_hpmax - v_exp_hp) > 0.001 then raise exception 'ER PROOF FAIL FLAGOFF: enemy hp_max % <> pre-E3 formula %', v_hpmax, v_exp_hp; end if;
-  if v_px is distinct from v_lx or v_py is distinct from v_ly then raise exception 'ER PROOF FAIL FLAGOFF: enemy not at location center (% % vs % %)', v_px, v_py, v_lx, v_ly; end if;
+  -- ── 0336 REPOINT: "at the location center" -> the ring the tick actually composes. ────────────
+  -- NULL-PINNED FIRST: `x is distinct from NULL` is TRUE for every real number, so an unwritten
+  -- coordinate satisfied the OLD clause and would satisfy a naive distance form of this one.
+  if v_px is null or v_py is null then
+    raise exception 'ER PROOF FAIL FLAGOFF: the spawned enemy carries a NULL coordinate (%,%) — a missing position must FAIL, never pass a geometry assert by absence', v_px, v_py;
+  end if;
+  select max((w->>'range')::double precision) into v_erange
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w
+   where cu.encounter_id = v_enc and cu.side='enemy';
+  if v_erange is null then
+    raise exception 'ER PROOF FAIL FLAGOFF: the spawned enemy carries no weapon range in its own weapons_json — the spawn radius is DERIVED from that range and cannot be formed';
+  end if;
+  for v_slot in 0 .. n - 1 loop
+    select fp.x, fp.y into v_fx, v_fy
+      from public.combat_formation_point(v_ax, v_ay, v_extent + v_erange + 1, v_slot,
+              public.combat_wave_arrival_phase(v_ax, v_ay, v_sx, v_sy, v_slot)) fp;
+    if v_fx is not null and v_fy is not null
+       and abs(v_px - v_fx) <= 0.000001 and abs(v_py - v_fy) <= 0.000001 then
+      v_slot_found := v_slot; exit;
+    end if;
+  end loop;
+  if v_slot_found is null then
+    raise exception 'ER PROOF FAIL FLAGOFF: the synthetic enemy stands at (%,%), which is not combat_formation_point(anchor %,%, radius % = measured extent % + its own range % + 1, slot, the 0338 arrival phase toward its own site) for any slot of this wave — the flag-off arm no longer lays the pre-E3 wave out through the one formation authority',
+      v_px, v_py, v_ax, v_ay, v_extent + v_erange + 1, v_extent, v_erange;
+  end if;
   if (select resolved_plan_json from public.combat_encounters where id = v_enc) is not null then
     raise exception 'ER PROOF FAIL FLAGOFF: resolved_plan_json is not NULL on a synthetic encounter';
   end if;
   if exists (select 1 from public.encounter_runtime_state) then
     raise exception 'ER PROOF FAIL FLAGOFF: encounter_runtime_state is non-empty after a synthetic wave';
   end if;
-  raise notice 'ER_PASS_FLAGOFF_ROWS';
+  raise notice 'ER_PASS_FLAGOFF_ROWS (1 pirate_synthetic row at the verbatim pre-E3 hp_max %, resolved_plan_json NULL, encounter_runtime_state empty, standing exactly on combat_formation_point(anchor %,%, measured extent % + its own range % + 1, slot %, the 0338 arrival phase))',
+    round(v_hpmax::numeric, 3), v_ax, v_ay, v_extent, v_erange, v_slot_found;
 
   -- force a deterministic clear: knock the surviving enemy to 1 hp, then re-tick (real clear path).
   update public.combat_units set hp_current = 1 where encounter_id = v_enc and side='enemy';
@@ -638,25 +724,69 @@ update public.game_config set value='true'::jsonb where key='encounter_resolver_
 do $$
 declare uZ uuid := (select v from erfx where k='uZ'); g2 uuid := (select v from erfx where k='g2');
   v_hunt uuid := (select v from erfx where k='hunt'); v_ep uuid := (select v from erfx where k='ep'); v_enc uuid;
-  v_lx double precision; v_ly double precision; n int;
+  n int; n_players int;
   v_hpmax double precision; v_exp_hp double precision; v_px double precision; v_py double precision;
   v_metal double precision; v_exp_metal double precision; v_tier int; v_grants jsonb; v_plan jsonb;
+  v_ax double precision; v_ay double precision; v_extent double precision; v_erange double precision;
+  v_sx double precision; v_sy double precision;  -- (0338) the encounter's own site: where a wave comes FROM
+  v_fx double precision; v_fy double precision; v_slot int; v_slot_found int := null;
 begin
-  select x, y, reward_tier into v_lx, v_ly, v_tier from public.locations where id = v_hunt;
+  select reward_tier into v_tier from public.locations where id = v_hunt;
   select resource_grants into v_grants from public.reward_profiles where id = (select v from erfx where k='rp');
   v_enc := pg_temp.send_and_settle(uZ, g2, v_hunt);
   insert into erfx values ('enc2', v_enc);
 
+  -- 0336: the anchor and the MEASURED player extent, read before the wave exists (see the FLAG-OFF
+  -- block above and this file's header — the spawn arm measures the extent before anything moves in
+  -- the spawn tick, so it has to be read here and not afterwards).
+  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), l.x, l.y into v_ax, v_ay, v_sx, v_sy
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
+  if v_ax is null or v_ay is null then
+    raise exception 'ER PROOF FAIL RESOLVED: the encounter has no engagement anchor (engagement_x/y and the location centre are both NULL) — the spawn geometry below would be measured from nothing';
+  end if;
+  select count(*), coalesce(max(public.osn_distance(v_ax, v_ay, u.pos_x, u.pos_y)), 0)
+    into n_players, v_extent
+    from public.combat_units u
+   where u.encounter_id = v_enc and u.side='player' and u.alive_count > 0
+     and u.pos_x is not null and u.pos_y is not null;
+  if n_players < 1 then
+    raise exception 'ER PROOF FAIL RESOLVED: no positioned living player unit before the spawn tick — the extent would be a default rather than a measurement and the radius assert would prove nothing';
+  end if;
+
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
 
-  -- the resolved wave: 1 unit at the location center; the encounter tagged; the runtime ledger written.
+  -- the resolved wave: 1 unit on its own formation slot; the encounter tagged; the runtime ledger written.
   select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
   if n <> 1 then raise exception 'ER PROOF FAIL RESOLVED: % enemy rows (want 1)', n; end if;
   select hp_max, pos_x, pos_y into v_hpmax, v_px, v_py from public.combat_units where encounter_id = v_enc and side='enemy';
   v_exp_hp := 5 * coalesce(public.cfg_num('enemy_hp_base'),14) * (1 + 1 * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;  -- archetype base_difficulty=5
   if abs(v_hpmax - v_exp_hp) > 0.001 then raise exception 'ER PROOF FAIL RESOLVED: enemy hp_max % <> archetype-derived %', v_hpmax, v_exp_hp; end if;
-  if v_px is distinct from v_lx or v_py is distinct from v_ly then raise exception 'ER PROOF FAIL RESOLVED: enemy not at location center'; end if;
+  -- 0336 REPOINT, identical in kind to the FLAG-OFF one: the RESOLVED spawn arm composes the SAME
+  -- formation leaf, so the resolved wave is pinned against it the same way. NULL-pinned first.
+  if v_px is null or v_py is null then
+    raise exception 'ER PROOF FAIL RESOLVED: the spawned enemy carries a NULL coordinate (%,%) — a missing position must FAIL, never pass a geometry assert by absence', v_px, v_py;
+  end if;
+  select max((w->>'range')::double precision) into v_erange
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w
+   where cu.encounter_id = v_enc and cu.side='enemy';
+  if v_erange is null then
+    raise exception 'ER PROOF FAIL RESOLVED: the spawned enemy carries no weapon range in its own weapons_json — the spawn radius is DERIVED from that range and cannot be formed';
+  end if;
+  for v_slot in 0 .. n - 1 loop
+    select fp.x, fp.y into v_fx, v_fy
+      from public.combat_formation_point(v_ax, v_ay, v_extent + v_erange + 1, v_slot,
+              public.combat_wave_arrival_phase(v_ax, v_ay, v_sx, v_sy, v_slot)) fp;
+    if v_fx is not null and v_fy is not null
+       and abs(v_px - v_fx) <= 0.000001 and abs(v_py - v_fy) <= 0.000001 then
+      v_slot_found := v_slot; exit;
+    end if;
+  end loop;
+  if v_slot_found is null then
+    raise exception 'ER PROOF FAIL RESOLVED: the resolved enemy stands at (%,%), which is not combat_formation_point(anchor %,%, radius % = measured extent % + its own range % + 1, slot, the 0338 arrival phase toward its own site) for any slot of this wave — the resolved spawn arm no longer lays its wave out through the one formation authority',
+      v_px, v_py, v_ax, v_ay, v_extent + v_erange + 1, v_extent, v_erange;
+  end if;
   v_plan := (select resolved_plan_json from public.combat_encounters where id = v_enc);
   if v_plan is null or (v_plan->>'encounter_profile_id') <> v_ep::text then
     raise exception 'ER PROOF FAIL RESOLVED: encounter not tagged with the resolved plan: %', v_plan;
@@ -680,7 +810,8 @@ begin
   if v_exp_metal = round(coalesce(public.cfg_num('reward_metal_base'),10) * greatest(v_tier,1) * (1 + 0.25*1) * coalesce(public.cfg_num('reward_multiplier'),1.0)) then
     raise exception 'ER PROOF FAIL RESOLVED: the authored (base 20) reward is indistinguishable from the pre-E3 (base 10) reward — the test cannot discriminate the branch';
   end if;
-  raise notice 'ER_PASS_RESOLVED_PLAN';
+  raise notice 'ER_PASS_RESOLVED_PLAN (1 archetype-derived row at hp_max %, plan-tagged, runtime ledger written, reward from the authored profile, standing exactly on combat_formation_point(anchor %,%, measured extent % + its own range % + 1, slot %, the 0338 arrival phase))',
+    round(v_hpmax::numeric, 3), v_ax, v_ay, v_extent, v_erange, v_slot_found;
 end $$;
 
 -- ════════ MULTI-WAVE (FIX 2): a resolved encounter REUSES its plan on wave 2 (not synthetic); reward stays resolved ═

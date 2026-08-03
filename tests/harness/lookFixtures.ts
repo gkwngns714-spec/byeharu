@@ -26,6 +26,7 @@ import type { Fleet, LocationPresence } from '../../src/features/fleets/fleetTyp
 import type { Base } from '../../src/features/base/baseTypes'
 import type { CombatReport } from '../../src/features/combat/combatTypes'
 import type { FleetPosition } from '../../src/features/map/mainshipApi'
+import type { InterceptMissLite } from '../../src/features/map/pirateApi'
 import type { GroupRow, ShipGroupMapEntry } from '../../src/features/command/teamRoster'
 import type { DockedTeamRollup } from '../../src/features/command/teamRollup'
 import type { UnitType } from '../../src/lib/catalog'
@@ -172,6 +173,16 @@ const PRESENCES: LocationPresence[] = [
   { id: 'pres-1', fleet_id: 'flt-strike', location_id: 'loc-haven', activity_type: 'trade_visit', status: 'active', entered_at: '2026-08-02T08:00:00Z' },
 ]
 
+// THE NEAR MISS — one rolled-and-missed crossing on a leg that has already settled (its
+// movement_id is absent from `movements: []`, which is exactly what makes it announceable — see
+// nearMissNotice rule 3). ACTIVE fixture only, so the look shots show what a player now gets
+// instead of the silence they used to get, and the EMPTY (brand-new player) shots stay honestly
+// bare. `created_at` is fixed, not relative: the Mission record keeps every miss regardless of age,
+// so no screenshot depends on a live clock.
+const INTERCEPT_MISSES: InterceptMissLite[] = [
+  { id: 'pim-1', movement_id: 'mv-settled', location_id: 'loc-vex', created_at: '2026-08-02T08:04:00Z' },
+]
+
 // ── the ShellState fixture ───────────────────────────────────────────────────────────────────────
 
 const noopAsync = async (): Promise<void> => {}
@@ -202,6 +213,7 @@ export function buildShellState(state: LookState): ShellState {
         }
       : null,
     mainshipSendEnabled: false,
+    interceptMisses: active ? INTERCEPT_MISSES : [],
     refresh: noopAsync,
   }
 
@@ -211,6 +223,7 @@ export function buildShellState(state: LookState): ShellState {
     ticks: [],
     units: [],
     reports: active ? REPORTS : [],
+    autoExit: {},
     refresh: noopAsync,
   }
 

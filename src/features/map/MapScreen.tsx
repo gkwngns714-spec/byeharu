@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useShellState } from '../../app/shellState'
 import { GalaxyMap } from './GalaxyMap'
 import type { MapLocation } from './mapTypes'
@@ -15,6 +15,7 @@ import { WorldEventsPanel } from '../events/WorldEventsPanel'
 import { TelegraphBanner } from '../combat/TelegraphBanner'
 import { CombatMapCard } from './CombatMapCard'
 import { ambushEncounterNotices } from './ambushEncounterNotice'
+import { nearMissNotices, NEAR_MISS_MAP_WINDOW_MS } from './nearMissNotice'
 import { distance } from '../../game/movement/travelPreview'
 import type { WorldCoord } from './openSpaceTransform'
 import { Badge, Button, OverlayPanel, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
@@ -57,7 +58,7 @@ export function MapScreen() {
   const {
     map: {
       loading, error, locations, meta, mainShip, movements,
-      teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups,
+      teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups, fleetPositions,
       fleetMovementUnifiedEnabled, unifiedGroupFleets, combatSortieFleets,
       launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
       miningFields, miningExtractRadius,
@@ -67,6 +68,11 @@ export function MapScreen() {
     // units/events feed the map's spatial-combat layer; dark today (no positioned rows exist while
     // spatial_combat_enabled is off) → the layer renders nothing.
     combat,
+    // THE NEAR MISS — `game` is taken whole for its interceptMisses AND its movements, which must
+    // come from ONE cycle: a miss becomes announceable exactly when its leg leaves the active list
+    // (nearMissNotice rule 3), so pairing the two across two different polls (game 3s, map 4s)
+    // would make the notice flicker on and off at the seam. useGameState fetches both in one wave.
+    game,
     selection,
   } = useShellState()
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -83,6 +89,14 @@ export function MapScreen() {
   // dev/admin authoring tool and has no player UI here, so 'draw' is not a player mode.
   const [pirateMode, setPirateMode] = useState<'off' | 'route'>('off')
   const [pirateDraftPoints, setPirateDraftPoints] = useState<WorldCoord[]>([])
+  // THE NEAR MISS — a coarse clock for the map alert's expiry window, the house idiom
+  // (GalaxyMap/ActiveCombatPanel/TelegraphBanner). Reading `Date.now()` in the render body would be
+  // an impure read; 30s is far finer than a ten-minute edge needs and costs one setState a minute.
+  const [nearMissNowMs, setNearMissNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    const iv = setInterval(() => setNearMissNowMs(Date.now()), 30_000)
+    return () => clearInterval(iv)
+  }, [])
   // CLEAN-MAP COMMAND HUB — the ONE authority (ONE hub, TWO stages):
   //   stage 1 (hubView='menu') — a double-tap on empty space floats a COMPACT ICON CLUSTER AT the
   //     double-tapped point ON THE MAP: a couple of small tappable icons (Send fleet + Pirate
@@ -288,7 +302,8 @@ export function MapScreen() {
               locations={locations}
               movements={movements}
               teamGroups={teamGroups}
-              dockedTeamRollups={dockedTeamRollups}
+              teamGroupMap={teamGroupMap}
+              fleetPositions={fleetPositions}
               unifiedGroupFleets={unifiedGroupFleets}
               combatSortieFleets={combatSortieFleets}
               fleetGoView={pointView}
@@ -350,7 +365,35 @@ export function MapScreen() {
                   <p className="text-xs font-semibold text-danger">{n.text}</p>
                 </OverlayPanel>
               ))}
-              <CombatMapCard encounters={combat.encounters} units={combat.units} />
+              {/* THE NEAR MISS — the ambush notice's missing twin, in the same rail because it is
+                  the same news: what the pirates did to you on that trip. An ambush that HITS has
+                  always been loud (an encounter, a map card, a report); an ambush that MISSES said
+                  nothing at all, which with a ~55% roll is indistinguishable from a broken game —
+                  and is exactly what the owner hit. Reads shell state only (no fetch here), and
+                  expires by NEAR_MISS_MAP_WINDOW_MS so the clean map is never permanently occupied.
+
+                  The clock is the 30s `nearMissNowMs` above, not a render-time `Date.now()`: the
+                  window has to keep expiring even if the shell poll stalls, and an impure read in
+                  the render body is unstable the moment React re-renders for another reason. */}
+              {nearMissNotices({
+                misses: game.interceptMisses,
+                locations,
+                activeMovementIds: game.movements.map((m) => m.id),
+                nowMs: nearMissNowMs,
+                withinMs: NEAR_MISS_MAP_WINDOW_MS,
+                limit: 3,
+              }).map((n) => (
+                <OverlayPanel key={n.id} data-testid={`map-near-miss-${n.id}`} className="w-64">
+                  <p className="text-xs font-semibold text-warning">{n.text}</p>
+                </OverlayPanel>
+              ))}
+              <CombatMapCard
+                encounters={combat.encounters}
+                units={combat.units}
+                ticks={combat.ticks}
+                autoExit={combat.autoExit}
+                onChanged={() => void combat.refresh()}
+              />
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
@@ -556,8 +599,24 @@ export function MapScreen() {
                     )}
 
                     {/* ZONE INFO — what this danger zone is, in plain words. The header already
-                        carries the name and the ✕, so the panel is body-only. */}
-                    {hubView === 'zone' && zoneInfo && <ZoneInfoPanel info={zoneInfo} />}
+                        carries the name and the ✕, so the panel is body-only.
+
+                        THE SIGNPOST (owner, 2026-08-03: "i went to snare, zone, no fighting
+                        happens"). The panel's hunt-site button hands the location id to
+                        `handleSelect` — the map's OWN marker-selection path, the very one a tap on
+                        that marker takes — which swings the hub onto its fleet stage, where the
+                        EXISTING FleetCommandPanel hunt section renders. No second hunt control, no
+                        new state, no new RPC: the zone panel retires itself by handing over the one
+                        selection the command surface already consumes. */}
+                    {hubView === 'zone' && zoneInfo && (
+                      <ZoneInfoPanel
+                        info={zoneInfo}
+                        onHuntSite={(locationId) => {
+                          setZoneInfoId(null)
+                          handleSelect(locationId)
+                        }}
+                      />
+                    )}
 
                     {/* PIRATE INTERCEPT — plot a route around danger zones. Reused as-is; the
                         header owns dismissal, so no per-panel close here. */}

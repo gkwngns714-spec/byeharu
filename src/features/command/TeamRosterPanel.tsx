@@ -17,6 +17,7 @@ import {
   type TeamRpcResult,
 } from './teamApi'
 import { teamReasonMessage } from './teamReasonMessage'
+import { HOW_A_FIGHT_STARTS } from './howAFightStarts'
 import { autoExitSaveAvailability, autoExitSummary, parseAutoExitPct, AUTO_EXIT_PCT_MIN, AUTO_EXIT_PCT_MAX } from './teamAutoExit'
 import { deriveDockedTeamRollups } from './teamRollup'
 import {
@@ -395,8 +396,12 @@ export function TeamRosterPanel() {
 
       {/* TEAM-UX: the one-line "how" — the old subtitle was a feature laundry list that never told a new
           player the ORDER of operations (create a team FIRST, then add ships). */}
+      {/* HOW-A-FIGHT-STARTS: "then send or hunt with the whole fleet in one order" never said WHERE
+          those orders are given, and this panel renders none of them (movement lives on the map —
+          see the charter note below). The second sentence closes that, in the ONE wording. */}
       <p className="mb-3 text-xs text-ink-faint">
-        How fleets work: create a fleet, add ships to it, then send or hunt with the whole fleet in one order.
+        How fleets work: create a fleet, add ships to it, then give the whole fleet one order on the Map.{' '}
+        {HOW_A_FIGHT_STARTS}
       </p>
 
       {notice && (

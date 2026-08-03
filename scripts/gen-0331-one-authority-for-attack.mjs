@@ -62,7 +62,7 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
     }
   };
   guard('calculate_expedition_stats', '20260618000205', '20260618000205');
-  guard('combat_create_group_encounter', '20260618000301', '20260618000316');
+  guard('combat_create_group_encounter', '20260618000301', '20260618000336');
 }
 
 const F205 = load('20260618000205_cmdbuff_command_buffs.sql');

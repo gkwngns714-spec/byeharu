@@ -4,6 +4,7 @@ import { dangerZoneLayer } from '../src/features/map/dangerZoneLayer'
 import { MAP_PASSTHROUGH_ATTR, isMapBackground } from '../src/features/map/mapBackground'
 import type { DangerZoneLite } from '../src/features/map/pirateApi'
 import type { MapLocation } from '../src/features/map/mapTypes'
+import { A_ZONE_IS_NOT_A_HUNT, HOW_A_FIGHT_STARTS } from '../src/features/command/howAFightStarts'
 
 // ZONE INFO — "click a danger zone, see what it is" (owner, 2026-07-29). Pure specs: the model
 // decides every word, and the layer decides whether a zone is a tap target at all.
@@ -49,7 +50,49 @@ test('the zone names itself, and the warning says what actually happens to you',
   const info = buildZoneInfo(zone(), [])
   expect(info.id).toBe('z-1')
   expect(info.title).toBe('The Snare')
-  expect(info.warning).toBe('Pirates hunt here. A fleet crossing this zone is almost always attacked.')
+  // REPOINTED 2026-08-03, and STRENGTHENED rather than loosened. The old pin was
+  // "…is almost always attacked", written against 0236's [0.98, 1.0] risk pin that production has
+  // long since left. The owner's last two Snare crossings rolled 0.545 and 0.240 and BOTH missed,
+  // so the sentence promised something the engine does not do — and being told "almost always
+  // attacked" and then never attacked is precisely what read to them as a broken game. The
+  // assertion now COMPOSES the one authority instead of restating a literal, so this test can never
+  // again agree with a sentence the rest of the app has stopped saying.
+  expect(info.warning).toContain(A_ZONE_IS_NOT_A_HUNT)
+  expect(info.warning, 'a certainty the engine does not deliver').not.toContain('almost always')
+})
+
+// ── THE SIGNPOST: from "what is this place" to an actual fight ────────────────────────────────────
+// Owner, 2026-08-03: "i went to snare, zone, no fighting happens." Their four trips that afternoon
+// were all open-space rallies toward the Snare's shaded blob; the Snare SITE, the only thing a hunt
+// can be ordered at, sits at its own marker and was never targeted. This panel is where a player
+// asks what the blob is, so it is where the answer has to lead somewhere.
+
+test('a zone wrapped around a hunt site offers that site, labelled by the one copy authority', () => {
+  const info = buildZoneInfo(zone({ location_id: 'loc-1' }), [loc()])
+  expect(info.huntSite).toEqual({ locationId: 'loc-1', name: 'Reaver', label: 'Hunt at Reaver' })
+  // …and the words say HOW, right where the confusion happened.
+  expect(info.warning).toContain(HOW_A_FIGHT_STARTS)
+})
+
+test('a zone with NO site makes no offer, and does not tell a player to do something it cannot do', () => {
+  const loose = buildZoneInfo(zone({ location_id: null }), [loc()])
+  expect(loose.huntSite).toBeNull()
+  expect(loose.warning).not.toContain(HOW_A_FIGHT_STARTS)
+  expect(loose.warning).toContain(A_ZONE_IS_NOT_A_HUNT)
+})
+
+test('an unresolvable site makes no offer — an offer that leads nowhere is worse than none', () => {
+  expect(buildZoneInfo(zone({ location_id: 'loc-missing' }), [loc()]).huntSite).toBeNull()
+})
+
+test('a PORT inside a zone is never offered as a hunt — only a real hunt destination earns the button', () => {
+  // teamDestinationKind classifies this as 'expedition', which is exactly the map's own verdict, so
+  // the panel can never offer a hunt the command surface would then refuse to render.
+  const port = loc({ id: 'loc-1', name: 'Haven', activity_type: 'none', location_type: 'trade_outpost' })
+  expect(buildZoneInfo(zone({ location_id: 'loc-1' }), [port]).huntSite).toBeNull()
+  // An inactive hunt site is not a destination either.
+  const closed = loc({ id: 'loc-1', status: 'inactive' })
+  expect(buildZoneInfo(zone({ location_id: 'loc-1' }), [closed]).huntSite).toBeNull()
 })
 
 test('a blank name falls back to plain words — never a raw id in front of a player', () => {

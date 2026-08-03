@@ -57,7 +57,8 @@ function RealGalaxyMap() {
       locations={LOCATIONS}
       movements={[]}
       teamGroups={[]}
-      dockedTeamRollups={[]}
+      teamGroupMap={{}}
+      fleetPositions={[]}
       unifiedGroupFleets={[]}
       combatSortieFleets={[]}
       fleetGoView={null}

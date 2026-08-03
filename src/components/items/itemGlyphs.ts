@@ -3,7 +3,7 @@
 // PURE data + pure functions (no React, no DOM — the icons.ts mold), so tests can prove the
 // id→glyph/label contract for the ENTIRE real catalog (tests/itemViz.spec.ts). The subjects are
 // the REAL seeded catalogs, hardcoded here as the display-side twin of the migrations (the
-// assetGlyphs.ts split: the server owns the vocabulary, this file owns how each id LOOKS):
+// uiassets/assetGlyphs.ts split: the server owns the vocabulary, this file owns how each id LOOKS):
 //   · item_types      — 0039_inventory + 0097_exploration seeds (12 ids)
 //   · trade_goods     — 0073_trade_goods_catalog seeds (6 ids)
 //   · module_types    — 0107_modules_p13 seeds (4) + 0183_mod2_shield_line seeds (2)

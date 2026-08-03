@@ -5,7 +5,7 @@ import {
   parseUnifiedStopResult,
   unifiedStopOutcomeMessage,
 } from '../src/features/command/teamStop'
-import { resolveTeamMarkers } from '../src/features/map/teamMarkers'
+import { resolveFleetPresence } from '../src/features/map/fleetPresence'
 import type { FleetMovement } from '../src/features/fleets/fleetTypes'
 import type { GroupRow } from '../src/features/command/teamRoster'
 
@@ -54,8 +54,8 @@ test('groupStopAvailability: order — group resolution is checked before member
 })
 
 // ── MOVEMENT-ON-MAP step 2 — the map Stop's derivation (same file, same server contract) ─────────
-// The load-bearing case is the deliberate divergence from resolveTeamMarkers: a fleet with an
-// un-drawable segment MUST still be stoppable.
+// The load-bearing case is the deliberate divergence from the map's presence authority: a fleet with
+// an un-drawable segment MUST still be stoppable.
 
 const DEP = '2026-01-01T00:00:00Z'
 const ARR = '2026-01-01T00:10:00Z'
@@ -138,9 +138,30 @@ test('resolveStoppableFleets: equal ETAs tie-break on movement id (stable across
 })
 
 test('an UN-DRAWABLE in-flight fleet is STILL stoppable (the Stop must not inherit the badge gate)', () => {
-  // A degenerate segment: teamMarkers refuses to guess a position and draws NO badge for it.
+  // A degenerate segment: the map's ONE presence authority refuses to guess a position for it, so the
+  // fleet is drawn with no world point at all ('unplaced' — reported, but never on a made-up pixel).
   const broken = mv({ group_id: 'g1', depart_at: ARR, arrive_at: DEP, travel_seconds: 0 })
-  expect(resolveTeamMarkers([broken], [G1], Date.parse(ARR))).toEqual([])
+  const drawn = resolveFleetPresence({
+    groups: [G1],
+    membership: { s1: { group_id: 'g1' } },
+    positions: [
+      {
+        main_ship_id: 's1',
+        place: 'transit',
+        location_id: null,
+        space_x: null,
+        space_y: null,
+        segment: {
+          origin_x: broken.origin_x, origin_y: broken.origin_y,
+          target_x: broken.target_x, target_y: broken.target_y,
+          target_kind: 'location', depart_at: broken.depart_at, arrive_at: broken.arrive_at,
+        },
+      },
+    ],
+    nowMs: Date.parse(ARR),
+  })
+  expect(drawn.map((p) => p.state)).toEqual(['unplaced'])
+  expect(drawn[0].at).toBeNull()
   // ...but the player must still be able to halt it — precisely the wreckage case.
   const stoppable = resolveStoppableFleets([broken], [G1])
   expect(stoppable).toHaveLength(1)

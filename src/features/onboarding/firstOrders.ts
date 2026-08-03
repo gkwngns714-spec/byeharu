@@ -27,6 +27,8 @@
 // so a non-monotone signal can un-tick (a docked ship that launches is no longer docked). The one
 // mitigation is structural, not stored: see the dock step's shipCount>=2 disjunct below.
 
+import { HOW_A_FIGHT_STARTS } from '../command/howAFightStarts'
+
 // ── the structural input (a cheap projection of already-polled shell state) ─────────────────────
 export interface FirstOrdersInput {
   /** Owned main ships (0 = pre-claim, 1 = starter, 2+ = fleet). */
@@ -89,7 +91,13 @@ export function deriveFirstOrders(input: FirstOrdersInput): FirstOrderStep[] {
       // (tests/firstOrders.spec.ts:35,43,82-83) still holds; only the words a player reads moved.
       label: 'Survive your first fight',
       done: input.wonBattle,
-      hint: 'Send your ship to hunt pirates at the Snare (Wreck Belt), then pull out while it still has hull.',
+      // HOW-A-FIGHT-STARTS sweep — "Send your ship to hunt pirates at the Snare (Wreck Belt)" named
+      // the PLACE and never the gesture, so a player who read it did the obvious thing (aim at the
+      // shaded Snare zone) and travelled instead of fighting. The one authority now supplies the
+      // how; the Snare stays as the starter site, and "(Wreck Belt)" is dropped because naming the
+      // containing map zone inside a sentence about a site is the exact confusion this sweep exists
+      // to end. The id, the `done` rule and the label are UNCHANGED — every spec pinning them holds.
+      hint: `${HOW_A_FIGHT_STARTS} The Snare is the starter site — pull out while it still has hull.`,
     })
   }
 

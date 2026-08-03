@@ -1,12 +1,11 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { Outlet } from 'react-router-dom'
 import { ShellStateContext } from './shellState'
 import { useGameState } from '../features/dashboard/useGameState'
 import { useCombat } from '../features/combat/useCombat'
 import { useGalaxyMapData } from '../features/map/useGalaxyMapData'
 import { useMainShipSelection } from '../features/map/useMainShipSelection'
-import { Icon } from '../components/ui'
 import { AccountMenu } from '../features/account/AccountMenu'
-import { NAV_TABS, navGridClass } from './navTabs'
+import { NavBar } from './NavBar'
 
 // UI-REBUILD (2b) — the persistent shell. ONE mobile-first bottom tab bar (Map · Ships · Fleet ·
 // Port · Command; active tab derived from the router; the table + its gating live in navTabs.ts,
@@ -47,28 +46,14 @@ export function AppShell() {
         <main className="min-h-0 flex-1 overflow-hidden">
           <Outlet />
         </main>
-        {/* The one persistent navigation (table + gating in navTabs.ts): ≥44px touch targets,
-            tokens only. Tab glyphs come from the design-system Icon set (currentColor line icons —
-            they inherit the NavLink's token color). No emoji in chrome. */}
-        <nav aria-label="Primary" data-testid="app-nav" className="border-t border-edge bg-surface">
-          <div className={`mx-auto grid max-w-3xl ${navGridClass(NAV_TABS.length)}`}>
-            {NAV_TABS.map((t) => (
-              <NavLink
-                key={t.to}
-                to={t.to}
-                data-testid={`nav-${t.label.toLowerCase()}`}
-                className={({ isActive }) =>
-                  `flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] transition ${
-                    isActive ? 'font-medium text-accent' : 'text-ink-muted hover:text-ink'
-                  }`
-                }
-              >
-                <Icon name={t.icon} size={20} />
-                {t.label}
-              </NavLink>
-            ))}
-          </div>
-        </nav>
+        {/* The one persistent navigation (destinations + grid width in navTabs.ts, markup in
+            NavBar.tsx): ≥44px touch targets, tokens only. Tab glyphs come from the design-system
+            Icon set (currentColor line icons — they inherit the NavLink's token color). No emoji in
+            chrome. ASSETS-TAB moved the markup into NavBar so the bar can be RENDERED AND MEASURED
+            at a 320px viewport (tests/navFits.uispec.ts) without booting the whole shell — the
+            width budget used to be defended by an unrendered estimate in a comment, and it was
+            wrong. There is still exactly one bar; this is its only mount. */}
+        <NavBar combatCount={combat.encounters.length} />
       </div>
     </ShellStateContext.Provider>
   )

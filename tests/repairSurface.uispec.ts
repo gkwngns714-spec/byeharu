@@ -70,12 +70,61 @@ test('a WRECK renders EXACTLY ONE repair action, in the SAME one panel — not a
   await boot(page, { shipStatus: 'destroyed', disabledShips: [AT_PORT], place: null })
   await expect(page.getByTestId('repair-panel')).toHaveCount(1)
   await expect(page.getByTestId('repair-submit')).toHaveCount(1)
-  await expect(page.getByTestId('repair-submit')).toHaveText(/Repair ship/)
   await expect(page.getByTestId('repair-tow')).toHaveCount(0)
-  // A WRECK RESTORES WHOLE (0335's amount policy ignores the requested amount), so the surface
-  // offers no stepper it could not honour.
-  await expect(page.getByTestId('repair-amount')).toHaveCount(0)
+  // A WRECK RESTORES WHOLE (0335's amount policy ignores the requested amount), so the amount slot
+  // STATES the amount rather than offering a stepper the server would not honour — the same row, in
+  // the same place, with a different amount. Never a different system.
+  await expect(page.getByTestId('repair-amount')).toHaveText('Whole hull')
+  await expect(page.getByTestId('repair-dec')).toHaveCount(0)
   await expect(page.getByTestId('repair-position-note')).toContainText('wrecked')
+})
+
+// ── THE COMPLAINT THIS SLICE ANSWERS ─────────────────────────────────────────────────────────────
+// The owner: "fixing command ship = fixing other ships. right now there is command ship fixing that
+// is different." Migration 0335 had already made the SERVER one verb, and PR #375 had already made
+// the client one PANEL — but the panel still rendered a wreck and a dent as two different things: a
+// different heading, a different button word, a different button shape, a credits line on one only,
+// an amount on one only. This spec is the one that fails if any of that comes back.
+test('SAME ACTION SHAPE: a wreck and a dent render the identical repair desk', async ({ page }) => {
+  const shapeOf = async () => {
+    const panel = page.getByTestId('repair-panel')
+    const present = await Promise.all(
+      ['repair-wallet', 'repair-amount', 'repair-cost', 'repair-submit'].map(async (id) => [
+        id,
+        (await panel.getByTestId(id).count()) === 1,
+      ]),
+    )
+    const submit = panel.getByTestId('repair-submit')
+    return {
+      present: Object.fromEntries(present),
+      heading: (await panel.textContent())?.includes("Repair this ship's hull"),
+      // The same WORD on the same BUTTON: same tag, same variant classes, same size.
+      label: (await submit.textContent())?.trim(),
+      tag: await submit.evaluate((el) => el.tagName),
+      classes: await submit.getAttribute('class'),
+    }
+  }
+  // A dent at a port…
+  await boot(page)
+  const dent = await shapeOf()
+  // …and a wreck at a port. Same ship, same desk.
+  await wreckAtPort(page)
+  await expect(page.getByTestId('repair-amount')).toHaveText('Whole hull') // settled on the wreck view
+  const wreckShape = await shapeOf()
+
+  expect(wreckShape.present).toEqual(dent.present)
+  expect(wreckShape.present).toEqual({
+    'repair-wallet': true,
+    'repair-amount': true,
+    'repair-cost': true,
+    'repair-submit': true,
+  })
+  expect(wreckShape.heading).toBe(true)
+  expect(dent.heading).toBe(true)
+  expect(wreckShape.label).toBe(dent.label)
+  expect(wreckShape.label).toBe('Repair')
+  expect(wreckShape.tag).toBe(dent.tag)
+  expect(wreckShape.classes).toBe(dent.classes)
 })
 
 test('a FULL-HULL ship shows NOTHING — no card, no action, no explanation of the obvious', async ({ page }) => {
@@ -87,7 +136,7 @@ test('a FULL-HULL ship shows NOTHING — no card, no action, no explanation of t
 test('a genuinely ADRIFT wreck is offered the TOW — and the Repair action is not shown beside it', async ({ page }) => {
   await boot(page, { shipStatus: 'destroyed', disabledShips: [ADRIFT], place: null })
   await expect(page.getByTestId('repair-tow')).toHaveCount(1)
-  await expect(page.getByTestId('repair-tow')).toHaveText(/Tow to the nearest port/)
+  await expect(page.getByTestId('repair-tow')).toHaveText(/Tow to a port/)
   // EXACTLY ONE action: the tow REPLACES the repair rather than sitting next to it.
   await expect(page.getByTestId('repair-submit')).toHaveCount(0)
   await expect(page.getByTestId('repair-position-note')).toContainText('adrift')

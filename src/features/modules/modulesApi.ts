@@ -86,10 +86,16 @@ export async function fetchModuleCatalog(): Promise<ModuleCatalogEntry[] | null>
 export async function fetchItemCatalog(): Promise<ItemTypeRow[] | null> {
   const { data, error } = await supabase
     .from('item_types')
-    .select('item_id, name, category, rarity, description, stackable, icon_key')
+    .select('item_id, name, category, rarity, description, stackable, icon_key, volume_m3')
     .order('name')
   if (error) return null
-  return (data ?? []) as ItemTypeRow[]
+  // ASSETS-TAB: volume_m3 (0333) rides this ONE catalog read rather than a second select on the
+  // same table. PostgREST hands numeric back as a STRING, so it is coerced here — the one place
+  // it enters the client — and a malformed value lands as 0, which every consumer treats as
+  // "unknown volume" rather than a free stack.
+  return ((data ?? []) as Array<Omit<ItemTypeRow, 'volume_m3'> & { volume_m3: number | string }>).map(
+    (r) => ({ ...r, volume_m3: Number(r.volume_m3) || 0 }),
+  )
 }
 
 // ── FITTING-P14 — the dark module-fitting surface (0113/0114 commands + 0116 read) ──────────────

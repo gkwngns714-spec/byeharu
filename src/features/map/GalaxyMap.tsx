@@ -4,28 +4,31 @@ import type { FleetMovement } from '../fleets/fleetTypes'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
 import { isMovementInFlight, interpolateMovementPoint } from './movementInterpolation'
-import { teamMarkersLayer } from './teamMarkers'
+import { fleetLayer } from './teamMarkers'
 import { territoryLayer } from './territoryLayer'
 import { miningFieldRangeLayer } from './miningFieldLayer'
 import { MiningFieldMarker } from './MiningFieldMarker'
 import type { MiningField } from '../mining/miningTypes'
 import { dangerZoneLayer } from './dangerZoneLayer'
-import { spatialCombatLayer } from './spatialCombatLayer'
+import { combatFocusWorldPoints, focusableEncounterId, spatialCombatLayer } from './spatialCombatLayer'
+import { resolveCombatActors } from './combatActors'
+import { useCombatMotion } from './useCombatMotion'
 import type { CombatEncounter, CombatEvent, CombatUnit } from '../combat/combatTypes'
 import type { DangerZoneLite } from './pirateApi'
-import type { GroupRow } from '../command/teamRoster'
-import type { DockedTeamRollup } from '../command/teamRollup'
+import type { GroupRow, ShipGroupMapEntry } from '../command/teamRoster'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
+import type { FleetPosition } from './mainshipApi'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { SpaceMoveTargetMarker } from './SpaceMoveTarget'
 import { classifyPointerGesture } from './spaceMoveCommand'
 import { isMapBackground } from './mapBackground'
 import { type FleetGoTargetView } from './fleetGoTarget'
-import { screenDeltaToViewBox, screenToWorld, worldToViewBox, type ViewBoxCoord, type WorldCoord } from './openSpaceTransform'
+import { screenDeltaToViewBox, screenToWorld, viewBoxDisplayRect, worldToViewBox, type ViewBoxCoord, type WorldCoord } from './openSpaceTransform'
 import {
   VIEW,
   BUTTON_ZOOM_STEP,
   clampPan,
+  fitCameraToWorldPoints,
   focusCamera,
   focusWorldPoints,
   zoomCameraAbout,
@@ -55,7 +58,8 @@ export function GalaxyMap({
   locations,
   movements,
   teamGroups,
-  dockedTeamRollups,
+  teamGroupMap,
+  fleetPositions,
   unifiedGroupFleets,
   combatSortieFleets,
   fleetGoView,
@@ -78,16 +82,17 @@ export function GalaxyMap({
 }: {
   locations: MapLocation[]
   movements: FleetMovement[]
-  // TEAMMAP-2: the owner's teams + the pure docked-team rollup (both empty while TEAM_COMMAND is
-  // dark — the additive team layer then renders nothing and the map is byte-identical to today).
+  // WHERE-IS-MY-FLEET: the three inputs the ONE fleet-presence authority reads — the owner's groups,
+  // the live membership map, and the SERVER's own per-ship place projection (get_my_fleet_positions,
+  // already polled by this hook for the Port hub). Zero groups → no fleet layer at all.
   teamGroups: GroupRow[]
-  dockedTeamRollups: DockedTeamRollup[]
-  // FLEET-GO 4a-1: the group's own unified fleets (charter §2). Feeds the in-space fleet badge in the
-  // team layer. [] while the unified flag is dark (useGalaxyMapData gates the read) → byte-identical.
+  teamGroupMap: Record<string, ShipGroupMapEntry>
+  fleetPositions: FleetPosition[]
+  // IDENTITY ONLY — the group's own `fleets.id`, so a fleet can find its OWN fight (the encounter join
+  // is on fleets.id). Never a position source: the positions projection above is already fleet-first
+  // for open space (0210). The two arrays are the partition useGalaxyMapData makes of ONE read; the
+  // layer re-unions them, because for identity the partition is irrelevant.
   unifiedGroupFleets: UnifiedGroupFleetLite[]
-  // MAP-INTEGRATION M1: the COMBAT-PRESENT group fleets (the dock fold's exact complement, partitioned
-  // once in useGalaxyMapData). Feeds the team layer's "in combat at X" badge so a fleet mid-hunt-combat
-  // never vanishes from the map. [] while the unified fetch is dark → byte-identical.
   combatSortieFleets: UnifiedGroupFleetLite[]
   // CLEAN-MAP HUB: the map is unobstructed by default. The ONE gesture that summons commands is a
   // DOUBLE-TAP on empty space (mouse double-click OR touch double-tap — both flow through pointer
@@ -166,6 +171,22 @@ export function GalaxyMap({
   // 1s clock for the in-flight path filter below. Same idiom as TeamMovingMarkers: Date.now()
   // stays OUT of render (it is impure and would re-read unpredictably on any re-render), and the interval
   // runs ONLY while there is a movement to time — with none, no timer exists and the map is idle as before.
+  // COMBAT THAT FLOWS — the battle's own clock. `liveCombatUnits` is `combatUnits` with each
+  // position moved to where it is at this instant (map/combatMotion.ts, composing the ONE
+  // interpolation primitive). It is passed to the TEAM layer as well as the combat layer on purpose:
+  // teamMarkers → fleetFightPosition stands the fleet badge on a real ship by copying that ship's
+  // x/y, so smoothing the rows once here is what keeps the badge and the glyphs from separating.
+  // The camera framing below deliberately keeps the RAW rows — a frame must not chase a tween.
+  const { units: liveCombatUnits, sightings: shotSightings, nowMs: combatNowMs } = useCombatMotion(
+    combatUnits,
+    combatEvents,
+  )
+  // THE FLEET IS THE COMBAT ACTOR — "show only fleet. it is as a whole." One glyph per player fleet
+  // (placed by the same fleetFightPosition rule that places its badge), one per living enemy hull.
+  const combatActors = useMemo(
+    () => resolveCombatActors(liveCombatUnits, combatEncounters),
+    [liveCombatUnits, combatEncounters],
+  )
   const [nowMs, setNowMs] = useState(() => Date.now())
   const anyMovement = movements.length > 0
   useEffect(() => {
@@ -318,6 +339,68 @@ export function GalaxyMap({
   // Cursor-anchored wheel zoom — the ONE binding, shared with the World Editor. The map now zooms
   // toward the point under the pointer instead of the viewBox centre.
   useWheelZoom(svgEl, zoomByFactor)
+
+  // ── HOW BIG IS A PIXEL HERE ────────────────────────────────────────────────────────────────────
+  // CSS px per viewBox unit, from the ONE letterbox authority (openSpaceTransform.viewBoxDisplayRect)
+  // applied to this element's real box. The combat readout needs it because `÷ k` is constant in
+  // VIEWBOX units, not pixels: on a 390px-wide map that is 0.39×, which rendered a nominally-10
+  // damage number at 3.9 CSS px. Measured, never assumed — and re-measured on resize/rotate, the only
+  // time it can change. Nothing else consumes it and no POSITION depends on it: this corrects
+  // screen-constant chrome only.
+  const [pxPerViewBox, setPxPerViewBox] = useState(1)
+  useEffect(() => {
+    if (!svgEl) return
+    const measure = () => {
+      const r = svgEl.getBoundingClientRect()
+      if (r.width === 0 || r.height === 0) return
+      const s = viewBoxDisplayRect({ width: r.width, height: r.height }).scale
+      if (Number.isFinite(s) && s > 0) setPxPerViewBox(s)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(svgEl)
+    return () => ro.disconnect()
+  }, [svgEl])
+
+  // ── FOCUS THE FIGHT ────────────────────────────────────────────────────────────────────────────
+  // A battle is 5-6 world units of weapon range and a 6-unit formation ring (0316) inside a 20000-unit
+  // world, so at the map's own default camera the whole engagement is a handful of pixels — smaller
+  // than the damage number drawn over it. Nothing in the map offered to go there: a grep for
+  // focusCamera/zoomTo/centerOn across src/features/map found no combat caller at all, so seeing your
+  // own fight required knowing to scroll ~25 wheel notches at the right spot.
+  //
+  // The camera goes to the fight; the fight is NOT redrawn larger than it is (see
+  // combatFocusWorldPoints' header for why an arena presentation scale was rejected). It composes
+  // the SAME `fitCameraToWorldPoints` the initial view and the reset button already use — one
+  // framing authority, given different points.
+  //
+  // AUTOMATIC ONCE PER BATTLE, then the camera is the player's again. Deliberately NOT gated on
+  // `userMovedRef`: a fight starting is the one event that outranks a camera the player set earlier,
+  // and it is exactly the case the content-fit's "frozen once touched" rule would have silently
+  // skipped for every player who has ever panned. It fires once per encounter id, so a poll cannot
+  // yank the view back while the player is looking elsewhere mid-fight, and ⟲ still resets.
+  const fightId = useMemo(
+    () => focusableEncounterId(combatEncounters, combatUnits),
+    [combatEncounters, combatUnits],
+  )
+  const focusFight = useCallback(
+    (id: string | null) => {
+      const pts = combatFocusWorldPoints(combatUnits, id)
+      if (pts.length === 0) return
+      userMovedRef.current = true // the battle framing is now the camera; no auto-fit may override it
+      setView(fitCameraToWorldPoints(pts))
+    },
+    [combatUnits],
+  )
+  const focusedFightRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!fightId || focusedFightRef.current === fightId) return
+    focusedFightRef.current = fightId
+    // Intentional: frame the battle the moment it becomes visible. Ref-gated to exactly one
+    // application per encounter — this is the "derive the view from newly-arrived data" effect, not
+    // a render loop.
+    focusFight(fightId)
+  }, [fightId, focusFight])
   // Reset re-enables the deterministic content-fit camera (frames the player ship / active movement,
   // else named content). NOT k=1/origin — at k=1 the fixed frame would show current seed content as a
   // tiny central cluster.
@@ -327,6 +410,28 @@ export function GalaxyMap({
     lastFitSig.current = focusSignature
     setView(pts.length ? focusCamera(focusInputs) : { k: 1, tx: 0, ty: 0 })
   }
+
+  // ── THE FLEET LAYER, resolved ONCE per render ─────────────────────────────────────────────────────
+  // Two presentations, one authority: the world badges go inside the camera group; the fleets the world
+  // cannot place go in the overlay rail. Splitting them here — rather than letting each renderer decide
+  // who it draws — is what keeps "does this fleet appear?" a question with exactly one answer.
+  const fleetLayerView = fleetLayer({
+    groups: teamGroups,
+    membership: teamGroupMap,
+    positions: fleetPositions,
+    // The union of the two partitions useGalaxyMapData makes of ONE fleets read — identity only.
+    fleets: [...unifiedGroupFleets, ...combatSortieFleets],
+    locations,
+    norm,
+    k: view.k,
+    nowMs,
+    encounters: combatEncounters,
+    // The SMOOTHED rows, exactly as the spatial layer below receives them. The fleet layer stands a
+    // fleet's badge on one of its own real hulls (fleetFightPosition), so handing it the raw rows
+    // while the glyphs ride the interpolated ones would put the badge and that fleet's own ships in
+    // two different places between ticks — the very defect both slices exist to kill.
+    units: liveCombatUnits,
+  })
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-card border border-edge bg-app shadow-card">
@@ -504,29 +609,15 @@ export function GalaxyMap({
             )
           })}
 
-          {/* TEAMMAP-2 — the team marker layer, composed by the pure, hook-free `teamMarkersLayer`
-              helper (the shipLayer element-tree convention; the unit tests call the SAME function).
-              ADDITIVE beside the existing layers: in-flight team badges ride the shared movement
-              interpolation at the lead fleet's position (individual dashed lines + dots above stay
-              untouched), and complete docked teams badge their port's marker position. Empty teams
-              (TEAM_COMMAND dark, or no team in flight/docked) render nothing. */}
-          {teamMarkersLayer({
-            movements,
-            groups: teamGroups,
-            rollups: dockedTeamRollups,
-            locations,
-            norm,
-            k: view.k,
-            // FLEET-GO 4a-1: parked unified fleets → the in-space fleet badge ([] while dark).
-            unifiedFleets: unifiedGroupFleets,
-            // MAP-INTEGRATION M1: combat-present sorties → the in-combat fleet badge ([] while dark).
-            combatFleets: combatSortieFleets,
-            // …and the live fights themselves: the VERY SAME encounters and units the spatial layer
-            // below is drawn from, so a fleet's badge and that fleet's own ships are placed from ONE
-            // source and can never render as two things standing in two different places.
-            encounters: combatEncounters,
-            units: combatUnits,
-          })}
+          {/* ██ THE FLEET LAYER — one fleet, one marker, in EVERY state. ██ Composed by the pure,
+              hook-free `fleetLayer` helper (the shipLayer element-tree convention; the unit tests call
+              the SAME function). It replaced four badge resolvers that each decided for themselves
+              whether a fleet EXISTS, which is how a fleet docked at a port with only some of its ships
+              placed ended up drawn nowhere at all. Existence is now unconditional — one presence per
+              group — and the state picks the glyph. Encounters + units are the VERY SAME arrays the
+              spatial layer below is drawn from, so a fleet's badge and that fleet's own ships come
+              from ONE source and can never render as two things standing in two places. */}
+          {fleetLayerView.elements}
 
           {/* COMBAT-S4 — the SPATIAL-COMBAT layer, composed by the pure, hook-free `spatialCombatLayer`
               helper (the territoryLayer/teamMarkersLayer element-tree convention; the unit test calls
@@ -535,9 +626,25 @@ export function GalaxyMap({
               this tick's fire lines between units. Above the markers (the battle is the focus of the
               frame) and pointer-transparent (the location under it stays the tap target). DARK BY DATA:
               while spatial_combat_enabled is off, no combat_units row carries a position, so `combatUnits`
-              has no positioned rows and this renders NOTHING — byte-identical to today. Re-renders each
-              ~1.5s poll (useCombat), so approach + kiting + fire animate as ticks land. */}
-          {spatialCombatLayer({ units: combatUnits, events: combatEvents, norm, k: view.k })}
+              has no positioned rows and this renders NOTHING — byte-identical to today.
+
+              WHAT ANIMATES (this used to claim "approach + kiting + fire animate as ticks land",
+              which was false: a position updated on tick arrival is a step function — three seconds
+              at A, then B, which is the "laggy, not smooth" the owner reported). The rows arriving
+              here have ALREADY been interpolated to `combatNowMs` by useCombatMotion, so each
+              server step is played out over the server's own measured tick interval and the ships
+              are SEEN crossing. `sightings` dates each fire event so the round a gun throws travels
+              its lane and its damage number appears when the round lands. */}
+          {spatialCombatLayer({
+            actors: combatActors,
+            units: liveCombatUnits,
+            events: combatEvents,
+            norm,
+            k: view.k,
+            pxScale: pxPerViewBox,
+            sightings: shotSightings,
+            nowMs: combatNowMs,
+          })}
 
           {/* 4C-CLIENT: the per-ship overlay layer (shipLayer — route + MainShipMarker) is DELETED
               with the per-ship movement client (S5 already deleted the redundant fleetShipsLayer).
@@ -594,7 +701,43 @@ export function GalaxyMap({
       {/* top-right: the zoom cluster. S5 MAP-UX: the fleet coordinate-go confirm panel that used to
           stack here moved into the ONE bottom-center FleetCommandPanel (MapScreen). */}
       <OverlayRail slot="top-right">
+        {/* ── FLEETS THE WORLD CANNOT PLACE ────────────────────────────────────────────────────────
+            A fleet whose every ship reports `place='hidden'` has no coordinate anywhere in the game,
+            so a world badge would be a fabricated position. It still belongs ON the map — the owner
+            asked to be told where their fleets are, and "we don't know" is an answer; silence is not.
+            It rides the rail this corner already owns (the design-system rule for co-corner overlays)
+            and carries the SAME `fleet-marker-<groupId>` testid every placed badge does, so "exactly
+            one marker per fleet, in every state" stays a single query. Nothing to say → nothing
+            rendered; a clean map is unchanged. */}
+        {fleetLayerView.unplaced.length > 0 && (
+          <OverlayPanel className="flex flex-col gap-0.5" data-testid="fleet-unplaced-rail">
+            {fleetLayerView.unplaced.map((p) => (
+              <span
+                key={p.groupId}
+                data-testid={`fleet-marker-${p.groupId}`}
+                className="whitespace-nowrap text-[10px] text-ink-muted"
+              >
+                {p.label}
+              </span>
+            ))}
+          </OverlayPanel>
+        )}
         <OverlayPanel className="flex flex-col gap-1">
+          {/* FOCUS THE FIGHT — a CAMERA control, so it lives with the other camera controls rather
+              than forking a second place that moves the view. Mounted only while a battle actually
+              has ships on the map; a clean map is unchanged. */}
+          {fightId && (
+            <Button
+              size="icon"
+              variant="warning"
+              data-testid="map-focus-fight"
+              onClick={() => focusFight(fightId)}
+              aria-label="Focus the battle"
+              title="Focus the battle"
+            >
+              ⌖
+            </Button>
+          )}
           <Button size="icon" onClick={() => zoomByFactor(BUTTON_ZOOM_STEP)} aria-label="Zoom in">+</Button>
           <Button size="icon" onClick={() => zoomByFactor(1 / BUTTON_ZOOM_STEP)} aria-label="Zoom out">−</Button>
           <Button size="icon" onClick={reset} aria-label="Reset view" className="text-xs">⟲</Button>

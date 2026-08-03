@@ -7,7 +7,8 @@
 // own parked point while that fleet's OWN SHIPS — drawn by spatialCombatLayer from
 // combat_units.pos_x/pos_y — stood 20-30 world units away. The same fleet, rendered twice, in two
 // places. (0313 cut weapon ranges to 25-30, which is what made the mover's close/kite arms fire at
-// all; the pos_x writers are 0234/0294/0311/0314. 0313 started the movement, it did not author it.)
+// all; the pos_x writers are 0234/0294/0311/0314/0336. 0313 started the movement, it did not author
+// it; 0336 is the writer that put a wave's units on a RING instead of all on one point.)
 //
 // The first fix put the badge on the CENTROID of those ships. The owner, after it shipped:
 // "the fleet arrived at combat zone, it fights but in a different location. This is not fixed."
