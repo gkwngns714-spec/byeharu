@@ -136,6 +136,58 @@ empty since launch; repair at 0.5/hp was 2.5× the break-even of the BEST locati
 - The DANGER-ZONE fixture guard fails at random because seeded zones are rebuilt with `random()` per
   fresh DB — a randomly-shaped world vs a fixed coordinate. Re-run past four times; being fixed at
   the root in 0336.
+## 2026-08-03 — COMBAT ENGINE REPAIRS (`slice-combat-engine-repairs`, migration 0336)
+
+Eight defects in the fight itself, each read off the **deployed** `process_combat_ticks` body
+(73,160 chars — no migration file holds it whole) and each confirmed against live production rows,
+read-only, at prod head **0335**.
+
+| # | defect | live evidence |
+|---|---|---|
+| 1 | A multi-gun ship **threw away its extra guns on kill ticks** — the target is resolved once, before the per-weapon loop, so when gun 1 killed it the damage step's found-guard dropped guns 2 and 3 instead of re-aiming | one prod ship carries **3 fitted autocannons**, and 0331 had just split its `combat_power` three ways to feed them |
+| 2 | **Every enemy in a wave spawned on one identical point** — both spawn arms inserted all N at the engagement anchor | every prod encounter that ever held enemies holds them at **exactly 1 distinct position** |
+| 3 | **Retreating spawned a fresh wave** that shot at a fleet which could not shoot back — the offense gate silences the player only, and the spawn block had no status guard | **4 prod encounters died inside the retreat window** (3.4 / 4.6 / 4.8 / 5.8 s in), each → `defeat` → `total_rewards_json = '{}'` |
+| 4 | The **four terminal arms were unconfined raise sites** — `fleet_destroy` and `presence_complete` both raise on a status mismatch, before their arm's own status write, so a mismatch rolled back the tick *including* `last_resolved_at` and retried identically, forever, silently | structural; only 0310's auto-exit arm already carried a subtransaction |
+| 5 | **Three of four arms leaked `fleets.retreat_target_*`** — only the settle arm cleared it, while its own header states the invariant that it is always consumed | structural |
+| 6 | **The actor loop order was heap order** — the population freeze had no `ORDER BY`, so *who fires first* was nondeterministic, and with sequential damage that decides whose shots are wasted | structural; any determinism harness over this tick was unsound |
+| 7 | **A longer gun silently disabled a shorter one** — the freeze carried `my_range = max(range)` and the mover uses that for both the close decision and the kite cap, while the fire gate is per weapon | latent (no prod ship carries two weapon *types* yet; the Mk-II is craftable) |
+| 8 | **The highest-difficulty site was an unwinnable standoff** — at The Furnace (difficulty 60) the synthetic enemy range is `3.6 + 0.04·60 = 6.0` and the formation ring was 6.0, so the wave spawned INSIDE its own reach, kited on tick 1, and settled at `5.8 = enemy_range − player_speed`; the player's gun reaches 5 | **executed against the deployed `combat_unit_decide_move`**, read-only, at live knobs |
+
+**Four new leaves, each the one authority for one concept, each COMPOSED rather than copied:**
+`combat_formation_point` (where slot *k* of a formation ring sits — composed by both wave-spawn arms
+*and* by the encounter creator's escort ring, so the ring formula no longer exists twice),
+`combat_acquire_target` (the tick's own candidates/tier CTE, lifted whole, plus ONE liveness
+predicate — composed at first acquisition and at per-weapon re-acquisition),
+`fleet_consume_retreat_target` (read-and-clear, composed by all four arms),
+`combat_encounter_release` (the confined world-state release, composed by all four arms).
+
+**The knob is derived, not decreed.** `spatial_formation_ring_radius` is raised at apply time to
+`max(current, widest_synthetic_enemy_range + 1)`, computed from the live knobs and the live
+`locations.base_difficulty` — 6.0 → 7.0 on today's world, which clears all three Ember sites. It only
+ever raises. A future site that outgrows the ring fails the CI assertion instead of quietly becoming
+unwinnable.
+
+**Built with `scripts/gen-0336-combat-engine-repairs.mjs`** (the 16th generator): 17 hunks over two
+functions, every `old_t` sliced verbatim from the migration that owns its deployed text (0299 for the
+tick, 0315 for the escort ring), every `new_t` derived from that slice by `edit()`. Nothing retyped.
+All 17 were verified to occur **exactly once in the deployed production bodies** before the migration
+was written, and the whole rewrite was replayed locally against those bodies.
+
+### Also fixed here: the DANGER-ZONE proof's random failure
+
+`danger-combat-proof` failed and passed on **identical commits four times in one day**, always at
+`REPOSITION FAIL fixture: 1 unrelated active zone(s) also hold the engagement point (… Reaver)`,
+naming Reaver every time with a different uuid. Not a flake — a mechanism: the seeded pirate zones are
+regenerated on every fresh disposable database by a generator built on `random()` (0296:174-186 —
+12..24 vertices, 3..6 lobes, random phase, per-vertex jitter, radial wobble `0.6..1.5 ×
+territory_radius` modulated by `1 ± 0.18`), so a blob's reach is anywhere in
+`[0.492, 1.77] × territory_radius`. The ROSTERAUTH fixture's engagement point sits **18.03** units
+from Reaver's centre, whose max reach is **21.24** — inside that annulus.
+
+Fixed by making the proof **own its zone world**: a new `DZCOMBAT_PASS_OWNWORLD` block deactivates
+every non-drawn zone in-txn before any fixture geometry exists, so the only active zones are ones the
+file drew itself at coordinates it chose. The REPOSITION guard is untouched and stays exactly as
+strong — a real overlap still invalidates the property it proves.
 
 ---
 
