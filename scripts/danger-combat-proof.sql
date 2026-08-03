@@ -1671,6 +1671,14 @@ begin
     from public.combat_units cu where cu.encounter_id = v_enc and cu.side = 'player'
    order by cu.id limit 1;
   if off_x is null then raise exception 'REPOSITION FAIL: the fixture''s player unit has no position — every rigidity assert would be vacuous'; end if;
+  -- ENEMY MOTION IS MEASURED TICK-TO-TICK, not against the pre-order world. This encounter is
+  -- NEVER-TICKED when the order is given, so its first wave does not exist yet — a snapshot taken
+  -- before the order holds ZERO enemy rows, and "did an enemy move?" asked against it is answered by
+  -- the fixture rather than by the engine. (That is exactly how the first cut of this block failed:
+  -- red on a correct system.) So the comparison walks forward, one tick at a time, from the first
+  -- world in which enemies exist at all.
+  create temp table dz_repo_e (id uuid primary key, pos_x double precision, pos_y double precision) on commit drop;
+  n_enemy_moved := 0;
   prev_x := e0x; prev_y := e0y;
   for i in 1 .. v_ticks loop
     perform pg_temp.ae_tick(v_enc);
@@ -1701,6 +1709,15 @@ begin
        and (abs((cu.pos_x - e.engagement_x) - off_x) > 1e-6 or abs((cu.pos_y - e.engagement_y) - off_y) > 1e-6);
     if n <> 0 then
       raise exception 'REPOSITION FAIL: after step % , % player unit(s) sit at a different offset from the anchor — the fleet is dissolving into individual ships instead of moving as one body', i, n; end if;
+    -- how many enemy rows moved between the previous tick and this one, accumulated across the run
+    select count(*) into n
+      from dz_repo_e b join public.combat_units cu on cu.id = b.id
+     where cu.pos_x is distinct from b.pos_x or cu.pos_y is distinct from b.pos_y;
+    n_enemy_moved := n_enemy_moved + n;
+    delete from dz_repo_e;
+    insert into dz_repo_e (id, pos_x, pos_y)
+      select cu.id, cu.pos_x, cu.pos_y from public.combat_units cu
+       where cu.encounter_id = v_enc and cu.side = 'enemy' and cu.alive_count > 0;
     prev_x := e.engagement_x; prev_y := e.engagement_y;
   end loop;
 
@@ -1723,13 +1740,16 @@ begin
 
   -- ── 7. THE ENEMY RESPONDED. Pirate rows are never translated by the reposition — they move under
   -- ── their OWN mover, which is what stops a walking fleet from becoming unreachable.
-  select count(*) into n_enemy_moved
-    from dz_repo_u1 b join public.combat_units cu on cu.id = b.id
-   where b.encounter_id = v_enc and b.side = 'enemy'
-     and (cu.pos_x is distinct from b.pos_x or cu.pos_y is distinct from b.pos_y);
+  -- n_enemy_moved was accumulated tick-to-tick inside the loop. Zero enemy rows and zero enemy
+  -- MOTION are different failures and get different diagnoses: the first says the fixture never
+  -- fielded an opponent, the second says the engine let a fleet walk out of a fight unchallenged.
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n = 0 then
+    raise exception 'REPOSITION FAIL: the fight fielded NO enemy rows across % tick(s) — there was nothing that could have responded, so this property would pass vacuously', v_ticks; end if;
   if n_enemy_moved = 0 then
-    raise exception 'REPOSITION FAIL: not one enemy row moved across the whole journey — a fleet that walks away would be unreachable by standing still'; end if;
-  -- and no OTHER fight in the world was touched
+    raise exception 'REPOSITION FAIL: none of the % enemy row(s) moved on any tick of the journey — a fleet that walks away would be unreachable by standing still', n; end if;
+  -- and no OTHER fight in the world was touched (dz_repo_u1 is the pre-order world; every row of it
+  -- that belongs to another encounter must still be exactly where it was)
   select count(*) into n
     from dz_repo_u1 b join public.combat_units cu on cu.id = b.id
    where b.encounter_id <> v_enc
