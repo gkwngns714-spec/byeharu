@@ -3921,6 +3921,15 @@ declare
   v_live_eff double precision; v_dist double precision;
   v_esc uuid; v_esc_hp double precision; v_tgt uuid; v_hit_unit uuid;
   ax double precision; ay double precision; v_gap double precision;
+  -- 0336: a wave arrives at (measured extent + its OWN range + 1), so it is outside its own reach on
+  -- the tick it spawns and a mutual exchange CANNOT happen on tick 1 — at any knob value. Both arms
+  -- therefore stage equal reach on the two sides, let them close, and OBSERVE the exchange tick.
+  k_perd double precision; k_ring double precision;
+  k_espd double precision; k_espdd double precision; k_pspd double precision;
+  v_reach double precision;            -- the ONE reach both sides carry, owned by this block
+  v_pre double precision;              -- the PRE-MOVE distance the engine's own fire gate evaluated
+  v_margin double precision;           -- reach - that distance: must be strictly positive, and named
+  i int; v_tgt2 uuid;
 begin
   -- ── OWN every knob this block reads back, and capture it for restore. ───────────────────────────
   k_hp   := coalesce(public.cfg_num('enemy_hp_base'), 14);
@@ -3931,6 +3940,11 @@ begin
   k_hvar := coalesce(public.cfg_num('combat_hit_variance_pct'), 0);
   k_ecd  := coalesce(public.cfg_num('enemy_synthetic_cooldown_seconds'), 0);
   k_pcd  := coalesce(public.cfg_num('combat_player_fallback_weapon_cooldown_seconds'), 0);
+  k_perd := coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 0.04);
+  k_ring := coalesce(public.cfg_num('spatial_formation_ring_radius'), 30);
+  k_espd := coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6);
+  k_espdd:= coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04);
+  k_pspd := coalesce(public.cfg_num('combat_player_speed_scale'), 0.2);
   v_defb := coalesce(public.cfg_num('defense_curve_base'), 100);
   if v_defb <= 0 then raise exception 'DEADFIRE FAIL: defense_curve_base is % — the mitigation arithmetic below has no base', v_defb; end if;
   -- OWN the determinism world rather than inherit it (the proofs-never-assert-ambient-defaults law):
@@ -3941,6 +3955,39 @@ begin
   perform public.set_game_config('combat_hit_variance_pct',                       '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_cooldown_seconds',              '0'::jsonb);
   perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+  -- ── 0336: EQUAL REACH ON BOTH SIDES, OWNED — AND WHY A TICK-1 EXCHANGE IS NOW IMPOSSIBLE ────────
+  -- Both arms of this block need the two sides to fire AT EACH OTHER on one tick. Before 0336 that
+  -- was free: every enemy was inserted ON the engagement anchor, i.e. on top of the lead, at distance
+  -- 0 and inside every seeded range. 0336 spawns a wave at (the MEASURED player-formation extent +
+  -- THAT wave's own weapon range + 1), so the wave is outside its OWN reach on the tick it arrives —
+  -- BY CONSTRUCTION, at every knob value. Solving the geometry says there is no rescue: with the
+  -- escort at radius `ext` and the wave at `ext + r + 1` half a slot round, an exchange at spawn would
+  -- need `2*(ext + r + 1)*(ext*(1 - cos(pi/8)) + 1) <= 2*ext + 1`, i.e. a wave radius under ~4.5 when
+  -- the radius is at least `ext + 1`. A tick-1 exchange is not tunable, it is gone.
+  -- SO BOTH ARMS CLOSE FIRST, and this is what makes the close CONVERGE rather than turn into a
+  -- chase: the two sides are given the SAME reach, so neither can out-range the other and neither
+  -- takes combat_unit_decide_move's KITE arm. The per-difficulty term is zeroed so that reach is one
+  -- constant rather than a value that drifts with whichever site the ambush resolves to — which is
+  -- exactly what put arm A on a knife edge (see its own header). All three restored at the end.
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty',          '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_base',                   '60'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_range',          '60'::jsonb);
+  v_reach := 60;
+  -- ── AND THE APPROACH IS MADE TO OVERSHOOT THE CLEARANCE, NOT LAND ON IT ─────────────────────────
+  -- The clearance the wave must cross is exactly 1 (the structural `+ 1`). At the SEEDED knobs and
+  -- this site's difficulty of 10 the wave's closing step is 0.6 + 0.04*10 = 1.0 — the SAME 1 — so it
+  -- came to rest exactly on its own range edge and every comparison against that edge became a
+  -- coin flip on the last ulp of a sqrt. That is not a rounding problem to paper over with an
+  -- epsilon; it is a fixture standing on a boundary. The wave is given a step of 2 instead, and made
+  -- independent of whichever site the ambush resolves to, so it crosses the clearance in ONE tick and
+  -- comes to rest a whole unit INSIDE reach — a margin this block then measures and asserts.
+  -- THE HULLS HOLD, for the same reason RSFEEL's does: a hull that moves breaks the symmetry of a
+  -- ring, and arm B needs all six pirates equidistant from both hulls so that "everyone fires on one
+  -- tick" is a property of the staging rather than of which arc a hull happened to drift toward. A
+  -- frozen hull still fires; nothing in either arm is about player movement. All three restored below.
+  perform public.set_game_config('enemy_synthetic_speed_base',                    '2'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty',          '0'::jsonb);
+  perform public.set_game_config('combat_player_speed_scale',                     '0'::jsonb);
 
   -- ══ (A) THE MUTUAL KILL ════════════════════════════════════════════════════════════════════════
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -3991,8 +4038,32 @@ begin
   select id into v_encA from public.combat_encounters where player_id = uA and status = 'active';
   if v_encA is null then raise exception 'DEADFIRE FAIL: the ambush opened no encounter for A'; end if;
 
-  -- the ONE hull is its own lead (0315), so it stands ON the anchor and the wave spawns ON it too:
-  -- distance 0, inside every seeded range, and the fight opens on tick 1.
+  -- ── 0336 RE-PREMISED: THE WAVE NO LONGER SPAWNS ON THE HULL, SO THE KILL IS NOT ON TICK 1 ───────
+  -- WHAT THIS SAID, AND WHY IT WAS THE WHOLE BUG: "the ONE hull is its own lead (0315), so it stands
+  -- ON the anchor and the wave spawns ON it too: distance 0, inside every seeded range, and the fight
+  -- opens on tick 1." Every clause of that was true before 0336 and the first two are still true —
+  -- but the wave no longer spawns on the anchor. A lone hull IS its own lead, so the MEASURED
+  -- formation extent is 0, and the wave therefore lands at exactly (its own range + 1): one unit
+  -- outside its own reach, which is the structural clearance 0336 exists to establish.
+  -- WHAT THAT DID TO THIS FIXTURE, at the seeded knobs and this site's difficulty of 10:
+  --   • the wave spawned 5.0 away with its own range 4.0 — so it could NEVER fire, and the "mutual"
+  --     kill was not mutual: the hull shot it, and its silence proved nothing about 0317's liveness
+  --     guard because it was simply out of range. The block was VACUOUS, and the non-vacuity premise
+  --     that failed in CI was telling the truth about it.
+  --   • it then closed exactly its own speed (0.6 + 0.04*10 = 1.0) into exactly its own range
+  --     (3.6 + 0.04*10 = 4.0), because at D = 10 the closing step equals the +1 clearance EXACTLY.
+  --     The premise compared that post-tick distance against 4 and the sqrt landed one ulp over:
+  --     `4.00000000000001 > 4`. A zero-margin float comparison, and which side of it the run fell on
+  --     also depended on a uuid ordering (the wave moves only if it is processed before the hull).
+  -- THE FIX IS THE FIXTURE, NOT AN EPSILON. The two sides are given equal reach (owned above), so
+  -- neither can fire at spawn and neither kites; they CLOSE together and enter reach on the same
+  -- tick, and that tick is OBSERVED. The margin they enter with is measured and asserted STRICTLY
+  -- positive, so a future retune that lands on the boundary again fails with the number in the
+  -- message instead of on a coin flip.
+  -- AND THE PREMISE NOW READS THE DISTANCE THE ENGINE READ. The fire gate evaluates the FROZEN
+  -- PRE-MOVE distance; this block measured the POST-tick one. Before 0336 both were 0 and the
+  -- difference was invisible. It is captured before the tick now, which is a second, independent
+  -- correctness fix rather than a restaging detail.
   select count(*) into n from public.combat_units where encounter_id = v_encA and side = 'player';
   if n <> 1 then raise exception 'DEADFIRE FAIL: A fielded % player unit(s) (the mutual kill needs exactly 1)', n; end if;
   select hp_current, coalesce(shield_current, 0), coalesce(defense_snapshot, 0)
@@ -4027,8 +4098,51 @@ begin
   perform public.set_game_config('enemy_attack_base',
     to_jsonb(round((((3.0 * (v_php + v_pshield)) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
 
+  -- ── THE SPAWN TICK: the wave arrives, silent, and outside the reach of both sides. ─────────────
   perform pg_temp.ae_tick(v_encA);
-  select tick_number into v_tA from public.combat_encounters where id = v_encA;
+  select count(*) into n from public.combat_events
+   where encounter_id = v_encA and tick_number = 1 and event_type = 'missile_salvo';
+  if n <> 0 then
+    raise exception 'DEADFIRE FAIL: % salvo(s) on the spawn tick — with both sides at the owned reach % the wave arrives at (extent + its own range + 1), outside BOTH, so nothing can fire on the tick it appears', n, v_reach;
+  end if;
+  -- ── CLOSE UNTIL BOTH SIDES ARE IN REACH, then take THAT tick as the mutual-kill tick. The exit
+  --    condition is the OBSERVATION (a salvo), never a tick count; the PRE-MOVE distance the fire
+  --    gate evaluated is captured on each pass, so the premise below reads what the engine read.
+  for i in 1 .. 12 loop
+    exit when v_tA is not null;
+    if (select status from public.combat_encounters where id = v_encA) <> 'active' then
+      raise exception 'DEADFIRE FAIL: A''s encounter left ''active'' during the approach — the mutual kill never happened and this block observed nothing';
+    end if;
+    select public.osn_distance(a.pos_x, a.pos_y, b.pos_x, b.pos_y) into v_pre
+      from public.combat_units a, public.combat_units b
+     where a.encounter_id = v_encA and a.side = 'player'
+       and b.encounter_id = v_encA and b.side = 'enemy';
+    if v_pre is null then
+      raise exception 'DEADFIRE FAIL: the pre-move distance between the two units is NULL on the approach — an unpositioned fight cannot prove either side was in reach';
+    end if;
+    perform pg_temp.ae_tick(v_encA);
+    select tick_number into v_tA from public.combat_encounters ce
+     where ce.id = v_encA
+       and exists (select 1 from public.combat_events ev
+                    where ev.encounter_id = v_encA and ev.tick_number = ce.tick_number
+                      and ev.event_type = 'missile_salvo');
+  end loop;
+  if v_tA is null then
+    raise exception 'DEADFIRE FAIL: neither side fired within 12 ticks of the spawn — at the owned reach % the two sides never closed into it, so there is no mutual-kill tick to measure', v_reach;
+  end if;
+  -- NON-VACUITY: the spawn tick is pinned silent above, so the exchange must be strictly later.
+  if v_tA < 2 then
+    raise exception 'DEADFIRE FAIL: the exchange is recorded on tick % — the spawn tick was pinned silent, so this block observed no approach at all', v_tA;
+  end if;
+  -- THE MARGIN, NAMED. v_pre is the FROZEN PRE-MOVE distance of the tick that fired — the very
+  -- quantity combat_unit_decide_move and the fire gate evaluated. Both sides carry v_reach, so both
+  -- were inside it by exactly this much. A future retune that lands the approach ON the boundary
+  -- fails HERE, with the number, instead of on the last ulp of a sqrt.
+  v_margin := v_reach - v_pre;
+  if v_margin <= 0 then
+    raise exception 'DEADFIRE FAIL: the exchange tick opened at a pre-move distance of % against a reach of % — margin %, so the mutual kill sits exactly on the range boundary and which side of it a run falls on is a rounding accident, not a property',
+      v_pre, v_reach, v_margin;
+  end if;
   select count(*) into n_units from public.combat_units where encounter_id = v_encA and side = 'enemy';
   if n_units <> 1 then
     raise exception 'DEADFIRE FAIL: % pirate unit(s) spawned into the mutual kill (want the danger-derived 1)', n_units;
@@ -4080,13 +4194,16 @@ begin
     into v_dead_pow, v_dead_rng
     from public.combat_units u, jsonb_array_elements(u.weapons_json) w
    where u.id = v_dead;
-  select public.osn_distance(a.pos_x, a.pos_y, b.pos_x, b.pos_y) into v_dist
-    from public.combat_units a, public.combat_units b where a.id = v_dead and b.id = v_live;
+  -- THE DISTANCE THE ENGINE ITSELF EVALUATED. The fire gate reads the FROZEN PRE-MOVE distance, and
+  -- v_pre is that quantity, captured before the tick that fired. Reading the POST-tick distance here
+  -- (what this line used to do) compares against a number the fire decision never saw — invisible
+  -- while the wave spawned at distance 0 and nothing moved, wrong the moment 0336 made units close.
+  v_dist := v_pre;
   if v_dead_pow is null or v_dead_rng is null or v_dist is null or v_live_eff is null then
     raise exception 'DEADFIRE FAIL: the loser''s weapon (% power / % range), the distance (%) or the survivor''s pool (%) is NULL — the loser could not have killed its target anyway would be unprovable', v_dead_pow, v_dead_rng, v_dist, v_live_eff;
   end if;
   if v_dist > v_dead_rng then
-    raise exception 'DEADFIRE FAIL: the loser was out of range (% > %) — the loser could not have killed its target anyway, so its silence proves nothing', v_dist, v_dead_rng;
+    raise exception 'DEADFIRE FAIL: the loser was out of range (% > %) at the PRE-MOVE distance the fire gate evaluated — the loser could not have killed its target anyway, so its silence proves nothing', v_dist, v_dead_rng;
   end if;
   v_would := v_dead_pow * (case when v_live_side = 'player' then v_defb / (v_defb + v_live_def) else 1 end);
   if v_would < v_live_eff then
@@ -4096,12 +4213,16 @@ begin
   v_pwA := v_pw;   -- A's own weapon power, kept for the notice (B re-uses v_pw for its own fleet)
 
   -- ══ (B) THE LIVING STILL ACT, AND THE FREEZE SURVIVES ══════════════════════════════════════════
-  -- Two hulls, six pirates, exactly one pirate dying. The ranges are OWNED here: the escort spawns on
-  -- the formation ring, which the seeded post-0316 ranges deliberately exceed (that is 0313/0316's
-  -- CLOSURE property, proven above and not re-litigated) — this block needs everyone firing on tick 1
-  -- instead, so it sets both ranges wide and restores them.
-  perform public.set_game_config('combat_player_fallback_weapon_range', '60'::jsonb);
-  perform public.set_game_config('enemy_synthetic_range_base',          '60'::jsonb);
+  -- Two hulls, six pirates. The equal reach both sides carry is owned ONCE at the top of this block
+  -- (one authority, not a second copy here), and this arm adds the one thing it needs on top: a ring
+  -- of ZERO, so both hulls stand ON the anchor and the MEASURED formation extent is 0.
+  -- WHY THE RING, AND WHY IT IS NOT COSMETIC: 0336 lays the wave out at (extent + its own range + 1)
+  -- and the escort sits on the ring, so with a ring the escort-to-wave gap is a CHORD between two
+  -- different radii — bigger than the wave's own reach at every radius (the inequality in this
+  -- block's header has no solution), and different for each hull, so "everyone fires on the same
+  -- tick" would be false by construction. At extent 0 every hull is exactly (reach + 1) from every
+  -- pirate, all six gaps are equal, and the whole field enters reach together. Restored at the end.
+  perform public.set_game_config('spatial_formation_ring_radius', '0'::jsonb);
 
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
@@ -4169,18 +4290,24 @@ begin
   if v_esc is null or v_esc_hp is null or v_esc_hp <= 0 then
     raise exception 'DEADFIRE FAIL: B has no screened escort to absorb the volley (% / %)', v_esc, v_esc_hp;
   end if;
-  -- GEOMETRY PREMISE, owned rather than assumed: the pirates spawn ON the engagement anchor and the
-  -- escort spawns on the formation ring, so the ring IS the gap both the escort's gun and every
-  -- pirate's gun must cover for tick 1 to be a full exchange. NULL-pinned (the 0313 law): a missing
+  -- GEOMETRY PREMISE, REPOINTED (0336). It used to read: "the pirates spawn ON the engagement anchor
+  -- and the escort spawns on the formation ring, so the ring IS the gap both guns must cover for tick
+  -- 1 to be a full exchange", and it measured the escort's distance from the ANCHOR against 60. Both
+  -- halves died with 0336: the pirates do not spawn on the anchor, so the ring is not the gap; and
+  -- the gap that matters is hull-to-WAVE, not hull-to-anchor. What this arm needs instead is that
+  -- every hull stands at the SAME distance from the wave — which the owned ring of 0 establishes —
+  -- so that the whole field enters reach on one tick. NULL-pinned (the 0313 law): a missing
   -- coordinate would make this premise pass while proving nothing.
   select engagement_x, engagement_y into ax, ay from public.combat_encounters where id = v_encB;
-  select public.osn_distance(ax, ay, u.pos_x, u.pos_y) into v_gap
-    from public.combat_units u where u.id = v_esc;
+  select max(public.osn_distance(ax, ay, u.pos_x, u.pos_y)) into v_gap
+    from public.combat_units u
+   where u.encounter_id = v_encB and u.side = 'player' and u.alive_count > 0
+     and u.pos_x is not null and u.pos_y is not null;
   if ax is null or ay is null or v_gap is null then
-    raise exception 'DEADFIRE FAIL: B''s anchor (%,%) or its escort''s spawn gap (%) is NULL — an unpositioned fight cannot prove everyone was in range', ax, ay, v_gap;
+    raise exception 'DEADFIRE FAIL: B''s anchor (%,%) or its measured formation extent (%) is NULL — an unpositioned fight cannot prove everyone was in reach', ax, ay, v_gap;
   end if;
-  if v_gap >= 60 then
-    raise exception 'DEADFIRE FAIL: B''s escort spawned % units out, at or beyond the 60-unit range this block owns — the formation grew and tick 1 would no longer be a full exchange', v_gap;
+  if v_gap <> 0 then
+    raise exception 'DEADFIRE FAIL: B''s measured formation extent is % (want 0 — the ring this arm owns) — with any spread the hull-to-wave gap is a different chord per hull and "everyone fires on one tick" is false by construction, not by regression', v_gap;
   end if;
   select min((w->>'power')::double precision) into v_pw
     from public.combat_units u, jsonb_array_elements(u.weapons_json) w
@@ -4213,32 +4340,76 @@ begin
   perform public.set_game_config('enemy_attack_base',
     to_jsonb(round((((0.1 * v_esc_hp) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
 
+  -- ── THE SPAWN TICK IS SILENT HERE TOO, THEN THE WHOLE FIELD CLOSES INTO REACH TOGETHER. ────────
   perform pg_temp.ae_tick(v_encB);
-  select tick_number into v_tB from public.combat_encounters where id = v_encB;
+  select count(*) into n from public.combat_events
+   where encounter_id = v_encB and tick_number = 1 and event_type = 'missile_salvo';
+  if n <> 0 then
+    raise exception 'DEADFIRE FAIL: % salvo(s) on B''s spawn tick — at extent 0 the whole wave arrives at (its own range + 1) from every hull, outside BOTH sides'' reach %, so nothing can fire on the tick it appears', n, v_reach;
+  end if;
+  for i in 1 .. 12 loop
+    exit when v_tB is not null;
+    if (select status from public.combat_encounters where id = v_encB) <> 'active' then
+      raise exception 'DEADFIRE FAIL: B''s encounter left ''active'' during the approach — the exchange never happened and this arm observed nothing';
+    end if;
+    perform pg_temp.ae_tick(v_encB);
+    select tick_number into v_tB from public.combat_encounters ce
+     where ce.id = v_encB
+       and exists (select 1 from public.combat_events ev
+                    where ev.encounter_id = v_encB and ev.tick_number = ce.tick_number
+                      and ev.event_type = 'missile_salvo');
+  end loop;
+  if v_tB is null then
+    raise exception 'DEADFIRE FAIL: B''s field never fired within 12 ticks of the spawn — at the owned reach % the two sides never closed into it', v_reach;
+  end if;
+  if v_tB < 2 then
+    raise exception 'DEADFIRE FAIL: B''s exchange is recorded on tick % — the spawn tick was pinned silent, so this arm observed no approach at all', v_tB;
+  end if;
   select count(*) into n_units from public.combat_units where encounter_id = v_encB and side = 'enemy';
   if n_units <> n_exp then
     raise exception 'DEADFIRE FAIL: % pirate unit(s) spawned into B (want the danger-derived %)', n_units, n_exp;
   end if;
 
-  -- exactly ONE pirate died, and no player hull did (the fight is still a fight).
+  -- ── 0336 REVERSED THIS PAIR OF CLAUSES DELIBERATELY, AND THEY ARE REPOINTED, NOT RELAXED ────────
+  -- This arm asserted that the two hulls BOTH fired at the ONE pirate the frozen snapshot named, that
+  -- only ONE of the two shots landed, and that exactly ONE pirate died — "the corpse shot that proves
+  -- targeting was not re-read". 0336 says the opposite IN ITS OWN WORDS: its hunk 13 quotes 0317's
+  -- "rather than silently re-acquiring — simultaneity is preserved" and answers "That is no longer
+  -- true, and it should not have been the rule", because a shot thrown away on a corpse is the very
+  -- defect (its #1) that slice was written to end. Targeting now asks for a LIVE target at BOTH
+  -- acquisition sites, so the second hull re-aims instead of shooting a body.
+  -- WHAT IS STILL SIMULTANEOUS, AND IS WHAT THIS ARM NOW PINS: POSITION. Every unit resolves its
+  -- target and its close/kite decision from the frozen pre-move world — that is the freeze, and it
+  -- survives. So the repointed claim is STRONGER than the corpse shot: two hulls firing produce TWO
+  -- landed hits on TWO DISTINCT live pirates and TWO kills — no shot is wasted — while every pirate
+  -- that survives still takes its own turn.
   select count(*) into n from public.combat_events
    where encounter_id = v_encB and tick_number = v_tB and event_type = 'unit_destroyed';
-  if n <> 1 then
-    raise exception 'DEADFIRE FAIL: % pirate(s) destroyed in B''s tick (want exactly 1 — two player guns firing at the ONE snapshot-named target)', n;
+  if n <> 2 then
+    raise exception 'DEADFIRE FAIL: % pirate(s) destroyed in B''s exchange tick (want exactly 2 — two hulls, each sized to one-shot a pirate, and 0336 re-aims the second onto a LIVE target instead of throwing it away on the corpse)', n;
   end if;
   select (payload_json->>'unit_id')::uuid into v_tgt from public.combat_events
-   where encounter_id = v_encB and tick_number = v_tB and event_type = 'unit_destroyed';
-  select side into v_live_side from public.combat_units where id = v_tgt;
-  if v_live_side is distinct from 'enemy' then
-    raise exception 'DEADFIRE FAIL: the unit destroyed in B is on side % (this scenario kills a pirate)', v_live_side;
+   where encounter_id = v_encB and tick_number = v_tB and event_type = 'unit_destroyed'
+   order by seq asc limit 1;
+  select (payload_json->>'unit_id')::uuid into v_tgt2 from public.combat_events
+   where encounter_id = v_encB and tick_number = v_tB and event_type = 'unit_destroyed'
+   order by seq desc limit 1;
+  if v_tgt is null or v_tgt2 is null or v_tgt = v_tgt2 then
+    raise exception 'DEADFIRE FAIL: B''s two kills name % and % — two shots must land on two DISTINCT pirates, or the second gun was still aimed at the first one''s corpse', v_tgt, v_tgt2;
   end if;
+  select count(*) into n from public.combat_units
+   where id in (v_tgt, v_tgt2) and side = 'enemy';
+  if n <> 2 then
+    raise exception 'DEADFIRE FAIL: B destroyed a unit that is not a pirate (% of 2 named rows are enemy) — this scenario kills pirates', n;
+  end if;
+  select side into v_live_side from public.combat_units where id = v_tgt;
   select count(*) into n from public.combat_units
    where encounter_id = v_encB and side = 'player' and alive_count = 0;
   if n <> 0 then
     raise exception 'DEADFIRE FAIL: % player hull(s) died in B''s tick — the volley was sized not to, and the survivors assert below would be measuring a different fight', n;
   end if;
 
-  -- THE FREEZE SURVIVES: both hulls fired, at the SAME pirate, and only ONE of the two landed.
+  -- THE FREEZE SURVIVES WHERE IT IS REAL — IN POSITION — AND NO SHOT IS WASTED.
   select count(*) into n from public.combat_events
    where encounter_id = v_encB and tick_number = v_tB and event_type = 'missile_salvo' and source = 'player';
   if n <> 2 then
@@ -4246,14 +4417,29 @@ begin
   end if;
   select count(*) into n from public.combat_events
    where encounter_id = v_encB and tick_number = v_tB and event_type = 'missile_salvo' and source = 'player'
-     and (payload_json->>'target_id')::uuid = v_tgt;
+     and (payload_json->>'target_id')::uuid in (v_tgt, v_tgt2);
   if n <> 2 then
-    raise exception 'DEADFIRE FAIL: only % of 2 player shots aimed at the snapshot-named pirate — the second shooter re-acquired a live target, so the population freeze was re-read and simultaneity is gone', n;
+    raise exception 'DEADFIRE FAIL: only % of 2 player shots named one of the two pirates that died — a shot went somewhere other than the target it is credited with killing', n;
+  end if;
+  select count(distinct payload_json->>'target_id') into n from public.combat_events
+   where encounter_id = v_encB and tick_number = v_tB and event_type = 'missile_salvo' and source = 'player';
+  if n <> 2 then
+    raise exception 'DEADFIRE FAIL: B''s two hulls named % distinct target(s) (want 2) — the second gun was still aimed at the first one''s corpse, which is the wasted shot 0336 exists to end', n;
   end if;
   select count(*) into n from public.combat_events
    where encounter_id = v_encB and tick_number = v_tB and event_type = 'hull_damage' and target = 'pirate';
+  if n <> 2 then
+    raise exception 'DEADFIRE FAIL: % landed hit(s) on the pirate side (want exactly 2 — every shot must reach a LIVE target; a shot that lands on a corpse and deals nothing is the pre-0336 waste)', n;
+  end if;
+  -- POSITION SIMULTANEITY, which IS what the freeze still guarantees: both hulls stand on the anchor
+  -- and every surviving pirate is the same distance from them, so no hull gained ground by being
+  -- processed earlier in the loop.
+  select count(distinct round(public.osn_distance(ax, ay, u.pos_x, u.pos_y)::numeric, 9)) into n
+    from public.combat_units u
+   where u.encounter_id = v_encB and u.side = 'enemy' and u.alive_count > 0
+     and u.pos_x is not null and u.pos_y is not null;
   if n <> 1 then
-    raise exception 'DEADFIRE FAIL: % landed hit(s) on the pirate side (want exactly 1 — the second shot must land on a corpse and deal nothing)', n;
+    raise exception 'DEADFIRE FAIL: the surviving pirates stand at % distinct radii from the anchor (want 1) — they all closed from one frozen snapshot at one speed, so a spread means a unit moved on a position another unit had already changed', n;
   end if;
 
   -- THE LIVING STILL ACT: every pirate still alive after the tick fired exactly once in it.
@@ -4307,13 +4493,19 @@ begin
   perform public.set_game_config('enemy_attack_base',                   to_jsonb(k_atk));
   perform public.set_game_config('combat_player_fallback_weapon_range', to_jsonb(k_frng));
   perform public.set_game_config('enemy_synthetic_range_base',          to_jsonb(k_erng));
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', to_jsonb(k_perd));
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_espd));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_espdd));
+  perform public.set_game_config('combat_player_speed_scale',            to_jsonb(k_pspd));
   perform public.set_game_config('combat_damage_variance_pct',                     to_jsonb(k_dvar));
   perform public.set_game_config('combat_hit_variance_pct',                        to_jsonb(k_hvar));
   perform public.set_game_config('enemy_synthetic_cooldown_seconds',               to_jsonb(k_ecd));
   perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', to_jsonb(k_pcd));
 
-  raise notice 'DZCOMBAT_PASS_DEADFIRE ok: in a MUTUAL one-shot kill (hull power %, pirate power %, distance %, both inside range) the tick produced exactly ONE salvo, ONE landed hit and ONE destroyed unit — the loser (side %) emitted nothing and dealt nothing even though its own weapon would have dealt % against the survivor''s % hull+shield; and in a % -pirate wave exactly one pirate died while all % survivors still fired and BOTH hulls still fired at the pirate the FROZEN snapshot named, only one of those two shots landing — the corpse shot that proves targeting was not re-read; across both fights, zero attack events were emitted after the event that destroyed their firer',
-    v_pwA, v_dead_pow, v_dist, (select side from public.combat_units where id = v_dead), v_would, v_live_eff, n_units, n_alive;
+  raise notice 'DZCOMBAT_PASS_DEADFIRE ok: both sides carried the same OWNED reach %, so 0336''s structural clearance made the spawn tick SILENT on both sides and they CLOSED into reach together — the MUTUAL one-shot kill landing on tick % at a FROZEN PRE-MOVE distance of % (margin % inside that reach, measured not assumed), where the tick produced exactly ONE salvo, ONE landed hit and ONE destroyed unit: the loser (side %) emitted nothing and dealt nothing even though its own weapon (power %, hull power %) would have dealt % against the survivor''s % hull+shield; and in a % -pirate wave at extent 0, tick % saw TWO hulls kill TWO DISTINCT pirates with TWO landed hits — every shot re-aimed onto a LIVE target rather than wasted on a corpse (0336''s own reversal of the pre-0336 corpse shot) — while all % survivors still fired and still stood at ONE radius, the position freeze that IS still simultaneous; across both fights, zero attack events were emitted after the event that destroyed their firer',
+    v_reach, v_tA, v_dist, v_margin, (select side from public.combat_units where id = v_dead),
+    v_dead_pow, v_pwA, v_would, v_live_eff, n_units, v_tB, n_alive;
 end $$;
 
 -- ── WHY THIS BLOCK IS LAST IN THE FILE ─────────────────────────────────────────────────────────

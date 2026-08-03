@@ -524,10 +524,33 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks the survivor-is-unhit assert"
   grep -q "a living unit went silent"                             "$SQL" \
     || fail "harness lacks the survivors-still-act assert (the failure mode where 0317 goes green by silencing everybody)"
-  grep -q "the second shooter re-acquired a live target"          "$SQL" \
-    || fail "harness lacks the frozen-snapshot assert (0317 must re-read the ACTOR's liveness only, never the population)"
-  grep -q "the second shot must land on a corpse and deal nothing" "$SQL" \
-    || fail "harness lacks the corpse-shot assert (the positive proof that targeting was not re-read)"
+  # ── 0336 REVERSED THE CORPSE SHOT ON PURPOSE, SO THIS PAIR IS REPOINTED, NOT RELAXED ───────────
+  # Arm B asserted that the second hull kept firing at the pirate the frozen snapshot named and that
+  # its shot landed on the corpse for nothing — "the positive proof that targeting was not re-read".
+  # 0336's hunk 13 quotes 0317's own wording and answers "That is no longer true, and it should not
+  # have been the rule": a shot thrown away on a corpse is the defect that slice was written to end,
+  # so targeting asks for a LIVE target at BOTH acquisition sites. What still IS simultaneous is
+  # POSITION, and that is what the repoint pins instead — a strictly stronger claim, because no shot
+  # is wasted: two hulls produce two landed hits on two DISTINCT live pirates and two kills.
+  grep -q "which is the wasted shot 0336 exists to end"           "$SQL" \
+    || fail "harness lacks the no-wasted-shot assert (0336's reversal of the corpse shot: the second gun must RE-AIM onto a live target)"
+  grep -q "two shots must land on two DISTINCT pirates"           "$SQL" \
+    || fail "harness lacks the two-distinct-kills assert (arm B's repointed freeze claim)"
+  grep -q "every shot must reach a LIVE target"                   "$SQL" \
+    || fail "harness lacks the every-shot-lands assert (a shot that lands on a corpse and deals nothing is the pre-0336 waste)"
+  grep -q "the surviving pirates stand at % distinct radii"       "$SQL" \
+    || fail "harness lacks arm B's POSITION-simultaneity pin (position is the half of the freeze 0336 kept, and it is what the corpse shot used to stand in for)"
+  # ── AND THE ZERO-MARGIN CLASS, NAMED ──────────────────────────────────────────────────────────
+  # DEADFIRE's non-vacuity premise compared a distance against a range with NO margin and CI caught
+  # it at `4.00000000000001 > 4`: 0336 had moved the wave from distance 0 to (extent + its own range
+  # + 1), and at this site's difficulty the wave's closing step is EXACTLY the +1 clearance, so it
+  # came to rest precisely on its own range edge. The fixture is re-staged with a whole unit of
+  # margin and the margin is now MEASURED and asserted, so a future retune that lands on the boundary
+  # fails with the number instead of on the last ulp of a sqrt.
+  grep -q "sits exactly on the range boundary"                    "$SQL" \
+    || fail "harness lacks DEADFIRE's named-margin assert (a premise resting on exact float equality is a coin flip, not a property)"
+  grep -q "at the PRE-MOVE distance the fire gate evaluated"      "$SQL" \
+    || fail "harness lacks DEADFIRE's pre-move distance repoint (the fire gate reads the FROZEN distance; measuring the post-tick one compares against a number the decision never saw)"
   grep -q "the dead unit fired after its own destruction"         "$SQL" \
     || fail "harness lacks the both-sides ordering invariant (no salvo at a seq later than the destruction event naming its firer)"
   grep -q "the ordering invariant would be vacuous"               "$SQL" \
