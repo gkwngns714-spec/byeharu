@@ -31,6 +31,13 @@ on:
     branches:
       - 'autopilot/**'
       - 'slice-worldeditor-zone-update**'
+      # 0318 rewrites zone_update (source := 'drawn' when it materializes an owner ring) and PROOF 12
+      # here is the ONLY layer that proves the end-to-end property — an owner-drawn boundary surviving
+      # a later location edit byte-identical, and a genuinely seeded zone still tracking its location.
+      # A branch-glob-only trigger that does not name this branch means the slice's own proof never
+      # runs on it: the exact failure mode that let combat-spatial and combat-fallback sit broken for
+      # three weeks (danger-combat-proof.yml:6-16 records it).
+      - 'slice-drawn-zones**'
 
 permissions:
   contents: read
@@ -83,6 +90,7 @@ jobs:
             PUBLISH_ZONE_UPD_PASS_NOT_FOUND \
             PUBLISH_ZONE_UPD_PASS_PIRATE_ZONE_LOCKDOWN_INTACT \
             PUBLISH_ZONE_UPD_PASS_GEOMETRY_ROUND_TRIP \
+            PUBLISH_ZONE_UPD_PASS_DRAWN_STAYS_DRAWN \
             'WORLD-EDITOR PUBLISH-ZONE-UPDATE PROOF PASSED'; do
             echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
           done

@@ -62,7 +62,7 @@ if [ "$MODE" = "selftest" ]; then
   # closed in BOTH directions: every scripts/gen-*.mjs on disk must be registered here (a new
   # generator can never again be silently ungated), and every registered generator must still exist
   # and pass (a deleted generator can never again be silently skipped). Neither half alone is enough.
-  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot"
+  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0318-drawn-zones-stay-drawn"
   if command -v node >/dev/null 2>&1; then
     # DIRECTION 1 — nothing on disk may be unregistered. This is the half that would have caught 0307
     # on the day the gate was written, and it needs no maintenance to keep working.
@@ -101,6 +101,12 @@ if [ "$MODE" = "selftest" ]; then
     # both. TEN generators now. gen-0317 carries the same two head checks in its own shape — no later
     # textual re-create, and no UNKNOWN later hunk surgery on the tick — so 0318 cannot cut a slice
     # from a head that has moved without failing here first.
+    # 0318 joins (UNION at the 0317/0318 merge — this list is APPENDED to, never replaced): it touches
+    # no combat function at all. It rewrites TWO hunks inside zone_update so a zone the owner DRAWS is
+    # flagged 'drawn' and permanently leaves 0296's derived-geometry regenerator selection. It is
+    # registered here anyway, and that is deliberate: this gate is the repo's ONLY runner of any
+    # generator's --check, and #360 closed it in BOTH directions, so an unregistered gen-*.mjs is now
+    # a HARD FAIL. The gate is about the METHOD, not about combat. ELEVEN generators now.
     for gen in $GENERATORS; do
       # A MISSING generator is a HARD FAIL, not a skip. The first version of this gate wrapped the
       # check in `if [ -f … ]; then … fi`, and adversarial review broke it empirically: hand-edit a

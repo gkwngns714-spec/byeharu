@@ -11,8 +11,11 @@
 -- validation_failed {invalid_geometry}); gates seeded (provenance='seeded') zones on
 -- `seeded_zone_edit_enabled` — DARK protects with a typed validation_failed {protected_zone}, LIT accepts
 -- the edit while provenance stays 'seeded' so the gate remains a genuine toggle (PROOF 7 proves BOTH
--- postures, txn-locally, and restores whatever posture the deployed chain ships); returns a typed
--- not_found/source_missing for a vanished target and
+-- postures, txn-locally, and restores whatever posture the deployed chain ships); CLAIMS a reshaped row
+-- for the AUTHORED writer by setting source='drawn' (0318), so an owner-drawn boundary survives a later
+-- edit of its location BYTE-IDENTICAL while a genuinely seeded source='circle' zone still TRACKS its
+-- location — PROOF 12 drives both directions through the real zone_update and location_update RPCs;
+-- returns a typed not_found/source_missing for a vanished target and
 -- invalid_request for a non-uuid target; touches ONLY danger_zones and leaves the 0239 pirate-zone
 -- lockdown intact.
 --
@@ -454,11 +457,14 @@ end $$;
 --               proves an untouched seed is protected, (c) proves an EDITED seed re-protects, which is
 --               the one-way-door risk 0282 exists to prevent.
 --
--- KNOWN SEAM, NOT ASSERTED HERE (named so nobody mistakes silence for a verdict): zone_update preserves
--- `source` bit-for-bit (0287:397-399), so a seeded 'circle' row hand-reshaped while the key is lit stays
--- source='circle' and 0296's rematerialize-on-location-edit writer will regenerate over the owner's
--- shape. 0296:63-70 states this seam and says the fix belongs to zone_update's own slice. This proof
--- therefore does NOT pin `source` after the lit edit — pinning it would cement the defect.
+-- THE SEAM THAT USED TO BE NAMED HERE IS CLOSED (0318). This block used to end with a paragraph saying
+-- zone_update preserved `source` bit-for-bit (0287:397-399), so a seeded 'circle' row reshaped while the
+-- key is lit stayed source='circle' and 0296's rematerialize-on-location-edit writer would regenerate
+-- over the owner's shape — and it deliberately did NOT pin `source` after the lit edit, because
+-- "pinning it would cement the defect". 0318 sets source='drawn' when zone_update materializes an owner
+-- ring, which is the fix 0296:66-68 wrote down. So pinning `source` now cements the FIX, and case (b)
+-- below does exactly that. The end-to-end property — the drawn shape SURVIVING a later location edit,
+-- and a genuinely seeded zone still tracking its own — is PROOF 12.
 do $$
 declare v_owner uuid; v_hostile uuid; v_id uuid; r jsonb; n int; v_row record;
         v_ambient boolean; v_posture text; v_rev text;
@@ -547,6 +553,12 @@ begin
   -- (0282's trigger) and zone_update never writes it, so the row is still protectable material.
   if v_row.provenance <> 'seeded' then
     raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: an accepted edit moved provenance to ''%'' — lighting the key would be a ONE-WAY DOOR, not a toggle', v_posture, v_row.provenance;
+  end if;
+  -- …and the GEOMETRY question is answered the other way (0318): the row now carries an owner-authored
+  -- ring, so it must say so and leave the derived writer's source='circle' selection for good. These
+  -- two assertions together ARE 0282's split: `provenance` did not move, `source` did.
+  if v_row.source <> 'drawn' then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: an accepted edit left source=''%'' — an owner-drawn ring stays inside 0296''s regenerator selection and the next location edit destroys it (0318)', v_posture, v_row.source;
   end if;
   select count(*) into n from public.world_editor_audit where request_id = 'zoneupd-seeded-lit-1';
   if n <> 1 then
@@ -788,6 +800,187 @@ begin
   end if;
 
   raise notice 'PUBLISH_ZONE_UPD_PASS_GEOMETRY_ROUND_TRIP';
+end $$;
+
+-- ── PROOF 12 (0318) — A ZONE THE OWNER DREW SURVIVES THE NEXT EDIT OF ITS LOCATION ─────────────────
+-- THE DEFECT THIS IS RED FOR. danger_zones.boundary has two writers:
+--   * zone_update — materializes the ring the OWNER drew;
+--   * danger_zone_rematerialize_for_location (0296:141) — regenerates a DERIVED polygon from the
+--     location's (x, y, territory_radius) with 0237's random() generator. It selects
+--     `where dz.source = 'circle'` (0296:169), and location_update fires it on every edit that moves
+--     one of those three inputs (0296:569-573).
+-- Before 0318, zone_update preserved `source` bit-for-bit, so an owner-reshaped SEEDED zone kept
+-- source='circle' and stayed inside the derived writer's selection. The next location edit replaced
+-- the owner's shape with a random blob — and random() has no inverse, so nothing brings it back.
+-- 0296:62-68 named this exact seam, wrote down this exact fix, and deferred it on the premise that
+-- "the flag being dark means no such row can exist today". seeded_zone_edit_enabled was lit by
+-- 0300:85-86, and on production such a row existed.
+--
+-- WHY THIS IS RED BY CONSTRUCTION ON THE PRE-0318 BODY, in two independent places:
+--   (b) `source` is still 'circle' after the owner's reshape — the classification never moved;
+--   (d) the boundary is NOT byte-identical after the location edit — the blob already landed.
+-- Neither can pass by accident: (d) compares ST_AsBinary, not an area or a vertex count.
+--
+-- AND THE CONVERSE, so the fix can never be "disable the regenerator" (case e): a genuinely seeded
+-- source='circle' zone the owner NEVER touched must STILL track its location. If 0318 had been
+-- implemented by weakening danger_zone_rematerialize_for_location instead of by making the two
+-- writers disjoint at the row, case (e) goes red.
+--
+-- Fixtures are built here and owned here: two hostile sites, two seeded zones, one edited and one not.
+-- The seeded_zone_edit_enabled pin is txn-local and restored, exactly as PROOF 7 does it.
+do $$
+declare
+  v_owner uuid; v_zone uuid;
+  v_locA uuid; v_locB uuid; v_zA uuid; v_zB uuid;
+  r jsonb; v_ambient boolean; v_lrow jsonb; v_exp jsonb; v_fields jsonb;
+  v_wkb_a bytea; v_wkb_b bytea; v_rev_a bigint; v_upd_a timestamptz; v_src_a text;
+begin
+  select v into v_owner from pubids where k = 'owner';
+  select id into v_zone from public.zones order by name limit 1;
+  if v_zone is null then
+    raise exception 'ZONE UPDATE PROOF SETUP FAIL [PROOF 12]: the seeded chain has no zones to host the fixtures';
+  end if;
+
+  -- ── fixtures: two ACTIVE hostile sites, each carrying a territory the generator can derive from ──
+  insert into public.locations
+      (zone_id, name, location_type, activity_type, x, y, reward_tier, base_difficulty,
+       min_power_required, is_public, territory_radius, status)
+    values (v_zone, 'ZUpd Drawn Stays A', 'pirate_hunt', 'hunt_pirates', 3000, 3000, 1, 1, 0, true, 100, 'active')
+    returning id into v_locA;
+  insert into public.locations
+      (zone_id, name, location_type, activity_type, x, y, reward_tier, base_difficulty,
+       min_power_required, is_public, territory_radius, status)
+    values (v_zone, 'ZUpd Drawn Stays B', 'pirate_hunt', 'hunt_pirates', 4000, 4000, 1, 1, 0, true, 100, 'active')
+    returning id into v_locB;
+
+  -- two SEEDED derived zones — the exact class 0233:215-221 creates and 0296's writer owns.
+  insert into public.danger_zones (name, zone_kind, source, provenance, location_id, boundary, status)
+    values ('ZUpd Drawn Stays Zone A', 'pirate', 'circle', 'seeded', v_locA,
+            ST_Buffer(ST_MakePoint(3000, 3000), 100, 32), 'active')
+    returning id into v_zA;
+  insert into public.danger_zones (name, zone_kind, source, provenance, location_id, boundary, status)
+    values ('ZUpd Drawn Stays Zone B', 'pirate', 'circle', 'seeded', v_locB,
+            ST_Buffer(ST_MakePoint(4000, 4000), 100, 32), 'active')
+    returning id into v_zB;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
+
+  -- ── (a) the owner reshapes zone A by hand (seeded editing pinned LIT, txn-locally) ───────────────
+  v_ambient := coalesce(public.cfg_bool('seeded_zone_edit_enabled'), false);
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_edit_enabled', 'true'::jsonb, 'proof-txn-local')
+    on conflict (key) do update set value = 'true'::jsonb;
+
+  r := public.zone_update('zoneupd-drawnstays-edit-1', jsonb_build_object(
+         'target_id', v_zA::text,
+         'source_revision', (select revision::text from public.danger_zones where id = v_zA),
+         'expected', jsonb_build_object('name','ZUpd Drawn Stays Zone A','zone_kind','pirate',
+           'attach_location_id', v_locA::text),
+         'fields', jsonb_build_object('name','ZUpd Drawn Stays Zone A','attach_location_id', v_locA::text,
+           'geometry', jsonb_build_object('kind','polygon','vertices', jsonb_build_array(
+             jsonb_build_object('x', 2900, 'y', 2900),
+             jsonb_build_object('x', 3140, 'y', 2905),
+             jsonb_build_object('x', 3120, 'y', 3130),
+             jsonb_build_object('x', 2960, 'y', 3160),
+             jsonb_build_object('x', 2870, 'y', 3020))))));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'ZONE UPDATE PROOF FAIL [PROOF 12(a)]: the owner reshape of a seeded zone was rejected: %', r;
+  end if;
+
+  -- ── (b) THE FIX ITSELF: materializing an owner ring CLAIMS the row for the authored writer ───────
+  select source into v_src_a from public.danger_zones where id = v_zA;
+  if v_src_a <> 'drawn' then
+    raise exception E'ZONE UPDATE PROOF FAIL [PROOF 12(b)]: zone_update materialized an OWNER-DRAWN ring but left source=''%''.\n'
+      '  MEANING: the row is still inside danger_zone_rematerialize_for_location''s selection\n'
+      '  (0296:169, where dz.source = ''circle''), so the next edit of its location will replace the\n'
+      '  owner''s shape with a random blob that cannot be recovered. 0296:66-68 names this exact fix.', v_src_a;
+  end if;
+  -- and the reshape did NOT launder the row's protection class (0282's immutable trigger, 0283's toggle)
+  if (select provenance from public.danger_zones where id = v_zA) <> 'seeded' then
+    raise exception 'ZONE UPDATE PROOF FAIL [PROOF 12(b)]: claiming the geometry moved provenance — source answers the GEOMETRY question only, never protection';
+  end if;
+
+  -- ── (c) move zone A's LOCATION through the real RPC — the writer that destroys the shape ─────────
+  select ST_AsBinary(boundary), revision, updated_at into v_wkb_a, v_rev_a, v_upd_a
+    from public.danger_zones where id = v_zA;
+  select ST_AsBinary(boundary) into v_wkb_b from public.danger_zones where id = v_zB;
+
+  -- `expected` and `fields` are derived from the LIVE row via to_jsonb — the exact representation
+  -- location_update compares against (0296:364-399) — so this case can never fail on a formatting
+  -- mismatch and mask the property it exists to prove.
+  select to_jsonb(l) into v_lrow from public.locations l where l.id = v_locA;
+  v_exp := jsonb_build_object(
+    'name', v_lrow->>'name', 'location_type', v_lrow->>'location_type',
+    'activity_type', v_lrow->>'activity_type', 'x', v_lrow->'x', 'y', v_lrow->'y',
+    'reward_tier', v_lrow->'reward_tier', 'base_difficulty', v_lrow->'base_difficulty',
+    'min_power_required', v_lrow->'min_power_required', 'is_public', v_lrow->'is_public',
+    'territory_radius', v_lrow->'territory_radius', 'status', v_lrow->>'status');
+  v_fields := v_exp || jsonb_build_object('x', to_jsonb(3300::double precision),
+                                          'y', to_jsonb(3300::double precision));
+
+  r := public.location_update('zoneupd-drawnstays-locmove-a', jsonb_build_object(
+         'target_id', v_locA::text, 'expected', v_exp, 'fields', v_fields));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'ZONE UPDATE PROOF FAIL [PROOF 12(c)]: the location move was rejected, so the property below was never exercised: %', r;
+  end if;
+  if (select x from public.locations where id = v_locA) <> 3300 then
+    raise exception 'ZONE UPDATE PROOF FAIL [PROOF 12(c)]: the location did not actually move — the regenerator''s trigger condition (0296:569-573) was never met';
+  end if;
+
+  -- ── (d) THE PROPERTY: the owner's boundary survived BYTE-IDENTICAL ───────────────────────────────
+  if (select ST_AsBinary(boundary) from public.danger_zones where id = v_zA) is distinct from v_wkb_a then
+    raise exception E'ZONE UPDATE PROOF FAIL [PROOF 12(d)]: the owner''s hand-drawn boundary was REGENERATED by the location edit.\n'
+      '  This is the irrecoverable case: 0237''s generator is random(), so the shape the owner drew is gone for good.\n'
+      '  The row must leave the derived writer''s source=circle selection the moment zone_update materializes an owner ring.';
+  end if;
+  -- nothing else about the row moved either: a re-derivation would have bumped both (0296:202-206)
+  if (select revision from public.danger_zones where id = v_zA) is distinct from v_rev_a
+     or (select updated_at from public.danger_zones where id = v_zA) is distinct from v_upd_a then
+    raise exception 'ZONE UPDATE PROOF FAIL [PROOF 12(d)]: the drawn zone''s revision/updated_at moved on a location edit — the derived writer still touched it';
+  end if;
+
+  -- ── (e) THE CONVERSE: an untouched SEEDED zone STILL tracks its location ─────────────────────────
+  -- Without this, "make the drawn zone survive" could be satisfied by disabling the regenerator, which
+  -- would silently re-open the 0289 split-brain 0296 exists to close.
+  select to_jsonb(l) into v_lrow from public.locations l where l.id = v_locB;
+  v_exp := jsonb_build_object(
+    'name', v_lrow->>'name', 'location_type', v_lrow->>'location_type',
+    'activity_type', v_lrow->>'activity_type', 'x', v_lrow->'x', 'y', v_lrow->'y',
+    'reward_tier', v_lrow->'reward_tier', 'base_difficulty', v_lrow->'base_difficulty',
+    'min_power_required', v_lrow->'min_power_required', 'is_public', v_lrow->'is_public',
+    'territory_radius', v_lrow->'territory_radius', 'status', v_lrow->>'status');
+  v_fields := v_exp || jsonb_build_object('x', to_jsonb(4400::double precision),
+                                          'y', to_jsonb(4400::double precision));
+
+  r := public.location_update('zoneupd-drawnstays-locmove-b', jsonb_build_object(
+         'target_id', v_locB::text, 'expected', v_exp, 'fields', v_fields));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'ZONE UPDATE PROOF FAIL [PROOF 12(e)]: the control location move was rejected: %', r;
+  end if;
+  if (select ST_AsBinary(boundary) from public.danger_zones where id = v_zB) is not distinct from v_wkb_b then
+    raise exception 'ZONE UPDATE PROOF FAIL [PROOF 12(e)]: a genuinely seeded source=circle zone did NOT follow its location — the derived writer has been disabled instead of made disjoint, re-opening the 0289 split-brain 0296 closed';
+  end if;
+  if (select source from public.danger_zones where id = v_zB) <> 'circle' then
+    raise exception 'ZONE UPDATE PROOF FAIL [PROOF 12(e)]: a re-derivation changed source — only zone_update may claim a row for the authored writer';
+  end if;
+  -- it followed the location it actually has now: every vertex within 0237's band of the NEW centre.
+  if exists (
+        select 1
+          from public.danger_zones dz
+          join public.locations l on l.id = dz.location_id
+          cross join lateral ST_DumpPoints(dz.boundary) p
+         where dz.id = v_zB
+           and ST_Distance(p.geom, ST_MakePoint(l.x, l.y)) > l.territory_radius::double precision * 1.5 * 1.18 + 1e-6) then
+    raise exception 'ZONE UPDATE PROOF FAIL [PROOF 12(e)]: the re-derived seeded zone is not centred on its location''s NEW coordinate';
+  end if;
+
+  -- restore the posture the deployed chain ships (the txn rolls back anyway; this keeps any future
+  -- case reading the REAL chain value rather than this case's pin).
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_edit_enabled', to_jsonb(v_ambient), 'proof-txn-local')
+    on conflict (key) do update set value = to_jsonb(v_ambient);
+
+  raise notice 'PUBLISH_ZONE_UPD_PASS_DRAWN_STAYS_DRAWN';
 end $$;
 
 do $$ begin raise notice 'WORLD-EDITOR PUBLISH-ZONE-UPDATE PROOF PASSED'; end $$;
