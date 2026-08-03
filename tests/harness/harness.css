@@ -1,0 +1,11 @@
+/* The app's real design system, made visible to a harness whose Vite root is tests/harness.
+ *
+ * Tailwind v4 auto-detects its source files relative to the CSS entry's project root. With
+ * `root: tests/harness` that detection sees ONLY tests/harness/**, so every utility used inside
+ * src/ — which is every class the real components carry — was silently absent: the combat card
+ * rendered as unstyled flow content, its overlay rail lost `absolute`, and a proof that measured
+ * the rendered readout would have been measuring the harness's own CSS instead of the app's.
+ * The explicit @source restores the app's own file set. Import THIS, never src/index.css directly.
+ */
+@import '../../src/index.css';
+@source '../../src';

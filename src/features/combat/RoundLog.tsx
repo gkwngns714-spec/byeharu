@@ -3,6 +3,7 @@ import type { UnitType } from '../../lib/catalog'
 import { formatShortTime } from '../../lib/time'
 import type { CombatTick } from './combatTypes'
 import { combatUnitLabel } from './combatLabels'
+import { resolveRewardEntries } from './rewardPayload'
 import { ItemChip } from '../../components/items'
 
 // M6: player-facing round-by-round log. Built ONLY from real combat_ticks fields
@@ -28,6 +29,11 @@ export function RoundLog({
       .map(([k, v]) => `${v} ${typeName(k)}`)
       .join(', ')
 
+  // The round's own reward delta, through the ONE payload reader — `{metal, items[]}`, the same
+  // shape total_rewards_json carries (0299:969). The old `t.reward_delta_json?.metal` read exactly
+  // one key by hand, so a round whose whole drop was ITEMS logged "Wave cleared" and nothing else.
+  const rewardsOf = (t: CombatTick) => resolveRewardEntries(t.reward_delta_json)
+
   const ordered = ticks.slice().sort((a, b) => b.tick_number - a.tick_number).slice(0, limit)
   if (ordered.length === 0) return <p className="text-sm text-ink-faint">No rounds yet.</p>
 
@@ -35,7 +41,7 @@ export function RoundLog({
     <ol className="space-y-1.5">
       {ordered.map((t) => {
         const losses = lossText(t.player_losses_json)
-        const metal = t.reward_delta_json?.metal ?? 0
+        const rewards = rewardsOf(t)
         let line: ReactNode
 
         if (t.result === 'next_wave_incoming') {
@@ -46,11 +52,17 @@ export function RoundLog({
               <span className="text-success">Wave {t.wave_number} cleared.</span> You dealt{' '}
               {/* UI R4: damage numerals in mono (ops telemetry) — rendered text unchanged. */}
               <span className="font-mono tabular-nums">{Math.round(t.player_damage)}</span> damage
-              {/* ITEM-VIZ: the metal reward as an ItemChip (glyph + name + mono qty) — the same
-                  server reward_delta_json value, presented as the one item treatment. */}
-              {metal > 0 && (
+              {/* ITEM-VIZ: EVERY reward in this round's delta as an ItemChip — metal and the looted
+                  items alike, from the one payload reader. */}
+              {rewards.length > 0 && (
                 <span className="text-warning/90">
-                  {' '}· +<ItemChip id="metal" kind="resource" qty={metal} /> pending
+                  {' '}·{' '}
+                  {rewards.map((r) => (
+                    <span key={r.id}>
+                      +<ItemChip id={r.id} qty={r.qty} className="mr-1" />
+                    </span>
+                  ))}
+                  pending
                 </span>
               )}
               {losses && <> · lost {losses}</>}

@@ -6,7 +6,7 @@ import { useGalaxyMapData } from '../features/map/useGalaxyMapData'
 import { useMainShipSelection } from '../features/map/useMainShipSelection'
 import { Icon } from '../components/ui'
 import { AccountMenu } from '../features/account/AccountMenu'
-import { NAV_TABS, navGridClass } from './navTabs'
+import { COMBAT_TAB_TO, NAV_TABS, navGridClass } from './navTabs'
 
 // UI-REBUILD (2b) — the persistent shell. ONE mobile-first bottom tab bar (Map · Ships · Fleet ·
 // Port · Command; active tab derived from the router; the table + its gating live in navTabs.ts,
@@ -52,21 +52,36 @@ export function AppShell() {
             they inherit the NavLink's token color). No emoji in chrome. */}
         <nav aria-label="Primary" data-testid="app-nav" className="border-t border-edge bg-surface">
           <div className={`mx-auto grid max-w-3xl ${navGridClass(NAV_TABS.length)}`}>
-            {NAV_TABS.map((t) => (
-              <NavLink
-                key={t.to}
-                to={t.to}
-                data-testid={`nav-${t.label.toLowerCase()}`}
-                className={({ isActive }) =>
-                  `flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] transition ${
-                    isActive ? 'font-medium text-accent' : 'text-ink-muted hover:text-ink'
-                  }`
-                }
-              >
-                <Icon name={t.icon} size={20} />
-                {t.label}
-              </NavLink>
-            ))}
+            {NAV_TABS.map((t) => {
+              // A LIVE BATTLE IS ANNOUNCED ON EVERY SCREEN. The nav is the only chrome that is
+              // always mounted, and combat.encounters is already polled here — no new read.
+              const fighting = t.to === COMBAT_TAB_TO && combat.encounters.length > 0
+              return (
+                <NavLink
+                  key={t.to}
+                  to={t.to}
+                  data-testid={`nav-${t.label.toLowerCase()}`}
+                  className={({ isActive }) =>
+                    `relative flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] transition ${
+                      isActive ? 'font-medium text-accent' : 'text-ink-muted hover:text-ink'
+                    }`
+                  }
+                >
+                  <span className="relative">
+                    <Icon name={t.icon} size={20} />
+                    {fighting && (
+                      <span
+                        data-testid="nav-combat-alert"
+                        aria-label={`${combat.encounters.length} battle${combat.encounters.length === 1 ? '' : 's'} under way`}
+                        title="Battle under way"
+                        className="absolute -right-1.5 -top-1 h-2.5 w-2.5 animate-pulse rounded-full bg-danger ring-2 ring-surface"
+                      />
+                    )}
+                  </span>
+                  {t.label}
+                </NavLink>
+              )
+            })}
           </div>
         </nav>
       </div>

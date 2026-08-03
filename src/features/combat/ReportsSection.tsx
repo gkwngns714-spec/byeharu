@@ -8,6 +8,7 @@ import { RoundLog } from './RoundLog'
 import type { CombatReport, CombatTick } from './combatTypes'
 import { combatUnitLabel } from './combatLabels'
 import { ItemChip } from '../../components/items'
+import { resolveRewardEntries } from './rewardPayload'
 import { newestReportId, reportRowOpen } from './reportFold'
 
 // UI-REBUILD (2b) — the ONE combat-reports surface, mounted in the Command destination. Merges the
@@ -76,18 +77,20 @@ export function ReportsSection({
     const e = Object.entries(obj ?? {}).filter(([, v]) => v > 0)
     return e.length ? e.map(([k, v]) => `${v} ${typeName(k)}`).join(', ') : 'none'
   }
-  // ITEM-VIZ: every positive reward code as an ItemChip (glyph + humanized name + mono qty).
-  // DELIBERATE SUPERSET of the old `metal()` helper, not parity: the old string showed ONLY the
-  // metal key ('N metal' / 'none'); this renders ALL positive total_rewards_json codes, and the
-  // 'none' gate accordingly changed from metal<=0 to no-positive-code. Identical output today
-  // (metal is the only reward code the server writes), but future codes surface instead of hiding.
-  const rewardChips = (obj: Record<string, number>) => {
-    const e = Object.entries(obj ?? {}).filter(([, v]) => v > 0)
-    if (e.length === 0) return 'none'
+  // ITEM-VIZ: every reward as an ItemChip (glyph + humanized name + mono qty), read through the ONE
+  // payload reader (combat/rewardPayload).
+  //
+  // WHAT THIS FIXES. The old inline read was `Object.entries(obj).filter(([, v]) => v > 0)`. The
+  // payload's `items` key holds an ARRAY, and `[] > 0` is false — so every looted item was filtered
+  // out of the battle report before it could be rendered, silently. A report that said "Rewards:
+  // 40 metal" could have carried a hold of items the player was never told they had won.
+  const rewardChips = (payload: Record<string, unknown>) => {
+    const entries = resolveRewardEntries(payload)
+    if (entries.length === 0) return 'none'
     return (
       <span className="inline-flex flex-wrap justify-end gap-1">
-        {e.map(([code, amt]) => (
-          <ItemChip key={code} id={code} kind="resource" qty={amt} />
+        {entries.map((r) => (
+          <ItemChip key={r.id} id={r.id} qty={r.qty} />
         ))}
       </span>
     )

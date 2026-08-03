@@ -23,7 +23,12 @@ export interface CombatEncounter {
   enemy_integrity_current: number
   wave_number: number
   next_wave_at: string | null
-  total_rewards_json: Record<string, number>
+  // `{"metal": N, "items": [{item_id, quantity}, …]}` — a scalar key BESIDE an array key
+  // (0299:1006-1010, loot_merge_items 20260617000041:51-66). It was typed `Record<string, number>`,
+  // which is why two surfaces rendered `Items ×[object Object]` and silently dropped every looted
+  // item. Read it through combat/rewardPayload.resolveRewardEntries — the ONE reader — never by
+  // iterating its entries inline.
+  total_rewards_json: Record<string, unknown>
   started_at: string
   retreat_started_at: string | null
   ended_at: string | null
@@ -93,7 +98,8 @@ export interface CombatTick {
   enemy_integrity_before: number
   enemy_integrity_after: number
   player_losses_json: Record<string, number>
-  reward_delta_json: Record<string, number>
+  /** the SAME shape as total_rewards_json (0299:969) — read it through rewardPayload, not inline. */
+  reward_delta_json: Record<string, unknown>
   result: string
   resolved_at: string
 }
@@ -133,7 +139,8 @@ export interface CombatReport {
   waves_cleared: number
   duration_seconds: number
   total_losses_json: Record<string, number>
-  total_rewards_json: Record<string, number>
+  /** the encounter's payload copied onto the report — same shape, same ONE reader. */
+  total_rewards_json: Record<string, unknown>
   survivors_json: Record<string, number>
   summary_text: string | null
   created_at: string
