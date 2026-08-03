@@ -21,9 +21,10 @@ import { Icon, type IconName } from '../components/ui'
 // NavLink's token color: accent when active, ink-muted otherwise). No emoji in chrome.
 const TABS: readonly { to: string; label: string; icon: IconName }[] = [
   { to: '/map', label: 'Map', icon: 'map' },
-  // S6: the Ship destination is now FITTING (ship outfitting by fleet; route kept at /ship so old
-  // bookmarks keep resolving). nav testid follows the label → `nav-fitting`.
-  { to: '/ship', label: 'Fitting', icon: 'ship' },
+  // PLAIN-WORDS: the destination is your SHIPS (roster by fleet + per-ship equipment + inventory).
+  // "Fitting" was EVE jargon — a typical game calls this Ships. Route kept at /ship so old
+  // bookmarks keep resolving. nav testid follows the label → `nav-ships`.
+  { to: '/ship', label: 'Ships', icon: 'ship' },
   { to: '/port', label: 'Port', icon: 'anchor' },
   { to: '/command', label: 'Command', icon: 'command' },
 ]

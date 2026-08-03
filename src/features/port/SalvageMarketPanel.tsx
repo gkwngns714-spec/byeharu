@@ -142,7 +142,9 @@ export function SalvageMarketPanel({
   return (
     // UI R2: the Card primitive owns the chrome (warning tone = the trade-family identity).
     <Card tone="warning" data-testid="salvage-panel">
-      <CardHeader title="Salvage Buyer" subtitle="Sell combat salvage to this port for credits." />
+      {/* PLAIN-WORDS (owner: "what is salvage buyer? it could just be shop"): this is the shop's
+          SELL side — the buy side is ShopPanel ("Shop"). One familiar concept, two cards. */}
+      <CardHeader title="Sell Items" subtitle="Sell your salvage and spare items to this port for credits." />
 
       {/* Current credits — the getWalletBalance semantics verbatim: 'error'/unread → honest '—',
           no wallet row → the effective starting credits (the CommissionShipPanel honesty posture). */}

@@ -98,12 +98,14 @@ export function PirateInterceptPanel({
   return (
     <OverlayPanel className="pointer-events-auto flex w-64 max-w-[calc(100vw-1.5rem)] flex-col gap-2 text-sm">
       <div className="flex items-center justify-between">
-        <span className="font-semibold text-ink">Pirate Intercept</span>
+        {/* PLAIN-WORDS: "Pirate Intercept" named the server mechanic; the player is plotting a
+            route around danger zones, so the surface says that. */}
+        <span className="font-semibold text-ink">Plot a Route</span>
         {onClose && (
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close pirate intercept"
+            aria-label="Close route plotting"
             title="Close"
             className="-mr-1 flex h-6 w-6 items-center justify-center rounded text-base leading-none text-ink-muted hover:bg-edge/40 hover:text-ink"
           >
@@ -118,7 +120,8 @@ export function PirateInterceptPanel({
 
       {mode === 'route' && (
         <div className="flex flex-col gap-2">
-          {!groupId && <p className="text-ink-muted">No fleet yet — add a ship to a team first.</p>}
+          {/* PLAIN-WORDS: the UI's one word for a ship group is "fleet" — "team" was the old name. */}
+          {!groupId && <p className="text-ink-muted">No fleet yet — create a fleet in Command first.</p>}
           <p className="text-ink-muted">Tap the map to plot up to 4 points — the last one is the destination.</p>
           <p className="text-ink">{draftPoints.length} plotted</p>
           <div className="flex gap-2">

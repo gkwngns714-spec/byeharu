@@ -74,11 +74,11 @@ if [ "$MODE" = "selftest" ]; then
 
   # ── the engineered geometry itself: the tuning knobs that make CLOSE/KITE/HOLD all reachable in
   #    ONE deterministic pass are present (gutting any one would silently degrade the scenario). ──────
-  grep -q "enemy_synthetic_range_base', '10'" "$SQL"    || fail "harness lost the tuned-low pirate weapon range (the KITE/CLOSE geometry depends on it)"
-  grep -q "spatial_formation_ring_radius', '20'" "$SQL" || fail "harness lost the tuned escort ring radius (20: inside the post-0313 catalog gun range, outside the pirate's 10 and the owned fallback 5)"
-  grep -q "enemy_synthetic_speed_base', '60'" "$SQL"    || fail "harness lost the tuned pirate closing speed (needed for the tick-2 retaliation)"
+  grep -q "enemy_synthetic_range_base', '2'" "$SQL"     || fail "harness lost the tuned-low pirate weapon range (the KITE/CLOSE geometry depends on it)"
+  grep -q "spatial_formation_ring_radius', '4'" "$SQL"  || fail "harness lost the tuned escort ring radius (4: inside the post-0316 catalog gun range 5, outside the pirate's 2 and the owned fallback 1)"
+  grep -q "enemy_synthetic_speed_base', '12'" "$SQL"    || fail "harness lost the tuned pirate closing speed (needed for the tick-2 retaliation)"
   grep -q "combat_damage_variance_pct', '0'" "$SQL"     || fail "harness lost the determinism knob (0 variance)"
-  grep -q "combat_player_fallback_weapon_range', '5'" "$SQL" || fail "harness lost the OWNED fallback range (since 0262 the unfitted escort carries the fallback weapon; the CLOSE case needs a range this harness sets under the ring)"
+  grep -q "combat_player_fallback_weapon_range', '1'" "$SQL" || fail "harness lost the OWNED fallback range (since 0262 the unfitted escort carries the fallback weapon; the CLOSE case needs a range this harness sets under the ring)"
   grep -q "set value='false'::jsonb where key='combat_telegraph_enabled'" "$SQL" \
     || fail "harness does not keep combat_telegraph_enabled dark (0300 lit it; a lit telegraph queues the encounter instead of opening it inline at the settle)"
   grep -q "'autocannon_battery'" "$SQL"                 || fail "harness does not craft the real S0 weapon catalog entry"
@@ -104,7 +104,7 @@ if [ "$MODE" = "selftest" ]; then
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "COMBAT-SPATIAL SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. craft/fit/group/send/settle; exactly 2 tick invocations; the engineered geometry knobs (pirate range 10 / ring 20 / owned fallback range 5 / pirate speed 60 / variance 0) present with the fitted range derived from the catalog; every property — spawn positions, synthetic pirate at center, HOLD/KITE/CLOSE, tick-1 fire, pirate hp fell, tick-2 aggro-tier screening — asserted in assert-form; no random())"
+  echo "COMBAT-SPATIAL SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. craft/fit/group/send/settle; exactly 2 tick invocations; the engineered geometry knobs, all divided by 5 with 0316 (pirate range 2 / ring 4 / owned fallback range 1 / pirate speed 12 / variance 0), present with the fitted range derived from the catalog; every property — spawn positions, synthetic pirate at center, HOLD/KITE/CLOSE, tick-1 fire, pirate hp fell, tick-2 aggro-tier screening — asserted in assert-form; no random())"
   exit 0
 fi
 

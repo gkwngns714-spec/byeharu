@@ -23,7 +23,7 @@ const REASON_MESSAGES: Record<string, string> = {
   // order. DISTINCT from empty_group: that fleet has no ships at all; this one has ships and they
   // are all disabled. The copy says what to actually do — the recovery path is per-ship (Fitting
   // screen: Repair in port, Tow when adrift — shipRecovery.ts), never another fleet order.
-  no_living_ships: 'Every ship in this fleet is wrecked — repair them (or tow them to a port first) from the Fitting screen, then give the order again.',
+  no_living_ships: 'Every ship in this fleet is wrecked — repair them (or tow them to a port first) from the Ships screen, then give the order again.',
   // hunt send (0168)
   invalid_location: 'This destination can’t take a fleet right now.',
   // shared readiness reject: hunt (0168 — every ship home and battle-ready) and docked-team move
@@ -47,7 +47,8 @@ const REASON_MESSAGES: Record<string, string> = {
   // 0292 narrowed this: a fleet IN COMBAT can now be ordered away and will retreat under fire. This
   // refusal survives only for a sortie with no encounter behind it, so the copy no longer claims that
   // combat blocks every order — it did, and saying so while the retreat path exists would be a lie.
-  group_on_sortie: 'This fleet is out on a sortie and can’t take a new course yet.',
+  // PLAIN-WORDS: "sortie" is military jargon — say what it means. (The reason KEY is the server's.)
+  group_on_sortie: 'This fleet is out on a mission and can’t take a new course yet.',
   // The combat-time OUTCOMES (`retreat_started`, `retreat_destination_updated`) are deliberately NOT
   // mapped here — this map is the REJECT vocabulary. Those two are successes whose copy must name the
   // destination, so their one authority is `fleetRetreatOutcomeMessage` in teamMove.ts, composed

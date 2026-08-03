@@ -61,7 +61,8 @@ export function deriveFirstOrders(input: FirstOrdersInput): FirstOrderStep[] {
     {
       // First-ship commissioning is always lit (the PORT-ENTRY claim path owns the action).
       id: 'claim-ship',
-      label: 'Commission your first ship',
+      // PLAIN-WORDS: "commission" was navy jargon; the button this points at says "Claim".
+      label: 'Claim your first ship',
       done: input.shipCount >= 1,
       hint: 'Claim your ship below — it docks at Haven, ready for orders.',
     },
@@ -95,9 +96,11 @@ export function deriveFirstOrders(input: FirstOrdersInput): FirstOrderStep[] {
   if (input.additionalShipsLit) {
     steps.push({
       id: 'second-ship',
-      label: 'Commission a second ship',
+      label: 'Buy a second ship',
       done: input.shipCount >= 2,
-      hint: 'Buy a second hull on the Ship screen and start building a fleet.',
+      // PLAIN-WORDS + copy fix: the "Buy ship" panel lives on the Command screen (S6 re-homed
+      // acquisition there) — the old hint pointed at the Ship screen, where no buy control exists.
+      hint: 'Buy a second ship right here in Command and start building a fleet.',
     })
   }
 

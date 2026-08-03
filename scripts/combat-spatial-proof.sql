@@ -9,24 +9,31 @@
 -- auth.users FK chain), but NEVER executes the spatial tick end to end. This script does.
 --
 -- ── SCENARIO (deliberately engineered geometry, not incidental; retuned by the 0313 range cut —
---    the fitted autocannon range is now READ FROM THE CATALOG (25 post-0313), never assumed, and
+--    the fitted autocannon range is now READ FROM THE CATALOG (5 post-0316), never assumed, and
 --    every distance this scenario stakes a property on is a knob it OWNS in-txn) ──────────────────
 -- One team of 3 ships: a command ship (armed, spawns at the arrival location's own center — dist 0
 -- from the synthetic pirate, which ALSO spawns at the center) and two escorts on the formation ring
--- (spatial_formation_ring_radius tuned to 20): one ARMED (autocannon, catalog range) and one with
+-- (spatial_formation_ring_radius tuned to 4): one ARMED (autocannon, catalog range) and one with
 -- NO fitted weapon — which, since 0262, carries the synthesized fallback weapon, whose range this
--- harness OWNS at 5 (combat_player_fallback_weapon_range tuned in-txn) so the CLOSE case stays
+-- harness OWNS at 1 (combat_player_fallback_weapon_range tuned in-txn) so the CLOSE case stays
 -- reachable now that every combat-capable ship has a weapon.
--- The synthetic pirate's own weapon range is tuned to 10 (under the 20-unit ring distance) and
--- its move speed to 60 (well over the 20-unit gap), while every player ship's move_speed is the
--- bare hull's ~1.0 (main_ship_hull_types.starter_frigate.base_speed) — deliberately asymmetric, so:
---   • command ship  (dist 0, catalog range 25 >= 0)                  → HOLD, fires immediately.
---   • armed escort  (dist 20, catalog 25 >= 20 > pirate range 10)    → KITE (retreats), fires
+-- The synthetic pirate's own weapon range is tuned to 2 (under the 4-unit ring distance) and
+-- its move speed to 12 (well over the 4-unit gap), while every player ship's move_speed is the bare
+-- hull's ~1.0 (main_ship_hull_types.starter_frigate.base_speed) converted into combat space by
+-- 0316's combat_player_speed_scale — deliberately asymmetric, so:
+--   • command ship  (dist 0, catalog range 5 >= 0)                   → HOLD, fires immediately.
+--   • armed escort  (dist 4, catalog 5 >= 4 > pirate range 2)        → KITE (retreats), fires
 --                                                                       immediately (pre-move in range).
---   • fallback escort(dist 20, own fallback range 5 < 20)            → CLOSE (advances), cannot fire.
---   • the pirate (dist 20 > its own range 10) CLOSEs on tick 1 (speed 60 closes the full 20-unit gap)
+--   • fallback escort(dist 4, own fallback range 1 < 4)              → CLOSE (advances), cannot fire.
+--   • the pirate (dist 4 > its own range 2) CLOSEs on tick 1 (speed 12 closes the full 4-unit gap)
 --     and, now in range, FIRES on tick 2 — proving the S1 aggro-tier screening survives spatially:
 --     it can only ever target an escort (aggro 0) while one lives, never the command ship (aggro 100).
+-- 0316 REPOINT: every one of those four owned numbers is the OLD one divided by 5, exactly as 0316
+-- divided the world they sit in (catalog gun 25->5, ring 30->6, pirate range/speed and the player's
+-- in-combat speed all by the same factor). The KITE and CLOSE assertions are DIRECTIONAL (distance
+-- increased / decreased), so they hold for any positive player speed and never depend on the value
+-- of the conversion factor — only the ORDERING fallback < ring < catalog gun is load-bearing, and
+-- the ring assertion below states it in the same breath as it measures it.
 -- enemy_hp_base is raised so the synthetic pirate has ample hp to survive both player hits (the
 -- assertions need it alive into tick 2); combat_damage_variance_pct is zeroed for determinism (the
 -- house idiom, team-command-proof.sql's own COMBATPARITY setup).
@@ -121,15 +128,15 @@ begin
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);              -- so combat_ticks rows land
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);             -- so fire events land
   perform public.set_game_config('enemy_hp_base', '1000'::jsonb);                    -- pirate survives both hits into tick 2
-  perform public.set_game_config('spatial_formation_ring_radius', '20'::jsonb);      -- escort ring distance: inside the catalog gun range (25 post-0313), outside the pirate's 10 and the owned fallback 5
-  perform public.set_game_config('enemy_synthetic_range_base', '10'::jsonb);         -- pirate weapon range < ring distance
+  perform public.set_game_config('spatial_formation_ring_radius', '4'::jsonb);       -- escort ring distance: inside the catalog gun range (5 post-0316), outside the pirate's 2 and the owned fallback 1
+  perform public.set_game_config('enemy_synthetic_range_base', '2'::jsonb);          -- pirate weapon range < ring distance
   perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
-  perform public.set_game_config('enemy_synthetic_speed_base', '60'::jsonb);         -- pirate closes the 20-gap in ONE tick
+  perform public.set_game_config('enemy_synthetic_speed_base', '12'::jsonb);         -- pirate closes the 4-gap in ONE tick
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
   -- the CLOSE witness's own range, OWNED here (0313 repoint): since 0262 an unfitted ship carries
   -- the synthesized fallback weapon, so "advances because it cannot reach" needs a range this
   -- harness sets, strictly under the ring — never the seeded default.
-  perform public.set_game_config('combat_player_fallback_weapon_range', '5'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_range', '1'::jsonb);
 end $$;
 
 -- ════════ PROVISION: 3 ships via the real commission RPCs, a real team, a real command designation,
@@ -201,7 +208,7 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit gun2: %', r; end if;
 
   -- s_bare gets NO craft/fit call — since 0262 it will carry the synthesized fallback weapon,
-  -- whose range this harness owns at 5 (< the 20 ring): the CLOSE witness.
+  -- whose range this harness owns at 1 (< the 4 ring): the CLOSE witness.
 
   -- form the team, assign all 3, designate the command ship (owner-scoped, NOT flag-gated, 0204).
   r := pg_temp.call_as(uZ, 'public.upsert_ship_group(1, ''Spatial'')');
@@ -284,13 +291,13 @@ begin
     raise exception 'SPAWN FAIL: command ship not at location center (got %,% want %,%)', v_cmd_x, v_cmd_y, v_loc_x, v_loc_y;
   end if;
 
-  -- both escorts sit on the SAME ring (same distance from center — the tuned 20).
+  -- both escorts sit on the SAME ring (same distance from center — the tuned 4).
   select public.osn_distance(pos_x, pos_y, v_loc_x, v_loc_y) into v_dist_arm
     from public.combat_units where encounter_id = v_enc and main_ship_id = s_arm;
   select public.osn_distance(pos_x, pos_y, v_loc_x, v_loc_y) into v_dist_bare
     from public.combat_units where encounter_id = v_enc and main_ship_id = s_bare;
-  if abs(v_dist_arm - 20) > 0.01 or abs(v_dist_bare - 20) > 0.01 then
-    raise exception 'SPAWN FAIL: escort ring distances wrong (arm=%, bare=%, want ~20 each)', v_dist_arm, v_dist_bare;
+  if abs(v_dist_arm - 4) > 0.01 or abs(v_dist_bare - 4) > 0.01 then
+    raise exception 'SPAWN FAIL: escort ring distances wrong (arm=%, bare=%, want ~4 each)', v_dist_arm, v_dist_bare;
   end if;
 
   -- weapons_json shapes: every ship carries exactly 1 entry — the two fitted ships their catalog
@@ -309,19 +316,19 @@ begin
       and (cu.weapons_json->0->>'module_type_id') = 'autocannon_battery'
       and (cu.weapons_json->0->>'range')::numeric = (select t.range from public.module_types t where t.id = 'autocannon_battery');
   if n <> 2 then raise exception 'SPAWN FAIL: fitted weapon range/id did not carry into weapons_json (want 2 rows at the catalog autocannon_battery range)'; end if;
-  -- and the unfitted escort's ONE entry is the fallback, at the range this harness owns (5).
+  -- and the unfitted escort's ONE entry is the fallback, at the range this harness owns (1).
   select count(*) into n from public.combat_units cu
     where cu.encounter_id = v_enc and cu.main_ship_id = s_bare
       and (cu.weapons_json->0->>'module_type_id')
             = coalesce((select value #>> '{}' from public.game_config where key = 'combat_player_fallback_weapon_module_type_id'), 'basic_player_weapon')
-      and (cu.weapons_json->0->>'range')::numeric = 5;
-  if n <> 1 then raise exception 'SPAWN FAIL: the unfitted escort''s entry is not the owned-range fallback weapon (want 1 fallback row at range 5)'; end if;
+      and (cu.weapons_json->0->>'range')::numeric = 1;
+  if n <> 1 then raise exception 'SPAWN FAIL: the unfitted escort''s entry is not the owned-range fallback weapon (want 1 fallback row at range 1)'; end if;
 
   -- side is 'player' for every row this creator ever writes.
   select count(*) into n from public.combat_units where encounter_id = v_enc and side <> 'player' and main_ship_id is not null;
   if n <> 0 then raise exception 'SPAWN FAIL: a member row is not side=player'; end if;
 
-  raise notice 'COMBATSPATIAL_PASS_SPAWN ok: command ship at location center, both escorts on the 20-unit ring, weapons_json shapes exact (1/1/1 — catalog guns + the owned-range fallback), side=player throughout';
+  raise notice 'COMBATSPATIAL_PASS_SPAWN ok: command ship at location center, both escorts on the 4-unit ring, weapons_json shapes exact (1/1/1 — catalog guns + the owned-range fallback), side=player throughout';
 end $$;
 
 -- ════════ TICK 1: wave spawn + first movement/fire pass ═════════════════════════════════════════════
@@ -366,8 +373,8 @@ begin
   --    run, then removed): this assertion originally required the pirate's position to still equal the
   --    location center AFTER tick 1 — but the pirate is ALSO a full participant in tick 1's own
   --    targeting/movement/fire pass (the same tick it spawns in, by design: "new pirates already
-  --    fire/take damage the same tick they spawn"), and this scenario deliberately tunes its speed (60)
-  --    to fully close the 20-unit gap to its target in ONE tick — so by the time we can observe it, it
+  --    fire/take damage the same tick they spawn"), and this scenario deliberately tunes its speed (12)
+  --    to fully close the 4-unit gap to its target in ONE tick — so by the time we can observe it, it
   --    has legitimately already moved OFF the center. That is CORRECT behavior, not a bug (confirmed:
   --    the tick's own wave_spawned event payload carried 'units':1 and enemy_integrity_current fell
   --    from 16000 to 15980 — the row existed with the right identity and took real damage; only this
@@ -416,7 +423,7 @@ begin
   if n_player_fire < 2 then raise exception 'TICK1 FAIL FIRE: % player missile_salvo events on tick 1 (want >= 2 — command + armed escort)', n_player_fire; end if;
   select count(*) into n from public.combat_events
     where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'pirate';
-  if n <> 0 then raise exception 'TICK1 FAIL FIRE: pirate fired on tick 1 (want 0 — it starts out of its own 10-range at dist 20)'; end if;
+  if n <> 0 then raise exception 'TICK1 FAIL FIRE: pirate fired on tick 1 (want 0 — it starts out of its own 2-range at dist 4)'; end if;
   raise notice 'COMBATSPATIAL_PASS_FIRE ok: tick 1 — % player missile_salvo events (command + armed escort), pirate did not fire (still out of range pre-move)', n_player_fire;
 
   -- ── DAMAGE: the pirate's hp_current fell below its frozen hp_max (it took real damage tick 1). ─────
