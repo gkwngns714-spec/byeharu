@@ -3,21 +3,21 @@ import {
   canRepair,
   canTow,
   freshestShipStatus,
-  isAdriftError,
+  recoveryReasonMessage,
   repairConcept,
-  repairErrorMessage,
   repairGate,
   repairGateNote,
   towReasonMessage,
   towSuccessMessage,
   type DisabledShipRow,
 } from '../src/features/ship/shipRecovery'
+import { repairReasonMessage } from '../src/features/ship/repairReasonMessage'
 
-// 0297 REPAIR REQUIRES A PORT — specs for the pure recovery gate + its reason→copy maps.
+// 0297 REPAIR REQUIRES A PORT, unified by 0335 — specs for the pure recovery gate + its copy.
 // The rules under test are the ones that make the slice safe:
 //   · a disabled ship ALWAYS gets exactly one recovery action offered — never none;
 //   · an unavailable readiness read FAILS OPEN (Repair stays offered; the server is the enforcer);
-//   · no raw server code or raise text ever reaches the screen.
+//   · no raw server code ever reaches the screen, and there is now only ONE vocabulary to map.
 // Run: `npx playwright test shipRecovery.spec.ts`.
 
 const AT_PORT: DisabledShipRow = { main_ship_id: 's1', name: 'Kestrel', at_port: true, location_id: 'haven' }
@@ -104,44 +104,50 @@ test('a ship missing from a successful read is also unknown, not silently strand
   expect(canRepair(gate)).toBe(true)
 })
 
-test("the server's ship_not_at_port reject outranks a stale readiness read", () => {
+test("the server's not_at_port reject outranks a stale readiness read", () => {
   // The read still claims this wreck is in port, but the repair just came back adrift.
   const gate = repairGate('destroyed', [AT_PORT], 's1', true)
   expect(gate).toEqual({ kind: 'adrift' })
   expect(canTow(gate)).toBe(true)
 })
 
-test('every repair_main_ship raise maps to player words — never the raw message', () => {
-  const raises = [
-    'repair_main_ship: ship_not_at_port — this ship is adrift; tow it to a port before repairing',
-    'repair_main_ship: ship is not disabled (status home) — nothing to repair',
-    'repair_main_ship: no main ship found',
-    'repair_main_ship: not authenticated',
-    'repair_main_ship: invalid max_hp (0)',
+// ── recovery copy: ONE vocabulary, ONE override (0335) ───────────────────────────────────────────
+// Before 0335 this module owned a whole private reason set, because repair_main_ship RAISED and its
+// codes arrived as exception SUBSTRINGS. The verb now returns the same {ok, reason} envelope the
+// priced mend always used, so recoveryReasonMessage delegates to the ONE map and overrides exactly
+// one key — the one where the generic sentence would be useless advice to a wreck.
+test('every 0335 reject reaching a wreck maps to player words — never a raw code', () => {
+  const reasons = [
+    'not_authenticated',
+    'invalid_request',
+    'ship_not_found',
+    'not_at_port',
+    'nothing_to_repair',
+    'hull_unrepairable',
   ]
-  const seen = new Set<string>()
-  for (const r of raises) {
-    const msg = repairErrorMessage(new Error(r))
+  for (const r of reasons) {
+    const msg = recoveryReasonMessage(r)
     expect(msg.length).toBeGreaterThan(0)
-    expect(msg).not.toContain('repair_main_ship')
     expect(msg).not.toContain('_') // no snake_case code leaks through
-    seen.add(msg)
   }
-  expect(seen.size).toBe(raises.length) // each raise has its OWN copy
+})
+
+test('the ONE override: a wreck rejected for position is told to TOW, not to "take it to a port"', () => {
+  const wreck = recoveryReasonMessage('not_at_port')
+  expect(wreck.toLowerCase()).toContain('tow')
+  // deliberately NOT the generic line — a wreck cannot take itself anywhere.
+  expect(wreck).not.toBe(repairReasonMessage('not_at_port'))
+})
+
+test('every other reason is the SAME sentence the mend shows — one copy source, not two', () => {
+  for (const r of ['not_authenticated', 'ship_not_found', 'nothing_to_repair', 'hull_unrepairable']) {
+    expect(recoveryReasonMessage(r)).toBe(repairReasonMessage(r))
+  }
 })
 
 test('an unrecognised failure degrades to the generic line (no throw, no raw text)', () => {
-  expect(repairErrorMessage(new Error('TypeError: fetch failed'))).toBe(
-    'Repairs are unavailable right now. Try again in a moment.',
-  )
-  expect(repairErrorMessage(null)).toBe('Repairs are unavailable right now. Try again in a moment.')
-  expect(repairErrorMessage(undefined)).toBe('Repairs are unavailable right now. Try again in a moment.')
-})
-
-test('only the position reject flips the ship to adrift', () => {
-  expect(isAdriftError(new Error('repair_main_ship: ship_not_at_port — …'))).toBe(true)
-  expect(isAdriftError(new Error('repair_main_ship: ship is not disabled (status home)'))).toBe(false)
-  expect(isAdriftError(null)).toBe(false)
+  expect(recoveryReasonMessage('unavailable')).toBe('Repair unavailable.')
+  expect(recoveryReasonMessage('totally_unknown_code')).toBe('Repair unavailable.')
 })
 
 test('every mainship_emergency_tow reason maps to distinct player words', () => {

@@ -5,6 +5,82 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-03 — ONE WAY TO REPAIR (`slice-one-way-to-repair`, migration 0335)
+
+**The owner's ask:** *"why does command ship have separate repair system? unnecessary"*
+
+**The premise, corrected first.** There was never a command-ship repair system. `main_ship_instances`
+is EVERY ship (77 rows on production; only 2 carry `is_command_ship`). "Main ship" is legacy naming
+from when a player had one hull, and NO repair path anywhere reads `is_command_ship` — verified
+against the deployed bodies, not inferred. `repair_main_ship` was DISABLED-SHIP RECOVERY, and its
+misleading name is most of why the duplication looked like a privilege.
+
+**But the duplication was real, and incidental.** Two RPCs for one concept:
+
+| | `repair_main_ship` (0081/0231/0297) | `repair_ship_hull_at_port` (0201) |
+|---|---|---|
+| subject | `status='destroyed'` only | damaged-but-alive only (rejects destroyed) |
+| position | `mainship_port_of_ship` (fleet dock → group dock → berth) | `mainship_resolve_docked_location` (also demands a PRESENT FLEET) |
+| cost | free | `repair_credits_per_hp` × hp |
+| amount | always full | clamped to the request |
+| failure | RAISES (the client matched exception substrings) | `{ok,reason}` envelope |
+| receipt / lock | none / none | `repair_receipts` + a per-ship lock |
+
+Only THREE differences were essential, and all three are POLICY over one verb: the precondition (a
+state, not a concept), the amount, and the cost — of which only the cost is load-bearing, because a
+wreck must never be unrecoverable for want of credits (the 0052 no-softlock rule). Everything else
+had drifted apart: **two position authorities** that disagreed about a berthed ship (all three of
+production's destroyed ships are in exactly that shape), two error protocols, two client wrappers,
+and a dead branch in `repair_main_ship` whose two flag-selected UPDATE statements were byte-identical.
+
+### The live defect this also closed
+
+Production carried `repair_economy_enabled = true` with `repair_credits_per_hp = 0` (the owner set 0
+deliberately, to make repair free pending a combat audit). 0201's knob read rejected any price at or
+below zero as `repair_misconfigured`, so **setting the price to free turned the paid mend off for
+every player** — "Repair pricing is unavailable right now." The client fold agreed (`foldRepairRate`
+required `n > 0`). 0335 makes ZERO mean FREE on both sides; null/negative still fail closed. Nothing
+is hardcoded free — a deploy-time self-assert refuses the migration if `v_per_hp` is assigned anywhere
+other than the two cost-policy branches.
+
+### What shipped
+
+- **`supabase/migrations/20260618000335_one_way_to_repair.sql`** — hand-written (no generator: nothing
+  is re-created from a live body; two functions are DROPPED and one is written fresh). §1
+  `repair_ship_hull(p_main_ship_id, p_repair_hp, p_request_id)`; §2 drops both predecessors with
+  their grants — no shim, no deprecation; §3 REVOKES the client INSERT/UPDATE/DELETE
+  `repair_receipts` still carried from Supabase's project-default `GRANT ALL` (the 0254 drift);
+  §4 self-asserts, all valid on an empty database, asserting no seed and no flag VALUE.
+- **Client:** ONE wrapper (`repairShipHull` in `src/features/ship/repairApi.ts`); `repairMainShip`
+  deleted from `src/features/map/mainshipApi.ts`; `repairErrorMessage` / `isAdriftError` (which
+  matched Postgres exception SUBSTRINGS) deleted from `shipRecovery.ts`; ONE reason vocabulary in
+  `repairReasonMessage.ts` (`not_docked` + `ship_not_at_port` → `not_at_port`; `ship_destroyed`
+  retired); `RepairDockState` collapsed `docked`/`berthed` → `at_port`, which deletes the copy that
+  only existed to explain the split ("Add this ship to a fleet on the Fleet tab to mend its hull
+  here") — a berthed ship now mends where it plainly is.
+- **`scripts/activate-repair-econ.{sh,sql}` DELETED** — a spent activation script whose preconditions
+  pinned prosrc of two functions that no longer exist.
+- **Proof:** `scripts/repair-econ-proof.{sh,sql}` EXTENDED, not forked — 12 property markers. New:
+  the economy gate rejects a priced mend while a WRECK still recovers with the same flag dark; a
+  broke player recovers a wreck whole and free AT A NON-ZERO KNOB; **zero is free** (RED on 0201);
+  a negative knob still fails closed; **the knob still governs** at 3/hp (so restoring the price is
+  one `set-knob` call); one-authority by COUNT of client-executable `repair*` functions plus the
+  ledger lockdown; and a **berthed fleet-less ship mends**, with the old dock resolver proven to
+  disagree first so the phase cannot pass vacuously. The harness now SETS every flag and knob value
+  it asserts — the old P1 asserted the chain's seeded 0.5, an ambient default it did not own.
+- **Triggers widened:** `repair-econ-proof.yml` fired only on `slice-repairecon**`; it now runs on
+  `main`, PRs, `slice-**` and `osn3-**`. `danger-combat-proof.yml`'s fifteen hand-appended
+  `slice-<topic>**` globs are COLLAPSED to `slice-**` — that list was the bug its own comments kept
+  warning about.
+- **Repointed onto the one verb:** `danger-combat-proof.sql`, `team-command-proof.sql`, the osn3
+  realchain fixtures and every client-RPC allowlist (osn3 s2–s6a / dock0 / hub1a / portlaunch /
+  port-entry / enablement-preflight), plus `scripts/verify-mainship-repair.mjs`.
+
+**Deploy state:** built on `slice-one-way-to-repair`, NOT merged and NOT deployed. Production head is
+still `20260618000334`.
+
+---
+
 ## 2026-08-03 — Foldable reports + the Fleet tab (`slice-reports-fold-fleet-tab`, client-only)
 
 **The owner's ask:** *"combat report, mission report, and so on, i want you to separate them and

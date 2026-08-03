@@ -20,8 +20,15 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - 'main'
       - 'autopilot/**'
-      - 'slice-repairecon**'
+      # WIDENED (0335). This used to fire only on `slice-repairecon**`, so the ONE proof of the
+      # repair verb ran only on branches that happened to remember it — a narrow trigger is not a
+      # net (the same lesson `danger-combat-proof.yml` and three post-0300 proofs learned the
+      # expensive way). Any slice that touches repair now runs it, and so does main.
+      - 'slice-**'
+      - 'osn3-**'
+  pull_request:
 
 permissions:
   contents: read

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useShellState } from '../../app/shellState'
-import { fetchHullTypes, fetchMyMainShips, repairMainShip, type HullRow, type MainShipRow } from '../map/mainshipApi'
+import { fetchHullTypes, fetchMyMainShips, type HullRow, type MainShipRow } from '../map/mainshipApi'
 import { getMyShipFittings } from '../modules/modulesApi'
 import type { GetMyShipFittingsResult } from '../modules/modulesTypes'
 import { getMyCaptainInstances } from '../captains/captainsApi'
@@ -23,8 +23,7 @@ import {
   canRepair,
   canTow,
   freshestShipStatus,
-  isAdriftError,
-  repairErrorMessage,
+  recoveryReasonMessage,
   repairGate,
   repairGateNote,
   towReasonMessage,
@@ -33,6 +32,7 @@ import {
   TOW_LABEL,
   type DisabledShipRow,
 } from './shipRecovery'
+import { repairShipHull } from './repairApi'
 import { emergencyTowMainShip, fetchMyDisabledShips } from './shipRecoveryApi'
 import { CaptainsPanel } from '../captains/CaptainsPanel'
 import { RecruitCaptainPanel } from '../captains/RecruitCaptainPanel'
@@ -78,8 +78,8 @@ import {
 //
 // NO-SOFTLOCK, POSITION-GATED (0297): every destroyed ship's row (and the detail) always carries A
 // RECOVERY ACTION — never none. Which one is decided by the ONE pure gate (shipRecovery.repairGate)
-// over get_my_disabled_ships, the same authority repair_main_ship gates on server-side:
-//   · in port  → "Repair ship"  (the free 0052 safelock — unchanged, no cost, no flag)
+// over get_my_disabled_ships, the same authority repair_ship_hull gates on server-side (0335):
+//   · in port  → "Repair ship"  (the free 0052 safelock — no cost, no flag, whole hull)
 //   · adrift   → "Tow to the nearest port" (the free 0297 tow), Repair disabled with the reason
 //   · unknown  → Repair, enabled: the readiness read failed or the client is ahead of the migration,
 //                and the SERVER is the enforcer. The UI never hides recovery it cannot rule out.
@@ -160,11 +160,13 @@ export function ShipScreen() {
     }
   }, [])
 
-  // NO-SOFTLOCK — the ONE free-repair implementation in this screen (see header). The detail
-  // composes this same function rather than carrying a second copy. Throw-style wrapper → try/catch,
-  // keyed per ship so rows never share pending state. 0297: the raw raise NEVER reaches the screen —
-  // repairErrorMessage turns it into player words, and a ship_not_at_port reject flips this ship to
-  // 'adrift' so the tow appears in place of the button that just failed.
+  // NO-SOFTLOCK — the ONE recovery-repair implementation in this screen (see header). The detail
+  // composes this same function rather than carrying a second copy. Keyed per ship so rows never
+  // share pending state. 0335: the repair verb is ENVELOPE-returning and never raises, so this is a
+  // plain result check — no try/catch around a thrown Postgres message and no substring matching of
+  // one. A not_at_port reject flips this ship to 'adrift' so the tow appears in place of the button
+  // that just failed. The amount is null = restore the whole hull, which is all a wreck's recovery
+  // has ever done; the server ignores the amount for a wreck regardless.
   async function repairShip(shipId: string) {
     const key = `repair:${shipId}`
     if (!guards.tryClaim(key)) return
@@ -172,14 +174,17 @@ export function ShipScreen() {
     setRepairNote((n) => ({ ...n, [shipId]: null }))
     setTowNote((n) => ({ ...n, [shipId]: null }))
     try {
-      await repairMainShip(shipId) // explicit ship id; server asserts ownership
-      if (activeRef.current) setAdriftSeen((a) => ({ ...a, [shipId]: false }))
-      await Promise.all([game.refresh(), map.refresh(), selection.refresh(), refreshShared()])
-    } catch (e) {
+      const res = await repairShipHull(shipId, null, crypto.randomUUID())
       if (activeRef.current) {
-        setRepairNote((n) => ({ ...n, [shipId]: repairErrorMessage(e) }))
-        if (isAdriftError(e)) setAdriftSeen((a) => ({ ...a, [shipId]: true }))
+        if (res.ok) {
+          setAdriftSeen((a) => ({ ...a, [shipId]: false }))
+        } else {
+          const reason = res.reason ?? 'unavailable'
+          setRepairNote((n) => ({ ...n, [shipId]: recoveryReasonMessage(reason) }))
+          setAdriftSeen((a) => ({ ...a, [shipId]: reason === 'not_at_port' }))
+        }
       }
+      await Promise.all([game.refresh(), map.refresh(), selection.refresh(), refreshShared()])
     } finally {
       guards.release(key)
       if (activeRef.current) setRepairPending((p) => ({ ...p, [shipId]: false }))

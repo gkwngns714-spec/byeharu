@@ -3237,9 +3237,9 @@ begin
   if (r->>'ok')::boolean is not true then
     raise exception 'NOLIVE FAIL: recovery is blocked on a dead fleet — the tow was refused: %', r;
   end if;
-  -- repair revives it at the port (raises on any refusal — a raise here IS the failure)
-  r := pg_temp.call_as(uN, format('public.repair_main_ship(%L::uuid)', sN2));
-  if (r->>'status') is distinct from 'home' then
+  -- repair revives it at the port (0335: an envelope, so a refusal is a value, never a raise)
+  r := pg_temp.call_as(uN, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', sN2, gen_random_uuid()));
+  if (r->>'ok')::boolean is not true or (r->>'status') is distinct from 'home' then
     raise exception 'NOLIVE FAIL: recovery is blocked on a dead fleet — repair did not revive the towed ship: %', r;
   end if;
   select hp, group_id into v_hp, v_group_tag from public.main_ship_instances where main_ship_id = sN2;
@@ -3987,7 +3987,7 @@ end $$;
 -- ESCAPE/COMPLETED arm's member loop was FILTERED `and alive_count > 0` (0299:622-624) and marked
 -- only the survivors 'returning' — the members that died while their fleetmates lived got NO write
 -- at all. Their hull number had been written by mainship_sync_combat_hp (hp ONLY, never status), so
--- they ended the fight at hp=0 with status='home'. repair_main_ship and mainship_emergency_tow both
+-- they ended the fight at hp=0 with status='home'. repair_ship_hull and mainship_emergency_tow both
 -- gate on status='destroyed' (0297), and get_my_disabled_ships lists by it, so such a ship was
 -- unrepairable, untowable AND invisible to the recovery UI. 0310's auto-exit made this the COMMON
 -- ending rather than a rare one: its whole job is to end fights by retreating.
@@ -4266,7 +4266,7 @@ begin
   -- ── 1. THE WRECK IS RECONCILED. RED on the pre-0332 body: it stays exactly as v_pre_status. ─────
   select status, hp, max_hp into v_status, v_hp, v_max from public.main_ship_instances where main_ship_id = v_wreck;
   if v_status <> 'destroyed' then
-    raise exception 'WRECKHOME FAIL: the fleet escaped and its casualty came out status=% (it was % before the settle) — a hull at 0 that the settle arm never marked is exactly the owner''s unrecoverable ship: repair_main_ship answers "ship is not disabled", mainship_emergency_tow answers ship_not_disabled, and get_my_disabled_ships never lists it',
+    raise exception 'WRECKHOME FAIL: the fleet escaped and its casualty came out status=% (it was % before the settle) — a hull at 0 that the settle arm never marked is exactly the owner''s unrecoverable ship: repair_ship_hull answers nothing_to_repair, mainship_emergency_tow answers ship_not_disabled, and get_my_disabled_ships never lists it',
       v_status, v_pre_status;
   end if;
   if v_hp <> 0 then
@@ -4275,7 +4275,7 @@ begin
 
   -- ── 5. THE HULL CAPACITY SURVIVES (checked here because the wreck is in hand). ──────────────────
   if v_max is distinct from v_wreck_max then
-    raise exception 'WRECKHOME FAIL: the wreck''s max_hp moved % -> % — a wreck must keep the capacity its owner paid for, and max_hp<=0 would make repair_main_ship raise invalid max_hp forever', v_wreck_max, v_max;
+    raise exception 'WRECKHOME FAIL: the wreck''s max_hp moved % -> % — a wreck must keep the capacity its owner paid for, and max_hp<=0 would make repair_ship_hull answer hull_unrepairable forever', v_wreck_max, v_max;
   end if;
 
   -- ── 2. THE SURVIVOR IS UNTOUCHED, AND hp IS NOT THE PREDICATE. ─────────────────────────────────
@@ -4310,10 +4310,14 @@ begin
   if v_berth is null or v_group is not null then
     raise exception 'WRECKHOME FAIL: the tow left the wreck half-berthed (berth %, group %) — the 0216 XOR admits no intermediate', v_berth, v_group;
   end if;
-  -- and the free repair brings it all the way back, at that port
-  r := pg_temp.call_as(uW, format('public.repair_main_ship(%L::uuid)', v_wreck));
-  if (r->>'status') is distinct from 'home' then
+  -- and the free repair brings it all the way back, at that port — free by POLICY, not by luck:
+  -- 0335 charges a wreck nothing whatever repair_credits_per_hp says, and reports it in the envelope.
+  r := pg_temp.call_as(uW, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', v_wreck, gen_random_uuid()));
+  if (r->>'ok')::boolean is not true or (r->>'status') is distinct from 'home' then
     raise exception 'WRECKHOME FAIL: repair did not revive the towed wreck: %', r;
+  end if;
+  if (r->>'total_price')::numeric <> 0 or (r->>'recovered')::boolean is not true then
+    raise exception 'WRECKHOME FAIL: wreck recovery was charged / not marked a recovery: %', r;
   end if;
   select hp, max_hp, status into v_hp, v_max, v_status from public.main_ship_instances where main_ship_id = v_wreck;
   if v_hp is distinct from v_max or v_status is distinct from 'home' then
@@ -4326,8 +4330,8 @@ begin
   -- ── 6 (continued). THE BYSTANDER STILL REPAIRS EXACTLY AS BEFORE. ──────────────────────────────
   -- It is berthed, so 0297's position gate passes without a tow — the three real destroyed ships in
   -- production carry this shape and this migration must not have changed their day.
-  r := pg_temp.call_as(uW, format('public.repair_main_ship(%L::uuid)', sW3));
-  if (r->>'status') is distinct from 'home' then
+  r := pg_temp.call_as(uW, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', sW3, gen_random_uuid()));
+  if (r->>'ok')::boolean is not true or (r->>'status') is distinct from 'home' then
     raise exception 'WRECKHOME FAIL: the already-destroyed berthed ship no longer repairs: % — this slice must not have touched the recovery path that already worked', r;
   end if;
 
@@ -4337,13 +4341,12 @@ begin
   if (r->>'ok')::boolean is not false then
     raise exception 'WRECKHOME FAIL: another player towed a wreck they do not own: % — recovery must be owner-scoped and fail closed', r;
   end if;
-  begin
-    r := pg_temp.call_as(uZ, format('public.repair_main_ship(%L::uuid)', v_wreck));
-    raise exception 'WRECKHOME FAIL: another player repaired a wreck they do not own: %', r;
-  exception
-    when sqlstate 'P0001' then
-      if position('WRECKHOME FAIL' in SQLERRM) > 0 then raise; end if;
-  end;
+  -- 0335: ownership is refused as a VALUE (ship_not_found — never an existence oracle for another
+  -- player's hull), so the exception dance this needed is gone.
+  r := pg_temp.call_as(uZ, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', v_wreck, gen_random_uuid()));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'ship_not_found' then
+    raise exception 'WRECKHOME FAIL: another player repaired a wreck they do not own, or was refused for the wrong reason: %', r;
+  end if;
   select status into v_status from public.main_ship_instances where main_ship_id = v_wreck;
   if v_status is distinct from 'destroyed' then
     raise exception 'WRECKHOME FAIL: a stranger''s refused recovery still moved the ship to % — a refusal must write nothing', v_status;
@@ -4362,8 +4365,8 @@ end $$;
 -- (mainship_resolve_fleet's transition fallback ends `if v_n <> 1 then return null;`) and, being in a
 -- group, can hold no berth at all (the 0216 XOR: `(group_id is null) = (berth_location_id is not
 -- null)`). So it had NO position — while its own fleetmates, which DO own per-ship fleets, were
--- reading "Docked at Haven" from them. Every recovery verb then refused it: repair_main_ship raises
--- ship_not_at_port, and get_my_disabled_ships reports at_port=false so the client offers only a tow.
+-- reading "Docked at Haven" from them. Every recovery verb then refused it: repair_ship_hull answers
+-- not_at_port, and get_my_disabled_ships reports at_port=false so the client offers only a tow.
 -- The tow was not the design; it was the only thing that still worked.
 --
 -- ── THE STAGING, and why it is the owner's shape rather than a convenient one ────────────────────
@@ -4403,7 +4406,7 @@ end $$;
 --      back to full hp and is STILL a member of its group. The tow un-groups (the 0216 XOR write), so
 --      an unchanged group_id is positive proof no tow happened.
 --   5. THE TOW SURVIVES FOR THE CASE IT WAS BUILT FOR. A wreck whose group holds no docked fleet at
---      all still resolves no port, still has its repair refused with ship_not_at_port, and is still
+--      all still resolves no port, still has its repair refused with not_at_port, and is still
 --      recovered by tow-then-repair. 0334 must not have deleted the escape hatch.
 --   6. RECOVERY IS OWNER-SCOPED: another player's tow and repair on the wreck are refused.
 do $$
@@ -4548,8 +4551,8 @@ begin
 
   -- ── 4. IT REPAIRS WITHOUT A TOW, AND KEEPS ITS PLACE IN THE FLEET. ─────────────────────────────
   select max_hp into v_max from public.main_ship_instances where main_ship_id = sB;
-  r := pg_temp.call_as(uD, format('public.repair_main_ship(%L::uuid)', sB));
-  if (r->>'status') is distinct from 'home' then
+  r := pg_temp.call_as(uD, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', sB, gen_random_uuid()));
+  if (r->>'ok')::boolean is not true or (r->>'status') is distinct from 'home' then
     raise exception 'DOCKWRECK FAIL: repair refused a wreck standing at its own fleet''s dock: %', r;
   end if;
   select hp, status, group_id, berth_location_id into v_hp, v_status, v_group, v_berth
@@ -4578,22 +4581,19 @@ begin
   if v_pc is not null then
     raise exception 'DOCKWRECK FAIL: a wreck whose group holds no docked fleet resolved port % — 0334 must answer only from a dock the fleet actually holds, never invent one', v_pc;
   end if;
-  begin
-    r := pg_temp.call_as(uD, format('public.repair_main_ship(%L::uuid)', sC));
+  r := pg_temp.call_as(uD, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', sC, gen_random_uuid()));
+  if (r->>'ok')::boolean is not false then
     raise exception 'DOCKWRECK FAIL: repair accepted a wreck that is genuinely at no port: %', r;
-  exception
-    when sqlstate 'P0001' then
-      if position('DOCKWRECK FAIL' in SQLERRM) > 0 then raise; end if;
-      if position('ship_not_at_port' in SQLERRM) = 0 then
-        raise exception 'DOCKWRECK FAIL: repair refused the nowhere-wreck with the wrong reason (%) — the position gate must still be the thing that answers', SQLERRM;
-      end if;
-  end;
+  end if;
+  if (r->>'reason') is distinct from 'not_at_port' then
+    raise exception 'DOCKWRECK FAIL: repair refused the nowhere-wreck with the wrong reason (%) — the position gate must still be the thing that answers', r;
+  end if;
   r := pg_temp.call_as(uD, format('public.mainship_emergency_tow(%L::uuid)', sC));
   if (r->>'ok')::boolean is not true then
     raise exception 'DOCKWRECK FAIL: the tow refused the nowhere-wreck: % — 0334 must not have broken the escape hatch it relies on for exactly this case', r;
   end if;
-  r := pg_temp.call_as(uD, format('public.repair_main_ship(%L::uuid)', sC));
-  if (r->>'status') is distinct from 'home' then
+  r := pg_temp.call_as(uD, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', sC, gen_random_uuid()));
+  if (r->>'ok')::boolean is not true or (r->>'status') is distinct from 'home' then
     raise exception 'DOCKWRECK FAIL: repair did not revive the towed nowhere-wreck: %', r;
   end if;
 
@@ -4603,19 +4603,16 @@ begin
   if (r->>'ok')::boolean is not false then
     raise exception 'DOCKWRECK FAIL: another player towed a wreck they do not own: %', r;
   end if;
-  begin
-    r := pg_temp.call_as(uZ, format('public.repair_main_ship(%L::uuid)', sB));
-    raise exception 'DOCKWRECK FAIL: another player repaired a wreck they do not own: %', r;
-  exception
-    when sqlstate 'P0001' then
-      if position('DOCKWRECK FAIL' in SQLERRM) > 0 then raise; end if;
-  end;
+  r := pg_temp.call_as(uZ, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', sB, gen_random_uuid()));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'ship_not_found' then
+    raise exception 'DOCKWRECK FAIL: another player repaired a wreck they do not own, or was refused for the wrong reason: %', r;
+  end if;
   select status into v_status from public.main_ship_instances where main_ship_id = sB;
   if v_status is distinct from 'destroyed' then
     raise exception 'DOCKWRECK FAIL: a stranger''s refused recovery still moved the ship to % — a refusal must write nothing', v_status;
   end if;
 
-  raise notice 'DZCOMBAT_PASS_DOCKWRECK ok: in a group with NO unified fleet (production''s own shape), a wreck that owns no fleet row and — being grouped — can hold no berth resolved its FLEETMATE''S dock (%) instead of nothing, through the member-ownership clause alone (the fleetmate''s commission fleet carries no group_id). The living ship and the wreck report the SAME port, get_my_disabled_ships lists it at_port=true, and it repaired to %/% WITHOUT a tow — still in its group, still berthless, so no haul occurred. A wreck whose group holds no docked fleet still resolves nothing, is still refused with ship_not_at_port, and is still recovered by tow-then-repair; and a stranger''s tow and repair are both refused, writing nothing',
+  raise notice 'DZCOMBAT_PASS_DOCKWRECK ok: in a group with NO unified fleet (production''s own shape), a wreck that owns no fleet row and — being grouped — can hold no berth resolved its FLEETMATE''S dock (%) instead of nothing, through the member-ownership clause alone (the fleetmate''s commission fleet carries no group_id). The living ship and the wreck report the SAME port, get_my_disabled_ships lists it at_port=true, and it repaired to %/% WITHOUT a tow — still in its group, still berthless, so no haul occurred. A wreck whose group holds no docked fleet still resolves nothing, is still refused with not_at_port, and is still recovered by tow-then-repair; and a stranger''s tow and repair are both refused, writing nothing',
     v_port, v_hp, v_max;
 end $$;
 

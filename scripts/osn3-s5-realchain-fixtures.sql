@@ -2,7 +2,7 @@
 -- public.dev_set_main_ship_destroyed(p_player). Builds states on the ACTUAL chain (through 0059). Proves:
 --   • coherent destruction of in_transit / in_space / at_location / legacy states (coordinate movement
 --     cancelled + pointer + spatial state cleared; legacy cleanup preserved; receipt immutable; history
---     preserved);  • idempotent repeated destruction;  • real repair_main_ship after destruction returns
+--     preserved);  • idempotent repeated destruction;  • real repair_ship_hull after destruction returns
 --     a valid legacy_home with no coordinate residue;  • every generic contradiction ABORTS atomically,
 --     leaving all rows unchanged (per-ship state hash before == after).
 -- Mirrors the live config in the disposable stack (mainship_send_enabled=true) and asserts S5 never
@@ -214,16 +214,18 @@ begin
   raise notice 'SECTION 5 ok: repeated destruction is idempotent (no duplicate terminalization)';
 end $$;
 
--- ════════ SECTION 6 — real repair_main_ship after destruction → valid legacy_home, no coordinate residue ════════
+-- ════════ SECTION 6 — real repair_ship_hull after destruction → valid legacy_home, no coordinate residue ════════
 do $$ declare s uuid; p uuid; r jsonb;
 begin
   s := s5fix('in_space'); p := s5_player(s);
   perform dev_set_main_ship_destroyed(p);
   perform s5_assert_destroyed(s, 0);
-  -- call the UNCHANGED repair_main_ship as the owning player (auth.uid() via jwt claim); repair is owner-executable here
+  -- call THE repair verb as the owning player (auth.uid() via jwt claim); repair is owner-executable
+  -- here. 0335: one verb, a NULL amount restores the whole hull, and the request id is the replay key.
   perform set_config('request.jwt.claim.sub', p::text, true);
   perform set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
-  r := repair_main_ship();
+  r := repair_ship_hull(null, null, gen_random_uuid());
+  if (r->>'ok')::boolean is not true then raise exception 'S6: repair refused the destroyed ship: %', r; end if;
   perform set_config('request.jwt.claim.sub', '', true);
   perform set_config('request.jwt.claims', '', true);
   if (r->>'status') <> 'home' then raise exception 'S6: repair did not return home: %', r; end if;
@@ -233,7 +235,7 @@ begin
   if exists (select 1 from main_ship_space_movements where main_ship_id=s and status='moving') then raise exception 'S6: repair created a coordinate movement'; end if;
   if exists (select 1 from location_presence lp join fleets f on f.id=lp.fleet_id where f.main_ship_id=s and lp.status='active') then raise exception 'S6: repair created presence'; end if;
   if (mainship_space_validate_context(s)->>'state') <> 'legacy_home' then raise exception 'S6: repaired ship not validate=legacy_home: %', mainship_space_validate_context(s); end if;
-  raise notice 'SECTION 6 ok: repair_main_ship (unchanged) after destruction → clean legacy_home, no coordinate residue';
+  raise notice 'SECTION 6 ok: repair_ship_hull after destruction → clean legacy_home, no coordinate residue';
 end $$;
 
 -- ════════ SECTION 7 — generic contradictions: destruction ABORTS, all rows untouched ════════

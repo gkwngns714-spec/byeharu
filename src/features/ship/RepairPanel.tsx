@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import { getWalletBalance } from '../map/tradeApi'
-import { getRepairConfigRows, getShipHull, repairShipHullAtPort } from './repairApi'
+import { getRepairConfigRows, getShipHull, repairShipHull } from './repairApi'
 import {
   clampRepairHp,
   isDestroyed,
@@ -37,29 +37,30 @@ import { Button, Card, CardHeader, SectionLabel } from '../../components/ui'
 // of its own — MeterPairBars directly above is the one hull display; two bars for one fact would
 // be the one-authority law broken in pixels.
 //
-// DOCKEDNESS is a PROP: `dockState` is repairDockState over the ship's own get_my_fleet_positions
-// row (see that fold for the four states and why berthed/unknown are not 'away'), the projection
-// the shell already polls. ZERO new dockedness reads — the old locationId prop (the Port dock
-// projection) was only ever a client-side is-docked proxy: repair_ship_hull_at_port takes no
-// location and resolves the dock server-side (0201 → mainship_resolve_docked_location, live head
-// 0210).
+// POSITION is a PROP: `dockState` is repairDockState over the ship's own get_my_fleet_positions
+// row (see that fold for the three states and why 'unknown' is not 'away'), the projection the
+// shell already polls. ZERO new position reads — repair_ship_hull takes no location and resolves
+// the port server-side through the ONE position authority (0335 → mainship_port_of_ship, which
+// accepts a berthed ship as well as a docked fleet; that is why the fold no longer distinguishes
+// them and why the old "add this ship to a fleet" line is gone).
 //
 // CLIENT-FLAG-GATED on the SERVER'S OWN flag, read honestly from PUBLIC-READ game_config (the
-// SalvageMarketPanel posture): 0201 shipped NO read RPC for repair, so the panel reads
+// SalvageMarketPanel posture): there is NO read RPC for repair, so the panel reads
 // repair_economy_enabled itself and renders NOTHING unless it is jsonb true (strict fold). While
-// the flag is false the server would also reject any repair with repair_economy_disabled before
-// any read — double fail-closed, the client is never the control. NO optimistic UI: every repair
+// the flag is false the server also rejects any PRICED mend with repair_economy_disabled — double
+// fail-closed, the client is never the control. (Wreck recovery is never gated by that flag on
+// either side; it renders through the free block, not this panel.) NO optimistic UI: every repair
 // awaits the server, then refetches its own wave (hull + wallet) AND pings the screen (onMended)
 // in parallel, so the shared hull meter above re-reads the hp the mend just changed. The
 // availability mirror (repairEconomy.ts) is a display-only precheck; its hints and every server
 // reject flow through the ONE repairReasonMessage mapper.
 //
-// EXACTLY ONE ACTION AT A TIME (the server-enforced mutual exclusion — free repair_main_ship
-// gates on status='destroyed', paid repair REJECTS destroyed, 0201): the caller mounts this panel
-// only when repairConcept says 'paid_mend' (FittingDetail — the free Repair/Tow block owns
-// 'free_recovery'), and the branches below keep it honest even against a stale status: destroyed
-// hull → the free-path note, damaged but not mendable here → the one honest line for WHY
-// (repairDockStateLine), damaged and docked → the mend (stepper + cost + ONE Repair).
+// EXACTLY ONE SURFACE AT A TIME: the caller mounts this panel only when repairConcept says
+// 'paid_mend' (FittingDetail — the free Repair/Tow block owns 'free_recovery'), and the branches
+// below keep it honest even against a stale status: destroyed hull → the free-path note, damaged
+// but not repairable here → the one honest line for WHY (repairDockStateLine), damaged and at a
+// port → the mend (stepper + cost + ONE Repair). Since 0335 both surfaces command the SAME RPC
+// (repair_ship_hull) — what differs is the policy the server applies to a wreck, not the verb.
 
 export function RepairPanel({
   // The commanded ship (always resolved — the Fitting detail IS a ship) + its display name.
@@ -151,7 +152,7 @@ export function RepairPanel({
       guards,
       setPending: (on) => setPending(on),
       setNote: (n) => setNote(n),
-      exec: () => repairShipHullAtPort(mainShipId, hpAmount, crypto.randomUUID()),
+      exec: () => repairShipHull(mainShipId, hpAmount, crypto.randomUUID()),
       // Success feedback with the SERVER's receipted numbers, never the client math.
       successNote: (res) =>
         `Repaired +${res.hp_restored} hull — −${res.total_price.toLocaleString('en-US')} credits.`,
@@ -189,7 +190,7 @@ export function RepairPanel({
 
   // The warning tone marks an ACTIONABLE desk only (damaged + docked); explainers ride neutral.
   const actionable =
-    hull !== 'error' && !isDestroyed(hull) && missingHull(hull) > 0 && dockState === 'docked'
+    hull !== 'error' && !isDestroyed(hull) && missingHull(hull) > 0 && dockState === 'at_port'
 
   return (
     <Card tone={actionable ? 'warning' : 'default'} data-testid="repair-panel" className="mt-3">
@@ -265,36 +266,29 @@ function RepairBody({
     flagOn: true, // by construction: rendered only under the cfg.enabled gate
     amount: effectiveAmount || 1,
     shipResolved: true, // by construction: mainShipId is a required prop
-    destroyed,
-    docked: dockState === 'docked', // the REAL fold of the ship's own position row — never hardcoded
+    atPort: dockState === 'at_port', // the REAL fold of the ship's own position row — never hardcoded
     missing,
     affordable,
   })
 
-  // The one honest line when the mend cannot happen here (repairDockStateLine — null for 'docked',
+  // The one honest line when the mend cannot happen here (repairDockStateLine — null for 'at_port',
   // where the mend renders instead, and for 'unknown', where no claim is permitted).
   const stateLine = repairDockStateLine(dockState)
 
   return (
     <>
       {destroyed ? (
-        // THE SEAM: a destroyed ship recovers through the FREE path (repair_main_ship), not the paid
+        // THE SEAM: a destroyed ship recovers through the FREE policy of the same verb, not this
         // desk. Normally unreachable here (repairConcept routes destroyed to the free block) — this
         // covers a stale-status race against the fresher hull read, honestly and button-free.
         <p data-testid="repair-destroyed" className="mt-2 text-[10px] text-ink-muted">
-          {repairReasonMessage('ship_destroyed')}
+          This ship is disabled — recover it first (free), then it can be repaired.
         </p>
       ) : missing <= 0 ? (
         // Reachable only with a pending note (a full hull with nothing to show renders no card at
         // all) — this line gives the receipt below its context: the mend finished, the hull is whole.
         <p data-testid="repair-full" className="mt-2 text-[10px] text-ink-muted">
           {repairReasonMessage('nothing_to_repair')}
-        </p>
-      ) : dockState === 'berthed' ? (
-        // At the port but without a fleet: the location line above reads "Docked at <port>", so the
-        // one thing this line must NOT say is "take this ship to a port". Name the real blocker.
-        <p data-testid="repair-no-fleet" className="mt-2 text-[10px] text-ink-muted">
-          {stateLine}
         </p>
       ) : dockState === 'away' ? (
         // Genuinely not at a port: the ONE honest line (the availability mirror's not_docked copy —
