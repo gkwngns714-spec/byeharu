@@ -60,7 +60,13 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
       're-point the slice at the new head before generating.');
   }
 
-  const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000336']);
+  // 0337 JOINS, by name rather than by widening the window. It makes a reposition a MOVE instead of
+  // a teleport; its four tick hunks are the declare block, the v_is_spatial line, the per-unit
+  // position write and the foot of the spatial arm — all in the SPATIAL branch, while this file's
+  // slice is the settle arm's member-repatriation loop in branch (B), hundreds of lines above it.
+  // Statically disjoint, checked site by site.
+  const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000336',
+                                         '20260618000337']);
   const reHunkRow = /\(\s*\d+\s*,\s*'process_combat_ticks'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000299'
     && !KNOWN_LATER_REWRITERS.has(version(f))

@@ -210,26 +210,37 @@ test('RETREAT: an ordinary move yields null, so the caller keeps its own "Sent �
   }
 })
 
-// ── REPOSITION (0311): an in-zone order moves the fight, and the copy says so plainly. ────────────
+// ── REPOSITION (0337): an in-zone order starts a MOVE, and the copy says so in the right tense. ───
 
-test('REPOSITION: the repositioned outcome says the fleet moved and the fight continues', () => {
+test('REPOSITION: the repositioning outcome says the fleet is ON ITS WAY and the fight continues', () => {
   // The owner's rule: "when i am inside the zone and moving(redirecting), it should just move
-  // without breaking combat, and battles being continued." The copy mirrors it: moved, still
-  // fighting. It must never read as a retreat (nothing broke off) and never as a journey (no leg
-  // was minted — the move is immediate).
+  // without breaking combat, and battles being continued." 0311 built that as a teleport and the
+  // owner met it head-on — "when in combat, and i move, i teleport" — so 0337 made it a real journey
+  // the combat tick walks at the fleet's own speed. The copy is present tense BECAUSE OF THAT: the
+  // fleet has a course, not an arrival. It must never read as a retreat (nothing broke off) and never
+  // as a journey leg (no movement was minted — the fleet is moving inside its own fight).
   const point = openSpaceDestinationLabel({ x: 310, y: 455 })
-  expect(fleetRetreatOutcomeMessage('repositioned', 'Alpha', point)).toBe(
-    'Alpha moved to open space at (310, 455) — still in the fight.',
+  expect(fleetRetreatOutcomeMessage('repositioning', 'Alpha', point)).toBe(
+    'Alpha is moving to open space at (310, 455) — still in the fight.',
   )
-  expect(fleetRetreatOutcomeMessage('repositioned', 'Alpha', 'Haven')).toBe(
-    'Alpha moved to Haven — still in the fight.',
+  expect(fleetRetreatOutcomeMessage('repositioning', 'Alpha', 'Haven')).toBe(
+    'Alpha is moving to Haven — still in the fight.',
   )
-  const msg = fleetRetreatOutcomeMessage('repositioned', 'Alpha', point) as string
+  const msg = fleetRetreatOutcomeMessage('repositioning', 'Alpha', point) as string
   expect(msg).not.toContain('retreat')
   // no jargon, no home/base/win wording (the standing copy laws).
   for (const banned of ['base', 'home', 'win', 'sortie', 'berth']) {
     expect(msg).not.toContain(banned)
   }
+})
+
+test('REPOSITION: the retired 0311 token renders NOTHING — the arrival claim cannot come back', () => {
+  // 0337 deleted 'repositioned' from the server envelope in the same slice that deleted the teleport
+  // from the engine. Mapping it here to a friendly sentence would keep the arrival claim alive on a
+  // surface after the behaviour behind it was removed — the exact "documenting a limitation the owner
+  // told me to delete" shape. An unknown outcome falls through to null, and the caller keeps its own
+  // ordinary-move summary.
+  expect(fleetRetreatOutcomeMessage('repositioned', 'Alpha', 'Haven')).toBeNull()
 })
 
 // ── LOOT (0307): naming a destination costs nothing — so the copy no longer threatens the player. ──

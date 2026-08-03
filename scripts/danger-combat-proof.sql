@@ -80,12 +80,24 @@
 --                              rather than each carrying it; the no-weapon hull obeys the same
 --                              identity through the synthesized weapon; and the stronger gun
 --                              (mk2) never produces less damage than the weaker one.
---   DZCOMBAT_PASS_REPOSITION — (0311) an ambushed fleet ordered to a point INSIDE the fight's own
---                              zone REPOSITIONS: fleet parked at the destination, player units
---                              translated by the exact delta, engagement_x/y restamped, encounter
---                              still active, NO retreat_target_* written, NO retreat started, NO
---                              leg minted. Fails on the pre-0311 retreat-always body at its FIRST
---                              envelope assert (the order comes back 'retreat_started').
+--   DZCOMBAT_PASS_REPOSITION — (0337) an ambushed fleet ordered to a point INSIDE the fight's own
+--                              zone gets a COURSE, not a jump: the order moves nothing at all, and
+--                              the tick then walks the fleet there over THREE ticks at exactly its
+--                              own combat_fleet_move_speed per tick, the formation holding ONE rigid
+--                              offset from the anchor at every step, arriving exactly and consuming
+--                              the order — encounter still active, NO retreat_target_* written, NO
+--                              retreat started, NO leg minted, enemy rows moving under their own
+--                              mover the whole way. The PER-TICK bound is the point: an endpoint
+--                              assert alone passes a teleport, so a single-step body fails at step 1
+--                              even with a perfect endpoint. Fails on the pre-0311 retreat-always
+--                              body at its FIRST envelope assert ('retreat_started'), and on the
+--                              0311 teleport body at "the ORDER moved the fleet".
+--   DZCOMBAT_PASS_REPOHOLD   — (0337) the stale-destination case, decided: a fight that is RETREATING
+--                              while still carrying a course does not follow it. Non-vacuous by
+--                              construction — a living fleet, a positive speed and more than one
+--                              step still to run — so only the step's own fresh status='active'
+--                              read is holding it. Nothing clears the course, because a value on a
+--                              row nobody reads is already gone.
 --   DZCOMBAT_PASS_REPOOVERLAP — (0311) the admission QUANTIFIES over overlapping zones instead of
 --                              choosing one: a thin lower-area zone that holds the anchor but not
 --                              the destination cannot VETO a move whose destination sits inside
@@ -1503,15 +1515,32 @@ begin
   raise notice 'DZCOMBAT_PASS_FITTEDEXACT ok: the armed command ship''s weapons_json carries exactly its catalog autocannon_battery DELIVERY profile (range / projectile speed / cooldown / ammo, field-for-field, alone, frozen NULL clocks), no fallback beside it, and it fires its ship''s OWN folded combat_power (% — not the catalog share weight %)', v_fe_attack, t.power;
 end $$;
 
--- ════════ DZCOMBAT_PASS_REPOSITION (0311): AN IN-ZONE ORDER MOVES THE FIGHT, NOT OUT OF IT ══════════
+-- ════════ DZCOMBAT_PASS_REPOSITION (0337): AN IN-ZONE ORDER IS A MOVE, NOT A TELEPORT ═══════════════
 -- The owner's law, verbatim: "there should only be breaking combat when it is outside the zone.
 -- When i am inside the zone and moving(redirecting), it should just move without breaking combat,
--- and battles being continued." Pre-0311, step 8 of command_ship_group_go treated EVERY move order
--- against an active encounter as a retreat: it wrote fleets.retreat_target_* and armed
--- presence_request_leave. ON THAT PRE-0311 RETREAT-ALWAYS BODY (main today) THIS BLOCK FAILS AT
--- ITS FIRST ENVELOPE ASSERT (order_outcome comes back 'retreat_started', never 'repositioned') —
--- the defect, inverted. The OVERLAP semantics (quantify, never choose) are proven by the next
--- block; this one proves the basic in-zone move on a single-zone world.
+-- and battles being continued." 0311 built that — and built it as an INSTANT jump, saying so in its
+-- own header ("The reposition is INSTANT") on the strength of a measurement 0316 then invalidated by
+-- cutting every weapon range by five. The owner watched the result: "when in combat, and i move, i
+-- teleport."
+--
+-- SO THIS BLOCK NOW PROVES THE JOURNEY, AND AN ENDPOINT-ONLY ASSERT CANNOT SATISFY IT:
+--   1. the ORDER moves NOTHING — fleet, formation and anchor are byte-identical after it. On the
+--      0311 body this fails on the FIRST position check, which is the teleport inverted.
+--   2. the destination is RECORDED on the ENCOUNTER (per fleet, one pair, both-or-neither).
+--   3. tick 1 moves the fleet EXACTLY the fleet's own speed and the order still stands.
+--   4. tick 2 moves it EXACTLY that again — MORE THAN ONE TICK, which is the whole property.
+--   5. tick 3 ARRIVES on the ordered point and the order is consumed.
+--   Every step is bounded by combat_fleet_move_speed, so a body that covered the distance in one
+--   step fails at (3) even though its endpoint is right.
+--   6. the formation is RIGID: the player unit's offset from the anchor is IDENTICAL at every one of
+--      the five observations — the fleet moves as ONE body ("show only fleet. it is as a whole").
+--   7. the enemy RESPONDS: pirate rows move under their own mover while the fleet walks, so walking
+--      away can never make a fleet unreachable by standing still.
+--
+-- THE PROOF OWNS ITS PRECONDITIONS: the destination is derived from the fleet's MEASURED speed
+-- (2.5 x speed, so the arithmetic of "3 ticks" is a fact of this fixture rather than of a knob), and
+-- the group's 0310 auto-exit is turned OFF through the real RPC so a damage roll mid-journey cannot
+-- silently end the fight and turn an arrival assert into a flake.
 --
 -- Fixture: ROSTERAUTH's end state, reused. Encounter ra_enc2 is ACTIVE and never ticked; its fleet
 -- is parked idle/space at the ambush entry point ON the 'DZC Roster Authority Zone' boundary — the
@@ -1519,7 +1548,7 @@ end $$;
 -- arm is a closure test).
 do $$
 declare
-  r jsonb; n int;
+  r jsonb; n int; i int;
   uL uuid := (select v from dzc where k='uL');
   gL uuid := (select v from dzc where k='ra_group');
   v_fleet uuid := (select v from dzc where k='ra_fleet');
@@ -1529,8 +1558,12 @@ declare
   py double precision := (select v from dzn where k='ra_py');
   e0x double precision; e0y double precision;
   dx double precision; dy double precision;
+  v_speed double precision;
+  v_step double precision; v_travelled double precision;
+  prev_x double precision; prev_y double precision;
+  off_x double precision; off_y double precision;
   fl record; e record; pr record;
-  n_mv0 int; n_units0 int;
+  n_mv0 int; n_units0 int; n_enemy_moved int;
 begin
   if v_enc is null or v_fleet is null or z_small is null or px is null then
     raise exception 'REPOSITION FAIL: the ROSTERAUTH fixture was not handed over'; end if;
@@ -1540,6 +1573,8 @@ begin
   if e.status <> 'active' then raise exception 'REPOSITION FAIL precondition: the encounter is % (want active)', e.status; end if;
   if e.engagement_x is null or e.engagement_y is null then
     raise exception 'REPOSITION FAIL precondition: the encounter has no engagement point'; end if;
+  if e.reposition_x is not null or e.reposition_y is not null then
+    raise exception 'REPOSITION FAIL precondition: a reposition destination is already recorded (%,%)', e.reposition_x, e.reposition_y; end if;
   e0x := e.engagement_x; e0y := e.engagement_y;
   select * into fl from public.fleets where id = v_fleet;
   if fl.status <> 'idle' or fl.location_mode <> 'space' then
@@ -1559,73 +1594,145 @@ begin
         where z.status = 'active' and z.id <> z_small
           and ST_DWithin(z.boundary, ST_MakePoint(e0x, e0y), 1e-6)); end if;
 
-  -- ── snapshot EVERY combat unit in the world: only ra_enc2's player rows may move. ───────────────
+  -- ── snapshot EVERY combat unit in the world: only ra_enc2's player rows may be translated. ──────
   create temp table dz_repo_u1 on commit drop as
     select cu.id, cu.encounter_id, cu.side, cu.pos_x, cu.pos_y from public.combat_units cu;
   select count(*) into n_units0 from dz_repo_u1 where encounter_id = v_enc and side = 'player';
   if n_units0 < 1 then raise exception 'REPOSITION FAIL precondition: no player units in the fixture encounter'; end if;
   select count(*) into n_mv0 from public.fleet_movements where fleet_id = v_fleet;
 
-  -- ── THE OWNER'S ACTION: redirect INSIDE the zone (the small zone's centre). ─────────────────────
-  dx := round(px); dy := round(py + 350);
+  -- ── THE FLEET'S OWN SPEED, MEASURED through the deployed authority — never a quoted knob. ───────
+  v_speed := public.combat_fleet_move_speed(v_enc);
+  if v_speed is null or v_speed <= 0 then
+    raise exception 'REPOSITION FAIL precondition: the fleet''s combat speed is % — it could not move under ANY order and every journey assert below would be vacuous', v_speed; end if;
+  -- 0310's auto-exit OFF through the real RPC: a damage roll must not end the fight mid-journey and
+  -- turn "did it arrive?" into a coin toss. Owned precondition, set here, never assumed.
+  r := pg_temp.call_as(uL, format('public.set_group_auto_exit(%L::uuid, false, 30)', gL));
+  if (r->>'ok')::boolean is not true then raise exception 'REPOSITION FAIL precondition: could not disable auto-exit: %', r; end if;
+
+  -- ── THE OWNER'S ACTION: redirect INSIDE the zone, 2.5 steps away — deeper into the zone the fleet
+  -- ── was ambushed on the edge of. Derived from the measured speed, so "three ticks" is arithmetic.
+  dx := e0x; dy := e0y + 2.5 * v_speed;
+  if not public.danger_zone_contains_point(z_small, dx, dy) then
+    raise exception 'REPOSITION FAIL fixture: the destination (%,%) is not inside the fight''s zone — 2.5 steps at speed % leaves it; move the fixture geometry', dx, dy, v_speed; end if;
   r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, dx, dy));
   if (r->>'ok')::boolean is not true then raise exception 'REPOSITION FAIL: the in-zone order was refused: %', r; end if;
-  if (r->>'order_outcome') is distinct from 'repositioned' then
-    raise exception 'REPOSITION FAIL: order_outcome is % — the in-zone order armed a retreat instead of repositioning (the pre-0311 behaviour)', r->>'order_outcome'; end if;
+  if (r->>'order_outcome') is distinct from 'repositioning' then
+    raise exception 'REPOSITION FAIL: order_outcome is % — the in-zone order armed a retreat instead of ordering a move (the pre-0311 behaviour), or still claims the arrival 0337 deleted', r->>'order_outcome'; end if;
   if (r->>'encounter_id')::uuid is distinct from v_enc then
     raise exception 'REPOSITION FAIL: the envelope names encounter % (want the live fight %)', r->>'encounter_id', v_enc; end if;
   if r ? 'movement_id' then
     raise exception 'REPOSITION FAIL: the envelope carries a movement_id — a reposition must never mint a leg: %', r; end if;
 
-  -- ── the fleet MOVED, through the one writer, and nothing retreat-shaped was written. ────────────
+  -- ── 1. THE ORDER MOVED NOTHING. This is the teleport, inverted: on the 0311 body the fleet, the
+  -- ── formation and the anchor are all AT the destination by now, and every one of these fails.
   select * into fl from public.fleets where id = v_fleet;
-  if fl.status <> 'idle' or fl.location_mode <> 'space' or fl.active_movement_id is not null
-     or abs(fl.space_x - dx) > 1e-6 or abs(fl.space_y - dy) > 1e-6 then
-    raise exception 'REPOSITION FAIL: the fleet is %/% at (%,%) — it did not park at the ordered point (%,%)',
-      fl.status, fl.location_mode, fl.space_x, fl.space_y, dx, dy; end if;
-  if fl.current_location_id is not null then
-    raise exception 'REPOSITION FAIL: the fleet is present at a location after an open-space jump'; end if;
-  if fl.retreat_target_location_id is not null or fl.retreat_target_x is not null or fl.retreat_target_y is not null then
-    raise exception 'REPOSITION FAIL: a reposition wrote a retreat destination (%, %, %)',
-      fl.retreat_target_location_id, fl.retreat_target_x, fl.retreat_target_y; end if;
-
-  -- ── the fight CONTINUES at the new spot: still active, anchor restamped, no retreat armed. ──────
+  if abs(fl.space_x - e0x) > 1e-6 or abs(fl.space_y - e0y) > 1e-6 then
+    raise exception 'REPOSITION FAIL: the ORDER moved the fleet to (%,%) — a reposition orders a move; it does not perform one. THIS IS THE TELEPORT.', fl.space_x, fl.space_y; end if;
   select * into e from public.combat_encounters where id = v_enc;
-  if e.status <> 'active' then
-    raise exception 'REPOSITION FAIL: the encounter is % — the in-zone order broke the combat', e.status; end if;
-  if abs(e.engagement_x - dx) > 1e-6 or abs(e.engagement_y - dy) > 1e-6 then
-    raise exception 'REPOSITION FAIL: engagement is (%,%) not the destination (%,%) — wave 2 would spawn at the abandoned point', e.engagement_x, e.engagement_y, dx, dy; end if;
+  if abs(e.engagement_x - e0x) > 1e-6 or abs(e.engagement_y - e0y) > 1e-6 then
+    raise exception 'REPOSITION FAIL: the ORDER restamped the anchor to (%,%) — the anchor is the tick''s to move, one step at a time', e.engagement_x, e.engagement_y; end if;
+  select count(*) into n
+    from dz_repo_u1 b join public.combat_units cu on cu.id = b.id
+   where cu.pos_x is distinct from b.pos_x or cu.pos_y is distinct from b.pos_y;
+  if n <> 0 then
+    raise exception 'REPOSITION FAIL: the ORDER moved % combat unit(s) — the whole-delta translate 0337 deleted is still in the order verb', n; end if;
+
+  -- ── 2. THE DESTINATION IS RECORDED ON THE FIGHT, per FLEET, as one both-or-neither pair. ────────
+  if e.reposition_x is null or e.reposition_y is null then
+    raise exception 'REPOSITION FAIL: no destination was recorded (%,%) — the order neither moved the fleet nor gave it a course', e.reposition_x, e.reposition_y; end if;
+  if abs(e.reposition_x - dx) > 1e-6 or abs(e.reposition_y - dy) > 1e-6 then
+    raise exception 'REPOSITION FAIL: the recorded destination is (%,%), not the ordered (%,%)', e.reposition_x, e.reposition_y, dx, dy; end if;
+  if fl.retreat_target_location_id is not null or fl.retreat_target_x is not null or fl.retreat_target_y is not null then
+    raise exception 'REPOSITION FAIL: a reposition wrote a retreat destination (%, %, %) — a move is never a retreat',
+      fl.retreat_target_location_id, fl.retreat_target_x, fl.retreat_target_y; end if;
   select * into pr from public.location_presence where id = e.presence_id;
   if pr.status <> 'active' or pr.retreat_requested_at is not null then
     raise exception 'REPOSITION FAIL: the presence is %/retreat_requested % — the reposition armed a retreat', pr.status, pr.retreat_requested_at; end if;
 
-  -- ── the formation TRANSLATED by the exact delta; every other unit in the world is untouched. ────
-  select count(*) into n
-    from dz_repo_u1 b join public.combat_units cu on cu.id = b.id
-   where b.encounter_id = v_enc and b.side = 'player'
-     and (abs(cu.pos_x - (b.pos_x + (dx - e0x))) > 1e-6 or abs(cu.pos_y - (b.pos_y + (dy - e0y))) > 1e-6);
-  if n <> 0 then
-    raise exception 'REPOSITION FAIL: % player unit(s) off the translated position — the formation did not translate with the fleet', n; end if;
+  -- ── 3-6. THE JOURNEY. Three ticks: two full steps and an arrival, each one MEASURED. ────────────
+  -- The rigid-body offset is captured from the pre-order world and re-checked after every step, so a
+  -- formation that slid relative to its own anchor fails here even if the anchor's path is perfect.
+  select cu.pos_x - e0x, cu.pos_y - e0y into off_x, off_y
+    from public.combat_units cu where cu.encounter_id = v_enc and cu.side = 'player'
+   order by cu.id limit 1;
+  if off_x is null then raise exception 'REPOSITION FAIL: the fixture''s player unit has no position — every rigidity assert would be vacuous'; end if;
+  prev_x := e0x; prev_y := e0y;
+  for i in 1 .. 3 loop
+    perform pg_temp.ae_tick(v_enc);
+    select * into e from public.combat_encounters where id = v_enc;
+    if e.status <> 'active' then
+      raise exception 'REPOSITION FAIL: the encounter went % on step % — the journey must not end the fight (auto-exit is off; this is damage or a wave)', e.status, i; end if;
+    v_step := public.osn_distance(prev_x, prev_y, e.engagement_x, e.engagement_y);
+    -- THE PER-TICK BOUND. An endpoint-only assert passes a teleport; this one does not.
+    if v_step > v_speed + 1e-9 then
+      raise exception 'REPOSITION FAIL: step % covered % world units against a fleet speed of % — the fleet is moving faster than its own slowest hull, i.e. it is still jumping', i, v_step, v_speed; end if;
+    if i < 3 then
+      -- a FULL step, and the order still standing: this is what makes the journey longer than one tick
+      if abs(v_step - v_speed) > 1e-9 then
+        raise exception 'REPOSITION FAIL: step % covered % world units, want a full step of % — the fleet is dawdling or the mover is not being asked for a full step', i, v_step, v_speed; end if;
+      if e.reposition_x is null then
+        raise exception 'REPOSITION FAIL: the order was consumed on step % of 3 — it arrived early, which at this distance means it jumped', i; end if;
+    end if;
+    -- the fleet marker tracks the fight the whole way (not only at the end)
+    select * into fl from public.fleets where id = v_fleet;
+    if abs(fl.space_x - e.engagement_x) > 1e-6 or abs(fl.space_y - e.engagement_y) > 1e-6 then
+      raise exception 'REPOSITION FAIL: after step % the fleet marker is (%,%) but the fight is at (%,%) — the map would show the ship somewhere it is not', i, fl.space_x, fl.space_y, e.engagement_x, e.engagement_y; end if;
+    if fl.status <> 'idle' or fl.location_mode <> 'space' or fl.active_movement_id is not null
+       or fl.current_location_id is not null then
+      raise exception 'REPOSITION FAIL: after step % the fleet is %/% (movement %, location %) — a reposition mints no leg and docks nowhere', i, fl.status, fl.location_mode, fl.active_movement_id, fl.current_location_id; end if;
+    -- RIGID BODY: the same offset from the anchor, every step, for every player row
+    select count(*) into n from public.combat_units cu
+     where cu.encounter_id = v_enc and cu.side = 'player'
+       and (abs((cu.pos_x - e.engagement_x) - off_x) > 1e-6 or abs((cu.pos_y - e.engagement_y) - off_y) > 1e-6);
+    if n <> 0 then
+      raise exception 'REPOSITION FAIL: after step % , % player unit(s) sit at a different offset from the anchor — the fleet is dissolving into individual ships instead of moving as one body', i, n; end if;
+    prev_x := e.engagement_x; prev_y := e.engagement_y;
+  end loop;
+
+  -- ── 5. ARRIVED, EXACTLY, AND THE ORDER IS CONSUMED. ────────────────────────────────────────────
+  if abs(e.engagement_x - dx) > 1e-6 or abs(e.engagement_y - dy) > 1e-6 then
+    raise exception 'REPOSITION FAIL: after 3 steps the fight is at (%,%), not the ordered (%,%) — 2.5 steps at speed % must land on tick 3', e.engagement_x, e.engagement_y, dx, dy, v_speed; end if;
+  if e.reposition_x is not null or e.reposition_y is not null then
+    raise exception 'REPOSITION FAIL: the fleet arrived and the order (%,%) still stands — arrival must consume it, or the tick keeps re-translating a fleet that is already there', e.reposition_x, e.reposition_y; end if;
+  v_travelled := public.osn_distance(e0x, e0y, e.engagement_x, e.engagement_y);
+  if abs(v_travelled - 2.5 * v_speed) > 1e-6 then
+    raise exception 'REPOSITION FAIL: the fleet covered % world units, want % (2.5 x its own speed)', v_travelled, 2.5 * v_speed; end if;
+  if e.status <> 'active' then
+    raise exception 'REPOSITION FAIL: the encounter is % — the in-zone order broke the combat', e.status; end if;
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.retreat_target_location_id is not null or fl.retreat_target_x is not null or fl.retreat_target_y is not null then
+    raise exception 'REPOSITION FAIL: a completed reposition wrote a retreat destination'; end if;
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'player';
   if n <> n_units0 then
-    raise exception 'REPOSITION FAIL: player unit count moved % -> % across a translate', n_units0, n; end if;
+    raise exception 'REPOSITION FAIL: player unit count moved % -> % across the journey', n_units0, n; end if;
+
+  -- ── 7. THE ENEMY RESPONDED. Pirate rows are never translated by the reposition — they move under
+  -- ── their OWN mover, which is what stops a walking fleet from becoming unreachable.
+  select count(*) into n_enemy_moved
+    from dz_repo_u1 b join public.combat_units cu on cu.id = b.id
+   where b.encounter_id = v_enc and b.side = 'enemy'
+     and (cu.pos_x is distinct from b.pos_x or cu.pos_y is distinct from b.pos_y);
+  if n_enemy_moved = 0 then
+    raise exception 'REPOSITION FAIL: not one enemy row moved across the whole journey — a fleet that walks away would be unreachable by standing still'; end if;
+  -- and no OTHER fight in the world was touched
   select count(*) into n
     from dz_repo_u1 b join public.combat_units cu on cu.id = b.id
-   where not (b.encounter_id = v_enc and b.side = 'player')
+   where b.encounter_id <> v_enc
      and (cu.pos_x is distinct from b.pos_x or cu.pos_y is distinct from b.pos_y);
   if n <> 0 then
-    raise exception 'REPOSITION FAIL: % unit(s) outside the repositioned side moved — enemy rows and other fights must be untouched', n; end if;
+    raise exception 'REPOSITION FAIL: % unit(s) in OTHER encounters moved — the translate is scoped to this fight''s player side', n; end if;
 
-  -- ── no journey, no fresh ambush roll: zero new legs, zero pending intercepts for this fleet. ────
+  -- ── no journey leg, no fresh ambush roll: zero new legs, zero pending intercepts for this fleet. ─
   select count(*) into n from public.fleet_movements where fleet_id = v_fleet;
   if n <> n_mv0 then raise exception 'REPOSITION FAIL: a reposition minted a leg (% -> % movements)', n_mv0, n; end if;
   select count(*) into n from public.pirate_intercepts pi
    join public.fleet_movements m on m.id = pi.movement_id
    where m.fleet_id = v_fleet and pi.lifecycle_state = 'pending';
-  if n <> 0 then raise exception 'REPOSITION FAIL: % pending ambush(es) exist after a reposition — the jump was rolled like a journey', n; end if;
+  if n <> 0 then raise exception 'REPOSITION FAIL: % pending ambush(es) exist after a reposition — the move was rolled like a journey', n; end if;
 
-  raise notice 'DZCOMBAT_PASS_REPOSITION ok: an in-zone order MOVED the ambushed fleet to (%,%) — % player unit(s) translated by the exact delta, engagement restamped, encounter still active, no retreat destination, no retreat armed, no leg, no new roll',
-    dx, dy, n_units0;
+  raise notice 'DZCOMBAT_PASS_REPOSITION ok: the in-zone order MOVED NOTHING and recorded a course to (%,%); the tick then walked the fleet there over THREE ticks at exactly % world units per tick (its own slowest hull), the formation held one rigid offset at every step, % enemy row(s) moved to follow, arrival consumed the order, and the fight never broke — no retreat write, no leg, no new roll',
+    dx, dy, v_speed, n_enemy_moved;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_REPOOVERLAP (0311): QUANTIFY OVER OVERLAPPING ZONES — NEVER CHOOSE ONE ═══════
@@ -1640,13 +1747,22 @@ end $$;
 -- picks the sliver (order 1) / the mid zone (order 2), misses the destination, and retreats.
 --
 -- Geometry, all relative to the ROSTERAUTH port anchor (px, py) and the previous block's
--- destination A1 = (round(px), round(py+350)) — the fight's current anchor:
---   S      = ra_zone                 [px-150, px+150] x [py+200, py+500]   area  90,000 (holds A1)
---   SLIVER = drawn here              [px-5,   px+5  ] x [py+250, py+450]   area   2,000 (holds A1)
---   BIG    = drawn here              [px-350, px+350] x [py+50,  py+750]   area 490,000 (holds A1)
+-- A1 IS READ FROM THE FIGHT, never recomputed (0337). The previous block used to leave the anchor at
+-- a hard-coded (px, py+350) because a reposition TELEPORTED there; now it walks 2.5 of its own steps
+-- and stops a couple of world units inside the zone edge, so the only honest source for "where is
+-- this fight" is the encounter row. The two zones below are therefore drawn AROUND A1 rather than
+-- around a remembered constant — same three areas, same three properties, no ambient value asserted:
+--   S      = ra_zone     [px-150, px+150] x [py+200, py+500]      area  90,000 (holds A1)
+--   SLIVER = drawn here  [A1x-5,   A1x+5] x [A1y-100, A1y+100]    area   2,000 (holds A1)
+--   BIG    = drawn here  [A1x-350, A1x+350] x [A1y-300, A1y+400]  area 490,000 (holds A1)
 --   order 1: D1 = A1 + (100, 0) — inside S and BIG, NOT inside SLIVER (the lowest-area holder).
---   order 2: D2 = A1 + (250, 0) — inside BIG only; S (the then-smallest holder of the new anchor
---            D1) does not contain it. Area order must not decide: geometry does.
+--   order 2: D2 = A1 + (250, 0) — inside BIG only; S does not contain it. Area order must not
+--            decide: geometry does.
+-- AND THE ASSERTION MOVED WITH THE BEHAVIOUR (0337): an admitted order now RECORDS a course instead
+-- of performing a jump, so what is checked is the admission's verdict and the recorded destination —
+-- which is exactly the property this block has always been about. The journey itself is proven
+-- above; repeating it here would only make this block slower, not stronger. Order 2 additionally
+-- pins LAST-WRITE-WINS: one destination pair, overwritten in place, never a second course.
 do $$
 declare
   r jsonb; n int;
@@ -1659,28 +1775,32 @@ declare
   v_hunt uuid := (select v from dzc where k='v_hunt');
   px double precision := (select v from dzn where k='ra_px');
   py double precision := (select v from dzn where k='ra_py');
-  a1x double precision := round(px); a1y double precision := round(py + 350);
+  a1x double precision := (select engagement_x from public.combat_encounters where id = v_enc);
+  a1y double precision := (select engagement_y from public.combat_encounters where id = v_enc);
   d1x double precision; d1y double precision;
   d2x double precision; d2y double precision;
   z_sliver uuid; z_big uuid; v_verts jsonb;
   fl record; e record;
   n_mv0 int;
 begin
-  -- ── the two overlapping zones, drawn with the real verb (0304 gives each its effect row). ───────
+  -- ── the two overlapping zones, drawn with the real verb (0304 gives each its effect row), around
+  -- ── the anchor READ FROM THE FIGHT rather than around a remembered constant (0337).
+  if a1x is null or a1y is null then
+    raise exception 'REPOOVERLAP FAIL precondition: the fight has no anchor to draw around'; end if;
   v_verts := jsonb_build_array(
-    jsonb_build_array(px - 5, py + 250),
-    jsonb_build_array(px + 5, py + 250),
-    jsonb_build_array(px + 5, py + 450),
-    jsonb_build_array(px - 5, py + 450));
+    jsonb_build_array(a1x - 5, a1y - 100),
+    jsonb_build_array(a1x + 5, a1y - 100),
+    jsonb_build_array(a1x + 5, a1y + 100),
+    jsonb_build_array(a1x - 5, a1y + 100));
   r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
                                   'DZC Overlap Sliver Zone', v_verts::text, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'REPOOVERLAP FAIL: sliver zone: %', r; end if;
   z_sliver := (r->>'zone_id')::uuid;
   v_verts := jsonb_build_array(
-    jsonb_build_array(px - 350, py + 50),
-    jsonb_build_array(px + 350, py + 50),
-    jsonb_build_array(px + 350, py + 750),
-    jsonb_build_array(px - 350, py + 750));
+    jsonb_build_array(a1x - 350, a1y - 300),
+    jsonb_build_array(a1x + 350, a1y - 300),
+    jsonb_build_array(a1x + 350, a1y + 400),
+    jsonb_build_array(a1x - 350, a1y + 400));
   r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
                                   'DZC Overlap Big Zone', v_verts::text, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'REPOOVERLAP FAIL: big zone: %', r; end if;
@@ -1691,7 +1811,9 @@ begin
   select * into e from public.combat_encounters where id = v_enc;
   if e.status <> 'active' then raise exception 'REPOOVERLAP FAIL precondition: the encounter is % (want active)', e.status; end if;
   if abs(e.engagement_x - a1x) > 1e-6 or abs(e.engagement_y - a1y) > 1e-6 then
-    raise exception 'REPOOVERLAP FAIL precondition: the anchor is (%,%), not the previous block''s destination (%,%)', e.engagement_x, e.engagement_y, a1x, a1y; end if;
+    raise exception 'REPOOVERLAP FAIL precondition: the anchor moved to (%,%) between the declare block and here (%,%)', e.engagement_x, e.engagement_y, a1x, a1y; end if;
+  if e.reposition_x is not null or e.reposition_y is not null then
+    raise exception 'REPOOVERLAP FAIL precondition: a course is still standing (%,%) — the previous block''s journey did not finish', e.reposition_x, e.reposition_y; end if;
   select count(*) into n from public.danger_zones z
    where z.status = 'active' and z.id in (z_s, z_sliver, z_big)
      and ST_DWithin(z.boundary, ST_MakePoint(a1x, a1y), 1e-6);
@@ -1712,12 +1834,15 @@ begin
      or public.danger_zone_contains_point(z_sliver, d1x, d1y) then
     raise exception 'REPOOVERLAP FAIL fixture: D1 is not (inside S, outside the sliver) — move it'; end if;
   r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, d1x, d1y));
-  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'repositioned' then
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'repositioning' then
     raise exception 'REPOOVERLAP FAIL: order 1 answered % — a lower-area overlapping zone VETOED an in-zone move (the 131e027 tie-break defect)', r; end if;
   select * into e from public.combat_encounters where id = v_enc;
   select * into fl from public.fleets where id = v_fleet;
-  if e.status <> 'active' or abs(e.engagement_x - d1x) > 1e-6 or abs(fl.space_x - d1x) > 1e-6 then
-    raise exception 'REPOOVERLAP FAIL: order 1 did not move the fight to D1 (encounter %, anchor %, fleet %)', e.status, e.engagement_x, fl.space_x; end if;
+  if e.status <> 'active' or e.reposition_x is null
+     or abs(e.reposition_x - d1x) > 1e-6 or abs(e.reposition_y - d1y) > 1e-6 then
+    raise exception 'REPOOVERLAP FAIL: order 1 did not give the fight a course to D1 (encounter %, recorded %,%)', e.status, e.reposition_x, e.reposition_y; end if;
+  if abs(fl.space_x - a1x) > 1e-6 or abs(fl.space_y - a1y) > 1e-6 then
+    raise exception 'REPOOVERLAP FAIL: order 1 MOVED the fleet to (%,%) — an admitted order records a course, it does not perform a jump (0337)', fl.space_x, fl.space_y; end if;
 
   -- ── ORDER 2: destination inside the BIGGEST holder only — area order must not decide. ───────────
   d2x := a1x + 250; d2y := a1y;
@@ -1725,18 +1850,24 @@ begin
      or not public.danger_zone_contains_point(z_big, d2x, d2y) then
     raise exception 'REPOOVERLAP FAIL fixture: D2 is not (outside S, inside BIG) — move it'; end if;
   r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, d2x, d2y));
-  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'repositioned' then
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'repositioning' then
     raise exception 'REPOOVERLAP FAIL: order 2 answered % — the destination lies inside an anchor-holding zone and the area order still decided the outcome (the 131e027 tie-break defect)', r; end if;
   select * into e from public.combat_encounters where id = v_enc;
   select * into fl from public.fleets where id = v_fleet;
-  if e.status <> 'active' or abs(e.engagement_x - d2x) > 1e-6 or abs(fl.space_x - d2x) > 1e-6 then
-    raise exception 'REPOOVERLAP FAIL: order 2 did not move the fight to D2 (encounter %, anchor %, fleet %)', e.status, e.engagement_x, fl.space_x; end if;
+  -- LAST WRITE WINS, ONE PAIR (0337): D1's course is REPLACED by D2's, never joined by it. Two
+  -- standing destinations would be two answers to "where is this fleet headed".
+  if e.status <> 'active' or e.reposition_x is null
+     or abs(e.reposition_x - d2x) > 1e-6 or abs(e.reposition_y - d2y) > 1e-6 then
+    raise exception 'REPOOVERLAP FAIL: order 2 did not replace the course with D2 (encounter %, recorded %,%)', e.status, e.reposition_x, e.reposition_y; end if;
+  if abs(fl.space_x - a1x) > 1e-6 or abs(fl.space_y - a1y) > 1e-6
+     or abs(e.engagement_x - a1x) > 1e-6 or abs(e.engagement_y - a1y) > 1e-6 then
+    raise exception 'REPOOVERLAP FAIL: two orders moved the fight to (%,%)/(%,%) without a single tick — ordering is not moving (0337)', fl.space_x, fl.space_y, e.engagement_x, e.engagement_y; end if;
   if fl.retreat_target_location_id is not null or fl.retreat_target_x is not null or fl.retreat_target_y is not null then
     raise exception 'REPOOVERLAP FAIL: an overlap reposition wrote a retreat destination'; end if;
   select count(*) into n from public.fleet_movements where fleet_id = v_fleet;
   if n <> n_mv0 then raise exception 'REPOOVERLAP FAIL: an overlap reposition minted a leg'; end if;
 
-  raise notice 'DZCOMBAT_PASS_REPOOVERLAP ok: with three overlapping anchor-holding zones (areas 2000 / 90000 / 490000), an in-zone move repositioned PAST the lower-area sliver to (%,%) and PAST the mid zone to (%,%) — geometry admits, area never decides, no retreat write, no leg',
+  raise notice 'DZCOMBAT_PASS_REPOOVERLAP ok: with three overlapping anchor-holding zones (areas 2000 / 90000 / 490000), an in-zone order was ADMITTED past the lower-area sliver to (%,%) and past the mid zone to (%,%), the second replacing the first on ONE destination pair — geometry admits, area never decides, neither order moved the fleet, no retreat write, no leg',
     d1x, d1y, d2x, d2y;
 end $$;
 
@@ -1763,7 +1894,11 @@ declare
   v_hunt uuid := (select v from dzc where k='v_hunt');
   px double precision := (select v from dzn where k='ra_px');
   py double precision := (select v from dzn where k='ra_py');
-  a3x double precision := round(px) + 250; a3y double precision := round(py + 350);
+  -- 0337: READ FROM THE FIGHT. The overlap block used to leave the anchor at D2 because an admitted
+  -- order teleported the fleet there; it now only records a course, so the anchor is still where the
+  -- previous journey ended and the only honest source is the encounter row.
+  a3x double precision := (select engagement_x from public.combat_encounters where id = v_enc);
+  a3y double precision := (select engagement_y from public.combat_encounters where id = v_enc);
   obx double precision; oby double precision;
   irx double precision; iry double precision;
   z_far uuid; v_verts jsonb;
@@ -1772,11 +1907,13 @@ declare
   n_mv0 int;
 begin
   -- ── a zone that contains the outside destination but does NOT hold the anchor. ──────────────────
+  if a3x is null or a3y is null then
+    raise exception 'REPOOUTSIDE FAIL precondition: the fight has no anchor to place the far zone against'; end if;
   v_verts := jsonb_build_array(
-    jsonb_build_array(px + 1000, py + 300),
-    jsonb_build_array(px + 1200, py + 300),
-    jsonb_build_array(px + 1200, py + 400),
-    jsonb_build_array(px + 1000, py + 400));
+    jsonb_build_array(a3x + 1000, a3y - 50),
+    jsonb_build_array(a3x + 1200, a3y - 50),
+    jsonb_build_array(a3x + 1200, a3y + 50),
+    jsonb_build_array(a3x + 1000, a3y + 50));
   r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
                                   'DZC Far Non-Holder Zone', v_verts::text, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'REPOOUTSIDE FAIL: far zone: %', r; end if;
@@ -1787,7 +1924,7 @@ begin
   if e.status <> 'active' then raise exception 'REPOOUTSIDE FAIL precondition: the encounter is % (want active)', e.status; end if;
   if abs(e.engagement_x - a3x) > 1e-6 or abs(e.engagement_y - a3y) > 1e-6 then
     raise exception 'REPOOUTSIDE FAIL precondition: the anchor is (%,%), not the overlap block''s end state (%,%)', e.engagement_x, e.engagement_y, a3x, a3y; end if;
-  obx := round(px) + 1100; oby := a3y;
+  obx := a3x + 1100; oby := a3y;
   if exists (select 1 from public.danger_zones z
               where z.id = z_far and ST_DWithin(z.boundary, ST_MakePoint(a3x, a3y), 1e-6)) then
     raise exception 'REPOOUTSIDE FAIL fixture: the far zone holds the anchor — the mirror shape did not build'; end if;
@@ -1823,7 +1960,7 @@ begin
   t_req := pr.retreat_requested_at; t_start := e.retreat_started_at;
 
   -- ── 2. NOW RETREATING: an order back to an ADMITTED point must NOT jump. ────────────────────────
-  irx := round(px) + 300; iry := a3y;
+  irx := a3x + 300; iry := a3y;
   if not public.combat_encounter_zone_admits_point(v_enc, irx, iry) then
     raise exception 'REPOOUTSIDE FAIL fixture: the admitted point is not admitted — the no-jump property would be vacuous'; end if;
   r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, irx, iry));
@@ -1848,6 +1985,81 @@ begin
 
   raise notice 'DZCOMBAT_PASS_REPOOUTSIDE ok: the mirror order (destination inside a non-holding zone, admitted by nothing) stored (%,%) and armed the one retreat authority (presence + encounter retreating, fleet unmoved, no restamp, no leg); the admitted order on the retreating fight only replaced the destination with (%,%) — no jump, no restamp, no clock restart',
     obx, oby, irx, iry;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_REPOHOLD (0337): A STANDING COURSE DIES WITH THE FIGHT IT BELONGS TO ════════
+-- THE DEFECT THIS CLASS ALWAYS PRODUCES, named in the slice's own brief: a destination that outlives
+-- its encounter. This repository has already been bitten by it once — fleets.retreat_target_* is a
+-- destination stored on the FLEET row, and 0336 had to add fleet_consume_retreat_target and call it
+-- from FOUR arms because a dead fleet kept a course its next sortie then flew. 0337 stores the
+-- reposition destination on the ENCOUNTER instead, precisely so that there is nothing to consume:
+-- the tick only ever selects status in ('active','retreating'), and the reposition step re-reads
+-- status = 'active' at the instant of acting, so a course on a fight that is leaving or over is
+-- unreachable BY CONSTRUCTION.
+--
+-- This block proves the sharp end of that, on the exact state the previous block leaves behind: an
+-- encounter that is RETREATING while still carrying the course REPOOVERLAP recorded. It is the live
+-- shape of "the owner ordered a reposition and then pressed Retreat mid-move."
+--
+-- NON-VACUITY IS THE WHOLE DIFFICULTY: "the fleet did not move" passes trivially on a fleet that
+-- could never move. So the block pins, before ticking, that (a) a course IS standing, (b) the fleet's
+-- own combat speed is positive — it COULD cover ground — and (c) the only thing between it and the
+-- destination is the fence. Flip the step's `ce.status = 'active'` to a read of the loop record and
+-- this block goes red while every other reposition assert stays green.
+do $$
+declare
+  n int;
+  v_fleet uuid := (select v from dzc where k='ra_fleet');
+  v_enc uuid := (select v from dzc where k='ra_enc2');
+  v_speed double precision;
+  bx double precision; by double precision;
+  rpx double precision; rpy double precision;
+  e record; fl record;
+begin
+  select * into e from public.combat_encounters where id = v_enc;
+  if e.status <> 'retreating' then
+    raise exception 'REPOHOLD FAIL precondition: the encounter is % (want retreating — the previous block arms it)', e.status; end if;
+  if e.reposition_x is null or e.reposition_y is null then
+    raise exception 'REPOHOLD FAIL precondition: no course is standing, so "it did not follow the course" is vacuous'; end if;
+  rpx := e.reposition_x; rpy := e.reposition_y;
+  bx := e.engagement_x; by := e.engagement_y;
+  v_speed := public.combat_fleet_move_speed(v_enc);
+  if v_speed is null or v_speed <= 0 then
+    raise exception 'REPOHOLD FAIL precondition: the fleet''s combat speed is % — it could not move under any circumstances and this block would pass vacuously', v_speed; end if;
+  if public.osn_distance(bx, by, rpx, rpy) <= v_speed then
+    raise exception 'REPOHOLD FAIL precondition: the standing course is within a single step (% units at speed %) — a hold and an arrival would be indistinguishable', public.osn_distance(bx, by, rpx, rpy), v_speed; end if;
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'player' and alive_count > 0;
+  if n < 1 then raise exception 'REPOHOLD FAIL precondition: no living player unit — nothing could have moved'; end if;
+
+  -- ── THE TICK. A retreating fight is LEAVING, not manoeuvring: the fence is the engine's own rule
+  -- ── for a retreating side, asked once more by the step's fresh status read.
+  perform pg_temp.ae_tick(v_enc);
+
+  select * into e from public.combat_encounters where id = v_enc;
+  if e.status <> 'retreating' then
+    raise exception 'REPOHOLD FAIL: the encounter went % on the tick (want retreating — the retreat window has not expired), so the hold below would be proving the wrong thing', e.status; end if;
+  if abs(e.engagement_x - bx) > 1e-9 or abs(e.engagement_y - by) > 1e-9 then
+    raise exception 'REPOHOLD FAIL: a RETREATING fight walked from (%,%) to (%,%) toward a course ordered before the retreat — a stale destination is steering a fleet that is trying to leave', bx, by, e.engagement_x, e.engagement_y; end if;
+  select * into fl from public.fleets where id = v_fleet;
+  if abs(fl.space_x - bx) > 1e-9 or abs(fl.space_y - by) > 1e-9 then
+    raise exception 'REPOHOLD FAIL: the retreating fleet''s marker moved to (%,%) — the retreat leg must depart from where the fleet actually stands', fl.space_x, fl.space_y; end if;
+  -- and the FORMATION did not creep either: every PLAYER row is exactly where the snapshot taken
+  -- before REPOOUTSIDE's orders left it (dz_repo_u2, which that block already proved unmoved). The
+  -- enemy side is deliberately NOT pinned here — pirates keep closing on a retreating fleet, which is
+  -- the engine working; only the player side is under the fence this block is about.
+  select count(*) into n
+    from dz_repo_u2 b join public.combat_units cu on cu.id = b.id
+   where cu.side = 'player'
+     and (cu.pos_x is distinct from b.pos_x or cu.pos_y is distinct from b.pos_y);
+  if n <> 0 then
+    raise exception 'REPOHOLD FAIL: % player unit(s) moved across a retreating tick — the rigid translate ran on a fight that is leaving', n; end if;
+  -- the course is still ON the row and still untouched: 0337 clears NOTHING on a retreat, because a
+  -- value nobody reads is already gone. If a future slice adds a clearing write, this line names it.
+  if e.reposition_x is distinct from rpx or e.reposition_y is distinct from rpy then
+    raise exception 'REPOHOLD FAIL: the course changed to (%,%) across a tick that must not touch it — the fence is the reader, not a writer', e.reposition_x, e.reposition_y; end if;
+
+  raise notice 'DZCOMBAT_PASS_REPOHOLD ok: a RETREATING fight carrying a course to (%,%) — with a living fleet, a positive speed of % and % units still to run — moved NOT ONE unit across a real tick; the destination is fenced by the step''s own fresh status read, and nothing had to remember to clear it',
+    rpx, rpy, v_speed, public.osn_distance(bx, by, rpx, rpy);
 end $$;
 
 -- ════════ DZCOMBAT_PASS_REPOMODE (0311): A SITE FIGHT FALLS THROUGH TO THE RETREAT — NEVER REFUSED ═══
@@ -1911,7 +2123,7 @@ begin
   r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gM, ix, iy));
   if (r->>'ok')::boolean is not true then
     raise exception 'REPOMODE FAIL: the admitted order was REFUSED (%) — a site fight''s in-zone order must fall through to the retreat, never a refusal (the 131e027 regression)', r; end if;
-  if (r->>'order_outcome') = 'repositioned' then
+  if (r->>'order_outcome') in ('repositioning', 'repositioned') then
     raise exception 'REPOMODE FAIL: a site fight was repositioned — reposition is open-space-only (the presence interaction is unverified)'; end if;
   if (r->>'order_outcome') is distinct from 'retreat_started' then
     raise exception 'REPOMODE FAIL: the admitted order answered % (want retreat_started — today''s behaviour, preserved)', r->>'order_outcome'; end if;
