@@ -1,10 +1,10 @@
 import { supabase } from '../../lib/supabase'
 
 // TRADE-UI-1 — typed client API for the TRADE-MARKET-1 surface (get-offers / buy / sell), the priced
-// add-ship RPC, and the owner-read wallet + per-ship cargo reads. DARK: this module is the API foundation
-// only; NOTHING renders it yet, and the compile-time gates TRADE_MARKET_ENABLED / MAINSHIP_ADDITIONAL_ENABLED
-// (osnReleaseGates.ts) plus the server flags (trade_market_enabled / mainship_additional_commission_enabled)
-// both fail closed — double fail-closed until a human flips them.
+// add-ship RPC, and the owner-read wallet + per-ship cargo reads. LIVE: MarketPanel renders this module on
+// PortScreen (TRADE_MARKET_ENABLED, flipped 2026-08-03) and the server flags (trade_market_enabled /
+// mainship_additional_commission_enabled) are both lit in production. The double fail-closed structure stands —
+// each layer still rejects on its own — but neither is dark any more.
 //
 // The client ALWAYS passes the EXPLICIT selected ship id (p_main_ship_id) — the server-side sole-ship shim is
 // a transition compat only; the UI addresses a chosen ship. The server derives the player from auth.uid(),
