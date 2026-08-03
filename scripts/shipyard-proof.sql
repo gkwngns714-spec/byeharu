@@ -554,13 +554,23 @@ begin
     where player_id=uB and hull_type_id='sy1_test_dread';
   if v_ship is null then raise exception 'P9 FAIL: no ship was delivered'; end if;
   -- exact hull stats + the exact 0184 name idiom (2nd ship -> class name + '' II'').
+  -- ⚠ REPOINTED 2026-08-03. This assert read main_ship_instances.spatial_state / space_x / space_y,
+  -- and `20260618000231_movement_schema_drop.sql` DROPPED all three (verified against production:
+  -- none of the three columns exists). The proof has therefore been broken since 0231 and nobody
+  -- saw it, because it fires only on `slice-shipyard**` branches and none has carried 0231 until
+  -- 0333 widened the trigger. The property is KEPT, not weakened: "the delivered ship is canonically
+  -- at_location" is now asked of the authority that REPLACED the column —
+  -- mainship_space_validate_context, the same oracle every live caller uses.
   if not exists (select 1 from public.main_ship_instances
                    where main_ship_id=v_ship and name='SY1 Test Dreadnought II'
                      and hp=1000 and max_hp=1000 and cargo_capacity=50 and cargo_capacity_m3=50.0
                      and support_capacity=10 and captain_slots=6 and module_slots=2
-                     and status='stationary' and spatial_state='at_location'
-                     and space_x is null and space_y is null) then
-    raise exception 'P9 FAIL: the delivered ship is not the exact hull stats/name shape (want SY1 Test Dreadnought II, 1000hp, 50 cargo, canonical at_location)';
+                     and status='stationary') then
+    raise exception 'P9 FAIL: the delivered ship is not the exact hull stats/name shape (want SY1 Test Dreadnought II, 1000hp, 50 cargo)';
+  end if;
+  if (public.mainship_space_validate_context(v_ship)->>'state') is distinct from 'at_location'
+     or (public.mainship_space_validate_context(v_ship)->>'ok')::boolean is not true then
+    raise exception 'P9 FAIL: the delivered ship is not canonically at_location (%)', public.mainship_space_validate_context(v_ship);
   end if;
   -- docked at the commission port: the present/location fleet + canonical at_location coherence.
   if not exists (select 1 from public.fleets
@@ -616,12 +626,19 @@ begin
    where id=v_order3 and status='active';
   select public.process_build_queue() into v_done;
   if v_done <> 1 then raise exception 'P9 FAIL: expected exactly 1 hauler completion, got %', v_done; end if;
+  -- Same 0231 repoint as the Dreadnought assert above: spatial_state is gone; the canonical
+  -- at_location claim is asked of mainship_space_validate_context instead, per delivered hull.
   if not exists (select 1 from public.main_ship_instances
                    where player_id=uB and hull_type_id='bulk_hauler' and name='Mule-class Hauler III'
                      and hp=650 and max_hp=650 and cargo_capacity=140 and cargo_capacity_m3=140.0
                      and support_capacity=10 and captain_slots=8 and module_slots=2
-                     and status='stationary' and spatial_state='at_location') then
+                     and status='stationary') then
     raise exception 'P9 FAIL: the delivered Mule is not the exact hull stats/name shape (want Mule-class Hauler III, 650hp, 140 cargo)';
+  end if;
+  if (select public.mainship_space_validate_context(m.main_ship_id)->>'state'
+        from public.main_ship_instances m
+       where m.player_id=uB and m.name='Mule-class Hauler III') is distinct from 'at_location' then
+    raise exception 'P9 FAIL: the delivered Mule is not canonically at_location';
   end if;
   if not exists (select 1 from public.build_orders where id=v_order3 and status='completed' and resolved_at is not null) then
     raise exception 'P9 FAIL: the hauler order is not terminal completed';

@@ -56,13 +56,13 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "public.production_create_order(" "$SQL" || fail "harness does not create the parity unit order via the real Production creator"
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.(bases|base_units|main_ship_instances|fleets)' "$SQL" \
     && fail "harness inserts bases/units/ships/fleets directly (must ride the real leaves)" || true
-  grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.player_inventory' "$SQL" \
-    && fail "harness inserts player_inventory directly (must go through reward_grant)" || true
+  grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.(base_items|fleet_items)' "$SQL" \
+    && fail "harness inserts a port/fleet item store directly (must go through reward_grant)" || true
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.captain_instances' "$SQL" \
     && fail "harness inserts captain_instances directly (must go through captains_mint_instance)" || true
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.hull_build_receipts' "$SQL" \
     && fail "harness inserts hull_build_receipts directly (Production is sole writer)" || true
-  grep -qiE 'update[[:space:]]+public\.player_wallet|update[[:space:]]+public\.player_inventory' "$SQL" \
+  grep -qiE 'update[[:space:]]+public\.player_wallet|update[[:space:]]+public\.(base_items|fleet_items)' "$SQL" \
     && fail "harness updates wallet/inventory directly (sole-writer breach)" || true
 
   # ── the exact 0185 recipe economics are pinned in assert form. ────────────────────────────────────

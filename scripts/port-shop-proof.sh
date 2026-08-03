@@ -61,7 +61,7 @@ if [ "$MODE" = "selftest" ]; then
   # ── ships are provisioned via the REAL RPC, never a direct module/inventory/receipt/offer insert. ─
   grep -q "public.commission_first_main_ship()" "$SQL" || fail "harness does not provision via commission_first_main_ship (the real RPC)"
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.module_instances'  "$SQL" && fail "harness inserts module_instances directly (must go through the buy RPC → modules_mint_instance)" || true
-  grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.player_inventory'  "$SQL" && fail "harness inserts player_inventory directly (must go through the buy RPC → inventory_deposit)" || true
+  grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.(base_items|fleet_items)'  "$SQL" && fail "harness inserts a port/fleet item store directly (must go through the buy RPC → inventory_deposit)" || true
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.port_shop_receipts' "$SQL" && fail "harness writes port_shop_receipts directly (the RPC is the sole writer)" || true
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.port_shop_offers'   "$SQL" && fail "harness writes port_shop_offers (Reference/Config — migration-seeded only)" || true
 

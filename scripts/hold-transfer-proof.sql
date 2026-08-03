@@ -818,6 +818,17 @@ begin
   -- row available — otherwise the fallback below would pass vacuously.
   v_oldest := (select id from public.bases where player_id = uF and status='active' order by created_at, id limit 1);
   v_second := public.get_or_create_store(uF, slag);
+  -- BOTH stores are created inside ONE transaction, and `bases.created_at` defaults to now() —
+  -- which in Postgres is the TRANSACTION timestamp, identical for both rows. "Oldest" would then be
+  -- decided by the uuid tiebreak rather than by age, and the assertion below would pass or fail at
+  -- random. Production never has that tie (bases are minted in separate transactions). STATE the
+  -- precondition the property needs instead of leaning on a coincidence: age the Home Base so it is
+  -- unambiguously the older row. This is the fixture nudge the property requires, nothing more.
+  update public.bases set created_at = created_at - interval '1 hour' where id = v_oldest;
+  if (select created_at from public.bases where id = v_oldest)
+     >= (select created_at from public.bases where id = v_second) then
+    raise exception 'P12 FAIL fixture: the two stores are not distinguishable by age — the oldest-base rule would be decided by a uuid';
+  end if;
   if v_second = v_oldest then raise exception 'P12 FAIL fixture: uF still has only one store — the oldest-base rule would be vacuous'; end if;
   if (select count(*) from public.bases where player_id = uF and status='active') < 2 then
     raise exception 'P12 FAIL fixture: uF has fewer than two active stores'; end if;

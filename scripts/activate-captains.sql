@@ -154,12 +154,14 @@ begin
   foreach fn in array array[
     'public.assign_captain_to_ship(text, uuid, uuid, text)',   -- DECKS-1: + p_station (0189 drop-then-create)
     'public.unassign_captain_from_ship(text, uuid)',
-    'public.recruit_captain(text, text)',
+    -- 0333: recruit now DERIVES the port it spends from off the acting ship's dock, so the
+    -- signature carries that ship. The old placeless (text, text) form is DROPPED.
+    'public.recruit_captain(text, text, uuid)',
     'public.get_my_captain_instances()',
     'public.get_my_ship_captains(uuid)',
     'public.captains_mint_instance(uuid, text, text)',
     'public.captain_assign_apply(uuid, uuid, uuid, text)',     -- DECKS-1: + p_station (0189 drop-then-create)
-    'public.production_recruit_captain(uuid, text, text)',
+    'public.production_recruit_captain(uuid, text, text, uuid)',   -- 0333: + the port it spends from
     'public.pirate_loot_for_wave(integer, numeric)'] loop
     if to_regprocedure(fn) is null then
       raise exception 'SMOKE FAIL: function % does not exist', fn; end if;

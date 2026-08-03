@@ -428,7 +428,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "the rig moved a non-mining key" "$SQL" \
     || fail "harness does not ASSERT the rig minus-key isolation pin"
   grep -viE '^[[:space:]]*--' "$SQL" \
-    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(module_instances|module_craft_receipts|ship_module_fittings|module_fitting_receipts|module_types|module_recipe_ingredients|player_inventory|inventory_ledger|reward_grants)\b' \
+    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(module_instances|module_craft_receipts|ship_module_fittings|module_fitting_receipts|module_types|module_recipe_ingredients|base_items|fleet_items|inventory_ledger|reward_grants)\b' \
     && fail "harness directly mutates a Modules/Fitting/Inventory/Reward-owned table (sole-writer law violation)" || true
 
   # ── MOD22 (0202 / MOD2-2) pins, in assert form (a gutted .sql that only mentions them in prose

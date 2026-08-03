@@ -240,7 +240,7 @@ end $$;
 -- ════════ P4 — guards: invalid_quantity (zero/negative/fractional) · not_docked · no_demand · insufficient_items. ════════
 do $$
 declare r jsonb; uS uuid := (select v from sv1 where k='uS'); uD uuid := (select v from sv1 where k='uD');
-  v_shipS uuid; v_shipD uuid; v_bal0 numeric; nrec int;
+  v_shipS uuid; v_shipD uuid; v_bal0 numeric; nrec int; v_group uuid;
   v_store uuid := (select v from sv1 where k='storeS');   -- 0333: uS's stock AT HAVEN
 begin
   select main_ship_id into v_shipS from public.main_ship_instances where player_id=uS;
@@ -262,9 +262,33 @@ begin
   if (r->>'reason') is distinct from 'invalid_quantity' then raise exception 'P4 FAIL qty 2.5 (fractional must reject): %', r; end if;
 
   -- not_docked: uD departs toward Slagworks → in transit → the ONE docked-resolver returns null.
-  r := pg_temp.call_as(uD, format('public.command_main_ship_space_move_to_location(%L::uuid, %L::uuid, %L::uuid)',
-                                   (select v from sv1 where k='slag'), gen_random_uuid(), v_shipD));
+  --
+  -- ⚠ REPOINTED 2026-08-03. This block called
+  -- `command_main_ship_space_move_to_location(uuid,uuid,uuid)`, which migration
+  -- `20260618000232_movement_function_drop.sql:237` DROPPED. This proof has therefore been broken
+  -- since 0232 and nobody saw it, because until 0333 widened the trigger NO WORKFLOW RAN IT AT ALL
+  -- (it had no `.yml` of any kind). Repointed onto the live unified mover — the same idiom
+  -- hold-transfer-proof uses — rather than onto a resurrected corpse. Every flag the mover needs is
+  -- FORCED here, in-txn, and reverted by the ROLLBACK.
+  update public.game_config set value='true'::jsonb where key='team_command_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_control_enabled';
+  r := pg_temp.call_as(uD, 'public.upsert_ship_group(1, ''Runner'')');
+  if (r->>'ok')::boolean is not true then raise exception 'P4 FAIL group uD: %', r; end if;
+  v_group := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', v_shipD, v_group));
+  if (r->>'ok')::boolean is not true then raise exception 'P4 FAIL assign uD: %', r; end if;
+  -- 0204 requires a command ship before the group can be ordered; arm it so the reject under test
+  -- is the DOCK one and not a missing-command-ship one.
+  r := pg_temp.call_as(uD, format('public.set_fleet_command_ship(%L::uuid, true)', v_shipD));
+  if (r->>'ok')::boolean is not true then raise exception 'P4 FAIL arm uD: %', r; end if;
+  r := pg_temp.call_as(uD, format('public.command_ship_group_go(%L::uuid, %L::uuid)', v_group, (select v from sv1 where k='slag')));
   if (r->>'ok')::boolean is not true then raise exception 'P4 FAIL move uD: %', r; end if;
+  -- the mover really did undock it — the shared resolver is the oracle, not a status guess. Without
+  -- this the not_docked assertion below could pass for the wrong reason.
+  if public.mainship_resolve_docked_location(v_shipD) is not null then
+    raise exception 'P4 FAIL fixture: uD is still docked after the go — the not_docked probe would be vacuous';
+  end if;
   r := pg_temp.call_as(uD, format('public.sell_item_at_port(%L::uuid, %L, %s, %L::uuid)', v_shipD, 'scrap', 1, gen_random_uuid()));
   if (r->>'reason') is distinct from 'not_docked' then raise exception 'P4 FAIL in-transit not rejected: %', r; end if;
 
