@@ -467,8 +467,12 @@ declare
 begin
   select string_agg(x.t || ': ' || coalesce(x.detail, '<none>'), ', ' order by x.t) into v_bad
     from (
+      -- polname is `name` and polcmd is `"char"`; both are cast to text explicitly. Without the
+      -- polcmd cast `text || "char"` is AMBIGUOUS (SQLSTATE 42725) and the migration aborts the whole
+      -- chain apply — which is exactly what the disposable apply-proof caught before this reached a
+      -- deploy. Do not remove these casts.
       select t.t,
-             (select string_agg(p.polname || '/' || p.polcmd || '/' || coalesce(pg_get_expr(p.polqual, p.polrelid), 'null'), ' + '
+             (select string_agg(p.polname::text || '/' || p.polcmd::text || '/' || coalesce(pg_get_expr(p.polqual, p.polrelid), 'null'), ' + '
                                 order by p.polname)
                 from pg_policy p where p.polrelid = ('public.' || t.t)::regclass) as detail,
              (select count(*) from pg_policy p where p.polrelid = ('public.' || t.t)::regclass) as n
@@ -481,7 +485,7 @@ begin
   end if;
 
   -- and RLS is still ON, or the policies are decoration.
-  select string_agg(c.relname, ', ' order by c.relname) into v_bad
+  select string_agg(c.relname::text, ', ' order by c.relname) into v_bad
     from pg_class c join pg_namespace n on n.oid = c.relnamespace
    where n.nspname = 'public'
      and c.relname in ('sectors', 'zones', 'locations', 'bases')
