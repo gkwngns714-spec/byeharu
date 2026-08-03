@@ -690,6 +690,7 @@ declare
   v_speed double precision;
   v_steps int := 0;
   v_x0 double precision; v_y0 double precision; v_x1 double precision; v_y1 double precision;
+  v_arm_engine text; v_pred_x double precision; v_pred_y double precision;
 begin
   select move_speed into v_speed from public.combat_units where id = u_bare;
   if v_speed is null or v_speed <= 0 then
@@ -732,13 +733,56 @@ begin
     raise exception 'HOLD FAIL: the encounter is no longer active — an unticked fight leaves every position untouched and the stillness below would be vacuous';
   end if;
   select pos_x, pos_y into v_x0, v_y0 from public.combat_units where id = u_bare;
+
+  -- ── ASK THE ENGINE, DO NOT MIRROR IT ────────────────────────────────────────────────────────────
+  -- cs_arm above is a hand-written copy of the mover's arm rule, and a copy can drift from the thing
+  -- it copies. That is exactly the failure this block hit in CI: it reported "the holding hull moved"
+  -- while printing a BYTE-IDENTICAL before/after, because the server renders at
+  -- extra_float_digits = 0 (15 significant digits) and the move was smaller than that.
+  -- The mover's arms are: dist > my_range -> close ; dist > target_range -> kite ; else hold. A hull
+  -- inside its OWN reach but outside its target's is therefore in KITE, and its step is
+  -- least(speed, my_range - dist), which VANISHES as dist approaches my_range from below. Measured
+  -- against the DEPLOYED function: a gap of 4.9999999999 against a reach of 5 moves the hull 1e-10,
+  -- and a true HOLD (inside BOTH reaches) returns the position bit-identically. So that is a real
+  -- move in a real arm, invisible at 15 digits — the assert was right, and a mirror that says "hold"
+  -- there is what was wrong.
+  -- The arm is therefore taken from combat_unit_decide_move ITSELF, with exactly the arguments the
+  -- tick passes it (0336: the hull's SHORTEST gun as its own reach, the target's LONGEST as the
+  -- threat), and the predicted point is pinned against what the tick actually wrote.
+  select m.action, m.new_x, m.new_y into v_arm_engine, v_pred_x, v_pred_y
+    from public.combat_units u, public.combat_units f,
+         lateral public.combat_unit_decide_move(
+           u.pos_x, u.pos_y,
+           coalesce((select min((w->>'range')::double precision) from jsonb_array_elements(u.weapons_json) w), 0),
+           coalesce(u.move_speed, 0),
+           f.pos_x, f.pos_y,
+           coalesce((select max((w->>'range')::double precision) from jsonb_array_elements(f.weapons_json) w), 0)) m
+   where u.id = u_bare and f.id = u_en;
+  if v_arm_engine is null then
+    raise exception 'HOLD FAIL: the engine mover returned no arm for the holding hull — a NULL arm would make every comparison below vacuous';
+  end if;
+  if v_arm_engine is distinct from 'hold' then
+    raise exception 'HOLD FAIL: the ENGINE says % where this block derived hold (gap %, own reach %, wave reach %) — either the harness mirror has drifted from combat_unit_decide_move, or the hull is inside its own reach but outside the wave''s, which is KITE with a vanishing step and not stillness at all',
+      v_arm_engine, v_gap, (select arm_my from pg_temp.cs_arm(u_bare, u_en)), (select arm_foe from pg_temp.cs_arm(u_bare, u_en));
+  end if;
+
   perform pg_temp.cs_tick(v_enc);
   select pos_x, pos_y into v_x1, v_y1 from public.combat_units where id = u_bare;
   if v_x0 is null or v_y0 is null or v_x1 is null or v_y1 is null then
     raise exception 'HOLD FAIL: the fallback escort has a NULL coordinate (pre %,% / post %,%) — an unpositioned unit cannot prove it stood still', v_x0, v_y0, v_x1, v_y1;
   end if;
+  -- the tick wrote exactly what the engine own leaf predicted...
+  if v_x1 is distinct from v_pred_x or v_y1 is distinct from v_pred_y then
+    raise exception 'HOLD FAIL: the tick wrote (%, %) where combat_unit_decide_move predicted (%, %) — the tick is not composing the mover it is supposed to',
+      to_char(v_x1, 'FM999999990.999999999999999999'), to_char(v_y1, 'FM999999990.999999999999999999'),
+      to_char(v_pred_x, 'FM999999990.999999999999999999'), to_char(v_pred_y, 'FM999999990.999999999999999999');
+  end if;
+  -- ...and for the HOLD arm that prediction is the hull own position, unchanged, to the last bit.
+  -- Rendered at full scale so a sub-display-precision move can never again read as no move at all.
   if v_x1 is distinct from v_x0 or v_y1 is distinct from v_y0 then
-    raise exception 'HOLD FAIL: the holding hull moved (%,% -> %,%) — want byte-identical', v_x0, v_y0, v_x1, v_y1;
+    raise exception 'HOLD FAIL: the holding hull moved (%, % -> %, %) — want byte-identical (rendered at full scale: the server prints only 15 significant digits by default, which is how a vanishing KITE step once read as no move)',
+      to_char(v_x0, 'FM999999990.999999999999999999'), to_char(v_y0, 'FM999999990.999999999999999999'),
+      to_char(v_x1, 'FM999999990.999999999999999999'), to_char(v_y1, 'FM999999990.999999999999999999');
   end if;
   raise notice 'COMBATSPATIAL_PASS_HOLD ok: the fallback escort closed over % guarded CLOSE tick(s) at its frozen speed %, arrived at gap % — inside its own reach and inside the wave''s — and its position is BYTE-IDENTICAL across the next tick (HOLD never touches pos_x/pos_y)', v_steps, v_speed, v_gap;
 end $$;

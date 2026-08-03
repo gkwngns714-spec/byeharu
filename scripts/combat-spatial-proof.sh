@@ -124,6 +124,13 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "TICK1 FAIL FIRE: pirate fired" "$SQL"                    || fail "harness lacks the tick-1 wave-silence assert"
   grep -q "TICK1 FAIL DAMAGE" "$SQL"                                || fail "harness lacks the pirate-hp-fell assert"
   grep -q "HOLD FAIL: the holding hull moved" "$SQL"                || fail "harness lacks the HOLD (byte-identical position) assert"
+  # 0336: the arm must come from the ENGINE's own leaf, never from the harness's mirror of it. A
+  # mirror that drifts is what turned a vanishing KITE step into a "the hull moved" failure printing
+  # a byte-identical before/after — the server renders only 15 significant digits.
+  grep -q "HOLD FAIL: the ENGINE says" "$SQL"                       || fail "harness no longer takes the HOLD arm from combat_unit_decide_move itself — a hand-written mirror can drift from the mover it copies"
+  grep -q "lateral public.combat_unit_decide_move(" "$SQL"          || fail "harness lacks the direct composition of the engine mover for the HOLD arm"
+  grep -q "HOLD FAIL: the tick wrote" "$SQL"                        || fail "harness lacks the pin that the tick wrote exactly what the mover predicted"
+  grep -q "HOLD FAIL: the engine mover returned no arm" "$SQL"      || fail "harness lacks the NULL-arm vacuity guard on the engine mover"
   grep -q "SCREEN FAIL: lead hp changed" "$SQL"                     || fail "harness lacks the aggro-tier screening assert"
   grep -q "aggro screening breached" "$SQL"                        || fail "harness lacks the lead-never-hit assert wording"
 
