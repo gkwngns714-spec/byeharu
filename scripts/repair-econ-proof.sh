@@ -77,7 +77,14 @@ if [ "$MODE" = "selftest" ]; then
   # ── ██ THE WRECK POLICY ██ — the one essential difference between the two deleted functions, now
   #    eight lines of policy: a DESTROYED ship recovers whole and FREE, at a NON-ZERO knob, for a
   #    player with an EMPTY wallet, and is never gated by the economy flag. ─────────────────────────
-  grep -q "public.dev_set_main_ship_destroyed" "$SQL" || fail "harness does not wreck a ship via the real primitive"
+  # The tick's OWN terminal leaf, so a wreck in the proof is the shape the game produces. And the
+  # DROPPED primitive is banned by name: this harness called dev_set_main_ship_destroyed until 0335,
+  # migration 0232:260 removed it, and the proof was dead on the chain for every one of those
+  # migrations because its workflow only fired on branches that happened to be named for it.
+  grep -q "public.mainship_mark_combat_destroyed(" "$SQL" \
+    || fail "harness does not wreck a ship via the tick's own terminal leaf"
+  grep -qE 'public\.dev_set_main_ship_destroyed\(' "$SQL" \
+    && fail "harness calls dev_set_main_ship_destroyed, which migration 0232 DROPPED — the proof cannot run on the real chain" || true
   grep -q "the economy flag gated a WRECK recovery" "$SQL" \
     || fail "harness does not prove recovery survives a DARK economy flag (a gated recovery is a permanently lost ship)"
   grep -q "recovery was PRICED" "$SQL" \

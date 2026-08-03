@@ -40,6 +40,16 @@
 -- and wallets are pre-seeded by a direct owner insert (the salvage-proof precedent) so every credit
 -- assert is an EXACT delta. The harness NEVER writes repair_receipts directly — every receipt is
 -- minted by the RPC under test.
+--
+-- ── WRECKS ARE MADE BY THE TICK'S OWN TERMINAL LEAF ──────────────────────────────────────────────
+-- public.mainship_mark_combat_destroyed(ship) — the SAME leaf process_combat_ticks' defeat branch
+-- calls, so a wreck here is the shape the game actually produces. It replaces
+-- dev_set_main_ship_destroyed(player), which this file called until 0335 and which migration
+-- 20260618000232:260 DROPPED. The proof had therefore been DEAD ON THE CHAIN ever since, and nobody
+-- saw it, because repair-econ-proof.yml fired only on `slice-repairecon**` branches — the identical
+-- narrow-trigger failure the shipyard / port-shop / salvage proofs hit after 0300. This slice widens
+-- the trigger for that reason, and the selftest now BANS the dropped primitive by name so the class
+-- cannot come back.
 
 \set ON_ERROR_STOP on
 
@@ -143,7 +153,7 @@ begin
   -- ...and the SAME dark flag does not touch a wreck. uW is destroyed through the real primitive and
   -- is berthed at Haven (the commissioned shape), so its position gate passes.
   select main_ship_id, max_hp into v_wreck, v_max from public.main_ship_instances where player_id=uW;
-  perform public.dev_set_main_ship_destroyed(uW);
+  perform public.mainship_mark_combat_destroyed(v_wreck);
   r := pg_temp.call_as(uW, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', v_wreck, gen_random_uuid()));
   if (r->>'ok')::boolean is not true then raise exception 'P0 FAIL: the economy flag gated a WRECK recovery — a player could never get their ship back: %', r; end if;
   if (r->>'status') is distinct from 'home' or (r->>'total_price')::numeric <> 0 then raise exception 'P0 FAIL wreck recovery envelope: %', r; end if;
@@ -328,7 +338,7 @@ begin
   -- permanent loss of the ship. The destruction primitive itself zeroes the hull, so the recovery has
   -- a whole max_hp to restore — no fixture damage needed here.
   select main_ship_id, max_hp into v_ship, v_max from public.main_ship_instances where player_id=uP;
-  perform public.dev_set_main_ship_destroyed(uP);
+  perform public.mainship_mark_combat_destroyed(v_ship);
   if (select status from public.main_ship_instances where player_id=uP) <> 'destroyed' then raise exception 'P6 SETUP FAIL: ship not destroyed'; end if;
   if public.cfg_num('repair_credits_per_hp') <> 0.5 then raise exception 'P6 SETUP FAIL: the knob is not the 0.5 this phase needs'; end if;
 

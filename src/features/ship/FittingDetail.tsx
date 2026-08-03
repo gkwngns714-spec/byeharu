@@ -60,11 +60,11 @@ import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 //   · location — from the ONE fleet-positions row the screen threads down (ZERO own location
 //     reads; the fleetPositionLocationLabel adapter — the same fold every roster row uses);
 //   · condition — the shared shield/hull pair (MeterPairBars over shipMeterPair), then EXACTLY ONE
-//     repair concept for this ship's state (REPAIR-WHERE-YOU-ARE): an ALIVE ship gets the paid
-//     hull mend (RepairPanel — its ONE mount; dockedness from this same positions row via
-//     repairDockState), a DISABLED ship gets the free RECOVERY ACTION instead (NO-SOFTLOCK: the
-//     free path is the ONLY recovery for a destroyed ship — the paid desk defers to it — so an
-//     action must render regardless of any flag). 0297 made that free repair POSITION-GATED, so
+//     repair SURFACE for this ship's state (REPAIR-WHERE-YOU-ARE): an ALIVE ship gets the priced
+//     hull mend (RepairPanel — its ONE mount; position from this same positions row via
+//     repairDockState), a DISABLED ship gets the free RECOVERY ACTION instead (NO-SOFTLOCK: a
+//     wreck's recovery is free and ungated by policy — 0335 — so an action must render regardless
+//     of any flag). Both surfaces command the same RPC. 0297 made repair POSITION-GATED, so
 //     which free action shows is decided by the ONE pure gate (shipRecovery.repairGate) and BOTH
 //     free commands are the screen's single implementations, threaded down as `recovery` — this
 //     component owns no copy of them;
@@ -471,15 +471,15 @@ export function FittingDetail({
         </div>
       )}
 
-      {/* REPAIR-WHERE-YOU-ARE — the paid hull mend, right under the hull meter it mends (the ONE
+      {/* REPAIR-WHERE-YOU-ARE — the priced hull mend, right under the hull meter it mends (the ONE
           mount; the Port-rail copy is retired). Mounted when repairConcept says 'paid_mend' — the
-          same single decision that mounts the free block below, so exactly one repair concept ever
-          renders (server-enforced: free repair gates on destroyed, paid repair rejects it, 0201).
-          Dockedness is the ship's OWN position row folded by repairDockState (docked / berthed /
-          away / unknown — each gets its own honest treatment; a berthed ship's paid mend would
-          100%-fail server-side, and an unknown position permits no dock claim at all), so the desk
-          and the location line above always describe the same ship. Flag-dark, full-hull, and
-          position-unknown all render null. */}
+          same single decision that mounts the free block below, so exactly one repair SURFACE ever
+          renders. Since 0335 both surfaces command the SAME RPC (repair_ship_hull); what differs is
+          the policy the server applies to a wreck, not the verb. Position is the ship's OWN position
+          row folded by repairDockState (at_port / away / unknown — 0335 collapsed docked and berthed
+          into one state, because the server now asks one position question through one authority; an
+          unknown position still permits no claim at all), so the desk and the location line above
+          always describe the same ship. Flag-dark, full-hull, and position-unknown all render null. */}
       {surface === 'paid_mend' && (
         <RepairPanel
           mainShipId={shipId}

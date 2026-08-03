@@ -1,6 +1,18 @@
 // Phase 10F verification — main-ship destroyed/repair safelock.
 //   node scripts/verify-mainship-repair.mjs
 //
+// ⚠ THIS VERIFIER CANNOT RUN AS WRITTEN, AND HAS NOT BEEN ABLE TO SINCE MIGRATION 0232.
+// Steps 1/1a/1b/1c and 7 below drive `dev_set_main_ship_destroyed`, which 0232:260 DROPPED. It is
+// workflow_dispatch-only (verify-mainship-repair.yml) so nothing has ever reported the breakage.
+// Discovered while unifying repair in 0335 — its sibling scripts/repair-econ-proof.sql hit the same
+// dead call the moment that proof's trigger was widened past `slice-repairecon**`, and was fixed
+// onto the tick's own terminal leaf (mainship_mark_combat_destroyed). This file's steps 4/5 are
+// repointed onto the one repair verb below so it names nothing that no longer exists on the repair
+// side, but reviving the destruction half needs a decision this slice does not own: the surviving
+// leaf marks a hull destroyed and does NOT clean up the linked fleet, which is exactly what steps
+// 1a–1c assert. Everything this file claims about repair is now covered by the disposable
+// repair-econ proof, which runs on every slice branch, every PR and main.
+//
 // Proves the safe landing + recovery path (NO combat, NO trigger — uses the service-role-only
 // dev_set_main_ship_destroyed helper to simulate a future defeat):
 //   • destroying a ship mid-expedition cleans up its linked fleet/movement/presence and wins over
