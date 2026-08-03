@@ -25,6 +25,7 @@ import {
   repairPositionLine,
   towReasonMessage,
   towSuccessMessage,
+  REPAIR_HEADING,
   REPAIR_LABEL,
   TOW_LABEL,
   type DisabledShipRow,
@@ -46,12 +47,23 @@ import { Button, Card, CardHeader, Notice, SectionLabel } from '../../components
 // difference is the POLICY it applies — the client simply never followed. It does now: the second
 // block is deleted, not hidden, and this component renders a wreck and a dent alike.
 //
-// The shape mirrors the server body exactly: ONE verb, ONE position authority, ONE reason
-// vocabulary, ONE price vocabulary, and TWO clearly-marked POLICY blocks —
-//   · A WRECK restores whole and free, ungated by repair_economy_enabled and by the price knob
-//     (the 0052 NO-SOFTLOCK rule: no price and no flag may ever stand between a player and their
-//     own wreck). So the wreck body renders BEFORE and INDEPENDENT of the config/hull/wallet reads
-//     — a dark flag or a failed hull read can never silence a wreck's recovery.
+// ── AND WHY IT IS NOW ONE BODY, NOT TWO ─────────────────────────────────────────────────
+// The owner, again: "fixing command ship = fixing other ships. right now there is command ship
+// fixing that is different." One panel was not enough, because the panel still rendered a wreck and
+// a dent as two DIFFERENT THINGS: a different heading ("Full hull restore" vs "Mend this ship's
+// hull"), a different button (a full-width warning "Repair ship" vs a small primary "Repair"), a
+// credits line on one and not the other, an amount on one and not the other. Same verb underneath,
+// two systems on screen — which is what the player actually reads.
+//
+// There is now ONE body. Every hull gets the same heading, the same credits line, the same amount
+// slot, the same price through the same vocabulary, and the SAME button. The policy difference
+// survives exactly where the server has one, and only as a NUMBER:
+//   · A WRECK restores WHOLE. 0335 ignores the requested amount for a wreck, so the amount slot
+//     states the whole hull instead of offering a stepper the server would not honour. Same row,
+//     same place, different amount — never a different system.
+//   · A WRECK is FREE and UNGATED, by the 0052 NO-SOFTLOCK rule: no price and no flag may ever
+//     stand between a player and their own wreck. So the wreck path renders INDEPENDENT of the
+//     config/hull/wallet reads — a dark flag or a failed hull read can never silence it.
 //   · A DENT restores what was asked for, priced by repair_credits_per_hp behind the economy flag,
 //     and stays SILENT when it has nothing true and useful to say.
 //
@@ -319,30 +331,25 @@ export function RepairPanel({
         </Notice>
       )}
 
-      {wreck ? (
-        <RecoveryBody
-          dock={dock}
-          repairing={pending}
-          towing={towing}
-          onRepair={() => void runRepair(null)}
-          onTow={() => void runTow()}
-        />
-      ) : hull === 'error' ? (
+      {!wreck && hull === 'error' ? (
         <p data-testid="repair-unavailable" className="mt-1 text-[10px] text-ink-muted">
           Hull status unavailable right now.
         </p>
-      ) : hull !== null && cfg !== null ? (
-        <MendBody
-          hull={hull}
+      ) : wreck || (hull !== null && cfg !== null) ? (
+        <RepairBody
+          wreck={wreck}
+          hull={hull === 'error' ? null : hull}
           cfg={cfg}
           wallet={wallet}
           dock={dock}
           amount={amount}
           amountDraft={amountDraft}
           pending={pending}
+          towing={towing}
           setAmount={setAmount}
           setAmountDraft={setAmountDraft}
           onRepair={(hp) => void runRepair(hp)}
+          onTow={() => void runTow()}
         />
       ) : null}
 
@@ -361,72 +368,24 @@ export function RepairPanel({
 }
 
 /**
- * ██ WRECK POLICY ██ — restore whole, free, and never gated. One action: Repair where the server
- * will accept it, the Tow where it will not. Never both, never neither — that mutual exclusion is
- * the NO-SOFTLOCK rule expressed in one ternary over the one position value.
+ * ██ THE ONE REPAIR BODY — a wreck and a dent render the SAME action. ██
  *
- * NO STEPPER AND NO WALLET HERE, deliberately: 0335 restores a wreck's hull WHOLE and ignores the
- * requested amount, and charges nothing. A stepper would be a control the server does not honour,
- * and a price would be a claim it does not make.
+ * Same heading, same credits line, same amount slot, same price label, same button. The only thing
+ * that differs between a wreck and a dent is the AMOUNT and what it costs — which is the only thing
+ * that differs on the server (0335: one verb, two policies). That is deliberate, and it is the whole
+ * reason this component exists: see the file header for what the two separate bodies looked like on
+ * screen, and why the owner read them as two different systems.
+ *
+ * EXACTLY ONE ACTION renders. The tow REPLACES the repair for a wreck the server would refuse for
+ * position; a dent that is not at a port renders no action at all (the position sentence above has
+ * already said the one useful thing, and a button that would 100%-fail is worse than none).
+ *
+ * WHAT MUST SURVIVE HERE (NO-SOFTLOCK): the wreck arm never reads `cfg`, never requires `hull`, and
+ * never waits on the wallet. A dark economy flag, a failed hull read and an unread wallet each leave
+ * the recovery exactly where it was.
  */
-function RecoveryBody({
-  dock,
-  repairing,
-  towing,
-  onRepair,
-  onTow,
-}: {
-  dock: RepairDockState
-  repairing: boolean
-  towing: boolean
-  onRepair: () => void
-  onTow: () => void
-}) {
-  return (
-    <>
-      <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
-        <span className="text-ink-faint">Full hull restore</span>
-        {/* The SAME price label the mend uses — a wreck is free by law (0335's cost policy). */}
-        <span data-testid="repair-cost" className="font-mono tabular-nums text-warning">
-          {repairPriceLabel(0)}
-        </span>
-      </div>
-      {dock === 'away' ? (
-        <Button
-          variant="warning"
-          data-testid="repair-tow"
-          busy={towing}
-          busyLabel="Towing…"
-          onClick={onTow}
-          className="mt-2 min-h-11 w-full"
-        >
-          {TOW_LABEL}
-        </Button>
-      ) : (
-        <Button
-          variant="warning"
-          data-testid="repair-submit"
-          busy={repairing}
-          busyLabel="Repairing…"
-          onClick={onRepair}
-          className="mt-2 min-h-11 w-full"
-        >
-          {REPAIR_LABEL}
-        </Button>
-      )}
-    </>
-  )
-}
-
-/**
- * ██ DENT POLICY ██ — restore what was asked for, priced by the knob. EXACTLY ONE branch renders, so
- * the surface always carries one honest statement or one action, never two. NO hull meter here:
- * MeterPairBars directly above the panel is the one hull display (one fact, one rendering); the
- * stepper's bounds still come from this panel's own priced hull read (the numbers the server will
- * clamp against). The not-at-a-port and unknown-position cases say nothing here — the position
- * sentence above already spoke for them, once.
- */
-function MendBody({
+function RepairBody({
+  wreck,
   hull,
   cfg,
   wallet,
@@ -434,153 +393,199 @@ function MendBody({
   amount,
   amountDraft,
   pending,
+  towing,
   setAmount,
   setAmountDraft,
   onRepair,
+  onTow,
 }: {
-  hull: ShipHull
-  cfg: RepairConfig
+  wreck: boolean
+  /** null = unread or unreadable. A WRECK renders fully without it; a dent never reaches here without one. */
+  hull: ShipHull | null
+  cfg: RepairConfig | null
   wallet: number | null | 'error' | undefined
   dock: RepairDockState
   amount: number | null
   amountDraft: string | null
   pending: boolean
+  towing: boolean
   setAmount: (n: number) => void
   setAmountDraft: (s: string | null) => void
-  onRepair: (hp: number) => void
+  onRepair: (hp: number | null) => void
+  onTow: () => void
 }) {
-  const missing = missingHull(hull)
-
-  // The default amount = a FULL mend (all missing hull); the player may dial it down. Clamped whole 1..missing.
-  const effectiveAmount = missing > 0 ? clampRepairHp(amount ?? missing, missing) : 0
-  const cost = repairCostFor(effectiveAmount, cfg.creditsPerHp)
-  // Affordability precheck: wallet unknown ('error'/undefined) → null (skip; the server answers). A
-  // lazy no-wallet-row player (null balance) rides on the starting-credits seed for the display check.
-  const knownCredits =
-    typeof wallet === 'number' ? wallet : wallet === null ? cfg.startingCredits : null
-  const affordable = knownCredits === null || cost === null ? null : knownCredits >= cost
-
-  const avail = repairAvailability({
-    flagOn: true, // by construction: rendered only under the cfg.enabled gate
-    amount: effectiveAmount || 1,
-    shipResolved: true, // by construction: mainShipId is a required prop
-    atPort: dock === 'at_port', // the REAL fold of the ship's own position — never hardcoded
-    missing,
-    affordable,
-  })
+  const missing = hull ? missingHull(hull) : 0
 
   // Reachable only with a pending note (a full hull with nothing to show renders no card at all) —
   // this line gives the receipt below its context: the mend finished, the hull is whole.
-  if (missing <= 0) {
+  if (!wreck && missing <= 0) {
     return (
       <p data-testid="repair-full" className="mt-2 text-[10px] text-ink-muted">
         {recoveryReasonMessage('nothing_to_repair')}
       </p>
     )
   }
-  // Genuinely not at a port / position unknown: the position sentence above is the whole statement.
-  // No stepper, no button that would 100%-fail.
-  if (dock !== 'at_port') return null
+  // A dent genuinely not at a port, or of unknown position: the position sentence above is the whole
+  // statement. No amount, no price, no button that would fail. A WRECK keeps its row — its way out
+  // (the tow) lives in the action slot below, and hiding the row would hide the recovery with it.
+  if (!wreck && dock !== 'at_port') return null
+
+  // THE AMOUNT. A dent restores what was asked for (the whole missing hull by default, dialable
+  // down); a WRECK restores WHOLE and 0335 ignores the requested amount — so the slot STATES the
+  // amount instead of offering a stepper the server would not honour. `null` is the whole-hull request.
+  const effectiveAmount = wreck ? null : clampRepairHp(amount ?? missing, missing)
+  // THE PRICE, through the ONE vocabulary. A wreck is free BY LAW (0335's cost policy, ungated by the
+  // knob); a dent is hp × the rate, and an unreadable rate claims nothing.
+  const cost = wreck ? 0 : repairCostFor(effectiveAmount ?? 0, cfg?.creditsPerHp ?? null)
+
+  // Affordability precheck (a dent's concern — a wreck costs nothing to owe): wallet unknown
+  // ('error'/undefined) → null (skip; the server answers). A lazy no-wallet-row player (null balance)
+  // rides on the starting-credits seed for the display check.
+  const knownCredits =
+    typeof wallet === 'number' ? wallet : wallet === null ? (cfg?.startingCredits ?? null) : null
+  const affordable = wreck || knownCredits === null || cost === null ? null : knownCredits >= cost
+  const avail = repairAvailability({
+    flagOn: true, // by construction: a dent renders only under the cfg.enabled gate; a wreck is ungated
+    amount: effectiveAmount ?? 1,
+    shipResolved: true, // by construction: mainShipId is a required prop
+    atPort: dock === 'at_port', // the REAL fold of the ship's own position — never hardcoded
+    missing: wreck ? 1 : missing,
+    affordable,
+  })
+  // The tow is the way out of the position gate, and it exists ONLY for a wreck — a dent can move
+  // itself, which is why "take it to a port" is useful advice to one and useless to the other.
+  const showTow = wreck && dock === 'away'
 
   return (
     <>
-      <SectionLabel className="mt-3">Mend this ship&rsquo;s hull</SectionLabel>
+      <SectionLabel className="mt-3">{REPAIR_HEADING}</SectionLabel>
       {/* Current credits — the getWalletBalance semantics verbatim ('error'/unread → '—'; no wallet
-          row → the effective starting credits; the SalvageMarketPanel honesty posture). */}
+          row → the effective starting credits; the SalvageMarketPanel honesty posture). Shown for
+          every hull, so the desk looks the same whichever one is on it. */}
       <div className="mt-1 flex items-center justify-between gap-2 text-xs">
         <span className="text-ink-faint">Credits</span>
         <span data-testid="repair-wallet" className="font-mono tabular-nums text-warning">
-          {repairWalletDisplay(wallet, cfg.startingCredits)}
+          {repairWalletDisplay(wallet, cfg?.startingCredits ?? 0)}
         </span>
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
-        {/* Whole-hp stepper — buttons clamp to 1..missing; typed input floors to whole 1.. and may
-            exceed missing (server clamps to the actual missing hull, never over-charges). */}
         <span className="flex shrink-0 items-center gap-1">
-          <Button
-            variant="secondary"
-            size="sm"
-            data-testid="repair-dec"
-            aria-label="Repair less hull"
-            disabled={pending || effectiveAmount <= 1}
-            onClick={() => {
-              setAmountDraft(null)
-              setAmount(clampRepairHp(effectiveAmount - 1, missing))
-            }}
-            className="px-2"
-          >
-            −
-          </Button>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            data-testid="repair-amount"
-            value={amountDraft ?? effectiveAmount}
-            onChange={(ev) => {
-              const raw = ev.target.value
-              if (raw === '') {
-                setAmountDraft('')
-                return
-              }
-              setAmountDraft(null)
-              setAmount(clampRepairHp(parseInt(raw, 10), missing))
-            }}
-            onBlur={() => setAmountDraft(null)}
-            className="w-16 rounded border border-edge bg-surface-2 px-1 py-0.5 text-right font-mono tabular-nums text-ink"
-          />
-          <Button
-            variant="secondary"
-            size="sm"
-            data-testid="repair-inc"
-            aria-label="Repair more hull"
-            disabled={pending || effectiveAmount >= missing}
-            onClick={() => {
-              setAmountDraft(null)
-              setAmount(clampRepairHp(effectiveAmount + 1, missing))
-            }}
-            className="px-2"
-          >
-            +
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            data-testid="repair-full-btn"
-            disabled={pending || effectiveAmount >= missing}
-            onClick={() => {
-              setAmountDraft(null)
-              setAmount(missing)
-            }}
-            className="px-2"
-          >
-            Full
-          </Button>
+          {wreck ? (
+            /* THE WHOLE HULL — the same slot the stepper occupies, stating the amount the server will
+               restore. Deliberately NOT a disabled stepper: a control the server would ignore is a lie
+               about what the player gets to choose. */
+            <span data-testid="repair-amount" className="font-mono tabular-nums text-ink">
+              Whole hull
+            </span>
+          ) : (
+            <>
+              {/* Whole-hp stepper — buttons clamp to 1..missing; the typed input floors to whole 1.. and
+                  may exceed missing (the server clamps to the real missing hull, never over-charges). */}
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="repair-dec"
+                aria-label="Repair less hull"
+                disabled={pending || (effectiveAmount ?? 1) <= 1}
+                onClick={() => {
+                  setAmountDraft(null)
+                  setAmount(clampRepairHp((effectiveAmount ?? 1) - 1, missing))
+                }}
+                className="px-2"
+              >
+                −
+              </Button>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                data-testid="repair-amount"
+                value={amountDraft ?? effectiveAmount ?? 0}
+                onChange={(ev) => {
+                  const raw = ev.target.value
+                  if (raw === '') {
+                    setAmountDraft('')
+                    return
+                  }
+                  setAmountDraft(null)
+                  setAmount(clampRepairHp(parseInt(raw, 10), missing))
+                }}
+                onBlur={() => setAmountDraft(null)}
+                className="w-16 rounded border border-edge bg-surface-2 px-1 py-0.5 text-right font-mono tabular-nums text-ink"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="repair-inc"
+                aria-label="Repair more hull"
+                disabled={pending || (effectiveAmount ?? 0) >= missing}
+                onClick={() => {
+                  setAmountDraft(null)
+                  setAmount(clampRepairHp((effectiveAmount ?? 0) + 1, missing))
+                }}
+                className="px-2"
+              >
+                +
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="repair-full-btn"
+                disabled={pending || (effectiveAmount ?? 0) >= missing}
+                onClick={() => {
+                  setAmountDraft(null)
+                  setAmount(missing)
+                }}
+                className="px-2"
+              >
+                Full
+              </Button>
+            </>
+          )}
         </span>
         <span className="flex min-w-0 items-center gap-1.5">
-          {/* Display cost (hp × rate) through the ONE price vocabulary — the server computes the
-              receipted total under its lock. A live knob of 0 reads "Free", never "0 cr". */}
+          {/* Display cost through the ONE price vocabulary — the server computes the receipted total
+              under its lock. A live knob of 0, and a wreck at any knob, read "Free", never "0 cr". */}
           <span data-testid="repair-cost" className="truncate font-mono tabular-nums text-warning">
             {repairPriceLabel(cost)}
           </span>
-          <Button
-            variant="primary"
-            size="sm"
-            data-testid="repair-submit"
-            // Hard-disable only on STRUCTURAL blocks (the salvage M2 posture): an unknown/stale
-            // wallet only ADVISES below and the server's wallet_debit stays the enforcement.
-            disabled={repairBlocks(avail.reason)}
-            busy={pending}
-            busyLabel="Repairing…"
-            onClick={() => onRepair(effectiveAmount)}
-            className="shrink-0"
-          >
-            Repair
-          </Button>
+          {showTow ? (
+            /* THE RECOVERY ROUTE (0297 §3) — free, always available to exactly the wrecks the position
+               gate refuses; it berths one at the nearest port, which is what unlocks the Repair. It
+               stands IN the action slot, never beside it: the player is never offered two repair-ish
+               buttons for one ship again. */
+            <Button
+              variant="primary"
+              size="sm"
+              data-testid="repair-tow"
+              busy={towing}
+              busyLabel="Towing…"
+              onClick={onTow}
+              className="shrink-0"
+            >
+              {TOW_LABEL}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="sm"
+              data-testid="repair-submit"
+              // Hard-disable only on STRUCTURAL blocks (the salvage M2 posture): an unknown/stale
+              // wallet only ADVISES below, and the server's wallet_debit stays the enforcement. A
+              // wreck is never structurally blocked — NO-SOFTLOCK.
+              disabled={!wreck && repairBlocks(avail.reason)}
+              busy={pending}
+              busyLabel="Repairing…"
+              onClick={() => onRepair(effectiveAmount)}
+              className="shrink-0"
+            >
+              {REPAIR_LABEL}
+            </Button>
+          )}
         </span>
       </div>
-      {/* The insufficient-credits advisory (button stays enabled — the server enforces). */}
+      {/* The insufficient-credits advisory (the button stays enabled — the server enforces). */}
       {avail.reason === 'insufficient_credits' && (
         <p className="mt-1 text-[10px] text-ink-muted">{recoveryReasonMessage('insufficient_credits')}</p>
       )}

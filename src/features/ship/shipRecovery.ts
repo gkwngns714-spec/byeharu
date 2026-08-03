@@ -148,8 +148,15 @@ export function repairPositionLine(wreck: boolean, state: RepairDockState): stri
   return state === 'away' ? repairReasonMessage('not_at_port') : null
 }
 
-export const REPAIR_LABEL = 'Repair ship'
-export const TOW_LABEL = 'Tow to the nearest port'
+// ██ ONE ACTION, ONE NAME. ██ The wreck body used to say "Repair ship" on a full-width warning
+// button while the dent body said "Repair" on a small primary one — two names and two shapes for one
+// server verb, which is exactly what the owner read as "there is command ship fixing that is
+// different". There is now one word, on one button, in one row, for every hull. The heading is the
+// same rule applied to the sentence above it: "Full hull restore" and "Mend this ship's hull" were
+// two names for the same desk.
+export const REPAIR_HEADING = "Repair this ship's hull"
+export const REPAIR_LABEL = 'Repair'
+export const TOW_LABEL = 'Tow to a port'
 
 const TOW_FALLBACK = 'The tow is unavailable right now. Try again in a moment.'
 

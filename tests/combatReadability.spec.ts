@@ -27,11 +27,32 @@ test('a group named anything else still gets the word', () => {
   expect(fleetLabel(null)).toBe('Fleet')
 })
 
-test('all four map badges compose the ONE label rule — no inline prefix survives', () => {
+test('the SHIP roster heading no longer says the fleet twice', () => {
+  // Live on screen, 2026-08-04: "FLEET 1 · FLEET 1 · 4 SHIPS". The heading printed the group's NAME
+  // and then re-announced it as "Fleet <group_index>" — and the owner's fleets are named "Fleet 1"
+  // and "Fleet 2", so the slot index said nothing the name had not already said. The prefix-by-hand
+  // is gone; the name comes from the ONE rule.
+  const screen = src('features/ship/ShipScreen.tsx')
+  expect(screen, 'the roster heading must not re-announce the slot index').not.toMatch(
+    /\{group\.name\} · Fleet \{group\.group_index\}/,
+  )
+  expect(screen).toContain("import { fleetLabel } from '../command/fleetLabel'")
+  expect(screen).toContain('{fleetLabel(group.name)}')
+})
+
+test('the map builds a fleet name in exactly ONE place, through the ONE rule', () => {
+  // STRONGER than the assertion it replaces. That one required the FOUR badge resolvers to each
+  // COMPOSE fleetLabel (>= 6 call sites) — the best check available while four resolvers each built
+  // their own label. There is now ONE presence authority, so the honest property is sharper: the name
+  // is built ONCE, and the presentation file that draws the badges does not build it at all.
+  const presence = src('features/map/fleetPresence.ts')
   const markers = src('features/map/teamMarkers.ts')
-  expect(markers).toContain("import { fleetLabel } from '../command/fleetLabel'")
-  expect((markers.match(/fleetLabel\(/g) ?? []).length).toBeGreaterThanOrEqual(6)
-  expect(markers, 'no badge may build the prefix by hand').not.toMatch(/`Fleet \$\{/)
+  expect(presence).toContain("import { fleetLabel } from '../command/fleetLabel'")
+  expect((presence.match(/fleetLabel\(/g) ?? []).length).toBe(1)
+  expect(markers, 'the badge layer renders labels, it does not compose them').not.toContain('fleetLabel')
+  for (const [name, file] of [['fleetPresence', presence], ['teamMarkers', markers]] as const) {
+    expect(file, `${name}: no badge may build the prefix by hand`).not.toMatch(/`Fleet \$\{/)
+  }
 })
 
 // ── "1  destroyed" ─────────────────────────────────────────────────────────────────────────────────

@@ -58,7 +58,7 @@ export function MapScreen() {
   const {
     map: {
       loading, error, locations, meta, mainShip, movements,
-      teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups,
+      teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups, fleetPositions,
       fleetMovementUnifiedEnabled, unifiedGroupFleets, combatSortieFleets,
       launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
       miningFields, miningExtractRadius,
@@ -302,7 +302,8 @@ export function MapScreen() {
               locations={locations}
               movements={movements}
               teamGroups={teamGroups}
-              dockedTeamRollups={dockedTeamRollups}
+              teamGroupMap={teamGroupMap}
+              fleetPositions={fleetPositions}
               unifiedGroupFleets={unifiedGroupFleets}
               combatSortieFleets={combatSortieFleets}
               fleetGoView={pointView}

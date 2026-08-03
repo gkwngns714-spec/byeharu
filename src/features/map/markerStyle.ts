@@ -80,6 +80,22 @@ export function markerStyle(l: MarkerStyleInputs): MarkerStyle {
   }
 }
 
+// ── BELOW-THE-MARKER TEXT ───────────────────────────────────────────────────────────────────
+// The location's own NAME is drawn ABOVE its glyph; a fleet badge for a fleet standing there is drawn
+// BELOW it, so the two never fight for the same pixels. This is the clearance for that second line,
+// and it lives HERE because it is a fact about the marker, not about the badge — the badge has no way
+// to know how big the glyph it is standing under actually is.
+//
+// It was 14, and 14 is INSIDE the glyph: the biggest marker has `radius` 12 with `haloRadius` 2.3, so
+// its halo alone reaches 27.6px and its hub ring 17.4px. The fleet label therefore rendered ON TOP of
+// the port it was naming — measured on the owner's live map on 2026-08-04, where "Fleet 2 1/1" sat
+// unreadable across the Slagworks diamond. A badge you cannot read does not tell anyone where their
+// fleet is. Both numbers are on-screen px; every caller divides by the zoom factor k, like every other
+// marker measurement in this module.
+export const MARKER_BELOW_LABEL_OFFSET = 46
+/** Line height for stacked below-marker text (several fleets sharing one port). */
+export const MARKER_BELOW_LABEL_STEP = 12
+
 // ── Label declutter: zoom-tiered reveal (replaces the old single global `k >= 0.9` dump) ────────────
 // Tier 0 (ports + major locations) is ALWAYS labelled; tier 1 reveals at a modest zoom; tier 2 (minor
 // waypoints) only when the player zooms right in. Selected markers are always labelled by the caller.
