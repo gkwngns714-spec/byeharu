@@ -1,16 +1,16 @@
 {
  "generatedFrom": "repo scan (no production knowledge)",
  "counts": {
-  "migrations": 300,
-  "functions": 302,
-  "tables": 100,
+  "migrations": 320,
+  "functions": 322,
+  "tables": 103,
   "flags": 48,
   "systems": 30,
   "phases": 28,
   "rungs": 9,
-  "jobs": 246,
-  "nodes": 817,
-  "edges": 2473
+  "jobs": 252,
+  "nodes": 860,
+  "edges": 2660
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -3410,6 +3410,226 @@
    "seedsFlag": []
   },
   {
+   "id": "mig:20260618000307",
+   "kind": "migration",
+   "label": "loot_secures_on_arrival",
+   "stamp": "20260618000307",
+   "seq": null,
+   "addedAt": "2026-08-02T12:11:01+09:00",
+   "file": "supabase/migrations/20260618000307_loot_secures_on_arrival.sql",
+   "detail": "0307 — LOOT SECURES ON ARRIVAL: the 'space' settle arm deposits the reward it carries. THE DEFECT. A fleet that survives a fight and retreats to a destination the player CHOSE received NOTHING. The tick's retreat-completion branch (head 0299:602-618) mints the leg with target_type='space' for EVERY ordered destination — a port resolves to its own coordinate (0299:609-610) and a bare point is used ",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000308",
+   "kind": "migration",
+   "label": "combat_roster_is_live_membership",
+   "stamp": "20260618000308",
+   "seq": null,
+   "addedAt": "2026-08-02T12:21:41+09:00",
+   "file": "supabase/migrations/20260618000308_combat_roster_is_live_membership.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0308 — THE COMBAT ROSTER IS LIVE MEMBERSHIP (and a mining rig stops counting as a gun) ═══════════════════════════════════════════════════════════════════════════════════════════════ TWO DEFECTS, ONE FUNCTION. Both live inside combat_create_group_encounter (head 0301:661):",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000309",
+   "kind": "migration",
+   "label": "client_surface_holds_only_what_the_client_calls",
+   "stamp": "20260618000309",
+   "seq": null,
+   "addedAt": "2026-08-02T11:42:55+09:00",
+   "file": "supabase/migrations/20260618000309_client_surface_holds_only_what_the_client_calls.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0309 — THE CLIENT-CALLABLE SURFACE HOLDS ONLY WHAT THE CLIENT CALLS ═══════════════════════════════════════════════════════════════════════════════════════════════ Five functions are granted to `authenticated` and are called by NOTHING in `src/`. Verified by grepping the whole client tree for each name:",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000310",
+   "kind": "migration",
+   "label": "hp_auto_exit",
+   "stamp": "20260618000310",
+   "seq": null,
+   "addedAt": "2026-08-02T16:50:52+09:00",
+   "file": "supabase/migrations/20260618000310_hp_auto_exit.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0310 — HP AUTO-EXIT: A FLEET LEAVES COMBAT ON ITS OWN AT THE PLAYER'S HP THRESHOLD (adjustable percentage, and an off switch — the owner's ask, verbatim: \"now build the hp auto-exit, make user adjust the percentage. turn off on toggle as well\") ═══════════════════════════════════════════════════════════",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000311",
+   "kind": "migration",
+   "label": "reposition_inside_the_fights_zone",
+   "stamp": "20260618000311",
+   "seq": null,
+   "addedAt": "2026-08-02T18:07:36+09:00",
+   "file": "supabase/migrations/20260618000311_reposition_inside_the_fights_zone.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0311 — REPOSITION INSIDE THE FIGHT'S OWN ZONE (an in-zone re-order is a tactical move; only leaving the zone breaks combat) ═══════════════════════════════════════════════════════════════════════════════════════════════ THE OWNER'S DIRECTIVE, VERBATIM: \"there should only be breaking combat when it is ou",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000312",
+   "kind": "migration",
+   "label": "no_living_ships_no_orders",
+   "stamp": "20260618000312",
+   "seq": null,
+   "addedAt": "2026-08-02T21:52:43+09:00",
+   "file": "supabase/migrations/20260618000312_no_living_ships_no_orders.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0312 — NO LIVING SHIPS, NO ORDERS (a dead fleet cannot be moved around the map) ═══════════════════════════════════════════════════════════════════════════════════════════════ THE OWNER'S BUG REPORT, VERBATIM: \"when there is no fleet active, meaning if it has no hp, it should not be able to move to map.",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000313",
+   "kind": "migration",
+   "label": "0313 weapon_ranges_fit_the_zone",
+   "stamp": "20260618000313",
+   "seq": "0313",
+   "addedAt": "2026-08-02T22:29:50+09:00",
+   "file": "supabase/migrations/20260618000313_weapon_ranges_fit_the_zone.sql",
+   "detail": "Byeharu — WEAPON RANGES FIT THE ZONE. Migration 0313. Pure DATA/CONFIG retune — this file re-creates NO function, touches NO schema, and needs NO generator/parity machinery. Every consumer reads these values at runtime (cfg_num / the module_types row), so the cut takes effect on the next encounter creation / wave spawn with zero plpgsql change. ── THE OWNER'S DECISION, VERBATIM ───────────────────",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000314",
+   "kind": "migration",
+   "label": "runescape_combat_feel",
+   "stamp": "20260618000314",
+   "seq": null,
+   "addedAt": "2026-08-02T22:45:02+09:00",
+   "file": "supabase/migrations/20260618000314_runescape_combat_feel.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0314 — THE RUNESCAPE COMBAT FEEL: REAL ATTACK INTERVALS, A FRESH DAMAGE ROLL PER HIT, AND EVERY HIT VISIBLE AS IT LANDS (the owner's ask, verbatim: \"i once told you that with what we have now, i want a runescape-like battle experience. Where you attack with interval, showing hp, and everytime it deals d",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000315",
+   "kind": "migration",
+   "label": "every_fleet_has_a_lead",
+   "stamp": "20260618000315",
+   "seq": null,
+   "addedAt": "2026-08-03T10:08:18+09:00",
+   "file": "supabase/migrations/20260618000315_every_fleet_has_a_lead.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0315 — EVERY FLEET ENTERING COMBAT HAS A LEAD (the encounter builder stops assuming a command ship exists, and derives one when it does not) ═══════════════════════════════════════════════════════════════════════════════════════════════ ── THE DEFECT, MEASURED ON LIVE PRODUCTION ────────────────────────",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000316",
+   "kind": "migration",
+   "label": "combat_five_times_tighter",
+   "stamp": "20260618000316",
+   "seq": null,
+   "addedAt": "2026-08-03T11:05:00+09:00",
+   "file": "supabase/migrations/20260618000316_combat_five_times_tighter.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0316 — COMBAT IS FIVE TIMES TIGHTER (every distance and every distance-per-tick in the combat arena divided by 5, together, so the geometry keeps its shape and every tick count stays exactly where it is) ═══════════════════════════════════════════════════════════════════════════════════════════════",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000317",
+   "kind": "migration",
+   "label": "the_dead_do_not_shoot",
+   "stamp": "20260618000317",
+   "seq": null,
+   "addedAt": "2026-08-03T12:24:28+09:00",
+   "file": "supabase/migrations/20260618000317_the_dead_do_not_shoot.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0317 — THE DEAD DO NOT SHOOT (and the dead do not move) a unit destroyed earlier in a tick takes no turn for the rest of that tick ═══════════════════════════════════════════════════════════════════════════════════════════════ ── THE DEFECT, READ OFF THE DEPLOYED BODY ───────────────────────────────────",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000318",
+   "kind": "migration",
+   "label": "hidden_stays_hidden",
+   "stamp": "20260618000318",
+   "seq": null,
+   "addedAt": "2026-08-03T12:41:02+09:00",
+   "file": "supabase/migrations/20260618000318_hidden_stays_hidden.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0318 — HIDDEN STAYS HIDDEN (one authority for \"can this client see this row\", and the drifted client write grants on zones / sectors / bases are REVOKED rather than merely asserted) ═══════════════════════════════════════════════════════════════════════════════════════════════",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000319",
+   "kind": "migration",
+   "label": "drawn_zones_stay_drawn",
+   "stamp": "20260618000319",
+   "seq": null,
+   "addedAt": null,
+   "file": "supabase/migrations/20260618000319_drawn_zones_stay_drawn.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0319 — A ZONE THE OWNER DREW STAYS DRAWN: zone_update claims the row for the authored writer, and the rows already at risk are claimed retroactively from the audit ledger. ═══════════════════════════════════════════════════════════════════════════════════════════════ ── THE DEFECT: TWO WRITERS, ONE ROW,",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000320",
+   "kind": "migration",
+   "label": "the_knobs_are_honest",
+   "stamp": "20260618000320",
+   "seq": null,
+   "addedAt": "2026-08-03T12:44:37+09:00",
+   "file": "supabase/migrations/20260618000320_the_knobs_are_honest.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0320 — THE KNOBS ARE HONEST (the eight config rows nothing reads are deleted; the three values production holds but no file produces are written into the chain, so a fresh database boots the game that is actually being played) ═════════════════════════════════════════════════════════════════════════════",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000330",
+   "kind": "migration",
+   "label": "the_mover_is_in_the_repo",
+   "stamp": "20260618000330",
+   "seq": null,
+   "addedAt": "2026-08-03T12:48:33+09:00",
+   "file": "supabase/migrations/20260618000330_the_mover_is_in_the_repo.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0330 — THE MOVER IS IN THE REPO (restore the repository as the source of truth for movement) ═══════════════════════════════════════════════════════════════════════════════════════════════ ⛔ THIS MIGRATION CHANGES NO BEHAVIOUR. Not one byte of any function body moves. It exists so that the next person w",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000331",
+   "kind": "migration",
+   "label": "one_authority_for_attack",
+   "stamp": "20260618000331",
+   "seq": null,
+   "addedAt": null,
+   "file": "supabase/migrations/20260618000331_one_authority_for_attack.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0331 — ONE AUTHORITY FOR ATTACK (the fold's combat_power becomes the damage a ship deals; a weapon decides HOW it is delivered, never HOW MUCH — and the fold itself stops carrying a dead path) ═══════════════════════════════════════════════════════════════════════════════════════════════",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000332",
+   "kind": "migration",
+   "label": "a_wreck_can_always_come_home",
+   "stamp": "20260618000332",
+   "seq": null,
+   "addedAt": "2026-08-03T16:45:29+09:00",
+   "file": "supabase/migrations/20260618000332_a_wreck_can_always_come_home.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0332 — A WRECK CAN ALWAYS COME HOME the settle arm gives a dead member its terminal write, so hp and status cannot end a fight disagreeing — and the two ships that already ended one that way are reconciled ═══════════════════════════════════════════════════════════════════════════════════════════════",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000333",
+   "kind": "migration",
+   "label": "items_have_a_place",
+   "stamp": "20260618000333",
+   "seq": null,
+   "addedAt": null,
+   "file": "supabase/migrations/20260618000333_items_have_a_place.sql",
+   "detail": "Byeharu — 0333: ITEMS LIVE AT PORTS.   (rev.3 — see THE TWO CORRECTIONS below) ═══════════════════════════════════════════════════════════════════════════════════════════════ THE OWNER'S DESIGN LAWS THIS MIGRATION EXISTS TO SATISFY (stated long ago, repeated 2026-08-03): 1. Items are NOT unlimited — VOLUME matters. An item with no volume is a bug. 2. Storage is PER-PORT. Each city holds its own st",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000334",
+   "kind": "migration",
+   "label": "a_wreck_is_where_its_fleet_is",
+   "stamp": "20260618000334",
+   "seq": null,
+   "addedAt": "2026-08-03T17:59:24+09:00",
+   "file": "supabase/migrations/20260618000334_a_wreck_is_where_its_fleet_is.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0334 — A WRECK IS WHERE ITS FLEET IS a ship whose GROUP is tied up at a port is AT that port, whatever its own lifecycle status — so a wreck in a docked fleet repairs on the spot, with no tow ═══════════════════════════════════════════════════════════════════════════════════════════════",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000335",
+   "kind": "migration",
+   "label": "one_way_to_repair",
+   "stamp": "20260618000335",
+   "seq": null,
+   "addedAt": "2026-08-03T20:16:21+09:00",
+   "file": "supabase/migrations/20260618000335_one_way_to_repair.sql",
+   "detail": "ONE WAY TO REPAIR (0335) — two repair systems collapsed into one, by DELETION. THE COMPLAINT (verbatim): \"why does command ship have separate repair system? unnecessary\" ── FIRST, THE PREMISE, CORRECTED ──────────────────────────────────────────────────────────────── There was never a COMMAND-SHIP repair system. `main_ship_instances` is EVERY ship (77 rows on",
+   "seedsFlag": []
+  },
+  {
    "id": "fn:handle_new_user",
    "kind": "function",
    "label": "handle_new_user",
@@ -5524,6 +5744,146 @@
    "detail": "Postgres function"
   },
   {
+   "id": "fn:group_sortie_live_members",
+   "kind": "function",
+   "label": "group_sortie_live_members",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:group_sortie_release",
+   "kind": "function",
+   "label": "group_sortie_release",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:module_is_firing_weapon",
+   "kind": "function",
+   "label": "module_is_firing_weapon",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:set_group_auto_exit",
+   "kind": "function",
+   "label": "set_group_auto_exit",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:danger_zone_contains_point",
+   "kind": "function",
+   "label": "danger_zone_contains_point",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:combat_encounter_zone_admits_point",
+   "kind": "function",
+   "label": "combat_encounter_zone_admits_point",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:combat_translate_player_formation",
+   "kind": "function",
+   "label": "combat_translate_player_formation",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:group_all_ships_destroyed",
+   "kind": "function",
+   "label": "group_all_ships_destroyed",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:world_sector_is_visible",
+   "kind": "function",
+   "label": "world_sector_is_visible",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:world_zone_is_visible",
+   "kind": "function",
+   "label": "world_zone_is_visible",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:world_location_is_visible",
+   "kind": "function",
+   "label": "world_location_is_visible",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:base_items_add",
+   "kind": "function",
+   "label": "base_items_add",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:base_items_take",
+   "kind": "function",
+   "label": "base_items_take",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:fleet_items_add",
+   "kind": "function",
+   "label": "fleet_items_add",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:fleet_items_take",
+   "kind": "function",
+   "label": "fleet_items_take",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:fleet_hold_capacity_m3",
+   "kind": "function",
+   "label": "fleet_hold_capacity_m3",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:fleet_hold_used_m3",
+   "kind": "function",
+   "label": "fleet_hold_used_m3",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:transfer_items",
+   "kind": "function",
+   "label": "transfer_items",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:get_my_hold",
+   "kind": "function",
+   "label": "get_my_hold",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:repair_ship_hull",
+   "kind": "function",
+   "label": "repair_ship_hull",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
    "id": "table:profiles",
    "kind": "table",
    "label": "profiles",
@@ -6220,6 +6580,27 @@
    "id": "table:zone_kind_permitted_effects",
    "kind": "table",
    "label": "zone_kind_permitted_effects",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:base_items",
+   "kind": "table",
+   "label": "base_items",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:fleet_items",
+   "kind": "table",
+   "label": "fleet_items",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:item_transfer_receipts",
+   "kind": "table",
+   "label": "item_transfer_receipts",
    "system": null,
    "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
   },
@@ -12892,6 +13273,311 @@
    "type": "creates"
   },
   {
+   "source": "mig:20260618000308",
+   "target": "fn:group_sortie_live_members",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000308",
+   "target": "fn:group_sortie_release",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000308",
+   "target": "fn:module_is_firing_weapon",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000309",
+   "target": "flag:mainship_send_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000310",
+   "target": "fn:set_group_auto_exit",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000310",
+   "target": "table:ship_groups",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000310",
+   "target": "flag:team_command_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000311",
+   "target": "fn:danger_zone_contains_point",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000311",
+   "target": "fn:combat_encounter_zone_admits_point",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000311",
+   "target": "fn:combat_translate_player_formation",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000312",
+   "target": "fn:group_all_ships_destroyed",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000318",
+   "target": "fn:world_sector_is_visible",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000318",
+   "target": "fn:world_zone_is_visible",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000318",
+   "target": "fn:world_location_is_visible",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000318",
+   "target": "fn:get_world_map",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000320",
+   "target": "flag:mainship_space_movement_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000320",
+   "target": "flag:dev_zone_editor_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "fn:command_ship_group_go",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "fn:command_ship_group_dock",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "fn:command_ship_group_stop",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "fn:send_ship_group_hunt",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "fn:movement_settle_arrival",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "flag:timed_docking_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "flag:launch_from_dock_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "flag:fleet_control_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "flag:team_command_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000331",
+   "target": "flag:ship_traits_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000331",
+   "target": "flag:command_buffs_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000331",
+   "target": "flag:captain_growth_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:base_items_add",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:base_items_take",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:fleet_items_add",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:fleet_items_take",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:fleet_hold_capacity_m3",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:fleet_hold_used_m3",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:inventory_deposit",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:inventory_spend",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:inventory_get_balance",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:transfer_items",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:get_my_hold",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:get_my_docked_store",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "table:base_items",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "table:fleet_items",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "table:item_transfer_receipts",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "table:item_types",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "table:base_items",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "table:fleet_items",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "table:inventory_ledger",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "table:item_transfer_receipts",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "table:build_orders",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:inventory_deposit",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:inventory_spend",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "fn:inventory_get_balance",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "flag:station_storage_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000334",
+   "target": "fn:mainship_port_of_ship",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000335",
+   "target": "fn:repair_ship_hull",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000335",
+   "target": "fn:repair_main_ship",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000335",
+   "target": "fn:repair_ship_hull_at_port",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000335",
+   "target": "flag:launch_from_dock_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000335",
+   "target": "flag:repair_economy_enabled",
+   "type": "gated-by"
+  },
+  {
    "source": "mig:20260616000018",
    "target": "mig:20260616000008",
    "type": "supersedes",
@@ -14374,6 +15060,72 @@
    "note": "pirate_intercept_resolve_due_for_movement"
   },
   {
+   "source": "mig:20260618000318",
+   "target": "mig:20260618000264",
+   "type": "supersedes",
+   "note": "get_world_map"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "mig:20260618000301",
+   "type": "supersedes",
+   "note": "command_ship_group_go"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "mig:20260618000219",
+   "type": "supersedes",
+   "note": "command_ship_group_dock"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "mig:20260618000301",
+   "type": "supersedes",
+   "note": "command_ship_group_stop"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "mig:20260618000231",
+   "type": "supersedes",
+   "note": "send_ship_group_hunt"
+  },
+  {
+   "source": "mig:20260618000330",
+   "target": "mig:20260618000208",
+   "type": "supersedes",
+   "note": "movement_settle_arrival"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "mig:20260617000039",
+   "type": "supersedes",
+   "note": "inventory_deposit"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "mig:20260617000039",
+   "type": "supersedes",
+   "note": "inventory_spend"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "mig:20260617000039",
+   "type": "supersedes",
+   "note": "inventory_get_balance"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "mig:20260618000211",
+   "type": "supersedes",
+   "note": "get_my_docked_store"
+  },
+  {
+   "source": "mig:20260618000334",
+   "target": "mig:20260618000297",
+   "type": "supersedes",
+   "note": "mainship_port_of_ship"
+  },
+  {
    "source": "mig:20260616000007",
    "target": "mig:20260616000006",
    "type": "extends",
@@ -14768,6 +15520,30 @@
    "target": "mig:20260618000233",
    "type": "extends",
    "note": "pirate_intercepts"
+  },
+  {
+   "source": "mig:20260618000310",
+   "target": "mig:20260618000160",
+   "type": "extends",
+   "note": "ship_groups"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "mig:20260617000039",
+   "type": "extends",
+   "note": "item_types"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "mig:20260617000039",
+   "type": "extends",
+   "note": "inventory_ledger"
+  },
+  {
+   "source": "mig:20260618000333",
+   "target": "mig:20260617000036",
+   "type": "extends",
+   "note": "build_orders"
   },
   {
    "source": "fn:base_reserve_units",
@@ -18665,6 +19441,561 @@
    "type": "touches"
   },
   {
+   "source": "fn:group_sortie_live_members",
+   "target": "table:group_sortie_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:group_sortie_live_members",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:group_sortie_live_members",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:group_sortie_release",
+   "target": "table:group_sortie_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:module_is_firing_weapon",
+   "target": "table:module_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:module_is_firing_weapon",
+   "target": "table:group_sortie_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:module_is_firing_weapon",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:module_is_firing_weapon",
+   "target": "fn:group_sortie_live_members",
+   "type": "calls"
+  },
+  {
+   "source": "fn:module_is_firing_weapon",
+   "target": "fn:group_sortie_release",
+   "type": "calls"
+  },
+  {
+   "source": "fn:module_is_firing_weapon",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:module_is_firing_weapon",
+   "target": "table:ship_module_fittings",
+   "type": "touches"
+  },
+  {
+   "source": "fn:module_is_firing_weapon",
+   "target": "table:module_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:module_is_firing_weapon",
+   "target": "fn:combat_create_group_encounter",
+   "type": "calls"
+  },
+  {
+   "source": "fn:module_is_firing_weapon",
+   "target": "fn:pirate_intercept_resolve_due_for_movement",
+   "type": "calls"
+  },
+  {
+   "source": "fn:combat_encounter_zone_admits_point",
+   "target": "table:combat_encounters",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_translate_player_formation",
+   "target": "table:combat_units",
+   "type": "touches"
+  },
+  {
+   "source": "fn:world_zone_is_visible",
+   "target": "table:sectors",
+   "type": "touches"
+  },
+  {
+   "source": "fn:world_zone_is_visible",
+   "target": "fn:world_sector_is_visible",
+   "type": "calls"
+  },
+  {
+   "source": "fn:base_items_add",
+   "target": "table:item_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:base_items_add",
+   "target": "table:base_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:base_items_take",
+   "target": "table:base_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:base_items_take",
+   "target": "fn:base_items_add",
+   "type": "calls"
+  },
+  {
+   "source": "fn:base_items_take",
+   "target": "table:fleet_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:base_items_take",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:base_items_take",
+   "target": "table:item_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_items_add",
+   "target": "table:item_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_items_add",
+   "target": "table:fleet_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_items_take",
+   "target": "table:fleet_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_items_take",
+   "target": "fn:fleet_items_add",
+   "type": "calls"
+  },
+  {
+   "source": "fn:fleet_hold_capacity_m3",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_hold_capacity_m3",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_hold_used_m3",
+   "target": "table:fleet_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_hold_used_m3",
+   "target": "table:item_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_hold_used_m3",
+   "target": "fn:fleet_hold_capacity_m3",
+   "type": "calls"
+  },
+  {
+   "source": "fn:fleet_hold_used_m3",
+   "target": "table:bases",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_hold_used_m3",
+   "target": "table:player_inventory",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_hold_used_m3",
+   "target": "fn:base_items_add",
+   "type": "calls"
+  },
+  {
+   "source": "fn:fleet_hold_used_m3",
+   "target": "table:inventory_ledger",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_hold_used_m3",
+   "target": "fn:inventory_deposit",
+   "type": "calls"
+  },
+  {
+   "source": "fn:fleet_hold_used_m3",
+   "target": "fn:inventory_spend",
+   "type": "calls"
+  },
+  {
+   "source": "fn:fleet_hold_used_m3",
+   "target": "fn:inventory_get_balance",
+   "type": "calls"
+  },
+  {
+   "source": "fn:inventory_deposit",
+   "target": "table:bases",
+   "type": "touches"
+  },
+  {
+   "source": "fn:inventory_deposit",
+   "target": "fn:base_items_add",
+   "type": "calls"
+  },
+  {
+   "source": "fn:inventory_spend",
+   "target": "table:bases",
+   "type": "touches"
+  },
+  {
+   "source": "fn:inventory_spend",
+   "target": "fn:base_items_take",
+   "type": "calls"
+  },
+  {
+   "source": "fn:inventory_get_balance",
+   "target": "table:bases",
+   "type": "touches"
+  },
+  {
+   "source": "fn:inventory_get_balance",
+   "target": "table:base_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:inventory_get_balance",
+   "target": "fn:inventory_deposit",
+   "type": "calls"
+  },
+  {
+   "source": "fn:inventory_get_balance",
+   "target": "fn:inventory_spend",
+   "type": "calls"
+  },
+  {
+   "source": "fn:inventory_get_balance",
+   "target": "table:item_transfer_receipts",
+   "type": "touches"
+  },
+  {
+   "source": "fn:inventory_get_balance",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:inventory_get_balance",
+   "target": "table:item_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:inventory_get_balance",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:inventory_get_balance",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "table:item_transfer_receipts",
+   "type": "touches"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "table:item_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:mainship_resolve_owned_ship",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:mainship_space_lock_context",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:mainship_resolve_docked_location",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:mainship_resolve_fleet",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:is_home_port_eligible",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:fleet_hold_used_m3",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:fleet_hold_capacity_m3",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:get_or_create_store",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "table:fleet_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:fleet_items_take",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:base_items_add",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "table:base_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:base_items_take",
+   "type": "calls"
+  },
+  {
+   "source": "fn:transfer_items",
+   "target": "fn:fleet_items_add",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_hold",
+   "target": "fn:mainship_resolve_owned_ship",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_hold",
+   "target": "fn:mainship_resolve_fleet",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_hold",
+   "target": "table:fleet_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_hold",
+   "target": "table:item_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_hold",
+   "target": "fn:fleet_hold_used_m3",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_hold",
+   "target": "fn:fleet_hold_capacity_m3",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "table:base_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "table:item_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:inventory_deposit",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:inventory_get_balance",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:inventory_spend",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:production_craft_module",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:production_recruit_captain",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "table:build_orders",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:production_start_hull_build",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:craft_module",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:recruit_captain",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:start_hull_build",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "table:inventory_ledger",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:transfer_items",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:mainship_resolve_fleet",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:mainship_space_lock_context",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:fleet_items_add",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:fleet_items_take",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "table:fleet_items",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:base_items_add",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:base_items_take",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "table:ship_cargo_lots",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "table:player_wallet",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "table:item_transfer_receipts",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "table:player_inventory",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:reward_grant",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:sell_item_at_port",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:cancel_build_order",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:buy_shop_offer_at_port",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_port_of_ship",
+   "target": "fn:fleet_docked_location",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_port_of_ship",
+   "target": "fn:repair_main_ship",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_port_of_ship",
+   "target": "fn:mainship_emergency_tow",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_port_of_ship",
+   "target": "fn:get_my_disabled_ships",
+   "type": "calls"
+  },
+  {
    "source": "table:profiles",
    "target": "system:Auth",
    "type": "owned-by"
@@ -21028,6 +22359,40 @@
   {
    "date": "2026-07-30",
    "title": "A danger zone can't swallow the map's gestures (`#336`, **DEPLOYED**)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-31",
+   "title": "Nothing was left to ship; what was left was the record (`#338`, **MERGED**)",
+   "migs": []
+  },
+  {
+   "date": "2026-08-02",
+   "title": "An eight-domain audit, and the three things it found that were costing players (`#339` `#340` `#341` `#342`, **ALL DEPLOYED & verified on target**)",
+   "migs": []
+  },
+  {
+   "date": "2026-08-03",
+   "title": "Foldable reports + the Fleet tab (`slice-reports-fold-fleet-tab`, client-only)",
+   "migs": []
+  },
+  {
+   "date": "2026-08-03",
+   "title": "ONE WAY TO REPAIR (`slice-one-way-to-repair`, migration 0335)",
+   "migs": [
+    "20260618000335"
+   ]
+  },
+  {
+   "date": "2026-08-03",
+   "title": "ITEMS LIVE AT PORTS (`slice-items-live-at-ports`, migration 0333 rev.3)",
+   "migs": [
+    "20260618000333"
+   ]
+  },
+  {
+   "date": "2026-08-03",
+   "title": "THE COMBAT AUDIT, AND THE WAVE AROUND IT (0334 → 0335, + client)",
    "migs": []
   }
  ]
