@@ -60,7 +60,7 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
       're-point the slice at the new head before generating.');
   }
 
-  const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000317']);
+  const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000336']);
   const reHunkRow = /\(\s*\d+\s*,\s*'process_combat_ticks'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000299'
     && !KNOWN_LATER_REWRITERS.has(version(f))

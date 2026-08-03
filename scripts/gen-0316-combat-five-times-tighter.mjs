@@ -56,7 +56,7 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // the gate protects is "never cut a NEW slice from a head that has moved", and 0316 cuts nothing
   // new. Naming each known later rewriter keeps the protection live for 0318 and everything after
   // it; raising the version floor would not.
-  const KNOWN_LATER_REWRITERS = new Set(['20260618000331']);
+  const KNOWN_LATER_REWRITERS = new Set(['20260618000331', '20260618000336']);
   const reHunkRow = /\(\s*\d+\s*,\s*'combat_create_group_encounter'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000315'
     && !KNOWN_LATER_REWRITERS.has(version(f))
