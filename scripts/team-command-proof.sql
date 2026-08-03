@@ -343,6 +343,56 @@ begin
   perform public.process_combat_telegraphs();
 end $$;
 
+-- ★ THE THIRD LIGHTS-ON FIXTURE HELPER (added 2026-08-03) ────────────────────────────────────────
+-- wipe_tick — spatial_combat_enabled (0234, lit by 0300:79).
+--
+-- UNDER THE SPATIAL ENGINE, `enemy_attack_base` IS HONOURED AT WAVE SPAWN AND ONLY THERE. The
+-- aggregate arm recomputes `v_enemy_attack` from the live knob on EVERY tick (0299:1037). The spatial
+-- arm computes it ONCE, when the wave spawns, and freezes it into each enemy unit's
+-- `combat_units.weapons_json -> 'power'` (0299:747-763 synthetic, :703-707 resolved); the fire loop
+-- then reads that frozen value (0299:867). 0300:79 lit `spatial_combat_enabled`, so every encounter
+-- this file creates takes the spatial arm.
+--
+-- THAT SPLIT THE FILE'S "one-step wipe" IDIOM IN TWO, AND NOTHING SAID SO:
+--   * raised BEFORE the encounter's first tick (TEAMSETTLE's loss fixture) the very next tick spawns
+--     wave 1 at the boosted knob — still lethal, still correct, which is why that block stayed green;
+--   * raised MID-WAVE (SHIELD1's tick 4, after three ticks had already spawned and frozen wave 1) it
+--     is completely INERT. The tick delivered the same ordinary damage, the regenerated 40 pool
+--     absorbed all of it, the hull never reached 0, and `SHIELD1 FAIL defeat` has aborted this file on
+--     every branch since — taking the 7 blocks behind it (~23% of the file) with it.
+--
+-- THE REPOINT (the "follow the game" arm of proofs-never-assert-ambient-defaults): a mid-fight raise
+-- only bites on a wave the engine actually SPAWNS, so spend the live wave and let the next tick roll a
+-- fresh one at the CURRENT knob. That is the game's own escalation path (0299:659 spatial / :1043
+-- aggregate — the same `enemy side is wiped -> spawn` branch in both arms), not a shortcut around it.
+-- Using it at BOTH wipe sites also leaves ONE authority for "make the next tick lethal" instead of two
+-- spellings whose difference nobody could see.
+--
+-- MODE-AGNOSTIC BY CONSTRUCTION — it spends the wave in BOTH representations (the spatial arm's
+-- side='enemy' rows and the aggregate arm's `enemy_integrity_current` scalar), so this helper is
+-- correct whether or not `spatial_combat_enabled` is lit, and never re-acquires the ambient
+-- dependency it exists to remove. `next_wave_at` is cleared because now() is FROZEN inside the
+-- proof's single transaction: a wave-transition pause set to now()+N could never elapse and would
+-- park every later tick on the `next_wave_incoming` branch.
+--
+-- The knob is CAPTURED and RESTORED, never restored to a hard-coded literal — the committed seed is
+-- the chain's to own, not this file's.
+create or replace function pg_temp.wipe_tick(p_enc uuid) returns void language plpgsql as $$
+declare v_prev jsonb;
+begin
+  select value into v_prev from public.game_config where key = 'enemy_attack_base';
+  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);
+  -- spend the live wave in both arms, then make the tick due
+  delete from public.combat_units where encounter_id = p_enc and side = 'enemy';
+  update public.combat_encounters
+     set enemy_integrity_current = 0,
+         next_wave_at            = null,
+         last_resolved_at        = last_resolved_at - interval '1 minute'
+   where id = p_enc;
+  perform public.process_combat_ticks();
+  perform public.set_game_config('enemy_attack_base', coalesce(v_prev, '1'::jsonb));
+end $$;
+
 -- three fresh players: uA (3-ship team ops), uB (foreign-owner gap probe), uC (all-or-nothing pair).
 -- The on-signup triggers auto-create each player's ACTIVE Home Base (required by the live send).
 do $$
@@ -3218,10 +3268,13 @@ end $$;
 --          is guarded); the leaf mirrors round(pool) to the ship row after every tick with hp
 --          byte-consistent and the ship still hunting; combat_ticks integrity stays HULL-only
 --          while the pool is nonzero (the accounting-unchanged pin);
---          tick 4 (enemy_attack_base 1000000 — the TEAMSETTLE one-step-wipe idiom): a ship whose
+--          tick 4 (pg_temp.wipe_tick — enemy_attack_base 1000000 delivered through a wave the
+--          engine SPAWNS at that knob, because the spatial arm freezes wave firepower into
+--          weapons_json at spawn and never re-reads the knob mid-wave; see the helper): a ship whose
 --          pool regenerated to FULL still dies the moment its hull reaches 0 — defeat detection
 --          is HULL-only, integrity lands 0, the D1 destroyed terminal fires on the ship row.
---          Knob and enemy_attack_base restored in-txn after (leak checks stay meaningful).
+--          Knob restored in-txn after; enemy_attack_base is captured/restored by the helper
+--          (leak checks stay meaningful).
 do $$
 declare r jsonb; n int; uV uuid; sV uuid; gV uuid;
   v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
@@ -3395,9 +3448,15 @@ begin
   -- ── TICK 4: DEFEAT IS HULL-ONLY — a shielded ship at hull 0 is dead ───────────────────────────
   v_pre := v_sh;   -- the pool entering the defeat tick (> 0 by the guard; regen even tops it to 40)
   if v_pre <= 0 then raise exception 'SHIELD1 FAIL guard: the defeat-arm pool is not positive (the pin would be vacuous)'; end if;
-  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);   -- one-step hull wipe (the TEAMSETTLE idiom)
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
+  -- ★ REPOINTED 2026-08-03. This raised enemy_attack_base and ticked once. Under the SPATIAL engine
+  -- ★ (0234, lit by 0300:79 — the arm every encounter this file creates now takes) that knob is read
+  -- ★ ONLY at wave spawn and frozen into the enemy's weapons_json, so the raise was INERT: the tick
+  -- ★ delivered the same ordinary damage, the full 40 pool absorbed all of it, the hull never reached
+  -- ★ 0 and this assert has been red on every branch since. pg_temp.wipe_tick SPENDS the wave first,
+  -- ★ so the engine spawns a replacement AT the boosted knob and the hit is genuinely lethal. The
+  -- ★ property asserted below is UNCHANGED and now actually exercised: a pool regenerated to FULL 40
+  -- ★ does not save a ship whose HULL reaches 0 — defeat and integrity are hull-only.
+  perform pg_temp.wipe_tick(v_enc);
   select count(*) into n from public.combat_encounters
     where id = v_enc and status = 'defeat' and ended_at is not null and player_integrity_current = 0;
   if n <> 1 then
@@ -3405,7 +3464,8 @@ begin
   select count(*) into n from public.main_ship_instances
     where main_ship_id = sV and status = 'destroyed' and hp = 0;
   if n <> 1 then raise exception 'SHIELD1 FAIL defeat: the D1 destroyed terminal did not fire on the shielded member'; end if;
-  perform public.set_game_config('enemy_attack_base', '1'::jsonb);          -- restore the engine default
+  -- enemy_attack_base is captured and restored inside pg_temp.wipe_tick (the committed seed is the
+  -- chain's to own — a hard-coded restore is the same ambient-default disease in reverse).
   perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);    -- restore the dark seed in-txn
 
   raise notice 'TEAMCMD_PASS_SHIELD1 ok: zero state pinned (member rows exist, none carries a snapshot, no fought ship''s instance shield ever moved — COMBATPARITY/TEAMHUNT/TEAMSETTLE ran their exact pins against THIS tick as the parity proof); lit arm exact vs the independent damage derivation — snapshot 40/3 carries the CURRENT pool, knob-0 tick fully drains min(pool,damage) with the hull taking only the overflow, knob-1 regen climbs 0→40 then CAPS at max, the leaf mirrors round(pool) each tick with hp consistent, integrity stays hull-only at a nonzero pool, and the fully-shielded ship still dies at hull 0 (defeat hull-only, D1 terminal); knob + enemy_attack_base restored in-txn';
@@ -3617,8 +3677,8 @@ end $$;
 --          home-normalize → surgery 40/3 → send_ship_group_hunt → movement_settle_arrival →
 --          ACTIVE encounter): the lit reconciler must NOT move its instance shield (want 3 —
 --          non-vacuous: the same predicate minus the live encounter matched fixture A above).
---          Then the one-step-wipe defeat (enemy_attack_base 1000000, the TEAMSETTLE idiom,
---          restored) destroys the ship; re-armed to 3/40 by surgery, the lit reconciler must
+--          Then the one-step-wipe defeat (pg_temp.wipe_tick — enemy_attack_base 1000000 delivered
+--          through a freshly SPAWNED wave, captured/restored) destroys the ship; re-armed to 3/40 by surgery, the lit reconciler must
 --          leave the DESTROYED hull at 3 (dead ships do not regenerate — repair is the revival
 --          path).
 --   COMMISSION COPY — SANCTIONED HULL SURGERY (commented, negative-grep-tightened in the .sh to
@@ -3734,11 +3794,15 @@ begin
   if v_sh is distinct from 3 then
     raise exception 'SHIELD2 FAIL exclusion: the lit reconciler moved an in-encounter shield to % (want 3 — while an encounter is active/retreating the tick is the SOLE shield writer)', v_sh; end if;
 
-  -- one-step-wipe defeat (the TEAMSETTLE idiom; restored) → the DESTROYED exclusion.
-  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
-  perform public.set_game_config('enemy_attack_base', '1'::jsonb);
+  -- one-step-wipe defeat → the DESTROYED exclusion. Routed through pg_temp.wipe_tick (2026-08-03) so
+  -- there is ONE spelling of "make the next tick lethal" in this file. This site is the SAFE half of
+  -- the split described on the helper — no combat tick has run on v_enc yet, so the boosted knob would
+  -- have been picked up by wave 1 anyway; wipe_tick is behaviour-identical here (nothing to delete,
+  -- the scalar is already 0, next_wave_at already null) and immune to the mid-wave trap if a future
+  -- edit ever ticks this encounter first. NOTE: this block has never executed — SHIELD1's defeat
+  -- assert aborted the file ahead of it on every branch since 0300 — so everything below is newly
+  -- reachable.
+  perform pg_temp.wipe_tick(v_enc);
   select count(*) into n from public.main_ship_instances where main_ship_id = sB and status = 'destroyed';
   if n <> 1 then raise exception 'SHIELD2 FAIL: the wipe tick did not destroy the exclusion fixture (fixture drift)'; end if;
   update public.main_ship_instances set shield = 3 where main_ship_id = sB;   -- re-arm the dead hull (sanctioned surgery)
