@@ -4368,11 +4368,16 @@ end $$;
 --
 -- ── THE STAGING, and why it is the owner's shape rather than a convenient one ────────────────────
 -- Every hull is commissioned through the real RPC, and port_entry_commission_build mints each one
--- "exactly ONE present/location fleet" tagged with its own main_ship_id. Group assignment writes no
--- fleets at all, so after assignment each member still owns that per-ship fleet and the group has NO
--- unified (main_ship_id IS NULL) fleet — which is EXACTLY production group df4649fc, and exactly the
--- case the two arms could not answer. A group that does own a unified fleet was never broken: its
--- members resolve it directly through branch (1). This block stages the broken shape on purpose.
+-- "exactly ONE present/location fleet" tagged with its own main_ship_id. assign_ship_to_group then
+-- mints ONE unified fleet (group_id set, main_ship_id NULL) for the first ship into an empty group,
+-- and it never updates or deletes a fleet — so each member keeps its own commission fleet as well.
+--
+-- WHILE THAT UNIFIED FLEET LIVES THERE IS NO BUG: branch (1) of mainship_resolve_fleet answers for
+-- every member, wreck or not. So the block RETIRES it with fleet_destroy — the tick's own leaf,
+-- whose sole production caller is process_combat_ticks, and exactly what happened to the owner:
+-- production group df4649fc holds FOUR fleets at status='destroyed' and no live unified one. Only
+-- then does the group match the shape the two arms could not answer, and only then is this block
+-- red against anything. The premise is asserted rather than assumed, both before and after.
 --
 -- The casualty is then produced by the tick's OWN terminal leaves, never a hand-write: fleet_destroy
 -- on the wreck's own fleet (the exact thing combat does to a fleet that dies) followed by
@@ -4405,7 +4410,7 @@ do $$
 declare
   r jsonb;
   uD uuid; gG uuid; gH uuid; sA uuid; sB uuid; sC uuid;
-  fA uuid; fB uuid; fC uuid;
+  fA uuid; fB uuid; fC uuid; v_unified uuid;
   uZ uuid := (select v from dzc where k='uZ');
   v_port uuid; v_pa uuid; v_pb uuid; v_pc uuid;
   v_status text; v_hp integer; v_max integer; v_group uuid; v_berth uuid;
@@ -4448,14 +4453,33 @@ begin
   r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sC, gH));
   if (r->>'ok')::boolean is not true then raise exception 'DOCKWRECK FAIL: assign C: %', r; end if;
 
-  -- ── THE STAGING PREMISE, OWNED not inherited: the group has NO unified fleet, so every member is
-  --    answered by its own commission fleet. If that ever changes, this block is staging a shape the
-  --    bug never had and must say so rather than pass. ────────────────────────────────────────────
+  -- ── RETIRE THE GROUPS' UNIFIED FLEETS — the step that makes this production's shape. ───────────
+  -- assign_ship_to_group mints ONE unified fleet (group_id set, main_ship_id NULL) for the first
+  -- ship into an empty group. While that fleet lives, mainship_resolve_fleet's branch (1) answers
+  -- for every member and NOTHING IS BROKEN — which is why the block must not stop here.
+  -- Production group df4649fc has no unified fleet: it holds FOUR fleets at status='destroyed',
+  -- because that is what a fight does to a fleet. fleet_destroy is the tick's own leaf and its sole
+  -- production caller is process_combat_ticks, so this reproduces the owner's state through the
+  -- exact writer that produced it — not by deleting or hand-editing a row.
+  select id into v_unified from public.fleets
+   where group_id = gG and player_id = uD and main_ship_id is null
+     and status in ('idle','moving','present','returning') limit 1;
+  if v_unified is null then
+    raise exception 'DOCKWRECK FAIL: group G was never given a unified fleet — the staging assumes assign_ship_to_group mints one, and without it this block is not reproducing the shape it claims';
+  end if;
+  perform public.fleet_destroy(v_unified);
+  select id into v_unified from public.fleets
+   where group_id = gH and player_id = uD and main_ship_id is null
+     and status in ('idle','moving','present','returning') limit 1;
+  if v_unified is not null then perform public.fleet_destroy(v_unified); end if;
+
+  -- ── THE STAGING PREMISE, OWNED not inherited: the group now has NO unified fleet, so every member
+  --    is answered by its own commission fleet — production's shape exactly. ──────────────────────
   select count(*) into v_n from public.fleets
    where group_id = gG and player_id = uD and main_ship_id is null
      and status in ('idle','moving','present','returning');
   if v_n <> 0 then
-    raise exception 'DOCKWRECK FAIL: group G already owns % unified fleet(s) — a group with a unified fleet was NEVER broken (its members resolve it through branch 1), so this block would prove nothing about the defect', v_n;
+    raise exception 'DOCKWRECK FAIL: group G still owns % unified fleet(s) — a group with a unified fleet was NEVER broken (its members resolve it through branch 1), so this block would prove nothing about the defect', v_n;
   end if;
   fA := public.mainship_resolve_fleet(sA);
   fB := public.mainship_resolve_fleet(sB);
