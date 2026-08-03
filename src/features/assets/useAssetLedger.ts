@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { fetchMyHold } from '../inventory/holdApi'
 import type { Hold } from '../inventory/hold'
 import { fetchItemCatalog } from '../modules/modulesApi'
@@ -62,7 +62,6 @@ export interface AssetLedgerState {
   shipCount: number
   /** Fleets the player owns, for the summary row. */
   fleetCount: number
-  refresh: () => void
 }
 
 /** A fleet (or lone ship) whose hold we intend to read, and where it stands. */
@@ -110,8 +109,6 @@ export function useAssetLedger(
   const [lots, setLots] = useState<Array<ShipCargoLot & { main_ship_id: string }>>([])
   const [groups, setGroups] = useState<GroupRow[]>([])
   const [groupMap, setGroupMap] = useState<Record<string, ShipGroupMapEntry>>({})
-  const [rev, setRev] = useState(0)
-  const refresh = useCallback(() => setRev((n) => n + 1), [])
 
   const locationsById = useMemo(() => new Map(locations.map((l) => [l.id, l])), [locations])
   const posByShip = useMemo(
@@ -144,9 +141,9 @@ export function useAssetLedger(
     return () => {
       active = false
     }
-    // shipKey stands in for `ships` (see above); refreshKey/rev are deliberate re-fetch triggers.
+    // shipKey stands in for `ships` (see above); refreshKey is a deliberate re-fetch trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shipKey, refreshKey, rev])
+  }, [shipKey, refreshKey])
 
   // ── the fleets, and where each stands (pure — no read of its own) ─────────────────────────────
   const holdTargets = useMemo<HoldTarget[]>(() => {
@@ -197,9 +194,9 @@ export function useAssetLedger(
     return () => {
       active = false
     }
-    // holdKey stands in for holdTargets' identity; rev/refreshKey are deliberate triggers.
+    // holdKey stands in for holdTargets' identity; refreshKey is a deliberate trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holdKey, refreshKey, rev])
+  }, [holdKey, refreshKey])
 
   // ── wave 3: the prices, for exactly the ports something of ours sits in ───────────────────────
   // Both catalogues are read for the SAME port set and kept in SEPARATE state. They are never
@@ -250,7 +247,7 @@ export function useAssetLedger(
       active = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portKey, refreshKey, rev])
+  }, [portKey, refreshKey])
 
   // ── the fold ──────────────────────────────────────────────────────────────────────────────────
   return useMemo<AssetLedgerState>(() => {
@@ -267,7 +264,6 @@ export function useAssetLedger(
         pricesUnavailable: itemPrices === 'error' || goodsPrices === 'error',
         shipCount,
         fleetCount,
-        refresh,
       }
     }
 
@@ -370,7 +366,6 @@ export function useAssetLedger(
       pricesUnavailable: itemPrices === 'error' || goodsPrices === 'error',
       shipCount,
       fleetCount,
-      refresh,
     }
   }, [
     stock,
@@ -384,6 +379,5 @@ export function useAssetLedger(
     ships,
     posByShip,
     locationsById,
-    refresh,
   ])
 }
