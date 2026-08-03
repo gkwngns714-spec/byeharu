@@ -9,19 +9,11 @@ import { DOCK_STORE_EMPTY, type DockedStore } from './dockStore'
 
 export function useDockStore(
   lifecycleKey: string,
-  // ITEMS-HAVE-A-PLACE (0333): mainShipId joins the SAME overrides bag useDockServices already
-  // uses — one idiom for both dock reads on this screen, not a second parameter shape. Passing the
-  // CHOSEN ship stops the read falling into the server's sole-ship shim, which resolves to NULL
-  // (and so to an empty, invisible hangar) for any player who owns two or more ships.
-  overrides?: { fetcher?: () => Promise<DockedStore>; mainShipId?: string | null },
+  overrides?: { fetcher?: () => Promise<DockedStore> },
 ): DockedStore {
   const [store, setStore] = useState<DockedStore>(DOCK_STORE_EMPTY)
   const overrideFetcher = overrides?.fetcher
-  const mainShipId = overrides?.mainShipId ?? null
-  const fetcher = useMemo(
-    () => overrideFetcher ?? (() => fetchMyDockedStore(mainShipId)),
-    [overrideFetcher, mainShipId],
-  )
+  const fetcher = useMemo(() => overrideFetcher ?? fetchMyDockedStore, [overrideFetcher])
 
   useEffect(() => {
     let active = true

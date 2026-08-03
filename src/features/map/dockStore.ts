@@ -13,14 +13,6 @@ export interface StoreUnit {
   unitTypeId: string
   quantity: number
 }
-// ITEMS-HAVE-A-PLACE (0333) — this port's own ITEM stock (base_items), the sibling base_resources
-// always had and items never did. The catalog volume rides along so no surface has to compute one.
-export interface StoreItem {
-  itemId: string
-  quantity: number
-  volumeM3: number
-  stackM3: number
-}
 export interface DockedStore {
   docked: boolean
   locationId: string | null
@@ -28,12 +20,11 @@ export interface DockedStore {
   storeId: string | null
   resources: StoreResource[]
   units: StoreUnit[]
-  items: StoreItem[]
 }
 
 // Safe default for loading / error / dark / non-docked / malformed: nothing renders.
 export const DOCK_STORE_EMPTY: DockedStore = {
-  docked: false, locationId: null, locationName: null, storeId: null, resources: [], units: [], items: [],
+  docked: false, locationId: null, locationName: null, storeId: null, resources: [], units: [],
 }
 
 function parseResource(raw: unknown): StoreResource[] {
@@ -52,20 +43,6 @@ function parseUnit(raw: unknown): StoreUnit[] {
   return id !== null && qty !== null ? [{ unitTypeId: id, quantity: qty }] : []
 }
 
-function parseItem(raw: unknown): StoreItem[] {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return []
-  const o = raw as Record<string, unknown>
-  const id = typeof o.item_id === 'string' && o.item_id.length > 0 ? o.item_id : null
-  const qty = typeof o.quantity === 'number' && Number.isFinite(o.quantity) ? o.quantity : null
-  const vol = typeof o.volume_m3 === 'number' && Number.isFinite(o.volume_m3) ? o.volume_m3 : null
-  const stack = typeof o.stack_m3 === 'number' && Number.isFinite(o.stack_m3) ? o.stack_m3 : null
-  if (id === null || qty === null || vol === null || stack === null) return []
-  // A zero/negative-volume item is unrepresentable server-side (NOT NULL + CHECK > 0); if one
-  // arrives the payload is malformed, and dropping it beats rendering a weightless stack.
-  if (vol <= 0) return []
-  return [{ itemId: id, quantity: qty, volumeM3: vol, stackM3: stack }]
-}
-
 /**
  * Strict validator for the raw get_my_docked_store() jsonb. Returns a sanitized DockedStore, or the empty
  * default for ANY non-docked / dark / malformed shape. Only a genuine at_location + docked payload with a real
@@ -81,8 +58,7 @@ export function parseDockedStore(raw: unknown): DockedStore {
   const storeId = typeof o.store_id === 'string' && o.store_id.length > 0 ? o.store_id : null
   const resources = Array.isArray(o.resources) ? o.resources.flatMap(parseResource) : []
   const units = Array.isArray(o.units) ? o.units.flatMap(parseUnit) : []
-  const items = Array.isArray(o.items) ? o.items.flatMap(parseItem) : []
-  return { docked: true, locationId, locationName, storeId, resources, units, items }
+  return { docked: true, locationId, locationName, storeId, resources, units }
 }
 
 /** Render gate: the ship is docked at a storable port (has a materialized store). */
