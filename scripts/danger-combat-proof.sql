@@ -136,11 +136,13 @@
 --                              ticks (pos_x/pos_y changing), neither fires while the gap exceeds its
 --                              own range, the escort's FIRST shot lands only on a tick whose pre-move
 --                              distance is inside its range (after at least one silent closing tick),
---                              the pirate's first shot obeys ITS range the same way — while the
---                              command ship (spawned at distance 0) fires from tick 1, so the fight
---                              starts immediately even though the escorts must travel. This is the
+--                              the pirate's first shot obeys ITS range the same way. This is the
 --                              CLOSE arm of combat_unit_decide_move running at SEEDED values for the
---                              first time in the game's history.
+--                              first time in the game's history. (0336 re-premised: the wave no
+--                              longer spawns ON the anchor, so the opening tick is SILENT ON BOTH
+--                              SIDES rather than the lead firing from distance 0, and the wave's
+--                              spawn point is derived from the MEASURED formation extent — the one
+--                              authority the engine itself uses — never from the ring knob.)
 --   DZCOMBAT_PASS_LEAD       — (0315) EVERY fleet entering combat has a lead, whether or not any ship
 --                              carries the flag. A three-hull fleet with NO command ship anywhere
 --                              elects one by the stated rule (a real flag first, then the greatest
@@ -2687,8 +2689,11 @@ end $$;
 --       stood on the anchor and the escort on the ring. The wave now stands on a ring of its own —
 --       further out than the player's, by its own weapon range plus one — at a different phase, so
 --       the escort-pirate gap is a chord between two different radii and is not the ring at all.
---       The seed is now that gap, SOLVED FOR by this block and then verified against
---       combat_formation_point, the very leaf the tick composes to place the wave.
+--       The seed is now that gap, MEASURED by this block off combat_formation_point — the very leaf
+--       the tick composes to place the wave — at the very radius the tick derives: the MEASURED
+--       formation extent plus the wave's own range plus one. (An intermediate draft SOLVED for a
+--       ring instead and wrote the knob; see the one-authority paragraph below for why that was
+--       wrong and why the solve is deleted rather than corrected.)
 --   (2) "THE PIRATE MOVED OFF ITS SPAWN ANCHOR" compared the pirate's post-tick position against
 --       combat_encounters.engagement_x/y. After 0336 it never spawns there, so that comparison
 --       passes for free and proves nothing — a vacuity hole, not merely a wrong message. It now
@@ -2702,17 +2707,34 @@ end $$;
 --       of a fight is SILENT ON BOTH SIDES — the wave spawns outside every gun's reach, both sides
 --       CLOSE, and the first shot is fired after an approach. This block now asserts that, over
 --       every unit of both sides, and the lead is covered by it like everybody else.
--- THE BLOCK ALSO OWNS ITS RING NOW, and it owns it for ONE window only. 0336 spawns a wave at
--- `spatial_formation_ring_radius + THAT WAVE'S OWN weapon range + 1`, so the knob no longer means
--- "how far out the enemy is" — it means "how far out the player formation is, and a floor under the
--- enemy's clearance". The block therefore leaves it alone while the encounter is CREATED (so the
--- escort spawns on the committed ring, exactly as every other fight in the world does) and then
--- solves for the ring that puts the escort-to-wave SPAWN GAP at r_esc + 1.5 closing steps, from
--- this encounter's own frozen speeds and the wave range derived from the same expression the spawn
--- arm evaluates. That makes the approach take EXACTLY two closing ticks at any positive speed, so
--- the tick count pinned below is a property of the construction rather than of whatever the seed
--- happens to carry. The knob is restored at the end. Every OTHER geometry knob — both weapon
--- ranges, both speeds — is still the seeded one: those are the subject, and they are not touched.
+-- ── THE WAVE RADIUS HAS EXACTLY ONE AUTHORITY, AND IT IS THE MEASURED EXTENT ─────────────────────
+-- THE BUG THIS PARAGRAPH REPLACES (CI, 02e7d87): `the pirate moved 1.9398 from the slot-0 formation
+-- point but its own frozen move_speed is 1`. An earlier draft OWNED spatial_formation_ring_radius:
+-- it left the knob alone while the encounter was CREATED (so the escort spawned on the committed
+-- ring), then SOLVED for a new ring value, wrote the knob, and predicted the wave's spawn point from
+-- the solved value. But 0336 does not read that knob when it places a wave. It measures
+--   max(distance from the anchor to each LIVING player unit)
+-- and spawns at `that MEASURED extent + the wave's own weapon range + 1`. The extent is the escort's
+-- ACTUAL position — the committed ring it was created on — so the block was predicting from a knob
+-- that no longer controls the thing it predicts. Two authorities for one radius, silently out of
+-- step, and the step assert (correctly) caught it.
+-- THE FIX IS A DELETION, not a second correction: the ring solve, the knob write and its restore are
+-- GONE, and the block now MEASURES the formation extent exactly the way the spawn arm measures it,
+-- then predicts the slot-0 point through combat_formation_point from that. One authority, no pair to
+-- keep in step, and NO geometry knob written at all — which is what this block always claimed ("the
+-- seeds ARE the subject"). The knob is still READ, for one thing only: pinning that the escort
+-- spawned on the committed ring.
+-- WHAT THAT COSTS, STATED: the spawn gap is now MEASURED rather than chosen, so the closing tick
+-- count is a property of the seeded world instead of of a constructed one. It is not unpinned — it
+-- is still asserted twice over (the engine's own recurrence must PREDICT it, the observed first
+-- salvo must LAND on it, and the answer must be 2 or 3), which is the same bound 0316's own (f6)
+-- self-assert carries. A retune that breaks it fails here, loudly, exactly as before.
+-- WHY MEASURED AND NOT THE KNOB, AT THE ENGINE LEVEL — DO NOT REGRESS THIS: 0336 measures the extent
+-- precisely so a LONE hull, which is its own lead and therefore stands ON the anchor at extent 0,
+-- gets its fight immediately instead of waiting out an approach it has no screen to justify. That
+-- was 9-15 SECONDS of silence per wave at live knobs, on endless waves, for the 71 of 77 production
+-- ships that are in no fleet at all. This block reads the extent; it must never re-introduce a knob
+-- that overrides it.
 --
 -- ── 0316 RE-PREMISED: THE TICK COUNT IS NOW A PINNED PROPERTY, NOT AN OBSERVATION ────────────────
 -- 0316 divided every combat DISTANCE and every combat RATE by 5 together (gun 25→5, ring 30→6,
@@ -2756,9 +2778,11 @@ declare
   -- number typed into the harness.
   v_sp_esc double precision; v_sp_en double precision;
   v_exp_tick int; v_sim double precision;
-  -- 0336: the OWNED ring and the DERIVED spawn geometry that replaced it as the recurrence seed.
-  v_ring_before double precision; v_r_fb double precision;
+  -- 0336: the MEASURED formation extent and the spawn geometry derived from it (never from a knob).
+  v_r_fb double precision;
+  v_extent double precision; v_players int;       -- the extent the spawn arm itself measures
   v_fx double precision; v_fy double precision;   -- the pirate's own spawn point, through the leaf
+  v_px double precision; v_py double precision;   -- where that spawn point must be after ONE close
   v_gap0 double precision;                        -- the escort<->pirate gap AT SPAWN (never the ring)
   v_step double precision;                        -- how far the pirate actually moved on tick 1
   v_bd double precision;                          -- the site difficulty both wave formulas take
@@ -2796,17 +2820,12 @@ begin
   select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
   perform public.set_game_config('enemy_attack_base', '0.001'::jsonb);
 
-  -- ── 0336: the block captures the ring but does NOT set it yet. The knob is used at TWO different
-  --    moments and this block needs them to say different things: the encounter creator reads it to
-  --    lay out the ESCORT ring, and the tick reads it to place the WAVE at
-  --    `ring + that wave's own weapon range + 1`. Leaving it alone until after creation means the
-  --    escort spawns on the committed ring (which is what every other block sees) while the wave
-  --    radius is then chosen, below, from numbers this encounter has actually produced — the escort's
-  --    real frozen range and speed. It is restored at the end of the block. Every OTHER geometry knob
-  --    — both weapon ranges, both speeds — stays seeded: those are the subject, and they are not
-  --    touched.
-  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30) into v_ring_before;
-  v_ring := v_ring_before;
+  -- ── 0336: the ring knob is READ and NEVER WRITTEN by this block. It is used for exactly one pin —
+  --    that the escort spawned on the committed ring — and for nothing else. The wave radius has ONE
+  --    authority and it is the MEASURED formation extent (see the header); a second lever here is
+  --    what put the two out of step. Every geometry knob — the ring, both weapon ranges, both speeds
+  --    — stays seeded: those are the subject, and they are not touched.
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30) into v_ring;
 
   -- ── the REAL ambush, through the STANDING Auto Exit corridor (the AUTOEXIT re-entry idiom: the
   --    zone already stands; a new fleet crossing it gets its own certain pending intercept). ───────
@@ -2853,24 +2872,29 @@ begin
     raise exception 'CLOSURE FAIL: escort spawned % from the command ship (want the % ring)', d_pre, v_ring;
   end if;
 
-  -- ── 0336: CHOOSE THE WAVE'S SPAWN RADIUS FROM THIS ENCOUNTER'S OWN NUMBERS. ────────────────────
-  -- The tick places slot k of a wave at combat_formation_point(anchor, ring + THAT WAVE'S OWN weapon
-  -- range + 1, k, 0.5). Both terms are derivable before the wave exists: the ring is the knob, and
-  -- the wave's range is the same base + difficulty*per_difficulty expression the spawn arm
-  -- evaluates. So this block picks the ring that puts the escort-to-wave SPAWN GAP exactly where it
-  -- wants it, instead of accepting whatever the world happened to be set to.
-  -- THE TARGET GAP is r_esc + 1.5 closing steps, where a step is the two frozen speeds together
-  -- (both sides move from the same pre-move snapshot). That makes the approach take EXACTLY two
-  -- closing ticks at any positive speed — tick 2's pre-move gap is r_esc + 0.5 steps, still outside,
-  -- and tick 3's is r_esc - 0.5 steps, inside — so the pinned tick count below is a property of the
-  -- construction rather than of the particular speeds the seed happens to carry.
-  -- THE GEOMETRY: the escort sits at radius R1 from the anchor at slot 0 phase 0, the wave at radius
-  -- Re at slot 0 phase 0.5, i.e. pi/8 of arc apart. Solving |escort - wave| = G for Re gives
-  -- Re = R1*cos(pi/8) + sqrt(G^2 - R1^2*sin^2(pi/8)), and the ring to ask for is Re minus the
-  -- wave's own range minus 1.
+  -- ── 0336: DERIVE THE WAVE'S SPAWN POINT FROM THE MEASURED EXTENT — THE ENGINE'S OWN INPUT. ─────
+  -- The tick places slot k of a wave at combat_formation_point(anchor, EXTENT + THAT WAVE'S OWN
+  -- weapon range + 1, k, 0.5), where EXTENT is `max(distance from the anchor to each LIVING player
+  -- unit)` measured at spawn — NOT the ring knob. Both terms are readable before the wave exists:
+  -- the extent off the rows this encounter already carries, measured with the same expression and
+  -- the same predicates the spawn arm uses, and the wave's range from the same
+  -- base + difficulty*per_difficulty formula the spawn arm evaluates. So this block MEASURES the
+  -- geometry it is about to observe instead of legislating a second one.
   select engagement_x, engagement_y into nx0, ny0 from public.combat_encounters where id = v_enc;
   if nx0 is null or ny0 is null then
     raise exception 'CLOSURE FAIL: the encounter carries no engagement anchor (engagement_x/y is NULL) — the spawn point this assert compares against does not exist';
+  end if;
+  -- THE EXTENT, measured the way the spawn arm measures it: living player rows, positions present.
+  select count(*), coalesce(max(public.osn_distance(nx0, ny0, u.pos_x, u.pos_y)), 0)
+    into v_players, v_extent
+    from public.combat_units u
+   where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0
+     and u.pos_x is not null and u.pos_y is not null;
+  -- NON-VACUITY: with no positioned living player row the coalesce hands back a DEFAULT 0 that looks
+  -- exactly like a real measurement of a lone hull standing on the anchor, and every radius below
+  -- would be derived from that default instead of from this two-ship formation.
+  if v_players <> 2 then
+    raise exception 'CLOSURE FAIL: % positioned living player row(s) entering the spawn tick (want the 2 this block staged — lead on the anchor, escort on the ring) — the measured extent below would not be this formation''s', v_players;
   end if;
   select pos_x, pos_y into ex0, ey0 from public.combat_units where id = u_esc;
   select move_speed into v_sp_esc from public.combat_units where id = u_esc;
@@ -2881,36 +2905,39 @@ begin
   v_sp_en_pred := public.cfg_num('enemy_synthetic_speed_base') + v_bd * public.cfg_num('enemy_synthetic_speed_per_difficulty');
   if ex0 is null or ey0 is null or v_sp_esc is null or v_bd is null
      or v_r_en_pred is null or v_sp_en_pred is null then
-    raise exception 'CLOSURE FAIL: the escort spawn (%,%), its frozen speed (%), the site difficulty (%) or the derived wave range/speed (% / %) is NULL — the wave radius this block has to choose cannot be derived',
+    raise exception 'CLOSURE FAIL: the escort spawn (%,%), its frozen speed (%), the site difficulty (%) or the derived wave range/speed (% / %) is NULL — the wave spawn point this block has to predict cannot be derived',
       ex0, ey0, v_sp_esc, v_bd, v_r_en_pred, v_sp_en_pred;
   end if;
   if v_sp_esc <= 0 or v_sp_en_pred <= 0 then
     raise exception 'CLOSURE FAIL: a closing speed is not positive (escort %, wave %) — one side cannot close at all, so the approach is not a phase of the fight', v_sp_esc, v_sp_en_pred;
   end if;
-  v_gap0 := v_r_esc + 1.5 * (v_sp_esc + v_sp_en_pred);
-  v_ring := v_gap0 * v_gap0 - d_pre * d_pre * sin(pi() / 8) * sin(pi() / 8);
-  if v_ring <= 0 then
-    raise exception 'CLOSURE FAIL: the escort ring % is too wide for a % spawn gap — no wave radius on the far side of the anchor can produce it, so this block cannot stage its own approach', d_pre, v_gap0;
+  -- THE ESCORT IS THE OUTERMOST PLAYER HULL, so it IS the extent. Pinned rather than assumed: if a
+  -- future fixture ever puts a hull further out, the wave stands clear of THAT hull instead and the
+  -- chord this block measures below is no longer the one the recurrence models.
+  if abs(v_extent - d_pre) > 1e-6 then
+    raise exception 'CLOSURE FAIL: the measured formation extent is % but the escort stands % from the anchor — some other hull is now the outermost one, so the wave is standing clear of a ship this block is not tracking', v_extent, d_pre;
   end if;
-  v_ring := d_pre * cos(pi() / 8) + sqrt(v_ring) - v_r_en_pred - 1;
-  if v_ring <= 0 then
-    raise exception 'CLOSURE FAIL: the required formation ring is % — the wave own reach (%) plus its structural unit of clearance already exceeds the gap this block needs, so the approach cannot be staged at these knobs', v_ring, v_r_en_pred;
-  end if;
-  perform public.set_game_config('spatial_formation_ring_radius', to_jsonb(round(v_ring::numeric, 9)));
-  v_ring := coalesce(public.cfg_num('spatial_formation_ring_radius'), v_ring);
-  -- and the slot-0 point that ring implies, through the SAME leaf the tick composes.
+  -- the slot-0 point the MEASURED extent implies, through the SAME leaf the tick composes.
   select fp.x, fp.y into v_fx, v_fy
-    from public.combat_formation_point(nx0, ny0, v_ring + v_r_en_pred + 1, 0, 0.5) fp;
+    from public.combat_formation_point(nx0, ny0, v_extent + v_r_en_pred + 1, 0, 0.5) fp;
   if v_fx is null or v_fy is null then
     raise exception 'CLOSURE FAIL: the wave slot-0 point is NULL — the closure recurrence would have no gap to start from';
   end if;
-  -- SELF-CHECK, and it is the line that fails LOUDLY if the spawn radius formula ever changes: the
-  -- geometry this block just solved must reproduce the gap it asked for.
-  if abs(public.osn_distance(ex0, ey0, v_fx, v_fy) - v_gap0) > 1e-6 then
-    raise exception 'CLOSURE FAIL: the ring solved for a % spawn gap actually places slot 0 at % from the escort — the wave radius is no longer ring + its own range + 1, so re-derive the arithmetic above rather than loosening anything below',
-      v_gap0, public.osn_distance(ex0, ey0, v_fx, v_fy);
+  -- THE SPAWN GAP IS MEASURED, never chosen: the chord between the escort (radius = the extent, slot
+  -- 0, phase 0) and the wave (radius = extent + its own range + 1, slot 0, phase 0.5).
+  v_gap0 := public.osn_distance(ex0, ey0, v_fx, v_fy);
+  if v_gap0 is null or v_gap0 <= 0 then
+    raise exception 'CLOSURE FAIL: the escort-to-wave spawn gap measures % — there is no approach to observe', v_gap0;
   end if;
   perform pg_temp.ae_tick(v_enc);
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  -- ONE unit, so "the slot-0 point" names exactly one row. combat_units.id is a random uuid, so an
+  -- `order by id limit 1` over a MULTI-unit wave would pick an arbitrary slot and every assert that
+  -- compares against slot 0 would be a coincidence. Pinned rather than trusted to the danger roll.
+  if n <> 1 then
+    raise exception 'CLOSURE FAIL: % living pirate(s) after the spawn tick (want exactly 1 — at danger 1 the wave is one unit, and every assert below names the SLOT-0 point, which an id-ordered pick over a larger wave would not find)', n;
+  end if;
   select id into u_en from public.combat_units
     where encounter_id = v_enc and side = 'enemy' and alive_count > 0
     order by id limit 1;
@@ -2940,12 +2967,12 @@ begin
   if v_sp_esc <= 0 or v_sp_en <= 0 then
     raise exception 'CLOSURE FAIL: a frozen move_speed is not positive (escort %, pirate %) — one side cannot close at all, so the approach is not a phase of the fight', v_sp_esc, v_sp_en;
   end if;
-  -- THE DERIVATION THAT CHOSE THE RING MUST MATCH THE WAVE THAT ACTUALLY ARRIVED. The spawn radius
-  -- was solved from a PREDICTED range and speed (base + difficulty*per_difficulty, the same two
-  -- expressions the spawn arm evaluates) because the wave did not exist yet. If the row disagrees,
-  -- every number downstream was solved for a fight that is not the one on the table.
+  -- THE DERIVATION THAT PLACED THE SLOT-0 POINT MUST MATCH THE WAVE THAT ACTUALLY ARRIVED. The spawn
+  -- point was derived from a PREDICTED range and speed (base + difficulty*per_difficulty, the same
+  -- two expressions the spawn arm evaluates) because the wave did not exist yet. If the row
+  -- disagrees, every number downstream was derived for a fight that is not the one on the table.
   if abs(v_r_en - v_r_en_pred) > 1e-6 or abs(v_sp_en - v_sp_en_pred) > 1e-6 then
-    raise exception 'CLOSURE FAIL: the wave arrived with range % and speed % but this block solved its spawn radius for % and % — the synthetic wave formulas moved and the geometry below was chosen for the wrong fight',
+    raise exception 'CLOSURE FAIL: the wave arrived with range % and speed % but this block derived its spawn point for % and % — the synthetic wave formulas moved and the geometry below was chosen for the wrong fight',
       v_r_en, v_sp_en, v_r_en_pred, v_sp_en_pred;
   end if;
   -- THE MODEL'S OWN PREMISE, asserted rather than assumed: the recurrence below applies BOTH sides'
@@ -3017,12 +3044,12 @@ begin
   -- This used to compare the pirate's post-tick position with combat_encounters.engagement_x/y. That
   -- was only a movement test while the wave spawned ON the anchor; after 0336 it never spawns there,
   -- so the comparison would pass for free on every run — a VACUITY hole, not a wrong message. It now
-  -- compares against (v_fx, v_fy), the slot-0 point combat_formation_point itself produces, and it
-  -- demands the step be EXACTLY the pirate's own frozen move_speed — which pins the spawn point and
-  -- the CLOSE step in one assert. IF THE WAVE'S SPAWN RADIUS EVER STOPS BEING
-  -- spatial_formation_ring_radius, this is the line that fails, loudly and diagnosably, because
-  -- (v_fx, v_fy) will no longer be where the unit started: re-derive the owned ring above, do not
-  -- loosen this.
+  -- compares against (v_fx, v_fy), the slot-0 point combat_formation_point itself produces from the
+  -- MEASURED formation extent, and it demands not merely the right STEP LENGTH but the exact right
+  -- END POINT — spawn point, direction and cap pinned in one assert. IF THE WAVE'S SPAWN RADIUS EVER
+  -- STOPS BEING (measured extent + its own range + 1), this is the line that fails, loudly and
+  -- diagnosably, because (v_fx, v_fy) will no longer be where the unit started: re-derive the
+  -- prediction above against whatever the spawn arm now measures, do not loosen this.
   select pos_x, pos_y into nx1, ny1 from public.combat_units where id = u_en;
   if nx1 is null or ny1 is null then
     raise exception 'CLOSURE FAIL: the pirate has a NULL position after tick 1 — an unpositioned enemy cannot prove it moved off the anchor';
@@ -3032,8 +3059,18 @@ begin
   end if;
   v_step := public.osn_distance(v_fx, v_fy, nx1, ny1);
   if v_step is null or abs(v_step - least(v_sp_en, v_gap0)) > 1e-6 then
-    raise exception 'CLOSURE FAIL: the pirate moved % from the slot-0 formation point (%,%) but its own frozen move_speed is % — either the wave did not spawn where combat_formation_point puts it (re-derive this block''s owned ring) or the CLOSE step is no longer capped by move_speed',
+    raise exception 'CLOSURE FAIL: the pirate moved % from the slot-0 formation point (%,%) but its own frozen move_speed is % — either the wave did not spawn where combat_formation_point puts it (re-derive against the MEASURED formation extent, which is the one authority for the wave radius) or the CLOSE step is no longer capped by move_speed',
       v_step, v_fx, v_fy, v_sp_en;
+  end if;
+  -- …and it stepped along the RIGHT LINE. The pirate closes on the lowest-aggro alive row — the
+  -- escort — from the FROZEN pre-move snapshot, so its post-tick point is determined exactly:
+  -- spawn + (escort - spawn)/gap * min(speed, gap). Length alone would pass for a step in any
+  -- direction; this pins the target choice, the direction and the cap together.
+  v_px := v_fx + (ex0 - v_fx) / v_gap0 * least(v_sp_en, v_gap0);
+  v_py := v_fy + (ey0 - v_fy) / v_gap0 * least(v_sp_en, v_gap0);
+  if abs(nx1 - v_px) > 1e-6 or abs(ny1 - v_py) > 1e-6 then
+    raise exception 'CLOSURE FAIL: the pirate stands at (%,%) after tick 1 but closing its own frozen speed % on the escort from the slot-0 point (%,%) lands at (%,%) — it either closed on a different hull than the lowest-aggro escort or it did not start where the measured extent puts it',
+      nx1, ny1, v_sp_en, v_fx, v_fy, v_px, v_py;
   end if;
   -- ...toward each other: the gap after tick 1 is smaller than the MEASURED spawn gap.
   select public.osn_distance(e.pos_x, e.pos_y, x.pos_x, x.pos_y) into d_t1
@@ -3117,14 +3154,13 @@ begin
       v_r_en, v_en_fire_tick, v_r_esc, v_esc_fire_tick;
   end if;
 
+  -- the ONE knob this block owned. The formation ring is NOT among them any more: it is read for the
+  -- escort-spawn pin and never written, so there is nothing to give back and nothing that could leak
+  -- into DZCOMBAT_PASS_RANGEINVARIANT below.
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
-  -- and give the ring back exactly as it was found: this block OWNS it (0336 raises it by
-  -- derivation) and must leave the world as it entered it, or DZCOMBAT_PASS_RANGEINVARIANT below
-  -- would be measuring this block's fixture instead of the migration's own derived value.
-  perform public.set_game_config('spatial_formation_ring_radius', to_jsonb(v_ring_before));
 
-  raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED ranges and speeds (escort range %, pirate range %, escort speed %, pirate speed %) and a ring SOLVED to % so the wave would arrive exactly % from the escort, the wave landed on its own ring — outside every gun on the field, so tick 1 was SILENT ON BOTH SIDES (0336 moved the wave off the anchor and out past its own reach; nothing stands at distance 0 any more) — and the escort and the pirate then MOVED toward each other (gap % -> % after tick 1, the pirate stepping exactly its own frozen speed off the slot-0 formation point) and held fire until closure: escort''s first salvo tick %, EXACTLY the tick the engine''s own recurrence predicts, at pre-move distance % (<= its range); pirate''s tick % at % (<= its range); % additional silent closing tick(s): position matters in a real fight, and the number of ticks it takes is still pinned',
-    v_r_esc, v_r_en, v_sp_esc, v_sp_en, v_ring, v_gap0, v_gap0, d_t1, v_esc_fire_tick, round(v_esc_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
+  raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED ranges, speeds and formation ring (escort range %, pirate range %, escort speed %, pirate speed %, committed ring %) — no geometry knob written by this block at all — the wave arrived on combat_formation_point(anchor, the MEASURED formation extent % + its own range + 1, slot 0, phase 0.5), a MEASURED % from the escort: outside every gun on the field, so tick 1 was SILENT ON BOTH SIDES (0336 moved the wave off the anchor and out past its own reach; nothing stands at distance 0 any more) — and the escort and the pirate then MOVED toward each other (gap % -> % after tick 1, the pirate landing on EXACTLY the point one frozen-speed close on the escort puts it) and held fire until closure: escort''s first salvo tick %, EXACTLY the tick the engine''s own recurrence predicts, at pre-move distance % (<= its range); pirate''s tick % at % (<= its range); % additional silent closing tick(s): position matters in a real fight, and the number of ticks it takes is still pinned',
+    v_r_esc, v_r_en, v_sp_esc, v_sp_en, v_ring, v_extent, v_gap0, v_gap0, d_t1, v_esc_fire_tick, round(v_esc_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_LEAD (0315): EVERY FLEET ENTERING COMBAT HAS A LEAD ══════════════════════════
