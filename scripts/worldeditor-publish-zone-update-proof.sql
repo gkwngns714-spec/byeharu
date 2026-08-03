@@ -12,7 +12,7 @@
 -- `seeded_zone_edit_enabled` — DARK protects with a typed validation_failed {protected_zone}, LIT accepts
 -- the edit while provenance stays 'seeded' so the gate remains a genuine toggle (PROOF 7 proves BOTH
 -- postures, txn-locally, and restores whatever posture the deployed chain ships); CLAIMS a reshaped row
--- for the AUTHORED writer by setting source='drawn' (0318), so an owner-drawn boundary survives a later
+-- for the AUTHORED writer by setting source='drawn' (0319), so an owner-drawn boundary survives a later
 -- edit of its location BYTE-IDENTICAL while a genuinely seeded source='circle' zone still TRACKS its
 -- location — PROOF 12 drives both directions through the real zone_update and location_update RPCs;
 -- returns a typed not_found/source_missing for a vanished target and
@@ -457,11 +457,11 @@ end $$;
 --               proves an untouched seed is protected, (c) proves an EDITED seed re-protects, which is
 --               the one-way-door risk 0282 exists to prevent.
 --
--- THE SEAM THAT USED TO BE NAMED HERE IS CLOSED (0318). This block used to end with a paragraph saying
+-- THE SEAM THAT USED TO BE NAMED HERE IS CLOSED (0319). This block used to end with a paragraph saying
 -- zone_update preserved `source` bit-for-bit (0287:397-399), so a seeded 'circle' row reshaped while the
 -- key is lit stayed source='circle' and 0296's rematerialize-on-location-edit writer would regenerate
 -- over the owner's shape — and it deliberately did NOT pin `source` after the lit edit, because
--- "pinning it would cement the defect". 0318 sets source='drawn' when zone_update materializes an owner
+-- "pinning it would cement the defect". 0319 sets source='drawn' when zone_update materializes an owner
 -- ring, which is the fix 0296:66-68 wrote down. So pinning `source` now cements the FIX, and case (b)
 -- below does exactly that. The end-to-end property — the drawn shape SURVIVING a later location edit,
 -- and a genuinely seeded zone still tracking its own — is PROOF 12.
@@ -554,11 +554,11 @@ begin
   if v_row.provenance <> 'seeded' then
     raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: an accepted edit moved provenance to ''%'' — lighting the key would be a ONE-WAY DOOR, not a toggle', v_posture, v_row.provenance;
   end if;
-  -- …and the GEOMETRY question is answered the other way (0318): the row now carries an owner-authored
+  -- …and the GEOMETRY question is answered the other way (0319): the row now carries an owner-authored
   -- ring, so it must say so and leave the derived writer's source='circle' selection for good. These
   -- two assertions together ARE 0282's split: `provenance` did not move, `source` did.
   if v_row.source <> 'drawn' then
-    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: an accepted edit left source=''%'' — an owner-drawn ring stays inside 0296''s regenerator selection and the next location edit destroys it (0318)', v_posture, v_row.source;
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: an accepted edit left source=''%'' — an owner-drawn ring stays inside 0296''s regenerator selection and the next location edit destroys it (0319)', v_posture, v_row.source;
   end if;
   select count(*) into n from public.world_editor_audit where request_id = 'zoneupd-seeded-lit-1';
   if n <> 1 then
@@ -802,27 +802,27 @@ begin
   raise notice 'PUBLISH_ZONE_UPD_PASS_GEOMETRY_ROUND_TRIP';
 end $$;
 
--- ── PROOF 12 (0318) — A ZONE THE OWNER DREW SURVIVES THE NEXT EDIT OF ITS LOCATION ─────────────────
+-- ── PROOF 12 (0319) — A ZONE THE OWNER DREW SURVIVES THE NEXT EDIT OF ITS LOCATION ─────────────────
 -- THE DEFECT THIS IS RED FOR. danger_zones.boundary has two writers:
 --   * zone_update — materializes the ring the OWNER drew;
 --   * danger_zone_rematerialize_for_location (0296:141) — regenerates a DERIVED polygon from the
 --     location's (x, y, territory_radius) with 0237's random() generator. It selects
 --     `where dz.source = 'circle'` (0296:169), and location_update fires it on every edit that moves
 --     one of those three inputs (0296:569-573).
--- Before 0318, zone_update preserved `source` bit-for-bit, so an owner-reshaped SEEDED zone kept
+-- Before 0319, zone_update preserved `source` bit-for-bit, so an owner-reshaped SEEDED zone kept
 -- source='circle' and stayed inside the derived writer's selection. The next location edit replaced
 -- the owner's shape with a random blob — and random() has no inverse, so nothing brings it back.
 -- 0296:62-68 named this exact seam, wrote down this exact fix, and deferred it on the premise that
 -- "the flag being dark means no such row can exist today". seeded_zone_edit_enabled was lit by
 -- 0300:85-86, and on production such a row existed.
 --
--- WHY THIS IS RED BY CONSTRUCTION ON THE PRE-0318 BODY, in two independent places:
+-- WHY THIS IS RED BY CONSTRUCTION ON THE PRE-0319 BODY, in two independent places:
 --   (b) `source` is still 'circle' after the owner's reshape — the classification never moved;
 --   (d) the boundary is NOT byte-identical after the location edit — the blob already landed.
 -- Neither can pass by accident: (d) compares ST_AsBinary, not an area or a vertex count.
 --
 -- AND THE CONVERSE, so the fix can never be "disable the regenerator" (case e): a genuinely seeded
--- source='circle' zone the owner NEVER touched must STILL track its location. If 0318 had been
+-- source='circle' zone the owner NEVER touched must STILL track its location. If 0319 had been
 -- implemented by weakening danger_zone_rematerialize_for_location instead of by making the two
 -- writers disjoint at the row, case (e) goes red.
 --
