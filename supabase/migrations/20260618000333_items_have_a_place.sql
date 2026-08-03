@@ -1,4 +1,34 @@
--- Byeharu — 0333: ITEMS HAVE A PLACE.
+-- Byeharu — 0333: ITEMS HAVE A PLACE.   (rev.2 — see THE ABORTED DEPLOY below)
+--
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════
+-- THE ABORTED DEPLOY (2026-08-03) — read this before touching any grant in this file.
+--
+-- rev.1 of this migration merged and then STOPPED ITS OWN PRODUCTION DEPLOY at check (c):
+--     ERROR: 0333 (c) FAIL: anon can SELECT base_items (SQLSTATE P0001)
+-- The transaction guard rolled everything back — head stayed 20260618000332, base_items/volume_m3/
+-- transfer_items never existed, nothing partially applied. The assert was RIGHT; the migration was
+-- wrong. It ASSERTED a posture it had never ESTABLISHED, which is the repo's own recorded lesson
+-- from the 0254 danger_zones abort and the 0309 grant sweep, repeated verbatim.
+--
+-- THE EVIDENCE, read off production rather than reasoned about (pg_default_acl, 2026-08-03):
+--     objtype 'r' (table) · owner postgres · schema public
+--     default_acl = {postgres=arwdDxtm/postgres, anon=arwdDxtm/postgres,
+--                    authenticated=arwdDxtm/postgres, service_role=arwdDxtm/postgres}
+-- `arwdDxtm` = INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN. Every new
+-- public table owned by postgres inherits ALL EIGHT for anon and authenticated at creation.
+-- rev.1 revoked three of them and asserted on a fourth.
+--
+-- The FUNCTION default on the same project is `{postgres=X, service_role=X}` — no anon, no
+-- authenticated — which is exactly why every function ACL check in (c) passed on production and only
+-- the table check failed. The asymmetry is real and worth keeping in mind: functions are safe by
+-- default here, tables are wide open by default.
+--
+-- WHY CI COULD NOT HAVE CAUGHT IT: a disposable `supabase start` has no project default ACLs, so on
+-- the throwaway chain anon never held SELECT, the assert passed, and every proof was green. 0318
+-- documented this same blindness across 67 public tables. The fix is not a better test — the fix is
+-- that a revoke must be a SUPERSET of any default (`revoke all`), so it is correct without needing
+-- to know what the default is, in both worlds.
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════
 --
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 -- THE OWNER'S DESIGN LAWS THIS MIGRATION EXISTS TO SATISFY (stated long ago, repeated 2026-08-03):
@@ -106,13 +136,23 @@
 --            EVERY existing key in EVERY one of its six return branches is preserved verbatim; the
 --            change is purely ADDITIVE keys, kept uniform across all six so the client parser keeps
 --            ONE contract, exactly as that function's own header requires.
---   REVOKES: client INSERT/UPDATE/DELETE on the four tables this slice's invariant rests on —
---            `base_items`, `player_inventory`, `item_types`, `inventory_ledger`. All four carry the
---            Supabase project-default GRANT ALL that no migration ever revoked (verified on prod
---            2026-08-03); RLS with no write policy is the only thing standing between them and a
---            repeat of the 2026-07-20 `danger_zones` incident. `base_resources` / `base_units` /
---            `ship_cargo_lots` carry the same drift and are deliberately left for their own slice —
---            this migration cures only what it makes load-bearing.
+--   GRANTS:  the FULL posture — `revoke all ... from public, anon, authenticated` then grant back
+--            exactly what is meant — on the five tables this slice's invariant rests on:
+--              base_items              SELECT to authenticated only   (new; mirrors base_resources)
+--              item_transfer_receipts  SELECT to authenticated only   (new; mirrors salvage_receipts)
+--              player_inventory        SELECT to authenticated only   (re-issues 0039:52)
+--              inventory_ledger        SELECT to authenticated only   (re-issues 0039:70)
+--              item_types              SELECT to anon AND authenticated (re-issues 0039:25 — this is
+--                                      a deliberate PUBLIC-READ Reference/Config catalog; revoking
+--                                      anon here would break the client's catalog read)
+--            `revoke all` rather than a verb list because the project default grants eight verbs and
+--            a list can be short; `public` named alongside the roles because PUBLIC-held privilege
+--            survives a revoke that omits it (0309). service_role is untouched — it is the definer
+--            seat. On a fresh chain every one of these revokes is a no-op, so the same statements are
+--            correct with and without the project defaults present.
+--            `base_resources` / `base_units` / `ship_cargo_lots` carry the same drift and are
+--            deliberately left for their own slice — this migration cures only what it makes
+--            load-bearing.
 --   TOUCHES NOT AT ALL: any cron, any combat function, any movement function, `market_buy`,
 --            `ship_cargo_lots`, `base_resources`, `base_units`, and every existing
 --            `player_inventory` row. No feature flag is created; the slice rides the ALREADY-LIT
@@ -252,12 +292,37 @@ create policy "base_items_select_own" on public.base_items
     select 1 from public.bases b where b.id = base_items.base_id and b.player_id = auth.uid()
   ));
 
-grant select on public.base_items to authenticated;
+-- ── ESTABLISH the WHOLE posture. REVOKE EVERYTHING FIRST, then grant back exactly what is meant. ──
+-- THIS IS THE HUNK THAT ABORTED THE FIRST PRODUCTION DEPLOY OF THIS MIGRATION. rev.1 revoked only
+-- insert/update/delete and then asserted that anon could not SELECT — an assertion it had never
+-- established. On production the deploy stopped at its own check (c) with
+-- `0333 (c) FAIL: anon can SELECT base_items`, and the transaction guard rolled the whole migration
+-- back: nothing partially applied, head stayed 20260618000332.
+--
+-- WHY THE REVOKE MUST BE TOTAL, read off production rather than assumed (pg_default_acl, 2026-08-03):
+--   objtype 'r' (table) · owner postgres · schema public
+--   default_acl = {postgres=arwdDxtm/postgres, anon=arwdDxtm/postgres,
+--                  authenticated=arwdDxtm/postgres, service_role=arwdDxtm/postgres}
+-- `arwdDxtm` is INSERT, **SELECT**, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN. Every
+-- new public table owned by postgres inherits ALL EIGHT for anon and authenticated the instant it is
+-- created. rev.1 named three of them. A disposable `supabase start` carries no such default, so the
+-- other five were invisible to every proof — the exact CI blindness 0318 documented across 67 tables.
+--
+-- `revoke all` is a SUPERSET of any default this project may ever carry, so it cannot be short by
+-- construction — it does not need to know the default, which is what makes it safe against future
+-- drift as well. `public` is named alongside the two roles because privilege held via the PUBLIC
+-- pseudo-role survives a revoke that names only anon/authenticated (the 0309 lesson), and
+-- has_table_privilege — used in the asserts below — is the only check that can see it.
+-- On a fresh chain the grants do not exist and the revoke is a harmless no-op, so this one statement
+-- is correct in BOTH worlds; nothing here is conditional on which world it lands in.
+-- service_role is deliberately untouched: it is the server/definer seat, exactly as on base_resources.
+revoke all on table public.base_items from public, anon, authenticated;
 
--- ESTABLISH the write lockdown, never merely assert it (the 2026-07-20 danger_zones lesson: a
--- Supabase project-default GRANT ALL lands on every new public table and CI's local Postgres cannot
--- reproduce it, so an assert-only migration passes vacuously and aborts on the real deploy).
-revoke insert, update, delete on table public.base_items from anon, authenticated;
+-- ...and now the intended posture, stated positively and owned by this migration rather than
+-- inherited: authenticated may SELECT (RLS scopes every row to the owning player), anon may not, and
+-- nobody but the SECURITY DEFINER writers may write. This mirrors base_resources (0005:58), whose
+-- grant is `authenticated` only.
+grant select on table public.base_items to authenticated;
 
 -- ═══ 3. The SOLE writers of base_items (the Base-system law, 0005:3-7) ═══════════════════════════
 -- Mirrors base_merge_units / base_reserve_units. Nothing else in the schema may write this table;
@@ -389,8 +454,10 @@ create policy "item_transfer_receipts_select_own" on public.item_transfer_receip
         and m.player_id = auth.uid()
     )
   );
-grant select on public.item_transfer_receipts to authenticated;
-revoke insert, update, delete on table public.item_transfer_receipts from anon, authenticated;
+-- Same total revoke-then-grant as base_items above, and for the same reason: this table is created
+-- HERE, so it inherits the project's arwdDxtm default for anon and authenticated at creation.
+revoke all on table public.item_transfer_receipts from public, anon, authenticated;
+grant select on table public.item_transfer_receipts to authenticated;
 
 -- ═══ 6. transfer_items — THE ONE AUTHORITY FOR MOVING A STACK ════════════════════════════════════
 --
@@ -750,17 +817,37 @@ $$;
 revoke all    on function public.get_my_docked_store(uuid) from public;
 grant  execute on function public.get_my_docked_store(uuid) to authenticated;
 
--- ═══ 9. Client table-write lockdown on the tables this slice's invariant rests on ════════════════
--- All four carry the Supabase project-default GRANT ALL that no migration ever revoked (verified on
--- production 2026-08-03: anon AND authenticated hold INSERT/UPDATE/DELETE on every one). RLS with
--- no write policy denies the writes today, so this is defense in depth — but the 2026-07-20
--- danger_zones deploy abort is the standing lesson that a publish slice ESTABLISHES its lockdown
--- rather than asserting it. `inventory_ledger` is in this list specifically because it is the
--- idempotency guard for transfer_items' deposits: a client able to pre-insert an idempotency key
--- could make a legitimate transfer silently no-op.
-revoke insert, update, delete on table public.player_inventory  from anon, authenticated;
-revoke insert, update, delete on table public.item_types        from anon, authenticated;
-revoke insert, update, delete on table public.inventory_ledger  from anon, authenticated;
+-- ═══ 9. The grant posture of every table this slice's invariant rests on ═════════════════════════
+-- All three carry the Supabase project-default arwdDxtm for anon AND authenticated that no migration
+-- ever revoked (verified on production 2026-08-03). RLS with no write policy denies the writes
+-- today, so the write half is defense in depth — but the 2026-07-20 danger_zones abort, and this
+-- migration's OWN rev.1 abort, are the standing lesson: a publish slice ESTABLISHES its posture, it
+-- never merely asserts one. `inventory_ledger` is here specifically because it is the idempotency
+-- guard for transfer_items' deposits: a client able to pre-insert an idempotency key could make a
+-- legitimate transfer silently no-op.
+--
+-- SAME total revoke-then-grant as the two new tables, but these three ALREADY EXIST, so the re-grant
+-- is not a design choice — it REPRODUCES what a migration deliberately established, and nothing else.
+-- Grepped the whole chain: `grant` on these three appears in exactly three places, all in 0039 —
+--   0039:25  grant select on public.item_types       to anon, authenticated;   <- PUBLIC-READ catalog
+--   0039:52  grant select on public.player_inventory to authenticated;
+--   0039:70  grant select on public.inventory_ledger to authenticated;
+-- so revoking everything and re-issuing exactly those three lines lands on the migration-intended
+-- state and strips only the project-default drift. Anything I did not re-grant below was never
+-- granted by any migration — it was inherited.
+--
+-- ⚠ item_types KEEPS its anon SELECT ON PURPOSE. It is Reference/Config with an `using(true)` read
+-- policy (0039:24-25), the same posture as module_types/market_offers, and the client's catalog read
+-- depends on it. A blind `revoke all` with no re-grant here would have been a self-inflicted outage —
+-- which is exactly why this block enumerates a per-table INTENDED posture instead of applying one
+-- rule to every table it touches.
+revoke all on table public.player_inventory from public, anon, authenticated;
+revoke all on table public.inventory_ledger from public, anon, authenticated;
+revoke all on table public.item_types       from public, anon, authenticated;
+
+grant select on table public.player_inventory to authenticated;              -- 0039:52, verbatim
+grant select on table public.inventory_ledger to authenticated;              -- 0039:70, verbatim
+grant select on table public.item_types       to anon, authenticated;        -- 0039:25, verbatim
 
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 -- SELF-ASSERTS — one DO block per check. Absence is FAILURE, never a pass.
@@ -829,7 +916,8 @@ end $a$;
 -- ── (b) base_items mirrors base_resources: shape, RLS, one owner-scoped SELECT policy, no writes ──
 do $b$
 declare
-  v_n integer;
+  v_n    integer;
+  v_qual text;
 begin
   if to_regclass('public.base_items') is null then
     raise exception '0333 (b) FAIL: public.base_items was not created';
@@ -886,14 +974,45 @@ begin
     raise exception '0333 (b) FAIL: the one base_items policy is not the owner-scoped SELECT';
   end if;
 
-  raise notice '0333 SELF-ASSERT (b) PASS: base_items mirrors base_resources — cascade from bases, FK to item_types, one stack per (store,item), RLS on with exactly one owner-scoped SELECT policy';
+  -- ...and the policy's EXPRESSION actually scopes to the owner. A table-level grant with no policy,
+  -- or a policy that exists but reads `using (true)`, is a DIFFERENT failure from a missing policy
+  -- and would leak every player's port storage to every other player. Read the deployed qual, do not
+  -- trust the policy's name.
+  select pg_get_expr(p.polqual, p.polrelid) into v_qual
+    from pg_policy p where p.polrelid = 'public.base_items'::regclass and p.polname = 'base_items_select_own';
+  if v_qual is null then
+    raise exception '0333 (b) FAIL: the base_items SELECT policy has no USING expression — it would admit every row';
+  end if;
+  if position('auth.uid()' in v_qual) = 0 or position('player_id' in v_qual) = 0
+     or position('bases' in v_qual) = 0 then
+    raise exception '0333 (b) FAIL: the base_items SELECT policy does not scope through bases.player_id = auth.uid() (got: %)', v_qual;
+  end if;
+
+  -- the same for the receipt ledger: RLS on, exactly one SELECT policy, scoped through the ship.
+  if not (select relrowsecurity from pg_class where oid = 'public.item_transfer_receipts'::regclass) then
+    raise exception '0333 (b) FAIL: RLS is not enabled on item_transfer_receipts';
+  end if;
+  select count(*) into v_n from pg_policies where schemaname='public' and tablename='item_transfer_receipts';
+  if v_n <> 1 then
+    raise exception '0333 (b) FAIL: item_transfer_receipts has % policies, expected exactly 1', v_n;
+  end if;
+  select pg_get_expr(p.polqual, p.polrelid) into v_qual
+    from pg_policy p where p.polrelid = 'public.item_transfer_receipts'::regclass;
+  if v_qual is null or position('auth.uid()' in v_qual) = 0 or position('main_ship_instances' in v_qual) = 0 then
+    raise exception '0333 (b) FAIL: the item_transfer_receipts policy does not scope through the owning ship (got: %)', coalesce(v_qual,'<null>');
+  end if;
+
+  raise notice '0333 SELF-ASSERT (b) PASS: base_items mirrors base_resources — cascade from bases, FK to item_types, one stack per (store,item); both new tables have RLS on with exactly one SELECT policy whose DEPLOYED expression really scopes to the owner (bases.player_id / main_ship_instances.player_id = auth.uid())';
 end $b$;
 
 -- ── (c) ACLs, ESTABLISHED above and asserted here ────────────────────────────────────────────────
 do $c$
 declare
-  v_t text;
-  v_g text;
+  v_t         text;
+  v_g         text;
+  v_bad       text;
+  v_n         bigint;
+  v_prev_role text;
 begin
   -- the two client RPCs: authenticated YES, anon/public NO.
   if not has_function_privilege('authenticated', 'public.transfer_items(uuid,text,text,numeric,uuid)', 'execute') then
@@ -930,28 +1049,102 @@ begin
     end if;
   end loop;
 
-  -- client TABLE-WRITE revoked on every table this slice's invariant rests on, for BOTH roles.
-  foreach v_t in array array['public.base_items', 'public.item_transfer_receipts',
-                             'public.player_inventory', 'public.item_types',
-                             'public.inventory_ledger'] loop
-    foreach v_g in array array['anon', 'authenticated'] loop
-      if has_table_privilege(v_g, v_t, 'insert')
-         or has_table_privilege(v_g, v_t, 'update')
-         or has_table_privilege(v_g, v_t, 'delete') then
-        raise exception '0333 (c) FAIL: % still holds client write on %', v_g, v_t;
-      end if;
-    end loop;
-  end loop;
-
-  -- the owner-read surfaces stay readable by authenticated and stay CLOSED to anon.
-  if not has_table_privilege('authenticated', 'public.base_items', 'select') then
-    raise exception '0333 (c) FAIL: authenticated cannot SELECT base_items — the hangar would be blind';
+  -- ── THE WHOLE TABLE MATRIX, not just the write half. ──────────────────────────────────────────
+  -- rev.1 checked three verbs and shipped; the project default grants EIGHT, and the deploy died on
+  -- the SELECT it never revoked. So: every verb the default can carry x every client grantee, 5
+  -- tables x 8 verbs x 3 grantees = 120 assertions, and each one is measured against a stated
+  -- INTENDED posture rather than against whatever happened to be inherited.
+  -- has_table_privilege is the check — it folds in privilege held via the PUBLIC pseudo-role, which
+  -- information_schema.role_table_grants and a naive read of pg_class.relacl both miss (0309).
+  --
+  -- NOT-ALLOWED = everything, for every client grantee, on every one of the five tables...
+  select string_agg(t || '.' || v || ' [' || r || ']', ', ' order by t, v, r) into v_bad
+    from unnest(array['base_items', 'item_transfer_receipts', 'player_inventory',
+                      'item_types', 'inventory_ledger'])                              as t
+   cross join unnest(array['INSERT','SELECT','UPDATE','DELETE',
+                           'TRUNCATE','REFERENCES','TRIGGER','MAINTAIN'])              as v
+   cross join unnest(array['anon', 'authenticated', 'public'])                         as r
+   where has_table_privilege(r, 'public.' || t, v)
+     -- ...EXCEPT the three reads a migration deliberately established (0039:25/52/70) and the two
+     -- this slice establishes for its own new tables. Anything outside this allow-list is drift.
+     and not (v = 'SELECT' and r = 'authenticated')                       -- all five: owner-scoped read
+     and not (v = 'SELECT' and r = 'anon' and t = 'item_types');          -- the PUBLIC-READ catalog
+  if v_bad is not null then
+    raise exception '0333 (c) FAIL: privilege OUTSIDE the intended posture survives on: %', v_bad;
   end if;
-  if has_table_privilege('anon', 'public.base_items', 'select') then
-    raise exception '0333 (c) FAIL: anon can SELECT base_items';
+
+  -- ...and the reads that MUST survive really did. A revoke that took too much is as broken as one
+  -- that took too little — it would blind the hangar or the item catalog.
+  select string_agg(t || ' [authenticated]', ', ' order by t) into v_bad
+    from unnest(array['base_items', 'item_transfer_receipts', 'player_inventory',
+                      'item_types', 'inventory_ledger']) as t
+   where not has_table_privilege('authenticated', 'public.' || t, 'SELECT');
+  if v_bad is not null then
+    raise exception '0333 (c) FAIL: the revoke took an authenticated SELECT it must keep — lost on: %', v_bad;
+  end if;
+  if not has_table_privilege('anon', 'public.item_types', 'SELECT') then
+    raise exception '0333 (c) FAIL: the revoke took anon SELECT on item_types — it is a PUBLIC-READ Reference/Config catalog (0039:24-25) and the client catalog read would break';
   end if;
 
-  raise notice '0333 SELF-ASSERT (c) PASS: transfer_items + get_my_hold authenticated-only; the four leaves service-role only; client INSERT/UPDATE/DELETE revoked on base_items, item_transfer_receipts, player_inventory, item_types and inventory_ledger; base_items readable by authenticated and closed to anon';
+  -- ── AND THE SAME QUESTION ANSWERED BY EXECUTION, not by reading a catalog. ────────────────────
+  -- has_table_privilege reports what the ACL says; this proves what the database DOES. Each probe
+  -- BECOMES the anon seat and tries the read. Permission denied (42501) is the pass. If the grant
+  -- were still open the select would SUCCEED — and RLS would hand back zero rows, so a row-count
+  -- check would be fooled into calling that safe — which is why the probe asserts on the RAISE, not
+  -- on the count. Same "evaluate the deployed rule, never re-type it" shape as the volume CHECK in (a).
+  --
+  -- Verified on production before relying on any of it (2026-08-03): PostgreSQL 17.6, so MAINTAIN is
+  -- a real privilege verb; anon/authenticated/service_role all exist; `postgres` is a member of anon
+  -- WITH ADMIN OPTION, so the deploy role can assume the seat; and `postgres` carries BYPASSRLS,
+  -- which the seat change correctly drops.
+  --
+  -- The role is restored via set_config('role', <saved>, true) rather than RESET ROLE: RESET returns
+  -- to the SESSION user, which is only the same thing if the deploy connected as the role it is
+  -- currently running as. Saving and restoring the actual GUC is exact under any connection shape.
+  -- `set local` is transaction-scoped anyway, so an aborted subtransaction unwinds it regardless —
+  -- the explicit restore is what keeps the SUCCESS path (the positive control) honest.
+  v_prev_role := current_setting('role');   -- 'none' when no SET ROLE is active
+
+  begin
+    set local role anon;
+    execute 'select count(*) from public.base_items' into v_n;
+    perform set_config('role', v_prev_role, true);
+    raise exception '0333 (c) FAIL: the anon seat could SELECT base_items — the table grant is still open (RLS returning 0 rows is NOT the boundary being asserted)';
+  exception
+    when insufficient_privilege then
+      perform set_config('role', v_prev_role, true);   -- the pass: the grant is genuinely gone
+  end;
+
+  begin
+    set local role anon;
+    execute 'select count(*) from public.player_inventory' into v_n;
+    perform set_config('role', v_prev_role, true);
+    raise exception '0333 (c) FAIL: the anon seat could SELECT player_inventory';
+  exception
+    when insufficient_privilege then
+      perform set_config('role', v_prev_role, true);
+  end;
+
+  -- THE POSITIVE CONTROL. Without it the two probes above would pass for a reason that has nothing
+  -- to do with this migration — an anon seat that cannot read anything at all, or a probe that never
+  -- actually changed seat, produces the same 42501. anon MUST still reach the PUBLIC-READ catalog.
+  begin
+    set local role anon;
+    execute 'select count(*) from public.item_types' into v_n;
+    perform set_config('role', v_prev_role, true);
+  exception
+    when insufficient_privilege then
+      perform set_config('role', v_prev_role, true);
+      raise exception '0333 (c) FAIL: the anon seat CANNOT read item_types — either the catalog grant was lost, or the two probes above passed vacuously because the seat can read nothing at all';
+  end;
+
+  -- and prove the seat was really restored, or every later statement in this migration would run as
+  -- anon and fail in a way that points nowhere near here.
+  if current_setting('role') is distinct from v_prev_role then
+    raise exception '0333 (c) FAIL: the anon probes did not restore the role (now %, expected %)', current_setting('role'), v_prev_role;
+  end if;
+
+  raise notice '0333 SELF-ASSERT (c) PASS: transfer_items + get_my_hold authenticated-only; the four leaves service-role only; ALL EIGHT privileges checked across 5 tables x 3 client grantees (120 assertions) against a stated intended posture, not against whatever was inherited; the authenticated reads and the item_types PUBLIC-READ catalog both survived; and the anon SEAT was made to try the reads for real — denied on base_items and player_inventory, allowed on item_types as the positive control';
 end $c$;
 
 -- ── (d) transfer_items composes the ONE authority for every fact, and acquires no second one ─────

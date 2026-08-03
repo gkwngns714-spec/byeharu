@@ -586,18 +586,62 @@ begin
   raise notice 'HOLD_PASS_READS ok: get_my_hold''s used/capacity/free match an independent fold and every stack carries its volume; get_my_docked_store projects THIS port''s base_items with volumes, keeps every 0211 key, and answers the uniform empty shape when not docked';
 end $$;
 
--- ════════ P9 — the write surface is locked down (the danger_zones 2026-07-20 lesson). ════════
+-- ════════ P9 — the WHOLE grant posture (the 0254/0309 lesson, and this migration's own rev.1). ════
+-- rev.1 of 0333 checked three verbs here and on the real deploy died on the SELECT it never revoked,
+-- because the Supabase project default grants EIGHT (arwdDxtm) on every new public table and a
+-- disposable chain reproduces none of them. This block now checks all eight against a stated
+-- INTENDED posture. It is honest about its own limit: on this throwaway DB the defaults are absent,
+-- so passing here does NOT prove the production posture — what proves that is the migration's total
+-- `revoke all`, which is a superset of any default and therefore cannot be short. What this block
+-- CAN prove, and does, is the other half: that the revoke did not take too much.
 do $$
-declare v_t text; v_g text; v_src text;
+declare v_t text; v_g text; v_src text; v_bad text; v_n bigint; v_prev_role text;
 begin
-  foreach v_t in array array['public.base_items','public.item_transfer_receipts',
-                             'public.player_inventory','public.item_types','public.inventory_ledger'] loop
-    foreach v_g in array array['anon','authenticated'] loop
-      if has_table_privilege(v_g, v_t, 'insert') or has_table_privilege(v_g, v_t, 'update')
-         or has_table_privilege(v_g, v_t, 'delete') then
-        raise exception 'P9 FAIL: % holds client write on %', v_g, v_t; end if;
-    end loop;
-  end loop;
+  select string_agg(t || '.' || v || ' [' || r || ']', ', ' order by t, v, r) into v_bad
+    from unnest(array['base_items','item_transfer_receipts','player_inventory',
+                      'item_types','inventory_ledger'])                          as t
+   cross join unnest(array['INSERT','SELECT','UPDATE','DELETE',
+                           'TRUNCATE','REFERENCES','TRIGGER','MAINTAIN'])         as v
+   cross join unnest(array['anon','authenticated','public'])                      as r
+   where has_table_privilege(r, 'public.' || t, v)
+     and not (v = 'SELECT' and r = 'authenticated')
+     and not (v = 'SELECT' and r = 'anon' and t = 'item_types');
+  if v_bad is not null then
+    raise exception 'P9 FAIL: privilege outside the intended posture survives on: %', v_bad; end if;
+
+  -- the reads that MUST survive. A revoke that overshoots blinds the hangar or the item catalog, and
+  -- THIS is the half a disposable chain can genuinely prove.
+  select string_agg(t, ', ' order by t) into v_bad
+    from unnest(array['base_items','item_transfer_receipts','player_inventory',
+                      'item_types','inventory_ledger']) as t
+   where not has_table_privilege('authenticated', 'public.' || t, 'SELECT');
+  if v_bad is not null then
+    raise exception 'P9 FAIL: the revoke took an authenticated SELECT it must keep — lost on: %', v_bad; end if;
+  if not has_table_privilege('anon', 'public.item_types', 'SELECT') then
+    raise exception 'P9 FAIL: the revoke took anon SELECT on the PUBLIC-READ item_types catalog'; end if;
+
+  -- and the same answered by EXECUTION: become anon and try. Denied is the pass; item_types is the
+  -- positive control so a seat that can read nothing at all cannot fake a pass. The role is saved
+  -- and restored through the GUC rather than RESET ROLE, which returns to the SESSION user and is
+  -- only equivalent under one connection shape.
+  v_prev_role := current_setting('role');
+  begin
+    set local role anon;
+    execute 'select count(*) from public.base_items' into v_n;
+    perform set_config('role', v_prev_role, true);
+    raise exception 'P9 FAIL: the anon seat could SELECT base_items';
+  exception when insufficient_privilege then perform set_config('role', v_prev_role, true);
+  end;
+  begin
+    set local role anon;
+    execute 'select count(*) from public.item_types' into v_n;
+    perform set_config('role', v_prev_role, true);
+  exception when insufficient_privilege then
+    perform set_config('role', v_prev_role, true);
+    raise exception 'P9 FAIL: the anon seat cannot read item_types — the probe above passed vacuously (positive control)';
+  end;
+  if current_setting('role') is distinct from v_prev_role then
+    raise exception 'P9 FAIL: the anon probes did not restore the role'; end if;
   foreach v_g in array array['public.base_items_add(uuid,text,integer)','public.base_items_take(uuid,text,integer)',
                              'public.hold_capacity_m3(uuid)','public.hold_used_m3(uuid)'] loop
     if has_function_privilege('anon', v_g, 'execute') or has_function_privilege('authenticated', v_g, 'execute') then
@@ -622,7 +666,7 @@ begin
   if position('pg_advisory_xact_lock(' in v_src) > position('mainship_space_lock_context(' in v_src) then
     raise exception 'P9 FAIL: inverted lock order — the row lock is taken before the advisory lock'; end if;
 
-  raise notice 'HOLD_PASS_ACL ok: client INSERT/UPDATE/DELETE revoked on all five load-bearing tables; the four leaves are server-only; the two RPCs are authenticated-only and closed to anon; and the capacity check is serialized by the per-player advisory lock, taken before any row lock';
+  raise notice 'HOLD_PASS_ACL ok: all EIGHT privileges checked across 5 tables x 3 client grantees against the intended posture; the authenticated reads and the item_types PUBLIC-READ catalog survived the revoke; the anon SEAT was denied base_items by execution with item_types as the positive control; the four leaves are server-only; the two RPCs authenticated-only; and the capacity check is serialized by the per-player advisory lock, taken before any row lock';
 end $$;
 
 do $$

@@ -63,6 +63,22 @@ if [ "$MODE" = "selftest" ]; then
   # ── REFUSE, never clamp. ────────────────────────────────────────────────────────────────────────
   grep -q "clamped!" "$SQL" || fail "harness does not assert that an over-capacity refusal moves NOTHING"
 
+  # ── THE GRANT POSTURE must be checked on ALL EIGHT privileges, not just the write verbs. rev.1 of
+  #    0333 checked three and aborted the real production deploy on the SELECT it never revoked,
+  #    because the Supabase project default grants arwdDxtm on every new public table. A short verb
+  #    list is precisely how that happened, so the harness now refuses to pass without the other
+  #    four, without an execution-level anon probe, and without a positive control for it. ─────────
+  for v in TRUNCATE REFERENCES TRIGGER MAINTAIN; do
+    grep -q "$v" "$SQL" \
+      || fail "harness does not check the '$v' privilege — the project default grants it, and a verb list that is short is exactly how rev.1 aborted on production"
+  done
+  grep -q "set local role anon" "$SQL" \
+    || fail "harness never becomes the anon seat — has_table_privilege reports what the ACL says, not what the database DOES"
+  grep -q "positive control" "$SQL" \
+    || fail "harness has no positive control for the anon probe — a seat that can read nothing at all would pass it vacuously"
+  grep -q "PUBLIC-READ item_types catalog" "$SQL" \
+    || fail "harness does not assert the item_types anon read SURVIVES the revoke — overshooting is as broken as falling short"
+
   # ── the capacity check must be SERIALIZED per player, or two of one player's ships can each pass
   #    it and land the hold over capacity between them. A one-transaction proof cannot stage that
   #    race, so it asserts the lock that prevents it — and its order against the row lock. ─────────
