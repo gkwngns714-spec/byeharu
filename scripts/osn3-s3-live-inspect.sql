@@ -70,7 +70,7 @@ end $$;
 do $$
 declare
   expected text[] := array['bootstrap_me','cancel_build_order','get_combat_reports','get_my_expedition_preview',
-    'get_world_map','move_main_ship_to_location','repair_main_ship','request_leave_location','request_main_ship_return',
+    'get_world_map','move_main_ship_to_location','repair_ship_hull','request_leave_location','request_main_ship_return',
     'request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
   actual text[];
   server_only text[] := array['mainship_space_begin_move','mainship_space_lock_context','mainship_space_validate_context',

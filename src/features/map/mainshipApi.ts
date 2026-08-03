@@ -14,7 +14,7 @@ import { parseDockedStore, DOCK_STORE_EMPTY, type DockedStore } from './dockStor
 // and the settle-arrival wrappers (both families unfireable — no writer can mint their rows). The
 // unified fleet mover (teamApi) is the only movement writer; ship placement is served exclusively
 // by get_my_fleet_positions. What remains here is owner READS (ship/fleet/presence/fleet-positions),
-// the repair + rename wrappers, and the dock reads. The client only REQUESTS; the server decides.
+// the rename wrapper, and the dock reads. The client only REQUESTS; the server decides.
 
 // (4C-CLIENT: the OSN-2 SpatialState type — the 0054 spatial-mode selector — is DELETED with its
 // last reader. No client code reads main_ship_instances.spatial_state anymore; 4c-mig-2 drops it.)
@@ -279,16 +279,10 @@ export async function fetchMyDockedStore(mainShipId?: string | null): Promise<Do
   return parseDockedStore(data)
 }
 
-// Phase 10F / TRADE-FLEET-0C §2.5 — repair a disabled main ship (status='destroyed' = disabled/needs-repair
-// for a PERSISTENT ship; never deletion). The only normal player recovery path; instant + free, restores
-// hp=max_hp and status='home'. Not routed through any legacy fleet API. Passes the EXPLICIT selected/sole
-// main-ship id (p_main_ship_id); the server asserts ownership (so it can only ever repair the caller's own
-// ship), and a null id preserves the sole-ship shim (behavior-identical while every player has exactly one).
-export async function repairMainShip(mainShipId?: string | null): Promise<{ main_ship_id: string; status: string; hp: number; max_hp: number }> {
-  const { data, error } = await supabase.rpc('repair_main_ship', { p_main_ship_id: mainShipId ?? null })
-  if (error) throw new Error(error.message)
-  return data as { main_ship_id: string; status: string; hp: number; max_hp: number }
-}
+// ONE WAY TO REPAIR (0335) — the repairMainShip wrapper that lived here is GONE, together with the
+// repair_main_ship RPC it called. Restoring a hull — wrecked or merely dented — is now ONE verb with
+// ONE client wrapper: repairShipHull in src/features/ship/repairApi.ts. This module keeps the reads
+// and the rename it already owned and carries no repair surface at all.
 
 // SHIP-IDENTITY (0184) / §2.5 — thin client wrapper over the player rename (rename_main_ship_self).
 // Sends the raw name plus the EXPLICIT selected/sole main-ship id (p_main_ship_id; null → server

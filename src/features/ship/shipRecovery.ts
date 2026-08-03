@@ -1,10 +1,18 @@
-// SHIP RECOVERY — the PURE view-model + copy for a DISABLED ship (migration 0297).
+import { repairReasonMessage } from './repairReasonMessage'
+
+// SHIP RECOVERY — the PURE view-model + copy for a DISABLED ship (migration 0297, unified by 0335).
 //
-// 0297 made the free repair (repair_main_ship) POSITION-GATED: a wrecked ship is repaired in a city,
-// never adrift. Because a gate with no way out is a softlock, the same migration added the free
-// always-available tow (mainship_emergency_tow), which berths a wreck at the nearest port. This
-// module is the ONE place that decides which of the two a disabled ship should be offered, and the
-// ONE place the server's reason codes become player words — a raw code must never reach the screen.
+// 0297 made the free repair POSITION-GATED: a wrecked ship is repaired in a city, never adrift.
+// Because a gate with no way out is a softlock, the same migration added the free always-available
+// tow (mainship_emergency_tow), which berths a wreck at the nearest port. This module is the ONE
+// place that decides which of the two a disabled ship should be offered.
+//
+// 0335 REMOVED THIS MODULE'S SECOND JOB. It used to own a private reason vocabulary, because
+// repair_main_ship RAISED and its "reason codes" arrived as substrings of an exception message
+// (repairErrorMessage / isAdriftError matched them with String.includes). That function is gone; the
+// one surviving repair verb returns the same {ok, reason} envelope the mend always used, so every
+// repair message in the game now comes from repairReasonMessage and this file carries only the GATE
+// — which action, and the sentence that explains the gate state itself.
 //
 // FAIL OPEN, ON PURPOSE. When the readiness read is unavailable (transport error, or the client
 // deployed ahead of the migration) the gate answers 'unknown' and the caller renders exactly what it
@@ -26,13 +34,13 @@ export interface DisabledShipRow {
 
 /**
  * REPAIR-WHERE-YOU-ARE — the ONE mount decision for the Fitting detail's condition block: which
- * repair concept a ship's state gets. Mirrors the server's mutual exclusion exactly (the free
- * repair_main_ship gates on status='destroyed'; the paid repair_ship_hull_at_port REJECTS
- * destroyed with ship_destroyed, 0201) — exactly one concept per state, never both, never
- * neither. Both mount sites in FittingDetail read THIS value; neither carries its own status
- * comparison, so the two surfaces can only flip together. Feed it the freshest status available
- * (the screen's refetched shared read, falling back to the selection row) — a stale selection
- * status here is what turns a mid-session destruction into a dead end.
+ * repair SURFACE a ship's state gets. Since 0335 both surfaces command the same RPC
+ * (repair_ship_hull); what differs is what the player is shown — a wreck gets a single free
+ * "Repair ship" / "Tow" action, a living hull gets the priced stepper desk. Exactly one surface per
+ * state, never both, never neither. Both mount sites in FittingDetail read THIS value; neither
+ * carries its own status comparison, so the two surfaces can only flip together. Feed it the
+ * freshest status available (the screen's refetched shared read, falling back to the selection row)
+ * — a stale selection status here is what turns a mid-session destruction into a dead end.
  */
 export type RepairConcept = 'paid_mend' | 'free_recovery'
 
@@ -72,7 +80,7 @@ export type RepairGate =
 
 /**
  * The ONE gate decision. `serverSaidAdrift` is the authoritative override: if a repair attempt came
- * back with the server's ship_not_at_port reject, that outranks any (possibly stale or unavailable)
+ * back with the server's not_at_port reject, that outranks any (possibly stale or unavailable)
  * readiness read — the player is shown the tow immediately rather than a button that just failed.
  */
 export function repairGate(
@@ -115,38 +123,21 @@ export function canTow(gate: RepairGate): boolean {
 export const REPAIR_LABEL = 'Repair ship'
 export const TOW_LABEL = 'Tow to the nearest port'
 
-const REPAIR_FALLBACK = 'Repairs are unavailable right now. Try again in a moment.'
 const TOW_FALLBACK = 'The tow is unavailable right now. Try again in a moment.'
 
 /**
- * repair_main_ship RAISES (it has always thrown, and its client wrapper re-throws the message), so
- * its "reason codes" arrive as substrings of an error message. This is the ONE place they are
- * recognised; every branch returns player words, never the raw text.
+ * The ONE recovery-specific sentence: a wreck rejected for POSITION is told about the tow, not
+ * about ports in the abstract. Every other reason falls through to repairReasonMessage — the same
+ * map the priced mend uses — because after 0335 there is one server verb and one vocabulary.
+ *
+ * This is not a second mapper: it overrides exactly one key, for the one surface where the generic
+ * "Take this ship to a port to repair it." would be useless advice (a wreck cannot move itself).
  */
-export function repairErrorMessage(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err ?? '')
-  if (raw.includes('ship_not_at_port')) {
+export function recoveryReasonMessage(reason: string): string {
+  if (reason === 'not_at_port') {
     return 'This ship is adrift. Tow it to a port, then repair it there.'
   }
-  if (raw.includes('ship is not disabled')) {
-    return "This ship isn't disabled — there's nothing to repair."
-  }
-  if (raw.includes('no main ship found')) {
-    return 'That ship could not be found.'
-  }
-  if (raw.includes('not authenticated')) {
-    return "You're signed out. Sign in again to repair this ship."
-  }
-  if (raw.includes('invalid max_hp')) {
-    return "This ship's hull record is broken — it cannot be repaired."
-  }
-  return REPAIR_FALLBACK
-}
-
-/** True when a failed repair was the 0297 position gate — the caller then offers the tow. */
-export function isAdriftError(err: unknown): boolean {
-  const raw = err instanceof Error ? err.message : String(err ?? '')
-  return raw.includes('ship_not_at_port')
+  return repairReasonMessage(reason)
 }
 
 /** mainship_emergency_tow returns an envelope; every reason maps to player words. */

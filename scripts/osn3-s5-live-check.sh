@@ -3,7 +3,7 @@
 #   1) migration list --linked              (0059 applied remotely)
 #   2) direct psql catalog query via pooler (AUTHORITATIVE: dev_set_main_ship_destroyed identity/owner/
 #                                            ACL, S2/S3/S4 helpers still service_role-only, canonical RPC
-#                                            inventory, repair_main_ship still client, S4 cron once, flags,
+#                                            inventory, repair_ship_hull still client, S4 cron once, flags,
 #                                            cap, movement/receipt counts)
 #   3) REST table reads                     (corroborate flags/cap + movement/receipt counts)
 # NEVER executes dev_set_main_ship_destroyed / repair / writer / processor / helpers, NEVER mutates,
@@ -79,9 +79,9 @@ begin
   if c<>6 then raise exception 'LIVE FAIL: expected 6 server-only space fns, found %', c; end if;
   raise notice 'LIVE ok: S4 processor + S3 writer + four S2 helpers remain service_role-only';
 end $$;
--- canonical client-RPC inventory unchanged; repair_main_ship still client-executable; no server fn exposed
+-- canonical client-RPC inventory unchanged; repair_ship_hull still client-executable; no server fn exposed
 do $$
-declare expected text[] := array['bootstrap_me','cancel_build_order','get_combat_reports','get_my_expedition_preview','get_world_map','move_main_ship_to_location','repair_main_ship','request_leave_location','request_main_ship_return','request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
+declare expected text[] := array['bootstrap_me','cancel_build_order','get_combat_reports','get_my_expedition_preview','get_world_map','move_main_ship_to_location','repair_ship_hull','request_leave_location','request_main_ship_return','request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
   actual text[]; server_only text[] := array['dev_set_main_ship_destroyed','process_mainship_space_arrivals','mainship_space_begin_move','mainship_space_lock_context','mainship_space_validate_context','mainship_space_resolve_origin','mainship_space_assert_cross_domain_exclusion'];
 begin
   select coalesce(array_agg(distinct p.proname order by p.proname),'{}') into actual from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and has_function_privilege('authenticated',p.oid,'EXECUTE');
@@ -89,9 +89,9 @@ begin
   if actual && server_only then raise exception 'LIVE FAIL: a server-only fn is authenticated-executable: %', actual; end if;
   if not (actual @> expected) then raise exception 'LIVE FAIL: a canonical client RPC lost execute: expected=% actual=%', expected, actual; end if;
   if not (expected @> actual) then raise notice 'LIVE NOTE: extra authenticated-executable fn(s): %', (select array_agg(x) from unnest(actual) x where not (x = any(expected))); end if;
-  if not has_function_privilege('authenticated','public.repair_main_ship()'::regprocedure,'EXECUTE') then raise exception 'LIVE FAIL: repair_main_ship lost authenticated execute'; end if;
+  if not has_function_privilege('authenticated','public.repair_ship_hull(uuid,numeric,uuid)'::regprocedure,'EXECUTE') then raise exception 'LIVE FAIL: repair_ship_hull lost authenticated execute'; end if;
   if not has_function_privilege('anon','public.get_world_map()'::regprocedure,'EXECUTE') then raise exception 'LIVE FAIL: anon lost get_world_map'; end if;
-  raise notice 'LIVE ok: canonical client-RPC inventory unchanged; repair_main_ship still authenticated-executable';
+  raise notice 'LIVE ok: canonical client-RPC inventory unchanged; repair_ship_hull still authenticated-executable';
 end $$;
 -- public CREATE denied; S4 arrival cron present exactly once with unchanged cadence
 do $$

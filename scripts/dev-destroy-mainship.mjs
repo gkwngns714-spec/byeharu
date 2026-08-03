@@ -6,7 +6,7 @@
 // It ONLY resolves the user by email and calls the existing canonical helper
 // public.dev_set_main_ship_destroyed(p_player) — it does NOT duplicate any destroy/cleanup logic.
 // The ship row is NOT deleted; status='destroyed' means disabled/needs-repair, recoverable via the
-// in-app "Repair main ship" button (repair_main_ship).
+// in-app "Repair ship" button (repair_ship_hull, migration 0335).
 //
 // SAFETY: SERVICE-ROLE key (server-side only). Refuses without --email. Not a player path; the RPC
 // is service_role-only. Built-in fetch (Node 18+); no npm install.

@@ -220,7 +220,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "public.mainship_mark_combat_destroyed(" "$SQL" || fail "harness does not wreck the ships through the tick's own terminal leaf (0312)"
   grep -q "public.mainship_sync_combat_hp("       "$SQL" || fail "harness does not damage a ship through the tick's own hp writer (the 0312 round-to-zero shape)"
   grep -q "public.mainship_emergency_tow("        "$SQL" || fail "harness does not exercise the tow on the dead fleet (the 0312 recovery half)"
-  grep -q "public.repair_main_ship("              "$SQL" || fail "harness does not exercise the repair on the towed wreck (the 0312 recovery half)"
+  grep -q "public.repair_ship_hull("              "$SQL" || fail "harness does not exercise the repair on the towed wreck (the 0312 recovery half)"
   grep -q "public.command_ship_group_dock("       "$SQL" || fail "harness does not exercise the dock refusal (the 0312 second compose site)"
 
   # the ambush must be fired by the REAL movement processor, never by calling the resolver to make it
@@ -517,7 +517,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "must not have broken the escape hatch"                 "$SQL" \
     || fail "harness lacks the tow-still-works assert (0297's escape hatch must survive for the case it was built for)"
   grep -q "the position gate must still be the thing that answers" "$SQL" \
-    || fail "harness lacks the nowhere-wreck reject-code assert (repair must still refuse with ship_not_at_port, not some other reason)"
+    || fail "harness lacks the nowhere-wreck reject-code assert (repair must still refuse with not_at_port, not some other reason)"
   grep -q "public.fleet_docked_location("                         "$SQL" \
     || fail "harness does not compose the 0306 docked authority when asserting the nowhere premise — it would be re-stating the docked test instead of using the one the fix uses"
 
