@@ -7,6 +7,7 @@ import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './com
 import { combatUnitLabel } from './combatLabels'
 import { selectCombatPhase, nextWaveSeconds, nextWaveText } from './combatPhase'
 import { resolveAutoExitLine, type AutoExitSetting } from './autoExitLine'
+import { resolveRepositionCourse } from './repositionCourse'
 import { resolveRewardEntries } from './rewardPayload'
 import { Card, Notice, Meter, SectionLabel, type MeterTone } from '../../components/ui'
 import { ItemChip } from '../../components/items'
@@ -75,6 +76,8 @@ export function ActiveCombatPanel({
   // THE SAFETY LINE (0310) — the ONE derivation, shared with the map card. Null when the setting is
   // unknown or off, and then this panel says nothing about it rather than implying there is none.
   const exit = resolveAutoExitLine(encounter, autoExit)
+  // 0337: the fleet's standing course, read through the ONE resolver. Null = no course to state.
+  const course = resolveRepositionCourse(encounter)
 
   return (
     // UI R4: the existing bh-fade-in entrance when a battle takes the screen (one-shot, no loop);
@@ -104,6 +107,19 @@ export function ActiveCombatPanel({
         <Notice tone="warning" className="mb-4 text-xs">
           Retreating — fleet breaks away in {retreatLeft > 0 ? `${retreatLeft}s` : 'a moment…'}.
           Warning: it can still take damage until it escapes.
+        </Notice>
+      )}
+
+      {/* THE STANDING COURSE (0337). A reposition is a MOVE now, not a jump: the order records a
+          destination and the tick walks the fleet there at its own speed over several ticks. Without
+          this line the player orders a move, watches the marker creep, and has nothing on screen
+          saying a course is being run — which reads as a stuck fleet. `course` is null whenever there
+          is none (and on any pre-0337 server), so this renders nothing by default. It sits BELOW the
+          retreat notice deliberately: a retreating fight is leaving, and the engine stops honouring
+          the course, so the resolver returns null and only one of the two can ever be on screen. */}
+      {course && (
+        <Notice tone="accent" className="mb-4 text-xs" data-testid="combat-panel-reposition">
+          {course.text}
         </Notice>
       )}
 

@@ -40,6 +40,15 @@ export interface CombatEncounter {
   // (see ambushEncounterNotice.ts, the ONE reader).
   engagement_x?: number | null
   engagement_y?: number | null
+  // THE STANDING COURSE (0337) — where this fleet has been ORDERED to, which is a different question
+  // from where it currently IS (engagement_x/y above). Non-null exactly while a reposition is in
+  // flight: command_ship_group_go writes the pair and moves nothing, the combat tick then walks the
+  // fleet toward it at the fleet's own speed and NULLs it on arrival. Both-or-neither is a CHECK on
+  // the table, so a client that sees one may rely on the other. Optional/nullable for combatApi's
+  // `select('*')`, same law as the anchor: a server that predates the columns simply omits them and
+  // every consumer fails closed (see repositionCourse.ts, the ONE reader).
+  reposition_x?: number | null
+  reposition_y?: number | null
 }
 
 export interface CombatUnit {
