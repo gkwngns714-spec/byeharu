@@ -70,16 +70,40 @@ export interface CombatUnit {
   pos_y?: number | null
   move_speed?: number | null
   side?: 'player' | 'enemy'
-  // Frozen-at-spawn weapon array; the map reads only `range` (the max across weapons is the unit's
-  // range ring). Other fields (power/cooldown/projectile_speed/…) are server fire-state, unused here.
+  // WHEN the server last wrote this row — set to now() by the same statement that writes pos_x/pos_y
+  // on every combat tick (0299's mover: `update combat_units set pos_x=…, pos_y=…, updated_at=now()`).
+  // map/combatMotion.ts reads it as the ONE source for how long a step took: the gap between two
+  // consecutive updated_at values IS the server's own tick interval, measured rather than assumed, so
+  // the smoothing needs no hard-coded 3000 and no second read of combat_ticks. Optional because
+  // combatApi reads `select('*')` — a row without it falls back to a stated default duration.
+  updated_at?: string | null
+  // The 0315 LEAD, as the server elected it: `is_command_ship desc, max_hp desc, main_ship_id asc`,
+  // resolved ONCE per encounter, written here as 100 for the lead and 0 for every escort (NULL on
+  // enemy rows, which hold no formation). The client COMPOSES this decision — it never re-derives
+  // "the command ship" — see combatMotion.resolveEncounterLead.
+  aggro_priority?: number | null
+  // Frozen-at-spawn weapon array (0234 §S3, powers rewritten by 0331). The map reads `range` (the max
+  // across weapons is the unit's range ring) and, since slice-combat-that-flows, `power` +
+  // `projectile_speed` + `module_type_id` to draw the ordnance a shot actually is.
   weapons_json?: CombatWeapon[]
 }
 
-/** One entry of combat_units.weapons_json — the map consumes only `range` (world units, may be null). */
+/** One entry of combat_units.weapons_json — the frozen-at-spawn description of ONE fitted gun.
+ *
+ *  This array is the ONE authority for what a ship shoots: 0331 (`one_authority_for_attack`) made
+ *  `power` the fold's own combat_power split across the ship's guns in proportion to their catalog
+ *  `module_types.power`, which is from that migration a unitless SHARE WEIGHT and never a damage
+ *  number. The map therefore reads a weapon's share of its ship's volley straight off this column
+ *  and never consults a client-side weapon table. */
 export interface CombatWeapon {
+  /** the catalog `module_types.id` this entry was frozen from — the shot's IDENTITY, restated by the
+   *  server on every fire event as `combat_events.projectile_type`. */
   module_type_id?: string | null
+  /** reach, world units. */
   range?: number | null
+  /** world units per second — with the shot's distance this is the server's own flight time. */
   projectile_speed?: number | null
+  /** post-0331: this gun's slice of its ship's combat_power per volley. */
   power?: number | null
 }
 

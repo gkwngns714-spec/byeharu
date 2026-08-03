@@ -11,6 +11,8 @@ import { MiningFieldMarker } from './MiningFieldMarker'
 import type { MiningField } from '../mining/miningTypes'
 import { dangerZoneLayer } from './dangerZoneLayer'
 import { combatFocusWorldPoints, focusableEncounterId, spatialCombatLayer } from './spatialCombatLayer'
+import { resolveCombatActors } from './combatActors'
+import { useCombatMotion } from './useCombatMotion'
 import type { CombatEncounter, CombatEvent, CombatUnit } from '../combat/combatTypes'
 import type { DangerZoneLite } from './pirateApi'
 import type { GroupRow, ShipGroupMapEntry } from '../command/teamRoster'
@@ -169,6 +171,22 @@ export function GalaxyMap({
   // 1s clock for the in-flight path filter below. Same idiom as TeamMovingMarkers: Date.now()
   // stays OUT of render (it is impure and would re-read unpredictably on any re-render), and the interval
   // runs ONLY while there is a movement to time — with none, no timer exists and the map is idle as before.
+  // COMBAT THAT FLOWS — the battle's own clock. `liveCombatUnits` is `combatUnits` with each
+  // position moved to where it is at this instant (map/combatMotion.ts, composing the ONE
+  // interpolation primitive). It is passed to the TEAM layer as well as the combat layer on purpose:
+  // teamMarkers → fleetFightPosition stands the fleet badge on a real ship by copying that ship's
+  // x/y, so smoothing the rows once here is what keeps the badge and the glyphs from separating.
+  // The camera framing below deliberately keeps the RAW rows — a frame must not chase a tween.
+  const { units: liveCombatUnits, sightings: shotSightings, nowMs: combatNowMs } = useCombatMotion(
+    combatUnits,
+    combatEvents,
+  )
+  // THE FLEET IS THE COMBAT ACTOR — "show only fleet. it is as a whole." One glyph per player fleet
+  // (placed by the same fleetFightPosition rule that places its badge), one per living enemy hull.
+  const combatActors = useMemo(
+    () => resolveCombatActors(liveCombatUnits, combatEncounters),
+    [liveCombatUnits, combatEncounters],
+  )
   const [nowMs, setNowMs] = useState(() => Date.now())
   const anyMovement = movements.length > 0
   useEffect(() => {
@@ -408,7 +426,11 @@ export function GalaxyMap({
     k: view.k,
     nowMs,
     encounters: combatEncounters,
-    units: combatUnits,
+    // The SMOOTHED rows, exactly as the spatial layer below receives them. The fleet layer stands a
+    // fleet's badge on one of its own real hulls (fleetFightPosition), so handing it the raw rows
+    // while the glyphs ride the interpolated ones would put the badge and that fleet's own ships in
+    // two different places between ticks — the very defect both slices exist to kill.
+    units: liveCombatUnits,
   })
 
   return (
@@ -604,9 +626,25 @@ export function GalaxyMap({
               this tick's fire lines between units. Above the markers (the battle is the focus of the
               frame) and pointer-transparent (the location under it stays the tap target). DARK BY DATA:
               while spatial_combat_enabled is off, no combat_units row carries a position, so `combatUnits`
-              has no positioned rows and this renders NOTHING — byte-identical to today. Re-renders each
-              ~1.5s poll (useCombat), so approach + kiting + fire animate as ticks land. */}
-          {spatialCombatLayer({ units: combatUnits, events: combatEvents, norm, k: view.k, pxScale: pxPerViewBox })}
+              has no positioned rows and this renders NOTHING — byte-identical to today.
+
+              WHAT ANIMATES (this used to claim "approach + kiting + fire animate as ticks land",
+              which was false: a position updated on tick arrival is a step function — three seconds
+              at A, then B, which is the "laggy, not smooth" the owner reported). The rows arriving
+              here have ALREADY been interpolated to `combatNowMs` by useCombatMotion, so each
+              server step is played out over the server's own measured tick interval and the ships
+              are SEEN crossing. `sightings` dates each fire event so the round a gun throws travels
+              its lane and its damage number appears when the round lands. */}
+          {spatialCombatLayer({
+            actors: combatActors,
+            units: liveCombatUnits,
+            events: combatEvents,
+            norm,
+            k: view.k,
+            pxScale: pxPerViewBox,
+            sightings: shotSightings,
+            nowMs: combatNowMs,
+          })}
 
           {/* 4C-CLIENT: the per-ship overlay layer (shipLayer — route + MainShipMarker) is DELETED
               with the per-ship movement client (S5 already deleted the redundant fleetShipsLayer).

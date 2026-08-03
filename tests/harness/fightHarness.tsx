@@ -29,13 +29,17 @@ import {
   OTHER_UNITS,
   TICKS,
   UNITS,
+  UNITS_NEXT_TICK,
 } from './fightFixtures'
 
 const noop = () => {}
 
-function Fight({ twoFights }: { twoFights: boolean }) {
+function Fight({ twoFights, advanced }: { twoFights: boolean; advanced: boolean }) {
   const encounters = twoFights ? [ENCOUNTER, OTHER_ENCOUNTER] : [ENCOUNTER]
-  const units = twoFights ? [...UNITS, ...OTHER_UNITS] : UNITS
+  // `advanced` delivers the NEXT server tick's rows — a second observation, which is the only way a
+  // rendered proof can watch a step being crossed rather than a glyph standing still.
+  const base = advanced ? UNITS_NEXT_TICK : UNITS
+  const units = twoFights ? [...base, ...OTHER_UNITS] : base
   const events = twoFights ? [...EVENTS, ...OTHER_EVENTS] : EVENTS
   return (
     <div className="relative h-full w-full">
@@ -77,14 +81,18 @@ function Harness() {
   // Default OFF so the single-fight case (the one the screenshots show) is what loads; the spec
   // flips it to prove a second, higher-tick battle no longer blanks this one.
   const [twoFights, setTwoFights] = useState(false)
+  const [advanced, setAdvanced] = useState(false)
   return (
     <>
       <div id="map-host">
-        <Fight twoFights={twoFights} />
+        <Fight twoFights={twoFights} advanced={advanced} />
       </div>
       <div id="controls">
         <button data-testid="toggle-second-fight" onClick={() => setTwoFights((v) => !v)}>
           second fight: {twoFights ? 'on' : 'off'}
+        </button>
+        <button data-testid="advance-tick" onClick={() => setAdvanced((v) => !v)}>
+          next tick: {advanced ? 'on' : 'off'}
         </button>
       </div>
     </>
