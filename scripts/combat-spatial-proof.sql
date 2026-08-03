@@ -752,10 +752,24 @@ begin
   select m.action, m.new_x, m.new_y into v_arm_engine, v_pred_x, v_pred_y
     from public.combat_units u, public.combat_units f,
          lateral public.combat_unit_decide_move(
-           u.pos_x, u.pos_y,
+           -- THROUGH THE FREEZE, exactly as the tick does. This is a FACT ABOUT THE CODE, not a
+           -- theory: process_combat_ticks never hands the mover the table's doubles. It builds a
+           -- jsonb snapshot of the population first (jsonb_build_object('pos_x', cu2.pos_x, ...))
+           -- and reads every mover argument back out of THAT. So a prediction made from the raw
+           -- columns is predicting a different call than the one the engine makes.
+           -- WHAT I VERIFIED, AND WHAT I DID NOT: CI failed here printing a tick-write and a
+           -- prediction that were IDENTICAL at display precision, so they differ below it. The
+           -- server runs at extra_float_digits = 0 (fifteen significant digits) — but a spot check
+           -- against production showed a 15-digit coordinate round-tripping through jsonb EXACTLY,
+           -- so "the round-trip is always lossy" is NOT established and is not claimed here. What is
+           -- established is the call path. Routing the prediction through the same freeze makes this
+           -- an exact model of what the engine does either way, with no tolerance and no epsilon; if
+           -- the round-trip is exact for these values the pin is unchanged, and if it is not, the
+           -- pin is now right. CI is what decides, and it is cheap to be right for both reasons.
+           (to_jsonb(u.pos_x)#>>'{}')::double precision, (to_jsonb(u.pos_y)#>>'{}')::double precision,
            coalesce((select min((w->>'range')::double precision) from jsonb_array_elements(u.weapons_json) w), 0),
            coalesce(u.move_speed, 0),
-           f.pos_x, f.pos_y,
+           (to_jsonb(f.pos_x)#>>'{}')::double precision, (to_jsonb(f.pos_y)#>>'{}')::double precision,
            coalesce((select max((w->>'range')::double precision) from jsonb_array_elements(f.weapons_json) w), 0)) m
    where u.id = u_bare and f.id = u_en;
   if v_arm_engine is null then
@@ -777,12 +791,18 @@ begin
       to_char(v_x1, 'FM999999990.999999999999999999'), to_char(v_y1, 'FM999999990.999999999999999999'),
       to_char(v_pred_x, 'FM999999990.999999999999999999'), to_char(v_pred_y, 'FM999999990.999999999999999999');
   end if;
-  -- ...and for the HOLD arm that prediction is the hull own position, unchanged, to the last bit.
+  -- ...and for the HOLD arm that prediction is the hull's own position, unchanged — but unchanged AS
+  -- THE FREEZE SEES IT. The mover's hold arm returns its p_my_x argument verbatim, and that argument
+  -- came through the jsonb snapshot, so a holding hull is rewritten with the round-trip of itself.
+  -- The comparison is therefore against that round-trip and is still EXACT: no tolerance, no epsilon.
   -- Rendered at full scale so a sub-display-precision move can never again read as no move at all.
-  if v_x1 is distinct from v_x0 or v_y1 is distinct from v_y0 then
-    raise exception 'HOLD FAIL: the holding hull moved (%, % -> %, %) — want byte-identical (rendered at full scale: the server prints only 15 significant digits by default, which is how a vanishing KITE step once read as no move)',
+  if v_x1 is distinct from (to_jsonb(v_x0)#>>'{}')::double precision
+     or v_y1 is distinct from (to_jsonb(v_y0)#>>'{}')::double precision then
+    raise exception 'HOLD FAIL: the holding hull moved (%, % -> %, %; the freeze round-trip of the start point is %, %) — a HOLD must leave the position exactly as the freeze presented it (rendered at full scale: the server prints only 15 significant digits, which is how a vanishing KITE step once read as no move at all)',
       to_char(v_x0, 'FM999999990.999999999999999999'), to_char(v_y0, 'FM999999990.999999999999999999'),
-      to_char(v_x1, 'FM999999990.999999999999999999'), to_char(v_y1, 'FM999999990.999999999999999999');
+      to_char(v_x1, 'FM999999990.999999999999999999'), to_char(v_y1, 'FM999999990.999999999999999999'),
+      to_char((to_jsonb(v_x0)#>>'{}')::double precision, 'FM999999990.999999999999999999'),
+      to_char((to_jsonb(v_y0)#>>'{}')::double precision, 'FM999999990.999999999999999999');
   end if;
   raise notice 'COMBATSPATIAL_PASS_HOLD ok: the fallback escort closed over % guarded CLOSE tick(s) at its frozen speed %, arrived at gap % — inside its own reach and inside the wave''s — and its position is BYTE-IDENTICAL across the next tick (HOLD never touches pos_x/pos_y)', v_steps, v_speed, v_gap;
 end $$;
