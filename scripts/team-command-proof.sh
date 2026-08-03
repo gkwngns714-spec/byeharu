@@ -299,6 +299,13 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks the TEAMHUNT hp_current NULL-pin (a NULL makes the screened-rows count 0 and PASSES while proving nothing)"
   grep -qF "the wave was destroyed before it closed" "$SQL" \
     || fail "harness lacks the TEAMHUNT wave-survives-its-approach guard"
+  # 0336: TEAMHUNT carries the LAST tick-1 FIRE pin in either proof file — every other tick-1 read in
+  # both files asserts SILENCE, which 0336 makes true rather than false. It is green, but only while
+  # extent + wave range + 1 <= the weakest member reach: at the seeded knobs, while the site
+  # difficulty is <= 10, and the margin reaches ZERO at 10. This premise names that margin so the day
+  # it flips the block fails with the CAUSE instead of with the arithmetic.
+  grep -qF "the tick-1 aggregation pin below would be measuring a fleet that could not shoot" "$SQL" \
+    || fail "harness lacks TEAMHUNT's tick-1 reach premise (the last tick-1 FIRE pin in the suite; without it a difficulty bump fails as 'player_damage is distinct from sum(attack_snapshot)', which names the arithmetic and not the cause)"
   # TWO blocks borrow enemy_hp_base for the 0336 approach (TEAMHUNT and SHIELD1: a wave that arrives
   # outside its own reach has to survive the ticks it spends closing, under the fleet's own fire), so
   # BOTH give-backs are counted rather than one being witnessed for the other.

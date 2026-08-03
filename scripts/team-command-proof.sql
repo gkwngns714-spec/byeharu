@@ -1658,6 +1658,48 @@ begin
   -- ── TICK 1: the member path's first live execution ────────────────────────────────────────────────
   select hp_current into v_hp1 from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
   select hp_current into v_hp2 from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
+  -- ── 0336: THE LAST TICK-1 FIRE PIN IN EITHER FILE, AND ITS MARGIN IS NOW NAMED ──────────────────
+  -- The aggregation pin below needs every member to FIRE on tick 1, and after 0336 that is a
+  -- geometric PRECONDITION rather than a given. This block owns a ring of 0, so every member stands
+  -- ON the anchor and the MEASURED formation extent is 0 — which puts the wave at exactly (its own
+  -- weapon range + 1) from all of them. A member reaches it only while
+  --     extent + wave range + 1  <=  its own range,
+  -- i.e. at the seeded knobs while 3.6 + 0.04*D + 1 <= 5, i.e. while the site difficulty D <= 10.
+  -- That holds here and the pin is GREEN — but the margin is (4 - wave range) and it hits ZERO at
+  -- D = 10: one point of site difficulty more and every member is out of reach on the spawn tick,
+  -- player_damage is 0, and the pin below fails with "player_damage is distinct from
+  -- sum(attack_snapshot)" — which names the arithmetic and not the cause. This guard turns that into
+  -- a diagnosis. It is TRUE exactly when the pin below passes, so it cannot redden a run that would
+  -- otherwise have been carried. (The same class red DZCOMBAT_PASS_LEAD; every other tick-1 read in
+  -- these files asserts SILENCE, which 0336 makes true rather than false.)
+  declare v_ext double precision; v_wr double precision; v_reach double precision; v_np int;
+  begin
+    select count(*),
+           coalesce(max(public.osn_distance(coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), u.pos_x, u.pos_y)), 0)
+      into v_np, v_ext
+      from public.combat_units u
+      join public.combat_encounters ce on ce.id = u.encounter_id
+      join public.locations l          on l.id = ce.location_id
+     where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0
+       and u.pos_x is not null and u.pos_y is not null;
+    select min((select max((w->>'range')::double precision) from jsonb_array_elements(u.weapons_json) w))
+      into v_reach
+      from public.combat_units u
+     where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0;
+    select coalesce(public.cfg_num('enemy_synthetic_range_base'), 120)
+           + l.base_difficulty * coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 5)
+      into v_wr
+      from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+     where ce.id = v_enc;
+    -- NON-VACUITY: a defaulted extent of 0 over zero rows looks exactly like a real ring-0 formation.
+    if v_np < 1 or v_reach is null or v_wr is null then
+      raise exception 'TEAMHUNT FAIL: % positioned living member row(s), weakest reach %, derived wave range % — the tick-1 reach premise would be read from a default rather than from this encounter', v_np, v_reach, v_wr;
+    end if;
+    if v_ext + v_wr + 1 > v_reach then
+      raise exception 'TEAMHUNT FAIL premise: 0336 stands the wave at (measured extent % + its own range % + 1) = %, OUTSIDE the weakest member reach % — no member can fire on the spawn tick, so the tick-1 aggregation pin below would be measuring a fleet that could not shoot',
+        v_ext, v_wr, v_ext + v_wr + 1, v_reach;
+    end if;
+  end;
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
   -- tick player_damage == Σ member attack_snapshot (the member-side aggregation pin; variance 0).
