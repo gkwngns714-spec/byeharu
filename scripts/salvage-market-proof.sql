@@ -89,6 +89,11 @@ begin
   select main_ship_id into v_ship from public.main_ship_instances where player_id=uS;
   select coalesce((select balance from public.player_wallet where player_id=uS), -1) into v_bal;
 
+  -- THE PRECONDITION IS OURS, NOT THE SEED'S. Migration 0300 (lights_on) lights salvage_market_enabled
+  -- IN THE CHAIN, so trusting the ambient seed made this assert a WORLD rather than a property. Set
+  -- the dark state under test — in-txn, rolled back with everything else, like the enable below.
+  update public.game_config set value='false'::jsonb where key='salvage_market_enabled';
+
   r := pg_temp.call_as(uS, format('public.sell_item_at_port(%L::uuid, %L, %s, %L::uuid)', v_ship, 'scrap', 1, gen_random_uuid()));
   if (r->>'reason') is distinct from 'salvage_market_disabled' then raise exception 'P0 FAIL dark sell: %', r; end if;
 
