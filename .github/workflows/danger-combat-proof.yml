@@ -64,6 +64,21 @@ on:
       # block, which 0316 turned into a pinned tick-count property — a five-times-tighter branch
       # that does not fire this gate ships the whole geometry on text self-asserts alone.
       - 'slice-combat-five-times**'
+      # 0317 rewrites the combat tick again (a unit destroyed earlier in a tick takes no turn — no
+      # move, no shot, on either side) and this proof carries its behaviour block
+      # (DZCOMBAT_PASS_DEADFIRE), which is RED by construction on the pre-0317 body. A branch that
+      # changes who is allowed to act inside a tick and does not fire this gate ships on text alone.
+      - 'slice-the-dead**'
+      # UNION at the 0317/0318/0319 merges — BOTH globs stay. 0319 (drawn zones stay drawn) was
+      # authored as 0317 against the pre-#361 main, renumbered to 0318 when the-dead-do-not-shoot took
+      # that number and DEPLOYED it, then to 0319 when hidden-stays-hidden took THAT one and deployed
+      # too; each side had appended exactly one branch here. Taking either side whole would silently
+      # un-gate the other slice, which is the failure mode every UNION comment above records.
+      # 0319 adds gen-0319 to this file's GENERATED-MIGRATION PARITY GATE (danger-combat-proof.sh's
+      # GENERATORS list), the repo's ONLY runner of any generator's `--check`. It changes no combat
+      # function and adds no behaviour block here; the branch is named so its own generator is checked
+      # on the branch that introduces it rather than first on main.
+      - 'slice-drawn-zones**'
       # 0320 DELETES eight game_config rows and writes three more. Its whole safety argument is an
       # apply-time precondition ("no function in this database mentions these keys") that only a real
       # Postgres can evaluate — a static read of the file proves nothing about it. This proof is the

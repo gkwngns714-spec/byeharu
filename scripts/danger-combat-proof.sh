@@ -29,7 +29,9 @@ SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 # other's markers, the local run then never checks for those notices, and the suite prints
 # OVERALL_PASS with entire runtime blocks unverified. It is silent, and it survives CI.
 # 0315 appends LEAD — twenty-one markers now, from five slices.
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD"
+# 0317 appends DEADFIRE — twenty-two. Same law as every line above: a resolution that drops a marker
+# leaves its runtime block unchecked while the suite still prints ALL PASSED.
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -60,7 +62,7 @@ if [ "$MODE" = "selftest" ]; then
   # closed in BOTH directions: every scripts/gen-*.mjs on disk must be registered here (a new
   # generator can never again be silently ungated), and every registered generator must still exist
   # and pass (a deleted generator can never again be silently skipped). Neither half alone is enough.
-  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter"
+  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn"
   if command -v node >/dev/null 2>&1; then
     # DIRECTION 1 — nothing on disk may be unregistered. This is the half that would have caught 0307
     # on the day the gate was written, and it needs no maintenance to keep working.
@@ -94,6 +96,21 @@ if [ "$MODE" = "selftest" ]; then
     # sliced from 0301:754, the one line 0308 and 0315 both left alone. NINE generators now. Note
     # that gen-0315's own "nobody rewrote this function after me" head check names 0316 explicitly
     # rather than being widened, so it still fires for 0317 and everything after it.
+    # 0317 joins: ONE hunk inside process_combat_ticks (the actor-liveness guard at the top of the
+    # spatial per-unit loop), sliced from 0299 like 0310's and 0314's and statically disjoint from
+    # both. TEN generators now. gen-0317 carries the same two head checks in its own shape — no later
+    # textual re-create, and no UNKNOWN later hunk surgery on the tick — so 0318 cannot cut a slice
+    # from a head that has moved without failing here first.
+    # 0319 joins (UNION, resolved by hand TWICE — this list is APPENDED to, never replaced): it touches
+    # no combat function at all. It rewrites TWO hunks inside zone_update so a zone the owner DRAWS is
+    # flagged 'drawn' and permanently leaves 0296's derived-geometry regenerator selection. It is
+    # registered here anyway, and that is deliberate: this gate is the repo's ONLY runner of any
+    # generator's --check, and #360 closed it in BOTH directions, so an unregistered gen-*.mjs is now
+    # a HARD FAIL. The gate is about the METHOD, not about combat. TWELVE generators now.
+    # It was authored as 0317, renumbered to 0318 when the_dead_do_not_shoot took that number and
+    # DEPLOYED it, then to 0319 when hidden_stays_hidden took THAT one and deployed too. The number
+    # moved three times; the slice source (0287, zone_update's textual head) never did, and
+    # gen-0319's own head check re-proves that on every run rather than trusting the rename.
     for gen in $GENERATORS; do
       # A MISSING generator is a HARD FAIL, not a skip. The first version of this gate wrapped the
       # check in `if [ -f … ]; then … fi`, and adversarial review broke it empirically: hand-edit a
@@ -356,13 +373,38 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "the single hull did not lead"                          "$SQL" || fail "harness lacks the single-hull-fleet assert"
   grep -q "an unpositioned hull cannot prove where it spawned"    "$SQL" || fail "harness lacks the LEAD NULL-coordinate pin"
   grep -q "the anchor this assert measures from does not exist"   "$SQL" || fail "harness lacks the LEAD engagement-anchor NULL pin"
+  # 0317 — THE DEAD DO NOT SHOOT. The first three are the pre-0317 REDS (the head produced TWO of
+  # each in a mutual-kill tick because the loser fired after dying); the rest are what stops the
+  # block passing for the wrong reason — the loser must have been a live threat, the survivors must
+  # still act (the way this fix could go green by breaking the fight), and the population freeze must
+  # still be the thing that decides targeting.
+  grep -q "a unit that was destroyed earlier in the tick still fired" "$SQL" \
+    || fail "harness lacks the one-salvo-per-mutual-kill assert (the pre-0317 red: the loser fired after its own destruction)"
+  grep -q "the dead unit dealt damage after its own destruction"  "$SQL" \
+    || fail "harness lacks the one-landed-hit assert (a posthumous shot must deal nothing, not merely be logged)"
+  grep -q "the loser still fired from beyond the grave"           "$SQL" \
+    || fail "harness lacks the exactly-one-death assert (on the head a mutual kill killed both)"
+  grep -q "the loser could not have killed its target anyway"     "$SQL" \
+    || fail "harness lacks the mutual-kill non-vacuity guard (the silenced unit must have been able to destroy the survivor)"
+  grep -q "the survivor took damage from a unit that was already destroyed" "$SQL" \
+    || fail "harness lacks the survivor-is-unhit assert"
+  grep -q "a living unit went silent"                             "$SQL" \
+    || fail "harness lacks the survivors-still-act assert (the failure mode where 0317 goes green by silencing everybody)"
+  grep -q "the second shooter re-acquired a live target"          "$SQL" \
+    || fail "harness lacks the frozen-snapshot assert (0317 must re-read the ACTOR's liveness only, never the population)"
+  grep -q "the second shot must land on a corpse and deal nothing" "$SQL" \
+    || fail "harness lacks the corpse-shot assert (the positive proof that targeting was not re-read)"
+  grep -q "the dead unit fired after its own destruction"         "$SQL" \
+    || fail "harness lacks the both-sides ordering invariant (no salvo at a seq later than the destruction event naming its firer)"
+  grep -q "the ordering invariant would be vacuous"               "$SQL" \
+    || fail "harness lacks the ordering-invariant vacuity guard (it must quantify over real destructions)"
 
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "DANGER-ZONE COMBAT SELFTEST: ALL PASSED (self-rolling-back; every dark flag enabled only inside the txn; combat_telegraph kept dark; risk knobs = 1.0 for a certain plan; sole-writer law for group_sortie_members + combat_units AND for the intercept lifecycle/geometry — only a symmetric depart/arrive/trigger time-travel is allowed; provisioning + entry 100% real-RPC incl. pirate_zone_create, command_ship_group_go, command_ship_group_go_route, command_ship_group_stop and set_group_auto_exit; the ambush is fired by the REAL process_fleet_movements and the single direct resolver call is the negative re-fire probe; exactly 3 known tick call sites; every property — the order starts a journey and no fight, the point is the zone EDGE not its centre, trigger_at is the leg's own interpolated clock, nothing fires early, the arrival cannot be settled past a due ambush, the fleet parks at the entry point, the route is abandoned, engagement_x/y equals the entry point with the command ship seeded on it, it cannot fire twice, stop/re-order before due cancels and re-plans while stop after due is refused, positioned spatial units, spawned + firing pirate + damage; the 0310 HP auto-exit fires at the player's threshold of REAL CAPACITY and never earlier, never re-requests, completes like a human press, exits a damaged fleet on re-entry (the compounding-denominator regression) and stays silent with the toggle OFF; and (0311) an in-zone order REPOSITIONS the fight (exact-delta translate, restamp, no retreat write, no leg), overlapping zones are QUANTIFIED over rather than chosen (a lower-area holder can neither veto nor decide), a destination admitted by no anchor-holding zone retreats byte-identically, a retreating fight never jumps, and a site fight falls through to the retreat — never repositioned, never refused — asserted in assert-form; no random() and the 0312 no-living-ships law — a dead fleet is refused go/go_route/dock with the typed no_living_ships and mints nothing, a damaged-but-alive hp-0 ship still moves, empty_group stays its own state, and the recovery path (brake/tow/repair/re-assign) works on exactly the dead fleet; and the 0313 CLOSURE properties (spawn gap exceeds the seeded cut ranges, command ship still fires tick 1, escort + pirate MOVE and hold fire until their own pre-move distance is inside their own range, and every positional comparison is NULL-pinned so absence is failure rather than a silent pass); and the 0314 RuneScape feel — a 3600s-cooldown wave holds fire on tick 2 while a zero-cooldown weapon keeps firing, six identical guns roll distinct damage in one tick, every landed hit emits its visible hull_damage under EVENT logging with debug pinned dark, and every fired clock armed now()+cooldown exactly); and the 0315 LEAD law — a fleet with NO command ship anywhere still elects one hull by the stated rule (a real flag first, then the greatest max_hp, then the lowest main_ship_id, over living hulls), anchors exactly THAT hull on the engagement point at aggro 100 with every escort at 0 on its unchanged ring slot, and fires on tick 1 from the anchor alone; a fleet that DOES carry a designated command ship is placed exactly as today even when the fallback would name a different hull on both derived keys; and a single-hull fleet is its own lead; and the 0316 FIVE-TIMES-TIGHTER geometry — the CLOSURE block now runs the engine own recurrence over the encounter real ring, weapon range and frozen move_speeds, demands the escort reach firing range within one or two silent closing ticks, demands the OBSERVED first salvo land on exactly the tick that recurrence predicts, and refuses a pirate that crosses the whole ring in a single step: a range cut made without the matching ring and speed cuts fails here instead of in a playtest"
+  echo "DANGER-ZONE COMBAT SELFTEST: ALL PASSED (self-rolling-back; every dark flag enabled only inside the txn; combat_telegraph kept dark; risk knobs = 1.0 for a certain plan; sole-writer law for group_sortie_members + combat_units AND for the intercept lifecycle/geometry — only a symmetric depart/arrive/trigger time-travel is allowed; provisioning + entry 100% real-RPC incl. pirate_zone_create, command_ship_group_go, command_ship_group_go_route, command_ship_group_stop and set_group_auto_exit; the ambush is fired by the REAL process_fleet_movements and the single direct resolver call is the negative re-fire probe; exactly 3 known tick call sites; every property — the order starts a journey and no fight, the point is the zone EDGE not its centre, trigger_at is the leg's own interpolated clock, nothing fires early, the arrival cannot be settled past a due ambush, the fleet parks at the entry point, the route is abandoned, engagement_x/y equals the entry point with the command ship seeded on it, it cannot fire twice, stop/re-order before due cancels and re-plans while stop after due is refused, positioned spatial units, spawned + firing pirate + damage; the 0310 HP auto-exit fires at the player's threshold of REAL CAPACITY and never earlier, never re-requests, completes like a human press, exits a damaged fleet on re-entry (the compounding-denominator regression) and stays silent with the toggle OFF; and (0311) an in-zone order REPOSITIONS the fight (exact-delta translate, restamp, no retreat write, no leg), overlapping zones are QUANTIFIED over rather than chosen (a lower-area holder can neither veto nor decide), a destination admitted by no anchor-holding zone retreats byte-identically, a retreating fight never jumps, and a site fight falls through to the retreat — never repositioned, never refused — asserted in assert-form; no random() and the 0312 no-living-ships law — a dead fleet is refused go/go_route/dock with the typed no_living_ships and mints nothing, a damaged-but-alive hp-0 ship still moves, empty_group stays its own state, and the recovery path (brake/tow/repair/re-assign) works on exactly the dead fleet; and the 0313 CLOSURE properties (spawn gap exceeds the seeded cut ranges, command ship still fires tick 1, escort + pirate MOVE and hold fire until their own pre-move distance is inside their own range, and every positional comparison is NULL-pinned so absence is failure rather than a silent pass); and the 0314 RuneScape feel — a 3600s-cooldown wave holds fire on tick 2 while a zero-cooldown weapon keeps firing, six identical guns roll distinct damage in one tick, every landed hit emits its visible hull_damage under EVENT logging with debug pinned dark, and every fired clock armed now()+cooldown exactly); and the 0315 LEAD law — a fleet with NO command ship anywhere still elects one hull by the stated rule (a real flag first, then the greatest max_hp, then the lowest main_ship_id, over living hulls), anchors exactly THAT hull on the engagement point at aggro 100 with every escort at 0 on its unchanged ring slot, and fires on tick 1 from the anchor alone; a fleet that DOES carry a designated command ship is placed exactly as today even when the fallback would name a different hull on both derived keys; and a single-hull fleet is its own lead; and the 0316 FIVE-TIMES-TIGHTER geometry — the CLOSURE block now runs the engine own recurrence over the encounter real ring, weapon range and frozen move_speeds, demands the escort reach firing range within one or two silent closing ticks, demands the OBSERVED first salvo land on exactly the tick that recurrence predicts, and refuses a pirate that crosses the whole ring in a single step: a range cut made without the matching ring and speed cuts fails here instead of in a playtest; and the 0317 DEAD-DO-NOT-SHOOT law — a mutual one-shot kill now produces exactly ONE salvo, ONE landed hit and ONE destroyed unit (the head produced two of each), the silenced loser is proven to have been able to destroy the survivor, every surviving pirate still fires and both hulls still fire at the pirate the FROZEN snapshot named with only one of the two shots landing, and across both staged fights no unit emits an attack event at a seq later than the destruction event naming it"
   exit 0
 fi
 

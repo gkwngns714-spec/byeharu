@@ -78,7 +78,8 @@ if [ "$MODE" = "selftest" ]; then
   printf '%s' "$CLEAN" | grep -qF "150.0" && printf '%s' "$CLEAN" | grep -qF "220.0" && printf '%s' "$CLEAN" | grep -qF "300.0" || fail "operation must pin the min_power gates 150/220/300"
   printf '%s' "$CLEAN" | grep -q "from public.zones"   || fail "operation must assert the parent zone is active (else the reveal is invisible)"
   printf '%s' "$CLEAN" | grep -q "from public.sectors" || fail "operation must assert the parent sector is active (else the reveal is invisible)"
-  printf '%s' "$CLEAN" | grep -qF "l.zone_id = z.id and l.status = ''active''" || fail "operation must prosrc-pin get_world_map's location-level status=active filter (the visibility authority)"
+  printf '%s' "$CLEAN" | grep -qF "public.world_location_is_visible(l.status, l.zone_id)" || fail "operation must prosrc-pin get_world_map to the 0318 visibility authority (it no longer carries its own status=active literal)"
+  printf '%s' "$CLEAN" | grep -qF "locations_client_read" || fail "operation must pin the 0318 RLS read policy too — the map read alone was never the whole authority, which is exactly why these three rows leaked to anonymous callers while 'hidden'"
   printf '%s' "$CLEAN" | grep -qF "public.get_world_map()::text" || fail "operation must behaviorally check the map read output (pre-leak + post-reveal)"
 
   # THE WRITE-SHAPE LAW (the reveal adaptation of the activate-family write checks): the ONLY write

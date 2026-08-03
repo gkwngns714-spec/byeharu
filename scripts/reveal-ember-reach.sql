@@ -142,15 +142,32 @@ begin
     raise exception 'PRECOND FAIL: sector Ashen Frontier is not active — the location reveal would be invisible';
   end if;
 
-  -- the map read is still the visibility authority: three-level active filter prosrc-pinned.
+  -- THE VISIBILITY AUTHORITY is pinned at both of the places this reveal depends on.
+  -- 0318 REPOINT. When this script was written the map read WAS the whole authority, and the pin
+  -- below said so. It was only ever half true: locations also carried RLS `USING (true)`, so these
+  -- three rows were readable by name and coordinate through PostgREST with the public anon key the
+  -- entire time they sat "hidden". 0318 removed that second authority — the RLS policy and
+  -- get_world_map now compose ONE leaf, world_{sector,zone,location}_is_visible, and the reveal
+  -- mechanism is unchanged (hidden -> active, the single UPDATE below). Both pins matter for a
+  -- reveal: the map read is what puts the sites ON the map, and the policy is what stops them being
+  -- readable BEFORE that.
   select prosrc into v_src from pg_proc where oid = to_regprocedure('public.get_world_map()')::oid;
   if v_src is null then
     raise exception 'PRECOND FAIL: public.get_world_map() does not exist';
   end if;
-  if position('l.zone_id = z.id and l.status = ''active''' in v_src) = 0
-     or position('z.sector_id = se.id and z.status = ''active''' in v_src) = 0
-     or position('se.status = ''active''' in v_src) = 0 then
-    raise exception 'PRECOND FAIL: get_world_map() no longer filters status=active at all three levels — visibility semantics changed; re-audit before revealing';
+  if position('public.world_location_is_visible(l.status, l.zone_id)' in v_src) = 0
+     or position('public.world_zone_is_visible(z.status, z.sector_id)' in v_src) = 0
+     or position('public.world_sector_is_visible(se.status)' in v_src) = 0 then
+    raise exception 'PRECOND FAIL: get_world_map() no longer composes the visibility authority at all three levels — visibility semantics changed; re-audit before revealing';
+  end if;
+  if not exists (
+        select 1 from pg_policy p
+         where p.polrelid = 'public.locations'::regclass
+           and p.polname = 'locations_client_read'
+           and p.polcmd = 'r'
+           and position('_is_visible(' in pg_get_expr(p.polqual, p.polrelid)) > 0)
+     or (select count(*) from pg_policy p where p.polrelid = 'public.locations'::regclass) <> 1 then
+    raise exception 'PRECOND FAIL: public.locations does not carry exactly the one composed 0318 read policy — a permissive policy would have been serving these rows to anonymous callers already; re-audit before revealing';
   end if;
 
   -- behavioral pre-check: nothing leaked yet.

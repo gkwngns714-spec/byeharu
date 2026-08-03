@@ -113,11 +113,15 @@ begin
     raise exception 'V1C PROOF FAIL: get_world_map() is not SECURITY DEFINER — the 0263 read-cutover was reverted';
   end if;
   -- body pins: the three hidden-invisibility filters + the 0217 field, and (post-0263) the anchor read.
-  if position('l.zone_id = z.id and l.status = ''active''' in v_src) = 0
-     or position('z.sector_id = se.id and z.status = ''active''' in v_src) = 0
-     or position('se.status = ''active''' in v_src) = 0
+  -- 0318 REPOINT: the three filters are no longer status literals — get_world_map composes the ONE
+  -- visibility authority (world_{sector,zone,location}_is_visible) that the RLS policy also composes.
+  -- Same property, one place. Pinning the old literal here would red on the current chain while the
+  -- hidden-invisibility guarantee is strictly stronger than it was.
+  if position('public.world_location_is_visible(l.status, l.zone_id)' in v_src) = 0
+     or position('public.world_zone_is_visible(z.status, z.sector_id)' in v_src) = 0
+     or position('public.world_sector_is_visible(se.status)' in v_src) = 0
      or position('''territory_radius'', l.territory_radius' in v_src) = 0 then
-    raise exception 'V1C PROOF FAIL: get_world_map() body drifted from the 0217 head';
+    raise exception 'V1C PROOF FAIL: get_world_map() body drifted from the 0264 head (hidden-invisibility filters or the 0217 territory field)';
   end if;
   if position('space_anchors' in v_src) = 0 then
     raise exception 'V1C PROOF FAIL: get_world_map() no longer reads space_anchors — the 0263 read-cutover was reverted';
