@@ -49,15 +49,19 @@
 //     is provably never more than the margin behind the nearest one.
 //
 // JITTER BEHAVIOUR BEING SHIPPED, stated plainly: the badge changes hull only when the contender set's
-// lowest id changes — i.e. when a different ship becomes nearer by more than a world unit, or when the
+// lowest id changes — i.e. when a different ship becomes nearer by more than the margin, or when the
 // holder dies or leaves the fight. It can still flap if a ship hovers exactly on the margin boundary,
 // and both endpoints of that flap are REAL SHIPS in the same battle, so the badge is never in empty
 // space either way. That bound was chosen over cross-tick hysteresis deliberately: hysteresis needs a
 // remembered previous choice, which would put mutable state in a pure leaf, thread it through both
 // call sites and React, go stale the moment the remembered hull is destroyed, and make the answer
 // depend on call history instead of on the rows — a second source of truth about where the fleet is.
-// NEAREST_SHIP_MARGIN = 1 world unit: weapon ranges are 25-30 (0313), so it is ~4% of a weapon's
-// reach and below what the map can resolve at any normal zoom. A swap inside it is noise, not news.
+// NEAREST_SHIP_MARGIN IS A WORLD-UNIT DISTANCE AND IT SCALES WITH THE ARENA. It was 1 while weapon
+// ranges were 25-30 (0313) — ~4% of a weapon's reach. 0316 divided every combat distance by 5
+// (ranges 5-6, formation ring 6), so the margin divides with them: 0.2, the same ~4% of reach and
+// the same fraction of the ring. Left at 1 it would have become a fifth of the whole engagement —
+// the badge would have stuck to one hull across most of the fight, which is the bug this constant
+// exists to bound, not the behaviour it exists to give. A swap inside it is noise, not news.
 //
 // ── ONE AUTHORITY, COMPOSED — NOT A THIRD POSITION PATH ────────────────────────────────────────────
 //   • which encounter is this fleet's   → combat/encounterAnchor.liveEncounterForFleet
@@ -81,9 +85,9 @@ import {
 import { resolveSpatialUnits, type SpatialUnitView } from './spatialCombatLayer'
 
 /** World units within which two hulls count as the SAME distance from the target, so the badge does
- *  not change ship on server jitter. See the STABILITY section of the header for why this exists and
- *  why it is not cross-tick hysteresis. */
-export const NEAREST_SHIP_MARGIN = 1
+ *  not change ship on server jitter. See the STABILITY section of the header for why this exists,
+ *  why it is not cross-tick hysteresis, and why 0316's five-times-tighter arena divided it by 5. */
+export const NEAREST_SHIP_MARGIN = 0.2
 
 export interface FleetFightPosition {
   /** WORLD coordinates — the same domain as locations.x/y and combat_units.pos_x/pos_y. Always finite.

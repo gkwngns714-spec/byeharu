@@ -36,7 +36,9 @@ const PROD_SHIPS = [
 // The stability band, in world units, that the resolver treats as "the same distance" before it
 // will move the badge to a different hull. Mirrors NEAREST_SHIP_MARGIN in the implementation; kept
 // as a literal here so the spec pins the shipped VALUE rather than restating whatever it becomes.
-const MARGIN = 1
+// 0316 divided every combat distance by 5 (weapon ranges 25-30 -> 5-6, formation ring 30 -> 6) and
+// this band is a combat distance, so it divided with them: 1 -> 0.2.
+const MARGIN = 0.2
 
 const unit = (o: Partial<CombatUnit> = {}): CombatUnit => ({
   id: 'u1',

@@ -52,8 +52,17 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
       're-point the slices at the new head before generating.');
   }
 
+  // 0316 IS EXEMPT BY NAME, not by widening the window. It rewrites this function AFTER 0315 (the
+  // world-travel -> combat-space speed conversion), which is exactly what this gate is built to
+  // notice — but 0315's slices come from 0301 and 0308, both FROZEN history, and the file 0315
+  // emits is frozen too. What the gate protects is "never cut a NEW slice from a head that has
+  // moved", and 0315 cuts nothing new. Naming the one known later rewriter keeps the protection
+  // live for 0317 and everything after it; raising the version floor would not.
+  const KNOWN_LATER_REWRITERS = new Set(['20260618000316']);
   const reHunkRow = /\(\s*\d+\s*,\s*'combat_create_group_encounter'\s*,/;
-  const newerSurgery = files.filter((f) => version(f) > '20260618000308' && reHunkRow.test(stripped.get(f)));
+  const newerSurgery = files.filter((f) => version(f) > '20260618000308'
+    && !KNOWN_LATER_REWRITERS.has(version(f))
+    && reHunkRow.test(stripped.get(f)));
   if (newerSurgery.length > 0) {
     throw new Error(
       `combat_create_group_encounter was rewritten by hunk surgery AFTER 0308 by: ${newerSurgery.join(', ')} — ` +

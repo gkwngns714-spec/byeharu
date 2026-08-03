@@ -2317,19 +2317,36 @@ end $$;
 -- sees, which is worse than either a real error or no check at all. This very comment was written
 -- that way on the first attempt and the depth walk caught it.
 
--- ════════ DZCOMBAT_PASS_CLOSURE (0313): CUT RANGES MAKE POSITION MATTER — UNITS MOVE, THEN FIRE ══════
--- The behaviour nobody has ever observed in this game: before 0313, every range (120–245) dwarfed
+-- ════════ DZCOMBAT_PASS_CLOSURE (0313, re-premised 0316): CUT RANGES MAKE POSITION MATTER ═══════════
+-- The behaviour nobody had ever observed in this game: before 0313, every range (120–245) dwarfed
 -- every spawn distance (0–30), so combat_unit_decide_move returned 'hold' on every tick of every
 -- real fight and no combat_units row ever changed its pos_x/pos_y. This block stages a fresh
 -- TWO-ship group (command + one escort) through the REAL ambush chain at the SEEDED knob/catalog
--- values (no range/ring/speed tuning — the 0313 seeds ARE the subject), and drives the REAL tick:
---   • premise, derived not assumed: ring > escort range AND ring > pirate range (exactly what 0313
---     establishes; if a later retune re-buries the mechanic, this raises honestly);
---   • tick 1: the command ship (dist 0) FIRES — combat still starts instantly — while the escort
+-- values (no range/ring/speed tuning — the seeds ARE the subject), and drives the REAL tick:
+--   • premise, derived not assumed: ring > escort range AND ring > pirate range (if a later retune
+--     re-buries the mechanic, this raises honestly);
+--   • tick 1: the LEAD hull (dist 0) FIRES — combat still starts instantly — while the escort
 --     and the pirate both MOVE (positions change, their gap shrinks) and neither fires;
 --   • across ticks: the escort's FIRST salvo lands only on a tick whose recorded PRE-MOVE distance
 --     is within its own range, with at least one earlier silent tick (fire strictly AFTER closure),
 --     and the pirate's first salvo at the escort obeys ITS OWN shorter range the same way.
+--
+-- ── 0316 RE-PREMISED: THE TICK COUNT IS NOW A PINNED PROPERTY, NOT AN OBSERVATION ────────────────
+-- 0316 divided every combat DISTANCE and every combat RATE by 5 together (gun 25→5, ring 30→6,
+-- pirate range 18+0.2·D→3.6+0.04·D, pirate speed 3+0.2·D→0.6+0.04·D, and the player's world-travel
+-- speed converted into a combat speed by combat_player_speed_scale). Because both the distances and
+-- the per-tick steps scaled by the same factor, the geometry is SIMILAR to the old one and every
+-- tick count is unchanged: one silent closing tick, first escort salvo on TICK 2.
+-- The old wording of this block treated that number as whatever came out. It is now ASSERTED, twice
+-- over, and both halves are derived from the rows this very encounter carries:
+--   • PREDICTED — the engine's own recurrence (both sides step from the same frozen pre-move
+--     snapshot, 0299:802-813, each capped at the remaining distance, 0234:249) run over this
+--     encounter's real ring, real weapon range and real frozen move_speeds;
+--   • OBSERVED  — the tick the escort's first salvo actually landed on.
+-- They must AGREE, and the answer must be tick 2 or 3. A retune that reintroduces the sprawl — a
+-- range cut without the ring, or a ring left large against a small gun — pushes the predicted tick
+-- past 3 and fails HERE instead of in a playtest, which is exactly what 0313's cut-without-the-ring
+-- would have done (25 units to close at ~1.2/tick ≈ 21 ticks ≈ a minute of nothing).
 -- Damage knobs are owned in-block (pirate attack tiny so the escort survives the approach; hp_base
 -- is already 1000 from setup so the wave survives) and restored after — the geometry knobs are NOT
 -- touched, that is the point.
@@ -2351,6 +2368,11 @@ declare
   v_en_fire_tick int := null; v_en_fire_dist double precision := null;
   n_silent int := 0;
   v_eab_before double precision;
+  -- 0316: the predicted-vs-observed closure arithmetic. Every input is READ off this encounter's
+  -- own rows (the frozen move_speeds, the frozen weapon range, the seeded ring) — nothing here is a
+  -- number typed into the harness.
+  v_sp_esc double precision; v_sp_en double precision;
+  v_exp_tick int; v_sim double precision;
 begin
   -- ── fresh funded player, two ships, ONE group, command designated — 100% real RPCs. ────────────
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -2447,6 +2469,53 @@ begin
       v_ring, v_r_esc, v_r_en;
   end if;
 
+  -- ── 0316 THE PREDICTED CLOSURE TICK, from the engine's own recurrence over THIS encounter's rows.
+  -- Both sides step from the same pre-move snapshot within a tick, so the gap closes by the sum of
+  -- the two frozen move_speeds, each capped at what is left; the escort fires on the first tick
+  -- whose PRE-MOVE gap is inside its own range. NULL IS FAILURE: combat_units.move_speed is
+  -- nullable (0234:175), and a NULL would make the recurrence NULL and every comparison below
+  -- vacuously true — the same defect class as the position pins in this block.
+  select move_speed into v_sp_esc from public.combat_units where id = u_esc;
+  select move_speed into v_sp_en  from public.combat_units where id = u_en;
+  if v_sp_esc is null or v_sp_en is null then
+    raise exception 'CLOSURE FAIL: a frozen move_speed is NULL (escort %, pirate %) — the closure recurrence would have no speeds in it and the tick-count assert would prove nothing', v_sp_esc, v_sp_en;
+  end if;
+  if v_sp_esc <= 0 or v_sp_en <= 0 then
+    raise exception 'CLOSURE FAIL: a frozen move_speed is not positive (escort %, pirate %) — one side cannot close at all, so the approach is not a phase of the fight', v_sp_esc, v_sp_en;
+  end if;
+  -- THE MODEL'S OWN PREMISE, asserted rather than assumed: the recurrence below applies BOTH sides'
+  -- CLOSE step on every tick it runs, which is only correct while BOTH are out of their own range.
+  -- The loop condition covers the escort; the pirate is covered only if its range is the shorter of
+  -- the two. That ordering is exactly what 0313/0316's (f3) invariant establishes for the seeded
+  -- world, and if a retune ever inverts it this recurrence would silently model the wrong fight.
+  if v_r_en >= v_r_esc then
+    raise exception 'CLOSURE FAIL premise: the pirate range % is not strictly under the escort range % — the closure recurrence assumes the escort out-ranges the pirate (otherwise the pirate KITEs or HOLDs during the approach and the predicted tick models a fight that is not happening)',
+      v_r_en, v_r_esc;
+  end if;
+  v_sim := v_ring; v_exp_tick := 1;
+  while v_sim > v_r_esc and v_exp_tick <= 24 loop
+    v_sim := v_sim - least(v_sp_esc, v_sim) - least(v_sp_en, v_sim);
+    v_exp_tick := v_exp_tick + 1;
+  end loop;
+  -- THE BOUND THE SLICE SHIPS: one or two silent closing ticks, never a stall. This is the assert
+  -- that a range cut made WITHOUT the matching ring/speed cut must fail on — 25 units of gap closed
+  -- at ~1.2 units/tick is ~21 ticks, i.e. about a minute of a fight in which the escorts do nothing.
+  if v_exp_tick > 3 then
+    raise exception 'CLOSURE FAIL: the seeded world needs % ticks for an escort to reach firing range (ring %, escort range %, escort speed %, pirate speed %) — the sprawl is back; closure must complete within one or two silent ticks',
+      v_exp_tick, v_ring, v_r_esc, v_sp_esc, v_sp_en;
+  end if;
+  if v_exp_tick < 2 then
+    raise exception 'CLOSURE FAIL: the recurrence says the escort is already in range at spawn (ring %, escort range %) — there would be nothing to close and this block would prove nothing',
+      v_ring, v_r_esc;
+  end if;
+  -- and the approach must not be a TELEPORT either: a single tick that swallows the whole ring puts
+  -- the pirate on top of the escort and every unit HOLDs at contact forever after, which is position
+  -- ceasing to matter — the very thing this block exists to witness.
+  if v_sp_en > v_ring / 2 then
+    raise exception 'CLOSURE FAIL: the pirate closes % of the % ring in one tick — it arrives on top of its target and the CLOSE/KITE arms run for a single tick before everything HOLDs at contact',
+      v_sp_en, v_ring;
+  end if;
+
   -- tick 1, the command ship (dist 0) FIRED — the fight starts immediately despite the gap.
   select count(*) into n from public.combat_events
     where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
@@ -2527,7 +2596,15 @@ begin
   end loop;
 
   if v_esc_fire_tick is null then
-    raise exception 'CLOSURE FAIL: the escort NEVER fired within 12 ticks — closure stalled (mutual approach at ~(3+0.2·difficulty)+~1 units/tick should be in range by tick 3-4)';
+    raise exception 'CLOSURE FAIL: the escort NEVER fired within 12 ticks — closure stalled (the recurrence over this encounter''s own rows predicted its first salvo on tick %)', v_exp_tick;
+  end if;
+  -- ── 0316: OBSERVED MUST EQUAL PREDICTED. The recurrence above is the arithmetic the scaling
+  -- decision was made on; this is where the engine is made to agree with it. A disagreement means
+  -- either the tick no longer moves both sides from one frozen snapshot, or the fire gate no longer
+  -- reads the PRE-move distance — both silent, both invisible to every static check in the repo.
+  if v_esc_fire_tick is distinct from v_exp_tick then
+    raise exception 'CLOSURE FAIL: the escort''s first salvo landed on tick % but the engine''s own recurrence over this encounter (ring %, escort range %, escort speed %, pirate speed %) predicts tick % — the movement/fire arithmetic no longer matches the geometry the knobs were chosen for',
+      v_esc_fire_tick, v_ring, v_r_esc, v_sp_esc, v_sp_en, v_exp_tick;
   end if;
   if v_esc_fire_dist > v_r_esc + 1e-6 then
     raise exception 'CLOSURE FAIL: the escort''s first salvo (tick %) left at pre-move distance % — OUTSIDE its own % range; the fire gate is not honouring the cut range',
@@ -2552,8 +2629,8 @@ begin
 
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
 
-  raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED 0313 ranges (escort %, pirate %, spawn gap %), the command ship fired on tick 1 while the escort and the pirate MOVED across ticks (gap % -> % after tick 1) and held fire until closure — escort''s first salvo tick % at pre-move distance % (<= its range), pirate''s tick % at % (<= its range), % additional silent closing tick(s) after the verified-silent tick 1: position now matters in a real fight',
-    v_r_esc, v_r_en, v_ring, v_ring, d_t1, v_esc_fire_tick, round(v_esc_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
+  raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED post-0316 geometry (escort range %, pirate range %, spawn gap %, escort speed %, pirate speed %), the lead fired on tick 1 while the escort and the pirate MOVED across ticks (gap % -> % after tick 1) and held fire until closure — escort''s first salvo tick %, EXACTLY the tick the engine''s own recurrence predicts, at pre-move distance % (<= its range); pirate''s tick % at % (<= its range); % additional silent closing tick(s) after the verified-silent tick 1: position matters in a real fight, and the number of ticks it takes is now pinned',
+    v_r_esc, v_r_en, v_ring, v_sp_esc, v_sp_en, v_ring, d_t1, v_esc_fire_tick, round(v_esc_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_LEAD (0315): EVERY FLEET ENTERING COMBAT HAS A LEAD ══════════════════════════
