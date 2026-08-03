@@ -146,7 +146,7 @@ export function StationHangar({
   /** Called after a successful move so the screen re-reads THIS port's storage. */
   onChanged: () => void
 }) {
-  const hold = useHold(refreshKey)
+  const hold = useHold(refreshKey, mainShipId)
   const guards = useActivityPanelGuards()
   const [openRow, setOpenRow] = useState<string | null>(null)
   const [pending, setPending] = useState<Record<string, boolean>>({})

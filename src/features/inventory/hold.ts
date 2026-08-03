@@ -13,7 +13,7 @@ import { itemLabel } from '../../components/items'
 
 export interface HoldItem {
   itemId: string
-  /** Whole units carried (player_inventory.quantity is integer). */
+  /** Whole units carried (an item is a whole thing; quantities are integers). */
   quantity: number
   /** Catalog volume of ONE unit, from item_types.volume_m3. Always > 0 server-side. */
   volumeM3: number

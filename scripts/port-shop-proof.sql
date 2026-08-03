@@ -13,7 +13,13 @@
 -- reverted by ROLLBACK. Ships are commissioned via the REAL commission_first_main_ship() RPC (docked at
 -- Haven); wallets are pre-seeded by a direct owner insert (the repair-proof precedent) so every credit
 -- assert is an EXACT delta. The harness NEVER writes port_shop_offers / module_instances /
--- player_inventory / port_shop_receipts directly — every grant + receipt is minted by the RPC under test.
+-- base_items / port_shop_receipts directly — every grant + receipt is minted by the RPC under test.
+--
+-- ── WHERE THE ITEMS ARE (0333) ────────────────────────────────────────────────────────────────────
+-- `player_inventory` (the global pool) is DROPPED: items live PER PORT in `base_items`, keyed to the
+-- player's `bases` row for that port. `buy_shop_offer_at_port` now deposits what you bought into the
+-- store of the port you are DOCKED AT. uB is docked at HAVEN throughout, so the ammo assertions below
+-- are measured at Haven's store — `get_or_create_store(uB, haven)`, the exact row the RPC deposits to.
 
 \set ON_ERROR_STOP on
 
@@ -73,6 +79,10 @@ begin
     ((select v from ps1 where k='uB'), 1000),
     ((select v from ps1 where k='uP'), 0)       -- poor: the insufficient_credits arm
   on conflict (player_id) do update set balance = excluded.balance;
+  -- 0333: items live PER PORT. Resolve uB's store AT HAVEN once and stash it — Haven is the port uB
+  -- is docked at for every buy below, so it is where buy_shop_offer_at_port now puts the goods.
+  insert into ps1 values ('storeB', public.get_or_create_store((select v from ps1 where k='uB'),
+                                                               (select v from ps1 where k='haven')));
 end $$;
 
 -- ════════ P0 — DARK gate: with port_shop_enabled OFF, the buy RPC rejects and writes NOTHING. ════════
@@ -162,14 +172,15 @@ begin
   raise notice 'SHOP_PASS_BUY_MODULE ok: autocannon_battery bought -> wallet -120, 1 owned instance (=returned id, fittable), 1 receipt with instance_id';
 end $$;
 
--- ════════ P3 — BUY ITEM (ammo): buy autocannon_rounds ×10 (2cr ea) → wallet −20, inventory 10, ONE receipt. ════════
+-- ════════ P3 — BUY ITEM (ammo): buy autocannon_rounds ×10 (2cr ea) → wallet −20, 10 stored AT HAVEN, ONE receipt. ════════
 do $$
 declare r jsonb; uB uuid := (select v from ps1 where k='uB'); v_ship uuid; v_bal0 numeric; v_have int; v_req uuid := gen_random_uuid();
+  v_store uuid := (select v from ps1 where k='storeB');   -- 0333: uB's stock AT HAVEN (the docked port)
 begin
   select main_ship_id into v_ship from public.main_ship_instances where player_id=uB;
   select balance into v_bal0 from public.player_wallet where player_id=uB;
-  select public.inventory_get_balance(uB, 'autocannon_rounds') into v_have;
-  if v_have <> 0 then raise exception 'P3 SETUP FAIL: uB already holds ammo'; end if;
+  select public.inventory_get_balance(uB, v_store, 'autocannon_rounds') into v_have;
+  if v_have <> 0 then raise exception 'P3 SETUP FAIL: uB already holds ammo at Haven'; end if;
 
   r := pg_temp.call_as(uB, format('public.buy_shop_offer_at_port(%L::uuid, %L, %s, %L::uuid)', v_ship, 'autocannon_rounds', 10, v_req));
   if (r->>'ok')::boolean is not true then raise exception 'P3 FAIL buy ammo: %', r; end if;
@@ -177,10 +188,15 @@ begin
   if (r->>'instance_id') is not null then raise exception 'P3 FAIL: an item buy carried an instance_id: %', r; end if;
 
   if v_bal0 - (select balance from public.player_wallet where player_id=uB) <> 20 then raise exception 'P3 FAIL wallet delta (want -20)'; end if;
-  if public.inventory_get_balance(uB, 'autocannon_rounds') <> 10 then raise exception 'P3 FAIL: inventory not +10 ammo'; end if;
+  -- 0333: the ammo landed in HAVEN's store — the port uB is docked at — and nowhere else.
+  if public.inventory_get_balance(uB, v_store, 'autocannon_rounds') <> 10 then raise exception 'P3 FAIL: Haven store not +10 ammo'; end if;
+  if not exists (select 1 from public.base_items bi join public.bases b on b.id = bi.base_id
+                   where b.player_id = uB and b.location_id = (select v from ps1 where k='haven')
+                     and bi.item_id = 'autocannon_rounds' and bi.quantity = 10) then
+    raise exception 'P3 FAIL: no base_items row for the ammo at Haven (the deposit did not land per-port)'; end if;
   if not exists (select 1 from public.port_shop_receipts where main_ship_id=v_ship and request_id=v_req and kind='item' and ref_id='autocannon_rounds' and quantity=10 and total_price=20) then
     raise exception 'P3 FAIL receipt fields wrong'; end if;
-  raise notice 'SHOP_PASS_BUY_ITEM ok: autocannon_rounds x10 bought -> wallet -20, inventory +10, 1 item receipt (no instance_id)';
+  raise notice 'SHOP_PASS_BUY_ITEM ok: autocannon_rounds x10 bought -> wallet -20, +10 in HAVEN''s base_items store, 1 item receipt (no instance_id)';
 end $$;
 
 -- ════════ P4 — idempotent replay: same (ship, request_id) → replayed VERBATIM, NO double debit/mint/receipt. ════════
@@ -245,6 +261,6 @@ begin
   raise notice 'SHOP_PASS_GUARDS ok: invalid_quantity (0/2.5), no_offer, module_qty_must_be_one, broke insufficient_credits — all zero-write';
 end $$;
 
-select 'PORT-SHOP PROOF PASSED (dark gate; seeded outfit + wired ammo; buy module exact debit + minted instance + receipt; buy ammo exact debit + inventory + receipt; idempotent replay; quantity/offer/module-qty/dock/credit guards)' as result;
+select 'PORT-SHOP PROOF PASSED (dark gate; seeded outfit + wired ammo; buy module exact debit + minted instance + receipt; buy ammo exact debit + the docked port''s base_items store + receipt; idempotent replay; quantity/offer/module-qty/dock/credit guards)' as result;
 
 rollback;   -- leave ZERO persisted state: no wallet, inventory, instance, receipt, ship, flag flip, or fixture user.

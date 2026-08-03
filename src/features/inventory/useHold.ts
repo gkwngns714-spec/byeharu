@@ -10,11 +10,17 @@ import { HOLD_EMPTY, type Hold } from './hold'
 
 export function useHold(
   refreshKey: string,
+  // 0333: the hold belongs to this ship's FLEET, so the read is ship-addressed. Null falls back to
+  // the server's sole-ship shim.
+  mainShipId: string | null,
   overrides?: { fetcher?: () => Promise<Hold> },
 ): Hold {
   const [hold, setHold] = useState<Hold>(HOLD_EMPTY)
   const overrideFetcher = overrides?.fetcher
-  const fetcher = useMemo(() => overrideFetcher ?? fetchMyHold, [overrideFetcher])
+  const fetcher = useMemo(
+    () => overrideFetcher ?? (() => fetchMyHold(mainShipId)),
+    [overrideFetcher, mainShipId],
+  )
 
   useEffect(() => {
     let active = true

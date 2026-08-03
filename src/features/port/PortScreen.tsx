@@ -167,8 +167,10 @@ export function PortScreen() {
           <div className={screenRailClass('main')}>
             {/* The docked-port surface (identity → right now → service details). */}
             <DockedPortCard dock={dock} />
-            {/* WORKSHOP — module CRAFTING (non-spatial, 0109: player-scoped, no settled
-                precondition — reachable wherever the ship is docked). S6: the fit/unfit EDIT
+            {/* WORKSHOP — module CRAFTING. 0333: crafting is SPATIAL now — it consumes the stock
+                of the port this ship is DOCKED at, because that is where items live. The panel
+                addresses `chosenShipId`, the SAME acting ship as every other panel on this screen.
+                S6: the fit/unfit EDIT
                 surface moved to the Fitting tab's per-ship detail (FittingDetail — the ONE
                 fitting-edit surface; its enable derives from the ship's own fleet-positions row
                 and the server's 0114 settled-safe rule stays the enforcer), so this panel is
@@ -176,7 +178,11 @@ export function PortScreen() {
                 branch so a dark read never leaves a label over a void. No onChanged wiring: no
                 sibling on this screen reads the player inventory, and the Fitting tab's readers
                 refetch on route remount — screens unmount on navigation. */}
-            <ModulesPanel lifecycleKey={lifecycleKey} sectionLabel="Workshop" />
+            <ModulesPanel
+              lifecycleKey={lifecycleKey}
+              mainShipId={chosenShipId}
+              sectionLabel="Workshop"
+            />
             {/* TRADE-MARKET-1 (LIVE since 2026-08-03; server flag `trade_market_enabled` is lit and
                 re-checked on every RPC): buy/sell the port's cargo goods. This is the ONLY player-
                 reachable producer of ship_cargo_lots — the haul contract board below consumes them,

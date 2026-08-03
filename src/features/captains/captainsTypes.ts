@@ -159,7 +159,11 @@ const RECRUIT_ERROR_COPY: Record<string, string> = {
   invalid_request: 'Invalid command request.',
   unknown_captain: 'Unknown captain.',
   no_recipe: 'This captain cannot be recruited yet.',
-  insufficient_items: 'Not enough materials to recruit this captain.',
+  insufficient_items: 'Not enough materials stored at this port.',
+  // 0333, law 3 in the player's words: you recruit from the port you are standing in.
+  not_docked: 'Dock at a port to recruit from what is stored there.',
+  port_has_no_storage: 'This place has no storage.',
+  ship_not_found: 'No ship available.',
   unavailable: 'Captain recruitment is unavailable right now.',
 }
 export function recruitCaptainErrorMessage(res: {

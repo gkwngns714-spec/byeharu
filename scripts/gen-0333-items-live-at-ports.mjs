@@ -1,4 +1,264 @@
--- Byeharu — 0333: ITEMS LIVE AT PORTS.   (rev.3 — see THE TWO CORRECTIONS below)
+#!/usr/bin/env node
+// gen-0333-items-live-at-ports.mjs — emit (or --check) migration 0333.
+//
+// WHY A GENERATOR: 0333 re-points the THREE Inventory leaves (0039) at PORT storage and therefore
+// has to touch the SEVEN functions that compose them — reward_grant (0040), craft (0109), recruit
+// (0126), salvage sell (0174), shipyard order (0188), shipyard refund (0194) and port shop buy
+// (0235). Every one of those is LIVE plpgsql. The house law (0303, restated by 0330) is: never
+// retype a live function body. So every `old_t` below is SLICED VERBATIM out of the migration that
+// is that function's textual head, and every `new_t` is CONSTRUCTED FROM THAT SLICE by exactly-once
+// string edits. Nothing in a deployed body is retyped by hand. The migration then proves each slice
+// is still what is deployed (it must occur EXACTLY ONCE in pg_get_functiondef) before replacing it.
+//
+// The three commands that gain a ship parameter do NOT get their argument list retyped either: the
+// migration reads it back from pg_get_function_identity_arguments at deploy time and appends.
+//
+//   node scripts/gen-0333-items-live-at-ports.mjs          # write the migration
+//   node scripts/gen-0333-items-live-at-ports.mjs --check  # fail if the file on disk drifted
+
+import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const MIGDIR = join(ROOT, 'supabase/migrations');
+const MIG = (f) => join(MIGDIR, f);
+const OUT = MIG('20260618000333_items_have_a_place.sql');
+const SELF = '20260618000333';
+
+// LINE ENDINGS ARE PART OF THE CONTRACT (the 0306 lesson): pg_get_functiondef text is LF; a Windows
+// checkout hands this script CRLF. Normalise on read, refuse to emit a CR.
+const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\n');
+
+// ── HEAD CHECKS ──────────────────────────────────────────────────────────────────────────────────
+// For each function this migration cuts a slice from, establish that the named source migration is
+// still its TEXTUAL head: no later `create or replace function … <name>` anywhere, and no later
+// hunk-surgery rewriter (the house `(idx, '<name>',` shape). A migration that merely NAMES the
+// function in a comment or a read-only probe is not drift, so `--` comments are stripped first.
+const HEADS = [
+  ['reward_grant', '20260617000040'],
+  ['production_craft_module', '20260618000109'],
+  ['craft_module', '20260618000109'],
+  ['production_recruit_captain', '20260618000126'],
+  ['recruit_captain', '20260618000126'],
+  ['sell_item_at_port', '20260618000174'],
+  ['production_start_hull_build', '20260618000188'],
+  ['start_hull_build', '20260618000188'],
+  ['cancel_build_order', '20260618000194'],
+  ['buy_shop_offer_at_port', '20260618000235'],
+];
+{
+  const version = (f) => (f.match(/^(\d{14})_/) || [])[1] ?? '';
+  const files = readdirSync(MIGDIR).filter((f) => f.endsWith('.sql') && version(f) !== SELF);
+  const stripped = new Map(
+    files.map((f) => [f, readFileSync(MIG(f), 'utf8').replace(/--[^\n]*/g, '')]));
+
+  for (const [fname, head] of HEADS) {
+    const reCreate = new RegExp(
+      `create\\s+or\\s+replace\\s+function\\s+(?:public\\.)?${fname}\\s*\\(`, 'i');
+    const newer = files.filter((f) => version(f) > head && reCreate.test(stripped.get(f)));
+    if (newer.length > 0) {
+      throw new Error(
+        `${fname} was textually re-created AFTER ${head} by: ${newer.join(', ')} — ` +
+        're-point the slice at the new head before generating.');
+    }
+    const reHunkRow = new RegExp(`\\(\\s*\\d+\\s*,\\s*'${fname}'\\s*,`);
+    const surgery = files.filter((f) => version(f) > head && reHunkRow.test(stripped.get(f)));
+    if (surgery.length > 0) {
+      throw new Error(
+        `${fname} was rewritten by hunk surgery AFTER ${head} by: ${surgery.join(', ')} — ` +
+        'read that migration and re-point this slice; do not regenerate blindly.');
+    }
+  }
+}
+
+const F40 = load('20260617000040_pending_loot_bundle.sql');
+const F109 = load('20260618000109_modules_p13_craft_command.sql');
+const F126 = load('20260618000126_captain_p16_recruit_command.sql');
+const F174 = load('20260618000174_salvage_market.sql');
+const F188 = load('20260618000188_shipyard1_order_rpc.sql');
+const F194 = load('20260618000194_shipyard2_delivery.sql');
+const F235 = load('20260618000235_port_shop_buy.sql');
+
+/** Slice [from,to] 1-indexed inclusive, asserting fence lines so source drift fails loudly. */
+function slice(lines, file, from, to, startsWith, endsWith) {
+  const text = lines.slice(from - 1, to).join('\n');
+  const first = lines[from - 1];
+  const last = lines[to - 1];
+  if (!first.startsWith(startsWith)) {
+    throw new Error(`${file}:${from} does not start with ${JSON.stringify(startsWith)} — got ${JSON.stringify(first)}`);
+  }
+  if (!last.endsWith(endsWith)) {
+    throw new Error(`${file}:${to} does not end with ${JSON.stringify(endsWith)} — got ${JSON.stringify(last)}`);
+  }
+  return text;
+}
+
+/** Replace `find` with `repl` in `src`, asserting the match occurs exactly once. */
+function once(src, find, repl, what) {
+  const n = src.split(find).length - 1;
+  if (n !== 1) throw new Error(`${what}: expected exactly 1 occurrence of ${JSON.stringify(find)}, found ${n}`);
+  return src.split(find).join(repl);
+}
+
+/** A plpgsql dollar-quoted literal that cannot collide with the hunk text. */
+const q = (tag, text) => `$${tag}$${text}$${tag}$`;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
+// THE HUNKS. Each entry: [idx, function name, old text (sliced), new text (built from the slice)].
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+// ── (1) reward_grant — the ITEM arm finally uses the base it has always been handed. ─────────────
+const H1_OLD = slice(F40, '0040', 83, 85, '        perform inventory_deposit(', "r.item_id);");
+const H1_NEW = once(H1_OLD, '          p_player, r.item_id, r.qty,', '          p_player, p_base, r.item_id, r.qty,', 'H1');
+
+// ── (2) production_craft_module — the spend names the port it draws from. ────────────────────────
+const H2_OLD = slice(F109, '0109', 160, 160, '    v_have := public.inventory_get_balance(', 'r.item_id);');
+const H2_NEW = once(H2_OLD, '(p_player, r.item_id)', '(p_player, p_base, r.item_id)', 'H2');
+const H3_OLD = slice(F109, '0109', 176, 176, '    perform public.inventory_spend(', 'r.qty);');
+const H3_NEW = once(H3_OLD, '(p_player, r.item_id, r.qty)', '(p_player, p_base, r.item_id, r.qty)', 'H3');
+
+// ── (3) craft_module — gains the ship, derives the port, refuses when not docked. ────────────────
+// The wrapper declare block is byte-identical in craft_module / recruit_captain / start_hull_build;
+// it is sliced ONCE and asserted to occur exactly once inside each of the three.
+const WRAP_DECL_OLD = slice(F109, '0109', 208, 212, 'declare', 'begin');
+const WRAP_DECL_NEW = once(
+  WRAP_DECL_OLD, '  v_reason text;\nbegin',
+  '  v_reason text;\n  v_ship   uuid;   -- ★ 0333\n  v_loc    uuid;   -- ★ 0333\n  v_base   uuid;   -- ★ 0333\nbegin',
+  'WRAP_DECL');
+
+/** The dock→store resolution the three commands all do, in the wrapper, before delegating. */
+const dockBlock = (verb) => `  -- ★ 0333 — LAW 3: you build from the port you are DOCKED AT. The port is DERIVED from the
+  --   ship's validated dock through the ONE shared resolver; it is never a parameter, so
+  --   "${verb} from a port I am not standing in" is not a request this surface can express.
+  v_ship := public.mainship_resolve_owned_ship(v_player, p_main_ship_id);
+  if v_ship is null then
+    return jsonb_build_object('ok', false, 'code', 'ship_not_found', 'message', 'No ship available.');
+  end if;
+  v_loc := public.mainship_resolve_docked_location(v_ship);
+  if v_loc is null then
+    return jsonb_build_object('ok', false, 'code', 'not_docked', 'message', 'Dock at a port to use what is stored there.');
+  end if;
+  if not public.is_home_port_eligible(v_loc) then
+    return jsonb_build_object('ok', false, 'code', 'port_has_no_storage', 'message', 'This place has no storage.');
+  end if;
+  v_base := public.get_or_create_store(v_player, v_loc);
+
+`;
+
+const H4_OLD = slice(F109, '0109', 225, 225, '  v_res := public.production_craft_module(', 'p_request_id);');
+const H4_NEW = dockBlock('craft') + once(
+  H4_OLD, '(v_player, p_module_type, p_request_id)', '(v_player, p_module_type, p_request_id, v_base)', 'H4');
+
+// ── (4) production_recruit_captain / recruit_captain — the same two shapes. ──────────────────────
+const H5_OLD = slice(F126, '0126', 165, 165, '    v_have := public.inventory_get_balance(', 'r.item_id);');
+const H5_NEW = once(H5_OLD, '(p_player, r.item_id)', '(p_player, p_base, r.item_id)', 'H5');
+const H6_OLD = slice(F126, '0126', 181, 181, '    perform public.inventory_spend(', 'r.qty);');
+const H6_NEW = once(H6_OLD, '(p_player, r.item_id, r.qty)', '(p_player, p_base, r.item_id, r.qty)', 'H6');
+const H7_OLD = slice(F126, '0126', 230, 230, '  v_res := public.production_recruit_captain(', 'p_request_id);');
+const H7_NEW = dockBlock('recruit') + once(
+  H7_OLD, '(v_player, p_captain_type, p_request_id)', '(v_player, p_captain_type, p_request_id, v_base)', 'H7');
+
+// ── (5) sell_item_at_port — sells what THIS port is holding for you. ─────────────────────────────
+const H8_OLD = slice(F174, '0174', 181, 182, '  v_receipt  uuid;', 'begin');
+const H8_NEW = once(H8_OLD, '  v_receipt  uuid;\nbegin', '  v_receipt  uuid;\n  v_store    uuid;   -- ★ 0333\nbegin', 'H8');
+const H9_OLD = slice(F174, '0174', 213, 216, '  v_loc := public.mainship_resolve_docked_location(', '  end if;');
+const H9_NEW = H9_OLD + `
+
+  -- ★ 0333 — items LIVE in this port's storage, so the sale draws from THIS port and no other.
+  if not public.is_home_port_eligible(v_loc) then
+    return jsonb_build_object('ok', false, 'reason', 'port_has_no_storage', 'location_id', v_loc);
+  end if;
+  v_store := public.get_or_create_store(v_player, v_loc);`;
+const H10_OLD = slice(F174, '0174', 237, 237, '  v_have := public.inventory_get_balance(', 'p_item_id);');
+const H10_NEW = once(H10_OLD, '(v_player, p_item_id)', '(v_player, v_store, p_item_id)', 'H10');
+const H11_OLD = slice(F174, '0174', 247, 247, '  perform public.inventory_spend(', 'v_qty);');
+const H11_NEW = once(H11_OLD, '(v_player, p_item_id, v_qty)', '(v_player, v_store, p_item_id, v_qty)', 'H11');
+
+// ── (6) production_start_hull_build — spends the docked port's stock AND RECORDS IT on the order. ─
+const H12_OLD = slice(F188, '0188', 267, 267, '    v_have := public.inventory_get_balance(', 'r.item_id);');
+const H12_NEW = once(H12_OLD, '(p_player, r.item_id)', '(p_player, p_base, r.item_id)', 'H12');
+const H13_OLD = slice(F188, '0188', 293, 293, '    perform public.inventory_spend(', 'r.qty::integer);');
+const H13_NEW = once(H13_OLD, '(p_player, r.item_id, r.qty::integer)', '(p_player, p_base, r.item_id, r.qty::integer)', 'H13');
+// THE REFUND ANSWER: the hull order records the store it was placed from, so 0194's refund arm has
+// a port to give the ingredients back to. Before this, `build_orders_kind_coherent` FORCED base_id
+// NULL on hull orders, so the item refund had no port BY CONSTRUCTION.
+const H14_OLD = slice(F188, '0188', 303, 305, '  insert into build_orders (', 'returning id into v_order;');
+const H14_NEW = once(
+  once(H14_OLD,
+    'insert into build_orders (player_id, hull_type_id, quantity, credits_spent, status, queued_at)',
+    'insert into build_orders (player_id, base_id, hull_type_id, quantity, credits_spent, status, queued_at)',
+    'H14 cols'),
+  'values (p_player, p_hull_type_id, 1, v_recipe.credits_cost, \'waiting\', now())',
+  'values (p_player, p_base, p_hull_type_id, 1, v_recipe.credits_cost, \'waiting\', now())',
+  'H14 vals');
+
+// ── (7) start_hull_build — the wrapper gains the ship. ───────────────────────────────────────────
+const H15_OLD = slice(F188, '0188', 350, 350, '  v_res := public.production_start_hull_build(', 'p_request_id);');
+const H15_NEW = dockBlock('order a hull') + once(
+  H15_OLD, '(v_player, p_hull_type_id, p_request_id)', '(v_player, p_hull_type_id, p_request_id, v_base)', 'H15');
+
+// ── (8) cancel_build_order — the hull refund goes back to the port that placed the order. ────────
+const H16_OLD = slice(F194, '0194', 404, 405, '        perform public.inventory_deposit(o.player_id,', "r.item_id);");
+const H16_NEW = once(H16_OLD, 'inventory_deposit(o.player_id, r.item_id, v_qty,', 'inventory_deposit(o.player_id, o.base_id, r.item_id, v_qty,', 'H16');
+
+// ── (9) buy_shop_offer_at_port — the goods are put down at the port you bought them at. ──────────
+const H17_OLD = slice(F235, '0235', 222, 223, '  v_receipt  uuid;', 'begin');
+const H17_NEW = once(H17_OLD, '  v_receipt  uuid;\nbegin', '  v_receipt  uuid;\n  v_store    uuid;   -- ★ 0333\nbegin', 'H17');
+const H18_OLD = slice(F235, '0235', 251, 254, '  v_loc := public.mainship_resolve_docked_location(', '  end if;');
+const H18_NEW = H18_OLD + `
+
+  -- ★ 0333 — what you buy is put down HERE, in this port's storage, because that is where items live.
+  if not public.is_home_port_eligible(v_loc) then
+    return jsonb_build_object('ok', false, 'reason', 'port_has_no_storage', 'location_id', v_loc);
+  end if;
+  v_store := public.get_or_create_store(v_player, v_loc);`;
+const H19_OLD = slice(F235, '0235', 296, 297, '    perform public.inventory_deposit(', "p_request_id::text);");
+const H19_NEW = once(H19_OLD, '      v_player, v_offer.item_id, v_qty,', '      v_player, v_store, v_offer.item_id, v_qty,', 'H19');
+
+// Body hunks, applied by replace-surgery over the DEPLOYED definition, exactly once each.
+const HUNKS = [
+  [1, 'reward_grant', H1_OLD, H1_NEW],
+  [2, 'production_craft_module', H2_OLD, H2_NEW],
+  [3, 'production_craft_module', H3_OLD, H3_NEW],
+  [4, 'craft_module', WRAP_DECL_OLD, WRAP_DECL_NEW],
+  [5, 'craft_module', H4_OLD, H4_NEW],
+  [6, 'production_recruit_captain', H5_OLD, H5_NEW],
+  [7, 'production_recruit_captain', H6_OLD, H6_NEW],
+  [8, 'recruit_captain', WRAP_DECL_OLD, WRAP_DECL_NEW],
+  [9, 'recruit_captain', H7_OLD, H7_NEW],
+  [10, 'sell_item_at_port', H8_OLD, H8_NEW],
+  [11, 'sell_item_at_port', H9_OLD, H9_NEW],
+  [12, 'sell_item_at_port', H10_OLD, H10_NEW],
+  [13, 'sell_item_at_port', H11_OLD, H11_NEW],
+  [14, 'production_start_hull_build', H12_OLD, H12_NEW],
+  [15, 'production_start_hull_build', H13_OLD, H13_NEW],
+  [16, 'production_start_hull_build', H14_OLD, H14_NEW],
+  [17, 'start_hull_build', WRAP_DECL_OLD, WRAP_DECL_NEW],
+  [18, 'start_hull_build', H15_OLD, H15_NEW],
+  [19, 'cancel_build_order', H16_OLD, H16_NEW],
+  [20, 'buy_shop_offer_at_port', H17_OLD, H17_NEW],
+  [21, 'buy_shop_offer_at_port', H18_OLD, H18_NEW],
+  [22, 'buy_shop_offer_at_port', H19_OLD, H19_NEW],
+];
+
+// Signature widenings, applied to the SAME re-created definitions. The argument list is read back
+// from the catalog at deploy time — it is never retyped here.
+const SIGS = [
+  ['production_craft_module', 'p_base uuid', false],
+  ['craft_module', 'p_main_ship_id uuid DEFAULT NULL::uuid', true],
+  ['production_recruit_captain', 'p_base uuid', false],
+  ['recruit_captain', 'p_main_ship_id uuid DEFAULT NULL::uuid', true],
+  ['production_start_hull_build', 'p_base uuid', false],
+  ['start_hull_build', 'p_main_ship_id uuid DEFAULT NULL::uuid', true],
+];
+
+const hunkRows = HUNKS.map(([i, f, o, n]) =>
+  `    (${i}, '${f}',\n     ${q(`o${i}`, o)},\n     ${q(`n${i}`, n)})`).join(',\n');
+const sigRows = SIGS.map(([f, add, client]) =>
+  `    ('${f}', '${add}', ${client})`).join(',\n');
+
+const sql = `-- Byeharu — 0333: ITEMS LIVE AT PORTS.   (rev.3 — see THE TWO CORRECTIONS below)
 --
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 -- THE OWNER'S DESIGN LAWS THIS MIGRATION EXISTS TO SATISFY (stated long ago, repeated 2026-08-03):
@@ -10,13 +270,13 @@
 --
 -- ── THE MODEL, SETTLED. DO NOT RE-LITIGATE IT. ───────────────────────────────────────────────────
 -- ITEMS LIVE IN PORT STORAGE. THE FLEET HOLD IS PURELY WHAT YOU CARRY.
---   · `base_items` (per-port, keyed to the player's `bases` row for that port) is where items LIVE.
+--   · \`base_items\` (per-port, keyed to the player's \`bases\` row for that port) is where items LIVE.
 --     It is their home. Crafting, recruiting and ordering a hull all consume from the port you are
 --     DOCKED AT — nothing consumes from a pool that has no place.
---   · `fleet_items` (per-FLEET) is the HOLD: purely what a fleet is carrying between ports. It is
---     transient. Its capacity is Σ `cargo_capacity_m3` over that fleet's LIVING ships.
---   · `transfer_items` is the ONE verb that moves a stack between them, and only while docked.
---   · `player_inventory` — a single GLOBAL, LOCATION-LESS, WEIGHTLESS pool — is the thing that
+--   · \`fleet_items\` (per-FLEET) is the HOLD: purely what a fleet is carrying between ports. It is
+--     transient. Its capacity is Σ \`cargo_capacity_m3\` over that fleet's LIVING ships.
+--   · \`transfer_items\` is the ONE verb that moves a stack between them, and only while docked.
+--   · \`player_inventory\` — a single GLOBAL, LOCATION-LESS, WEIGHTLESS pool — is the thing that
 --     contradicted laws 2 and 3 outright. Its 312 rows land in port storage and THE TABLE IS
 --     DROPPED. A model that ships while its predecessor stays live is spaghetti by construction.
 --
@@ -39,16 +299,16 @@
 --     objtype 'r' (table) · owner postgres · schema public
 --     default_acl = {postgres=arwdDxtm/postgres, anon=arwdDxtm/postgres,
 --                    authenticated=arwdDxtm/postgres, service_role=arwdDxtm/postgres}
--- `arwdDxtm` = INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN. Every new
+-- \`arwdDxtm\` = INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN. Every new
 -- public table owned by postgres inherits ALL EIGHT for anon and authenticated at creation. A
--- disposable `supabase start` carries no such default, so a verb-list revoke reads green in CI and
--- fails on production. `revoke all` is a SUPERSET of any default and is therefore correct in both
+-- disposable \`supabase start\` carries no such default, so a verb-list revoke reads green in CI and
+-- fails on production. \`revoke all\` is a SUPERSET of any default and is therefore correct in both
 -- worlds without needing to know which world it is in.
 --
--- ── WHY THE HOLD IS KEYED ON `fleets.id` ─────────────────────────────────────────────────────────
--- `mainship_resolve_fleet` (0210) is the ONE ship→fleet resolver and it already answers for both
+-- ── WHY THE HOLD IS KEYED ON \`fleets.id\` ─────────────────────────────────────────────────────────
+-- \`mainship_resolve_fleet\` (0210) is the ONE ship→fleet resolver and it already answers for both
 -- shapes: a ship in a group resolves to the group's unified fleet, a lone ship to its own per-ship
--- fleet. So keying the hold on `fleets.id` needs NO new concept, gives a grouped fleet ONE shared
+-- fleet. So keying the hold on \`fleets.id\` needs NO new concept, gives a grouped fleet ONE shared
 -- hold (the owner's correction), and still gives an ungrouped ship a hold of its own. Capacity is
 -- the inverse of that same resolver, in one leaf, over LIVING ships only — a wreck carries nothing.
 --
@@ -63,61 +323,61 @@
 --   cancel_build_order (hull refund)                    → the port that PLACED the order
 --
 -- ── DEPOSITS NEVER STRAND; SPENDS REFUSE ─────────────────────────────────────────────────────────
--- `inventory_deposit` accepts a NULL base and falls back to the oldest active base: never destroy
--- an asset to satisfy a rule. `inventory_spend` and `inventory_get_balance` REFUSE a NULL base —
+-- \`inventory_deposit\` accepts a NULL base and falls back to the oldest active base: never destroy
+-- an asset to satisfy a rule. \`inventory_spend\` and \`inventory_get_balance\` REFUSE a NULL base —
 -- a spend that does not name its port is not a spend, and the three commands return a typed
--- `not_docked` envelope long before the leaf is ever reached.
+-- \`not_docked\` envelope long before the leaf is ever reached.
 --
 -- ── THE THREE COMMANDS GAIN A SHIP ───────────────────────────────────────────────────────────────
--- `craft_module`, `recruit_captain` and `start_hull_build` gain `p_main_ship_id uuid default null`
+-- \`craft_module\`, \`recruit_captain\` and \`start_hull_build\` gain \`p_main_ship_id uuid default null\`
 -- — the established sole-ship shim shape (0081), so an existing single-ship caller keeps working
 -- byte-for-byte. The PORT is derived from that ship's validated dock through
--- `mainship_resolve_docked_location`; it is NEVER a parameter, so "craft from a port I am not
+-- \`mainship_resolve_docked_location\`; it is NEVER a parameter, so "craft from a port I am not
 -- standing in" is not a request the surface can express. "Oldest base" was REJECTED for these three:
 -- it would let a player craft from Haven's materials while standing at Slagworks, which is remote
 -- retrieval and violates law 3 for exactly the person who asked for the law.
 --
 -- ── HULL ORDERS MUST RECORD THEIR STORE (the refund answer) ──────────────────────────────────────
--- `build_orders_kind_coherent` (0188:104-108) CHECK-constrained hull orders to `base_id IS NULL`,
+-- \`build_orders_kind_coherent\` (0188:104-108) CHECK-constrained hull orders to \`base_id IS NULL\`,
 -- and the hull arm is the ONLY refund path that returns ITEMS (0194:404). So the item refund had no
--- port BY CONSTRUCTION. `production_start_hull_build` now records the docked port's store on the
--- order and the CHECK is flipped to REQUIRE `base_id NOT NULL` on hull orders, matching unit orders.
--- `build_orders` has ZERO rows on production, so there is nothing to backfill and no row can fail
+-- port BY CONSTRUCTION. \`production_start_hull_build\` now records the docked port's store on the
+-- order and the CHECK is flipped to REQUIRE \`base_id NOT NULL\` on hull orders, matching unit orders.
+-- \`build_orders\` has ZERO rows on production, so there is nothing to backfill and no row can fail
 -- the new CHECK.
 --
 -- ── BLAST RADIUS (production is a LIVE ~30-player game), measured 2026-08-03 ─────────────────────
---   `module_craft_receipts`   3 rows / 1 player — all within 0.6s on 2026-07-19, the SpatialCanary
+--   \`module_craft_receipts\`   3 rows / 1 player — all within 0.6s on 2026-07-19, the SpatialCanary
 --                             scripted account, currently not docked.
---   `captain_recruit_receipts` 0 rows.   `build_orders` 0 rows.   `base_items` does not exist.
---   `player_inventory`        312 rows / 157 players; EVERY ONE of those players has an active base
+--   \`captain_recruit_receipts\` 0 rows.   \`build_orders\` 0 rows.   \`base_items\` does not exist.
+--   \`player_inventory\`        312 rows / 157 players; EVERY ONE of those players has an active base
 --                             (checked: zero without), so the move below strands nobody.
 --   The live behavioural regression is therefore ONE non-organic account.
 --
---   ADDS:    `item_types.volume_m3`; `base_items`; `fleet_items`; `item_transfer_receipts`;
---            `inventory_ledger.base_id`; the six leaves (`base_items_add`/`_take`,
---            `fleet_items_add`/`_take`, `fleet_hold_capacity_m3`/`_used_m3`);
---            `transfer_items` + `get_my_hold` (authenticated RPCs).
---   DROPS:   `player_inventory` (after its rows move), and the three 0039 leaf signatures, which
+--   ADDS:    \`item_types.volume_m3\`; \`base_items\`; \`fleet_items\`; \`item_transfer_receipts\`;
+--            \`inventory_ledger.base_id\`; the six leaves (\`base_items_add\`/\`_take\`,
+--            \`fleet_items_add\`/\`_take\`, \`fleet_hold_capacity_m3\`/\`_used_m3\`);
+--            \`transfer_items\` + \`get_my_hold\` (authenticated RPCs).
+--   DROPS:   \`player_inventory\` (after its rows move), and the three 0039 leaf signatures, which
 --            are re-created against port storage.
 --   CHANGES: the ten functions listed in section 11, each by replace-surgery over its DEPLOYED
 --            definition using a slice cut verbatim from its own textual head.
---   TOUCHES NOT AT ALL: any cron, any combat function, any movement function, `market_buy`,
---            `ship_cargo_lots`, `base_resources`, `base_units`. No feature flag is created; the
---            slice rides the ALREADY-LIT `station_storage_enabled` because it IS the per-port
+--   TOUCHES NOT AT ALL: any cron, any combat function, any movement function, \`market_buy\`,
+--            \`ship_cargo_lots\`, \`base_resources\`, \`base_units\`. No feature flag is created; the
+--            slice rides the ALREADY-LIT \`station_storage_enabled\` because it IS the per-port
 --            storage feature finally completed. Shipping LIT is the standing order.
 --
 -- ── SELF-ASSERT MAP (one DO block per check — the statement number IS the diagnosis) ─────────────
 --   (a) every item type carries a POSITIVE volume, and the CHECK that guarantees it is validated
---   (b) `base_items` and `fleet_items` mirror `base_resources`: shape, RLS, one owner-scoped
+--   (b) \`base_items\` and \`fleet_items\` mirror \`base_resources\`: shape, RLS, one owner-scoped
 --       SELECT policy whose DEPLOYED expression really scopes to the owner, no client write
 --   (c) ACLs, each ESTABLISHED here and then asserted: 120 has_table_privilege assertions across
 --       5 tables x 8 verbs x 3 client grantees, plus the anon SEAT made to try the reads for real
---   (d) `transfer_items` composes ONE authority per fact and acquires no second one; law 3 is
+--   (d) \`transfer_items\` composes ONE authority per fact and acquires no second one; law 3 is
 --       UNEXPRESSABLE (no location-shaped parameter), not merely checked
---   (e) `get_my_docked_store` carried through every 0211 invariant
+--   (e) \`get_my_docked_store\` carried through every 0211 invariant
 --   (f) capacity is DERIVED (never stored), fleet-scoped, and excludes wrecks
---   (g) THE THREE LEAVES ARE THE ONLY WRITERS OF `base_items`/`fleet_items`, they all take a port,
---       `player_inventory` is GONE, and no second global pool replaced it
+--   (g) THE THREE LEAVES ARE THE ONLY WRITERS OF \`base_items\`/\`fleet_items\`, they all take a port,
+--       \`player_inventory\` is GONE, and no second global pool replaced it
 --   (h) the ten re-created functions changed BODY AND NOTHING ELSE (metadata parity), the three
 --       commands really gained the ship, and the hull order really records its store
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -234,8 +494,8 @@ update public.item_types t set volume_m3 = v.m3
 
 -- ═══ 2. base_items — WHERE ITEMS LIVE. Mirrors base_resources exactly. ═══════════════════════════
 -- Column shape, FK-with-cascade, uniqueness and RLS are a deliberate byte-mirror of
--- `base_resources` (0005:31-38 / :53-58). The ONLY differences are the value domain (INTEGER
--- quantity, because an item is a whole thing) and the FK on `item_types`.
+-- \`base_resources\` (0005:31-38 / :53-58). The ONLY differences are the value domain (INTEGER
+-- quantity, because an item is a whole thing) and the FK on \`item_types\`.
 create table public.base_items (
   id         uuid    primary key default gen_random_uuid(),
   base_id    uuid    not null references public.bases (id) on delete cascade,
@@ -319,7 +579,7 @@ grant execute on function public.base_items_add(uuid, text, integer)  to service
 grant execute on function public.base_items_take(uuid, text, integer) to service_role;
 
 -- ═══ 4. fleet_items — THE HOLD. What a fleet is CARRYING, and nothing else. ══════════════════════
--- Keyed on `fleets.id` because that is what `mainship_resolve_fleet` (0210) — the ONE ship→fleet
+-- Keyed on \`fleets.id\` because that is what \`mainship_resolve_fleet\` (0210) — the ONE ship→fleet
 -- resolver — already answers with, for both a grouped fleet and a lone ship. A fleet is in exactly
 -- one place at a time, which is the entire reason it, and not the player, is the unit of carrying.
 create table public.fleet_items (
@@ -397,7 +657,7 @@ grant execute on function public.fleet_items_add(uuid, text, integer)  to servic
 grant execute on function public.fleet_items_take(uuid, text, integer) to service_role;
 
 -- ═══ 5. The capacity leaves — DERIVED, never stored, FLEET-scoped ════════════════════════════════
--- There is no `hold_capacity` column anywhere and there must never be one: a stored copy of a
+-- There is no \`hold_capacity\` column anywhere and there must never be one: a stored copy of a
 -- derivable number is a second authority that drifts.
 create or replace function public.fleet_hold_capacity_m3(p_fleet uuid)
 returns numeric
@@ -408,7 +668,7 @@ set search_path = public
 as $$
   -- The INVERSE of mainship_resolve_fleet (0210), and the only place it is written: a unified
   -- fleet's ships are its GROUP's members; a per-ship fleet's ship is its own. A wreck carries
-  -- nothing, so `status <> 'destroyed'`. Zero living ships -> 0, which is the honest answer.
+  -- nothing, so \`status <> 'destroyed'\`. Zero living ships -> 0, which is the honest answer.
   select coalesce((
     select sum(m.cargo_capacity_m3)
       from public.fleets f
@@ -428,7 +688,7 @@ security definer
 set search_path = public
 as $$
   -- The hold's occupancy: every carried stack at its catalog volume. Items only — trade cargo
-  -- (`ship_cargo_lots`, keyed per hull) is a separate hold on purpose and is left byte-untouched.
+  -- (\`ship_cargo_lots\`, keyed per hull) is a separate hold on purpose and is left byte-untouched.
   select coalesce((
     select sum(fi.quantity * t.volume_m3)
       from public.fleet_items fi
@@ -447,7 +707,7 @@ grant execute on function public.fleet_hold_used_m3(uuid)     to service_role;
 -- — it is the securing-processor idiom (0221:1031-1036) that 0307:153 already uses for loot with
 -- no port. The precondition above proved every holder has one, so nothing is stranded, nothing is
 -- clamped, nothing is deleted. Quantities are summed per (base, item) in case a player somehow
--- holds the same item twice; `base_items_add` is the sole writer and is used as such.
+-- holds the same item twice; \`base_items_add\` is the sole writer and is used as such.
 do $move$
 declare
   r      record;
@@ -928,7 +1188,7 @@ begin
 
   -- §2.5: resolve the SELECTED owned ship (explicit p_main_ship_id, ownership asserted server-side) or the
   -- sole ship (shim); UI selection is never trusted. Null (no ship / unowned / zero / ambiguous >1) → the
-  -- existing no_main_ship projection, verbatim (was: `where player_id = v_player`, arbitrary at N>1).
+  -- existing no_main_ship projection, verbatim (was: \`where player_id = v_player\`, arbitrary at N>1).
   v_ship := public.mainship_resolve_owned_ship(v_player, p_main_ship_id);
   if v_ship is null then
     return jsonb_build_object('state','no_main_ship','docked',false,'location_id',null,'location_name',null,'store_id',null,'resources',c_empty,'units',c_empty,'items',c_empty);
@@ -942,7 +1202,7 @@ begin
 
   if v_ok is true and v_vstate = 'at_location' then
     -- FLEET-GO 3c-2 (the ONE hunk): the dock comes from the ONE shared resolver instead of the inlined
-    -- `f.main_ship_id = <ship>` read (NULL on a unified fleet — a docked group's hangar vanished).
+    -- \`f.main_ship_id = <ship>\` read (NULL on a unified fleet — a docked group's hangar vanished).
     -- Dark → the resolver's per-ship fallback returns the exact row the inline read selected →
     -- byte-identical. Null keeps collapsing to the same incoherent envelope below.
     v_loc := public.mainship_resolve_docked_location(v_ship);
@@ -1000,9 +1260,9 @@ revoke all    on function public.get_my_docked_store(uuid) from public;
 grant  execute on function public.get_my_docked_store(uuid) to authenticated;
 
 -- ═══ 12. THE TEN CONSUMERS, RE-POINTED BY REPLACE-SURGERY OVER THEIR DEPLOYED DEFINITIONS ════════
--- Nothing below is retyped. Every `old_t` was SLICED VERBATIM out of the migration that is that
+-- Nothing below is retyped. Every \`old_t\` was SLICED VERBATIM out of the migration that is that
 -- function's textual head (0040 / 0109 / 0126 / 0174 / 0188 / 0194 / 0235 — each proven to still BE
--- the head by the generator's own drift gate), and every `new_t` was CONSTRUCTED FROM THAT SLICE by
+-- the head by the generator's own drift gate), and every \`new_t\` was CONSTRUCTED FROM THAT SLICE by
 -- exactly-once string edits. The rewrite below proves each slice is still what is DEPLOYED (it must
 -- occur EXACTLY ONCE in pg_get_functiondef) before replacing it — so a body that drifted since the
 -- slice was cut aborts the deploy instead of being silently clobbered.
@@ -1029,28 +1289,7 @@ begin
   for r in
     select distinct fname from (
       select unnest(array[
-        'reward_grant',
-        'production_craft_module',
-        'production_craft_module',
-        'craft_module',
-        'craft_module',
-        'production_recruit_captain',
-        'production_recruit_captain',
-        'recruit_captain',
-        'recruit_captain',
-        'sell_item_at_port',
-        'sell_item_at_port',
-        'sell_item_at_port',
-        'sell_item_at_port',
-        'production_start_hull_build',
-        'production_start_hull_build',
-        'production_start_hull_build',
-        'start_hull_build',
-        'start_hull_build',
-        'cancel_build_order',
-        'buy_shop_offer_at_port',
-        'buy_shop_offer_at_port',
-        'buy_shop_offer_at_port'
+${HUNKS.map(([, f]) => `        '${f}'`).join(',\n')}
       ]) as fname) t
     order by fname
   loop
@@ -1069,195 +1308,7 @@ begin
   -- (2) apply every body hunk, each exactly once, in index order.
   for r in
     select * from (values
-    (1, 'reward_grant',
-     $o1$        perform inventory_deposit(
-          p_player, r.item_id, r.qty,
-          p_source_type || ':' || p_source_id::text || ':' || r.item_id);$o1$,
-     $n1$        perform inventory_deposit(
-          p_player, p_base, r.item_id, r.qty,
-          p_source_type || ':' || p_source_id::text || ':' || r.item_id);$n1$),
-    (2, 'production_craft_module',
-     $o2$    v_have := public.inventory_get_balance(p_player, r.item_id);$o2$,
-     $n2$    v_have := public.inventory_get_balance(p_player, p_base, r.item_id);$n2$),
-    (3, 'production_craft_module',
-     $o3$    perform public.inventory_spend(p_player, r.item_id, r.qty);$o3$,
-     $n3$    perform public.inventory_spend(p_player, p_base, r.item_id, r.qty);$n3$),
-    (4, 'craft_module',
-     $o4$declare
-  v_player uuid := auth.uid();
-  v_res    jsonb;
-  v_reason text;
-begin$o4$,
-     $n4$declare
-  v_player uuid := auth.uid();
-  v_res    jsonb;
-  v_reason text;
-  v_ship   uuid;   -- ★ 0333
-  v_loc    uuid;   -- ★ 0333
-  v_base   uuid;   -- ★ 0333
-begin$n4$),
-    (5, 'craft_module',
-     $o5$  v_res := public.production_craft_module(v_player, p_module_type, p_request_id);$o5$,
-     $n5$  -- ★ 0333 — LAW 3: you build from the port you are DOCKED AT. The port is DERIVED from the
-  --   ship's validated dock through the ONE shared resolver; it is never a parameter, so
-  --   "craft from a port I am not standing in" is not a request this surface can express.
-  v_ship := public.mainship_resolve_owned_ship(v_player, p_main_ship_id);
-  if v_ship is null then
-    return jsonb_build_object('ok', false, 'code', 'ship_not_found', 'message', 'No ship available.');
-  end if;
-  v_loc := public.mainship_resolve_docked_location(v_ship);
-  if v_loc is null then
-    return jsonb_build_object('ok', false, 'code', 'not_docked', 'message', 'Dock at a port to use what is stored there.');
-  end if;
-  if not public.is_home_port_eligible(v_loc) then
-    return jsonb_build_object('ok', false, 'code', 'port_has_no_storage', 'message', 'This place has no storage.');
-  end if;
-  v_base := public.get_or_create_store(v_player, v_loc);
-
-  v_res := public.production_craft_module(v_player, p_module_type, p_request_id, v_base);$n5$),
-    (6, 'production_recruit_captain',
-     $o6$    v_have := public.inventory_get_balance(p_player, r.item_id);$o6$,
-     $n6$    v_have := public.inventory_get_balance(p_player, p_base, r.item_id);$n6$),
-    (7, 'production_recruit_captain',
-     $o7$    perform public.inventory_spend(p_player, r.item_id, r.qty);$o7$,
-     $n7$    perform public.inventory_spend(p_player, p_base, r.item_id, r.qty);$n7$),
-    (8, 'recruit_captain',
-     $o8$declare
-  v_player uuid := auth.uid();
-  v_res    jsonb;
-  v_reason text;
-begin$o8$,
-     $n8$declare
-  v_player uuid := auth.uid();
-  v_res    jsonb;
-  v_reason text;
-  v_ship   uuid;   -- ★ 0333
-  v_loc    uuid;   -- ★ 0333
-  v_base   uuid;   -- ★ 0333
-begin$n8$),
-    (9, 'recruit_captain',
-     $o9$  v_res := public.production_recruit_captain(v_player, p_captain_type, p_request_id);$o9$,
-     $n9$  -- ★ 0333 — LAW 3: you build from the port you are DOCKED AT. The port is DERIVED from the
-  --   ship's validated dock through the ONE shared resolver; it is never a parameter, so
-  --   "recruit from a port I am not standing in" is not a request this surface can express.
-  v_ship := public.mainship_resolve_owned_ship(v_player, p_main_ship_id);
-  if v_ship is null then
-    return jsonb_build_object('ok', false, 'code', 'ship_not_found', 'message', 'No ship available.');
-  end if;
-  v_loc := public.mainship_resolve_docked_location(v_ship);
-  if v_loc is null then
-    return jsonb_build_object('ok', false, 'code', 'not_docked', 'message', 'Dock at a port to use what is stored there.');
-  end if;
-  if not public.is_home_port_eligible(v_loc) then
-    return jsonb_build_object('ok', false, 'code', 'port_has_no_storage', 'message', 'This place has no storage.');
-  end if;
-  v_base := public.get_or_create_store(v_player, v_loc);
-
-  v_res := public.production_recruit_captain(v_player, p_captain_type, p_request_id, v_base);$n9$),
-    (10, 'sell_item_at_port',
-     $o10$  v_receipt  uuid;
-begin$o10$,
-     $n10$  v_receipt  uuid;
-  v_store    uuid;   -- ★ 0333
-begin$n10$),
-    (11, 'sell_item_at_port',
-     $o11$  v_loc := public.mainship_resolve_docked_location(v_ship);
-  if v_loc is null then
-    return jsonb_build_object('ok', false, 'reason', 'not_docked');
-  end if;$o11$,
-     $n11$  v_loc := public.mainship_resolve_docked_location(v_ship);
-  if v_loc is null then
-    return jsonb_build_object('ok', false, 'reason', 'not_docked');
-  end if;
-
-  -- ★ 0333 — items LIVE in this port's storage, so the sale draws from THIS port and no other.
-  if not public.is_home_port_eligible(v_loc) then
-    return jsonb_build_object('ok', false, 'reason', 'port_has_no_storage', 'location_id', v_loc);
-  end if;
-  v_store := public.get_or_create_store(v_player, v_loc);$n11$),
-    (12, 'sell_item_at_port',
-     $o12$  v_have := public.inventory_get_balance(v_player, p_item_id);$o12$,
-     $n12$  v_have := public.inventory_get_balance(v_player, v_store, p_item_id);$n12$),
-    (13, 'sell_item_at_port',
-     $o13$  perform public.inventory_spend(v_player, p_item_id, v_qty);$o13$,
-     $n13$  perform public.inventory_spend(v_player, v_store, p_item_id, v_qty);$n13$),
-    (14, 'production_start_hull_build',
-     $o14$    v_have := public.inventory_get_balance(p_player, r.item_id);$o14$,
-     $n14$    v_have := public.inventory_get_balance(p_player, p_base, r.item_id);$n14$),
-    (15, 'production_start_hull_build',
-     $o15$    perform public.inventory_spend(p_player, r.item_id, r.qty::integer);$o15$,
-     $n15$    perform public.inventory_spend(p_player, p_base, r.item_id, r.qty::integer);$n15$),
-    (16, 'production_start_hull_build',
-     $o16$  insert into build_orders (player_id, hull_type_id, quantity, credits_spent, status, queued_at)
-    values (p_player, p_hull_type_id, 1, v_recipe.credits_cost, 'waiting', now())
-    returning id into v_order;$o16$,
-     $n16$  insert into build_orders (player_id, base_id, hull_type_id, quantity, credits_spent, status, queued_at)
-    values (p_player, p_base, p_hull_type_id, 1, v_recipe.credits_cost, 'waiting', now())
-    returning id into v_order;$n16$),
-    (17, 'start_hull_build',
-     $o17$declare
-  v_player uuid := auth.uid();
-  v_res    jsonb;
-  v_reason text;
-begin$o17$,
-     $n17$declare
-  v_player uuid := auth.uid();
-  v_res    jsonb;
-  v_reason text;
-  v_ship   uuid;   -- ★ 0333
-  v_loc    uuid;   -- ★ 0333
-  v_base   uuid;   -- ★ 0333
-begin$n17$),
-    (18, 'start_hull_build',
-     $o18$  v_res := public.production_start_hull_build(v_player, p_hull_type_id, p_request_id);$o18$,
-     $n18$  -- ★ 0333 — LAW 3: you build from the port you are DOCKED AT. The port is DERIVED from the
-  --   ship's validated dock through the ONE shared resolver; it is never a parameter, so
-  --   "order a hull from a port I am not standing in" is not a request this surface can express.
-  v_ship := public.mainship_resolve_owned_ship(v_player, p_main_ship_id);
-  if v_ship is null then
-    return jsonb_build_object('ok', false, 'code', 'ship_not_found', 'message', 'No ship available.');
-  end if;
-  v_loc := public.mainship_resolve_docked_location(v_ship);
-  if v_loc is null then
-    return jsonb_build_object('ok', false, 'code', 'not_docked', 'message', 'Dock at a port to use what is stored there.');
-  end if;
-  if not public.is_home_port_eligible(v_loc) then
-    return jsonb_build_object('ok', false, 'code', 'port_has_no_storage', 'message', 'This place has no storage.');
-  end if;
-  v_base := public.get_or_create_store(v_player, v_loc);
-
-  v_res := public.production_start_hull_build(v_player, p_hull_type_id, p_request_id, v_base);$n18$),
-    (19, 'cancel_build_order',
-     $o19$        perform public.inventory_deposit(o.player_id, r.item_id, v_qty,
-                                         'hull_cancel:' || o.id || ':' || r.item_id);$o19$,
-     $n19$        perform public.inventory_deposit(o.player_id, o.base_id, r.item_id, v_qty,
-                                         'hull_cancel:' || o.id || ':' || r.item_id);$n19$),
-    (20, 'buy_shop_offer_at_port',
-     $o20$  v_receipt  uuid;
-begin$o20$,
-     $n20$  v_receipt  uuid;
-  v_store    uuid;   -- ★ 0333
-begin$n20$),
-    (21, 'buy_shop_offer_at_port',
-     $o21$  v_loc := public.mainship_resolve_docked_location(v_ship);
-  if v_loc is null then
-    return jsonb_build_object('ok', false, 'reason', 'not_docked');
-  end if;$o21$,
-     $n21$  v_loc := public.mainship_resolve_docked_location(v_ship);
-  if v_loc is null then
-    return jsonb_build_object('ok', false, 'reason', 'not_docked');
-  end if;
-
-  -- ★ 0333 — what you buy is put down HERE, in this port's storage, because that is where items live.
-  if not public.is_home_port_eligible(v_loc) then
-    return jsonb_build_object('ok', false, 'reason', 'port_has_no_storage', 'location_id', v_loc);
-  end if;
-  v_store := public.get_or_create_store(v_player, v_loc);$n21$),
-    (22, 'buy_shop_offer_at_port',
-     $o22$    perform public.inventory_deposit(
-      v_player, v_offer.item_id, v_qty, 'shop:' || v_player::text || ':' || p_request_id::text);$o22$,
-     $n22$    perform public.inventory_deposit(
-      v_player, v_store, v_offer.item_id, v_qty, 'shop:' || v_player::text || ':' || p_request_id::text);$n22$)
+${hunkRows}
     ) as t(idx, fname, old_t, new_t)
     order by idx
   loop
@@ -1272,12 +1323,7 @@ begin$n20$),
   -- (3) widen the six signatures, reading the current argument list back from the catalog.
   for s in
     select * from (values
-    ('production_craft_module', 'p_base uuid', false),
-    ('craft_module', 'p_main_ship_id uuid DEFAULT NULL::uuid', true),
-    ('production_recruit_captain', 'p_base uuid', false),
-    ('recruit_captain', 'p_main_ship_id uuid DEFAULT NULL::uuid', true),
-    ('production_start_hull_build', 'p_base uuid', false),
-    ('start_hull_build', 'p_main_ship_id uuid DEFAULT NULL::uuid', true)
+${sigRows}
     ) as t(fname, add_arg, is_client)
     order by fname
   loop
@@ -1304,12 +1350,7 @@ begin$n20$),
 
   for s in
     select * from (values
-    ('production_craft_module', 'p_base uuid', false),
-    ('craft_module', 'p_main_ship_id uuid DEFAULT NULL::uuid', true),
-    ('production_recruit_captain', 'p_base uuid', false),
-    ('recruit_captain', 'p_main_ship_id uuid DEFAULT NULL::uuid', true),
-    ('production_start_hull_build', 'p_base uuid', false),
-    ('start_hull_build', 'p_main_ship_id uuid DEFAULT NULL::uuid', true)
+${sigRows}
     ) as t(fname, add_arg, is_client)
     order by fname
   loop
@@ -1337,7 +1378,7 @@ begin$n20$),
     raise exception '0333 REWRITE FAIL: the public function count moved % -> % across the rewrite (expected no net change)', v_before, v_after;
   end if;
 
-  raise notice '0333 REWRITE: % body hunk(s) over % function(s) and % signature widening(s), every hunk sliced verbatim from its own textual head and matched exactly once against the deployed body', 22, (select count(*) from jsonb_object_keys(v_defs) k), 6;
+  raise notice '0333 REWRITE: % body hunk(s) over % function(s) and % signature widening(s), every hunk sliced verbatim from its own textual head and matched exactly once against the deployed body', ${HUNKS.length}, (select count(*) from jsonb_object_keys(v_defs) k), ${SIGS.length};
 end $rw$;
 
 -- The three client-facing commands keep their authenticated grant across the signature change
@@ -1357,9 +1398,9 @@ grant execute on function public.production_recruit_captain(uuid, text, text, uu
 grant execute on function public.production_start_hull_build(uuid, text, uuid, uuid) to service_role;
 
 -- ═══ 13. A HULL ORDER MUST RECORD ITS STORE ══════════════════════════════════════════════════════
--- 0188:104-108 forced `base_id IS NULL` on hull orders, which is precisely why 0194's hull refund
+-- 0188:104-108 forced \`base_id IS NULL\` on hull orders, which is precisely why 0194's hull refund
 -- arm — the ONLY refund path that returns ITEMS — had no port to return them to. Flip it: a hull
--- order now REQUIRES its store, exactly like a unit order. `build_orders` has zero rows on
+-- order now REQUIRES its store, exactly like a unit order. \`build_orders\` has zero rows on
 -- production, so no existing row can fail the new CHECK, and the assert below proves it.
 do $bo$
 declare
@@ -1383,21 +1424,21 @@ alter table public.build_orders add constraint build_orders_kind_coherent check 
 -- migration ever revoked (verified on production 2026-08-03). RLS with no write policy denies the
 -- writes today, so the write half is defense in depth — but the 2026-07-20 danger_zones abort, and
 -- this migration's OWN rev.1 abort, are the standing lesson: a publish slice ESTABLISHES its
--- posture, it never merely asserts one. `inventory_ledger` is here specifically because it is the
+-- posture, it never merely asserts one. \`inventory_ledger\` is here specifically because it is the
 -- idempotency guard for every keyed deposit: a client able to pre-insert an idempotency key could
 -- make a legitimate deposit silently no-op.
 --
--- Grepped the whole chain: `grant` on the two pre-existing tables appears in exactly two places,
+-- Grepped the whole chain: \`grant\` on the two pre-existing tables appears in exactly two places,
 -- both in 0039 —
 --   0039:25  grant select on public.item_types       to anon, authenticated;   <- PUBLIC-READ catalog
 --   0039:70  grant select on public.inventory_ledger to authenticated;
 -- so revoking everything and re-issuing exactly those two lines lands on the migration-intended
--- state and strips only the project-default drift. (0039:52's `player_inventory` grant went with
+-- state and strips only the project-default drift. (0039:52's \`player_inventory\` grant went with
 -- the table.) Anything not re-granted below was never granted by any migration — it was inherited.
 --
--- ⚠ item_types KEEPS its anon SELECT ON PURPOSE. It is Reference/Config with an `using(true)` read
+-- ⚠ item_types KEEPS its anon SELECT ON PURPOSE. It is Reference/Config with an \`using(true)\` read
 -- policy (0039:24-25), the same posture as module_types/market_offers, and the client's catalog read
--- depends on it. A blind `revoke all` with no re-grant here would have been a self-inflicted outage
+-- depends on it. A blind \`revoke all\` with no re-grant here would have been a self-inflicted outage
 -- — which is exactly why this block enumerates a per-table INTENDED posture instead of applying one
 -- rule to every table it touches.
 revoke all on table public.inventory_ledger from public, anon, authenticated;
@@ -1537,7 +1578,7 @@ begin
     end if;
 
     -- ...and the policy's EXPRESSION actually scopes to the owner. A policy that exists but reads
-    -- `using (true)` is a DIFFERENT failure from a missing one, and would leak every player's
+    -- \`using (true)\` is a DIFFERENT failure from a missing one, and would leak every player's
     -- storage to every other player. Read the deployed qual; do not trust the policy's name.
     select pg_get_expr(p.polqual, p.polrelid) into v_qual
       from pg_policy p where p.polrelid = ('public.' || v_t)::regclass;
@@ -1674,8 +1715,8 @@ begin
   -- on the count. Same "evaluate the deployed rule, never re-type it" shape as the volume CHECK.
   --
   -- Verified on production before relying on any of it (2026-08-03): PostgreSQL 17.6, so MAINTAIN is
-  -- a real privilege verb; anon/authenticated/service_role all exist; `postgres` is a member of anon
-  -- WITH ADMIN OPTION, so the deploy role can assume the seat; and `postgres` carries BYPASSRLS,
+  -- a real privilege verb; anon/authenticated/service_role all exist; \`postgres\` is a member of anon
+  -- WITH ADMIN OPTION, so the deploy role can assume the seat; and \`postgres\` carries BYPASSRLS,
   -- which the seat change correctly drops.
   --
   -- The role is restored via set_config('role', <saved>, true) rather than RESET ROLE: RESET returns
@@ -1737,7 +1778,7 @@ begin
     raise exception '0333 (d) FAIL: transfer_items is absent';
   end if;
   -- strip comments so no probe below can be satisfied by prose alone (the 0222 vacuity lesson).
-  v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
+  v_src := regexp_replace(v_src, '--[^\\n]*', '', 'g');
 
   -- LAW 3: the dock comes from the ONE shared resolver, and the surface CANNOT name a port.
   if position('mainship_resolve_docked_location(' in v_src) = 0 then
@@ -1795,11 +1836,11 @@ begin
   if position('base_items_add(' in v_src) = 0 or position('base_items_take(' in v_src) = 0 then
     raise exception '0333 (d) FAIL: transfer_items does not move the port stock through the base_items sole writers';
   end if;
-  if v_src ~* '(insert\s+into|update|delete\s+from)\s+public\.(base_items|fleet_items)' then
+  if v_src ~* '(insert\\s+into|update|delete\\s+from)\\s+public\\.(base_items|fleet_items)' then
     raise exception '0333 (d) FAIL: transfer_items writes a store directly — a second writer';
   end if;
   -- and it touches nothing outside its own domain.
-  if v_src ~* '(insert\s+into|update|delete\s+from)\s+public\.(base_resources|base_units|ship_cargo_lots|player_wallet|main_ship_instances|fleets)' then
+  if v_src ~* '(insert\\s+into|update|delete\\s+from)\\s+public\\.(base_resources|base_units|ship_cargo_lots|player_wallet|main_ship_instances|fleets)' then
     raise exception '0333 (d) FAIL: transfer_items writes a table outside the item-transfer domain';
   end if;
 
@@ -1807,7 +1848,7 @@ begin
   if position('hold_over_capacity' in v_src) = 0 then
     raise exception '0333 (d) FAIL: transfer_items has no over-capacity refusal';
   end if;
-  if v_src ~* 'least\s*\(\s*v_qty' or v_src ~* 'v_qty\s*:=\s*least' then
+  if v_src ~* 'least\\s*\\(\\s*v_qty' or v_src ~* 'v_qty\\s*:=\\s*least' then
     raise exception '0333 (d) FAIL: transfer_items clamps the quantity instead of refusing';
   end if;
 
@@ -1831,13 +1872,13 @@ begin
   if v_src is null then
     raise exception '0333 (e) FAIL: get_my_docked_store is absent';
   end if;
-  v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
+  v_src := regexp_replace(v_src, '--[^\\n]*', '', 'g');
 
   -- EIGHT return envelopes (0211 had eight: two no_main_ship, disabled, the null-dock incoherent,
   -- the storeless port, the full docked return, the in_transit/in_space/destroyed branch and the
   -- else) plus the THREE aggregate builders in the docked branch = exactly 11 sites. Any other
   -- number means a branch was lost or duplicated in the re-create.
-  select count(*) into v_n from regexp_matches(v_src, 'jsonb_build_object\(', 'g');
+  select count(*) into v_n from regexp_matches(v_src, 'jsonb_build_object\\(', 'g');
   if v_n <> 11 then
     raise exception '0333 (e) FAIL: the re-created body has % jsonb_build_object sites, expected exactly 11 — a return branch was lost or duplicated', v_n;
   end if;
@@ -1887,7 +1928,7 @@ begin
 
   -- it acquired no write authority: a read function must stay a read function (get_or_create_store's
   -- lazy store materialization is the one pre-existing exception, unchanged from 0211).
-  if v_src ~* '(insert\s+into|update|delete\s+from)\s+public\.(base_items|fleet_items|base_resources|base_units)' then
+  if v_src ~* '(insert\\s+into|update|delete\\s+from)\\s+public\\.(base_items|fleet_items|base_resources|base_units)' then
     raise exception '0333 (e) FAIL: the re-created read acquired a write';
   end if;
 
@@ -1910,8 +1951,8 @@ begin
   if v_cap is null or v_used is null then
     raise exception '0333 (f) FAIL: a capacity leaf is absent';
   end if;
-  v_cap  := regexp_replace(v_cap,  '--[^\n]*', '', 'g');
-  v_used := regexp_replace(v_used, '--[^\n]*', '', 'g');
+  v_cap  := regexp_replace(v_cap,  '--[^\\n]*', '', 'g');
+  v_used := regexp_replace(v_used, '--[^\\n]*', '', 'g');
 
   -- capacity reads cargo_capacity_m3, is keyed on the FLEET, and excludes wrecks.
   if position('cargo_capacity_m3' in v_cap) = 0 then
@@ -1974,8 +2015,8 @@ begin
   select string_agg(p.proname, ', ' order by p.proname) into v_bad
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public'
-     and regexp_replace(p.prosrc, '--[^\n]*', '', 'g')
-         ~* '(from|into|update|join)\s+(public\.)?player_inventory';
+     and regexp_replace(p.prosrc, '--[^\\n]*', '', 'g')
+         ~* '(from|into|update|join)\\s+(public\\.)?player_inventory';
   if v_bad is not null then
     raise exception '0333 (g) FAIL: these functions still read or write the deleted global pool: %', v_bad;
   end if;
@@ -1999,7 +2040,7 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public'
      and p.proname not in ('base_items_add', 'base_items_take', 'fleet_items_add', 'fleet_items_take')
-     and p.prosrc ~* '(insert\s+into|update|delete\s+from)\s+(public\.)?(base_items|fleet_items)';
+     and p.prosrc ~* '(insert\\s+into|update|delete\\s+from)\\s+(public\\.)?(base_items|fleet_items)';
   if v_bad is not null then
     raise exception '0333 (g) FAIL: these functions write a store directly instead of through its sole writer: %', v_bad;
   end if;
@@ -2142,3 +2183,30 @@ begin
 end $z$;
 
 commit;
+`;
+
+if (sql.includes('\r')) {
+  throw new Error('generated 0333 carries a CR — the rewrite hunks would never match the deployed bodies');
+}
+
+const check = process.argv.includes('--check');
+if (check) {
+  let onDisk;
+  try {
+    onDisk = readFileSync(OUT, 'utf8');
+  } catch {
+    console.error('0333 CHECK FAIL: migration file is missing — run the generator');
+    process.exit(1);
+  }
+  if (onDisk.replace(/\r\n/g, '\n') !== sql) {
+    console.error('0333 CHECK FAIL: the migration on disk is not what the slices generate.');
+    console.error('Either a source migration drifted or the file was hand-edited. Re-run the generator.');
+    process.exit(1);
+  }
+  console.log('0333 CHECK OK: migration matches the slices taken from 0040/0109/0126/0174/0188/0194/0235.');
+} else {
+  writeFileSync(OUT, sql);
+  console.log(`0333 written: ${OUT}`);
+  console.log(`  ${HUNKS.length} body hunks over ${new Set(HUNKS.map((h) => h[1])).size} functions, ` +
+    `${SIGS.length} signature widenings — nothing retyped.`);
+}

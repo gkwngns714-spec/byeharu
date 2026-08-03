@@ -15,13 +15,13 @@ const cap = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUppe
 // at a port, in the Storage card (the hold and the port's storage sit in one place because the
 // verb is a move between them).
 //
-// ITEMS-HAVE-A-PLACE (0333): this panel now reads the ONE hold authority (get_my_hold) instead of
-// selecting player_inventory directly, so it shows what every other surface shows — each stack's
-// VOLUME and how full the hold is. It computes neither: used/capacity/free all arrive from the
-// server (hold_used_m3 / hold_capacity_m3). A client-side copy of the capacity formula would be a
-// second authority for "how full is my hold", which is the defect 0333 exists to prevent.
-// The raw-quantity read (modulesApi.fetchMyItemBalances) stays where it belongs — ModulesPanel's
-// "have n" recipe hints, which need counts and no volumes.
+// ITEMS LIVE AT PORTS (0333): this is the FLEET'S HOLD — what the selected ship's fleet is
+// CARRYING — not a player-wide pool. There is no player-wide pool: items LIVE in port storage, and
+// the hold is the transient thing you load at one port and unload at another. It computes no
+// numbers: used/capacity/free all arrive from the server (hold_used_m3 / hold_capacity_m3), because
+// a client-side copy of the capacity formula would be a second authority for "how full is my hold",
+// which is the defect 0333 exists to prevent. What a PORT is holding is a different question with a
+// different authority (get_my_docked_store) and a different surface (the port's Storage card).
 //
 // NOT server-lit gated: the hold has no feature flag — it is live player data (combat salvage
 // already lands there in production), so the panel always renders. A read failure degrades to an
@@ -31,8 +31,12 @@ export function InventoryPanel({
   // Re-reads on main-ship lifecycle transitions AND after an item-consuming command elsewhere on
   // the screen (craft/recruit — ShipScreen bumps its loadout revision into this key).
   refreshKey,
+  // 0333: whose hold. The fleet is resolved server-side from this ship; null falls back to the
+  // sole-ship shim.
+  mainShipId,
 }: {
   refreshKey: string
+  mainShipId: string | null
 }) {
   // null = first load pending · 'error' = read failed · Hold = the server's hold projection.
   const [hold, setHold] = useState<Hold | 'error' | null>(null)
@@ -47,13 +51,13 @@ export function InventoryPanel({
   const { activeRef } = useActivityPanelGuards()
 
   const refresh = useCallback(async () => {
-    const [h, cat] = await Promise.all([fetchMyHold(), fetchItemCatalog()])
+    const [h, cat] = await Promise.all([fetchMyHold(mainShipId), fetchItemCatalog()])
     if (!activeRef.current) return
     // fetchMyHold is fail-closed: a transport error resolves to HOLD_EMPTY (ok:false), which is
     // indistinguishable from "signed out". Both are an honest unavailable line, never a fake empty.
     setHold(h.ok ? h : 'error')
     setCatalog(cat)
-  }, [activeRef]) // ref identity is stable — dep satisfies the lint rule
+  }, [activeRef, mainShipId]) // ref identity is stable; mainShipId is a real dep — the fleet decides the hold
 
   // refreshKey is a deliberate re-fetch trigger (the ModulesPanel lifecycleKey dep idiom).
   useEffect(() => {
