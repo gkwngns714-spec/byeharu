@@ -1070,6 +1070,13 @@ declare r jsonb; n int; t record;
 begin
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  -- 0320 pins the SECOND spread knob too. The per-hit roll 0314 added reads
+  --   coalesce(cfg_num('combat_hit_variance_pct'), v_var_pct)
+  -- so it INHERITED the damage-variance pin above only while that key did not exist. 0320 seeds it
+  -- (production runs it at 0.5), and the moment it exists the inheritance stops and every exact
+  -- damage equality below becomes a +/-50% roll. A proof must state the precondition it owns
+  -- rather than rely on a row's ABSENCE.
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);
   -- UNION at the 0313/0314 merge. BOTH preconditions below are load-bearing and neither replaces the
   -- other: 0314 zeroes the weapon cooldowns (a TIME precondition — without it every multi-tick fire
   -- sequence stalls) and 0313 borrows the formation ring (a GEOMETRY precondition — without it the
@@ -1085,8 +1092,10 @@ begin
   -- world, so it OWNS that precondition in-txn, zeroed BEFORE anything snapshots a cooldown into
   -- weapons_json (wave spawn / encounter creation). Set once here — game_config persists for the
   -- whole txn. The cooldown property itself is proven where it is owned: danger-combat-proof's
-  -- RSFEEL block. (The per-hit damage roll inherits the variance-0 pin above, so every exact
-  -- damage number in this file is unchanged.)
+  -- RSFEEL block. (The per-hit damage roll is pinned to 0 EXPLICITLY above, so every exact damage
+  -- number in this file is unchanged. It used to INHERIT the damage-variance pin, which only
+  -- worked while combat_hit_variance_pct did not exist; 0320 seeds that key — production runs it
+  -- at 0.5 — and this block is where that inheritance broke first.)
   perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
   perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
   update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
@@ -1337,6 +1346,7 @@ begin
   -- or alone.
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);
   select value into v_ring_before from public.game_config where key = 'spatial_formation_ring_radius';
   if v_ring_before is null then
     raise exception 'TEAMHUNT FAIL: game_config.spatial_formation_ring_radius is absent — this block cannot borrow-and-restore a knob that does not exist, and every later block would inherit the ring-0 override';
@@ -1804,6 +1814,7 @@ begin
   -- config surgery re-applied (idempotent; the real set_game_config; all reverted by ROLLBACK).
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);
 
   select id into v_hunt from public.locations
     where activity_type = 'hunt_pirates' and status = 'active'
@@ -3308,6 +3319,7 @@ begin
   -- ── LIT-ARM fixture: fresh user + REAL commission + the ONE sanctioned home normalization ─────
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
             'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -4477,6 +4489,7 @@ begin
 
   -- ══════════════ ARM B — process_combat_ticks (3s): a poisoned encounter must not wedge ═════════
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);  -- deterministic tick (knob; rolled back)
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);  -- deterministic tick (knob; rolled back)
 
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
