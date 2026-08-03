@@ -54,6 +54,10 @@ on:
       # 0314 rewrites the combat tick again (real attack intervals + per-hit rolls + the visible
       # hitsplat) and this proof carries its behaviour block (DZCOMBAT_PASS_RSFEEL).
       - 'slice-runescape-**'
+      # 0315 rewrites the ENCOUNTER BUILDER itself (every fleet entering combat gets a lead, flagged
+      # or not) and this proof carries its behaviour block (DZCOMBAT_PASS_LEAD) — a formation branch
+      # that does not fire this gate ships with nothing but its own text self-asserts behind it.
+      - 'slice-every-fleet**'
 
 permissions:
   contents: read
