@@ -74,8 +74,12 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // v_spawn_i while 0337 appends after v_move_action; h10/h11 own the freeze and the loop header,
   // neither of which 0337 touches. The check is scratchpad/anchors.mjs, run against the live body:
   // each 0337 anchor occurs EXACTLY ONCE in production and overlaps no old_t here.
+  // 0338 IS EXEMPTED BY NAME, and the disjointness is structural rather than a judgement: it edits
+  // only the PHASE argument of the two combat_formation_point calls that THIS migration's own hunks
+  // 8 and 9 introduce. That text does not exist in 0299, so it cannot overlap any slice this file
+  // takes from the 0299 head. 0338 moves no radius, no knob, no guard and no branch.
   guard('process_combat_ticks', '20260618000299',
-    new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000337']));
+    new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000337', '20260618000338']));
   guard('combat_create_group_encounter', '20260618000301',
     new Set(['20260618000308', '20260618000315', '20260618000316', '20260618000331']));
 }

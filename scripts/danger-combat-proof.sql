@@ -208,8 +208,21 @@
 --                              target once above the per-weapon loop and dropped guns 2 and 3.
 --   DZCOMBAT_PASS_WAVERING   — (0336) a wave arrives on a RING, not on one point: every unit on its
 --                              own position, none on the anchor, all at one measured radius, and
---                              every one of them reproduced by combat_formation_point at half-slot
---                              phase on a slot no other unit used.
+--                              every one of them reproduced by combat_formation_point at the arrival
+--                              phase on a slot no other unit used. AND (0338) IT CAME OUT OF THE
+--                              CITY: exactly one pirate stands where the ray from the engagement
+--                              anchor toward the zone's own settlement — combat_encounters.
+--                              location_id, carried from danger_zones.location_id — crosses that
+--                              radius, with the whole wave inside an arc of that bearing rather than
+--                              encircling the fleet. Both preconditions (a site is linked; the
+--                              anchor is not standing on it) are OWNED and raise rather than pass.
+--   DZCOMBAT_PASS_NODIRECTION — (0338) the fallback, end to end. A deliberate hunt anchors its fight
+--                              ON its site (combat_create_encounter hands the creator the location's
+--                              own centre for any fleet not in open space), so there is no direction
+--                              to arrive FROM — and the wave falls back to 0336's PLAIN RING value
+--                              for value: n distinct points, one measured radius, every unit on
+--                              combat_formation_point at 0336's own constant phase, and the arrival
+--                              leaf answering that constant at every slot the wave used.
 --   DZCOMBAT_PASS_RETREATNOSPAWN — (0336) pressing Retreat does not summon a bigger wave: with the
 --                              transition window PROVEN closed, the retreat tick raises no
 --                              wave_spawned, adds no enemy row and advances neither wave counter.
@@ -6152,6 +6165,9 @@ declare
   v_hunt uuid := (select v from dzc where k='v_hunt');
   v_mv uuid; v_enc uuid; mv record; pi record;
   ax double precision; ay double precision;
+  sx double precision; sy double precision;
+  c_x double precision; c_y double precision;
+  n_slot0 int; n_wide int;
   v_rad double precision; v_rmin double precision; v_rmax double precision;
   n_distinct int; n_units int;
   k_ring double precision; k_ehp double precision; k_esb double precision; k_esp double precision;
@@ -6222,6 +6238,20 @@ begin
   if ax is null or ay is null then
     raise exception 'WAVERING FAIL: the encounter carries no engagement anchor — every distance below would be NULL and every comparison a silent pass';
   end if;
+  -- (0338) THE CITY THE WAVE COMES OUT OF, read through the game's own link rather than typed in:
+  -- combat_encounters.location_id, which the ambush path carries from danger_zones.location_id.
+  -- Both preconditions below are OWNED, not assumed — if the staging ever stops linking a site, or
+  -- ever anchors the fight ON its site, the leaf correctly falls back to 0336's plain ring and the
+  -- origin assert would pass while proving nothing. That must be loud, not silent.
+  select l.x, l.y into sx, sy
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
+  if sx is null or sy is null then
+    raise exception 'WAVERING FAIL: the encounter carries no linked site — this block stages a real AMBUSH, whose zone is created through pirate_zone_create WITH a pirate_hunt location, so a NULL site means the staging changed and the arrival-bearing assert below would be measuring the no-direction fallback';
+  end if;
+  if public.osn_distance(ax, ay, sx, sy) <= 1e-6 then
+    raise exception 'WAVERING FAIL: the fight is anchored on its own site (anchor %,% site %,%) — there is no direction to arrive FROM, so the leaf correctly answers the plain ring and the arrival-bearing assert below would prove nothing', ax, ay, sx, sy;
+  end if;
   select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
   if n_units <> n_exp then
     raise exception 'WAVERING FAIL: % pirate unit(s) spawned (want the danger-derived %)', n_units, n_exp;
@@ -6262,19 +6292,60 @@ begin
   v_rad := v_rmin;
 
   -- (3) AND IT IS THE FORMATION LEAF'S OWN RING. Every unit must sit exactly on
-  --     combat_formation_point(anchor, measured radius, k, 0.5) for some slot k in 0..n-1, and no
-  --     two units may claim the same k. This pins the half-slot phase and the per-slot stepping
-  --     — the two things that stop a wave landing on top of an escort or on top of itself —
-  --     without this block ever having to know how the radius is computed.
+  --     combat_formation_point(anchor, measured radius, k, the arrival phase for k) for some slot k
+  --     in 0..n-1, and no two units may claim the same k. This pins the phase and the per-slot
+  --     stepping — the two things that stop a wave landing on top of itself — without this block
+  --     ever having to know how the radius is computed.
+  --     0338 REPOINTED: the phase is no longer the bare constant 0336 passed. It comes from
+  --     combat_wave_arrival_phase, THE one authority for which way a wave arrives from, composed
+  --     here with the SAME four arguments the tick composes it with — the engagement anchor and the
+  --     encounter's own site. Composing the leaf rather than re-deriving the angle is deliberate:
+  --     check (4) below is what independently pins the leaf's ANSWER to the city.
   select count(*) into n_match
     from public.combat_units u9
    where u9.encounter_id = v_enc and u9.side = 'enemy'
      and exists (select 1 from generate_series(0, n_units - 1) as gs(k),
-                      lateral public.combat_formation_point(ax, ay, v_rad, gs.k, 0.5) fp
+                      lateral public.combat_formation_point(ax, ay, v_rad, gs.k,
+                                public.combat_wave_arrival_phase(ax, ay, sx, sy, gs.k)) fp
                   where abs(fp.x - u9.pos_x) <= 1e-6 and abs(fp.y - u9.pos_y) <= 1e-6);
   if n_match <> n_units then
-    raise exception 'WAVERING FAIL: only % of % pirate(s) sit on a slot of combat_formation_point(anchor, %, k, 0.5) — the wave was not laid out by the one formation authority the player escort ring also composes',
+    raise exception 'WAVERING FAIL: only % of % pirate(s) sit on a slot of combat_formation_point(anchor, %, k, the arrival phase) — the wave was not laid out by the one formation authority the player escort ring also composes',
       n_match, n_units, v_rad;
+  end if;
+
+  -- (4) AND IT CAME OUT OF THE CITY (0338). The owner: "make the enemy come out from the city of the
+  --     zone. for example snare." The zone's settlement is combat_encounters.location_id, carried
+  --     from danger_zones.location_id by the ambush path. EXACTLY ONE pirate must stand on the point
+  --     where the ray from the engagement anchor toward that city crosses the wave's measured radius
+  --     — that is what "they came out of the city" means geometrically, and the expected point is
+  --     computed HERE from cos/sin of the site bearing, independently of the leaf, so this assert
+  --     cannot be satisfied by a leaf that agrees with itself.
+  --     RED ON 0336: the wave stood on a bearing fixed to the world x axis, which coincides with the
+  --     ray to the site only for a site that happens to lie in that direction.
+  c_x := ax + v_rad * cos(atan2(sy - ay, sx - ax));
+  c_y := ay + v_rad * sin(atan2(sy - ay, sx - ax));
+  select count(*) into n_slot0
+    from public.combat_units u0
+   where u0.encounter_id = v_enc and u0.side = 'enemy'
+     and abs(u0.pos_x - c_x) <= 1e-6 and abs(u0.pos_y - c_y) <= 1e-6;
+  if n_slot0 <> 1 then
+    raise exception 'WAVERING FAIL: % pirate(s) stand where the ray from the engagement anchor (%,%) toward the zone''s city (%,%) crosses the wave radius % — want exactly 1. The wave must COME OUT OF THE CITY; a wave whose bearing has nothing to do with its site is the pre-0338 body',
+      n_slot0, ax, ay, sx, sy, round(v_rad::numeric, 6);
+  end if;
+
+  -- (5) AND IT IS AN ARC FACING THE CITY, NOT AN ENCIRCLEMENT. The fan opens half a slot at a time
+  --     either side of the city bearing, so a wave of n units reaches at most n/4 slots off it. A
+  --     whole-slot fan — or no fan at all — would let a six-pirate wave wrap most of the circle and
+  --     stand BEHIND the fleet, which is the opposite of coming out of the city.
+  select count(*) into n_wide
+    from public.combat_units u1
+   where u1.encounter_id = v_enc and u1.side = 'enemy'
+     and abs(atan2(sin(atan2(u1.pos_y - ay, u1.pos_x - ax) - atan2(sy - ay, sx - ax)),
+                   cos(atan2(u1.pos_y - ay, u1.pos_x - ax) - atan2(sy - ay, sx - ax))))
+         > (n_units::double precision / 4.0) * (pi() / 4.0) + 1e-9;
+  if n_wide <> 0 then
+    raise exception 'WAVERING FAIL: % of % pirate(s) stand more than % slot(s) off the bearing to the city — the wave is encircling the fleet rather than arriving from the settlement that sent it',
+      n_wide, n_units, round((n_units / 4.0)::numeric, 4);
   end if;
 
   perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
@@ -6282,8 +6353,169 @@ begin
   perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
 
-  raise notice 'DZCOMBAT_PASS_WAVERING ok: a %-pirate wave arrived on % DISTINCT points, every one of them exactly % from the engagement anchor (never ON it) and every one of them reproduced by combat_formation_point at half-slot phase on a slot no other unit used — the head planted all % on the anchor itself (1 distinct point, radius 0)',
-    n_units, n_distinct, round(v_rad::numeric, 6), n_units;
+  raise notice 'DZCOMBAT_PASS_WAVERING ok: a %-pirate wave arrived on % DISTINCT points, every one of them exactly % from the engagement anchor (never ON it) and every one of them reproduced by combat_formation_point at the arrival phase on a slot no other unit used — the head planted all % on the anchor itself (1 distinct point, radius 0); and (0338) it CAME OUT OF THE CITY: exactly one pirate stands where the ray from the anchor (%,%) toward the zone''s own settlement (%,%) crosses that radius, with the whole wave inside a % -slot arc of that bearing rather than encircling the fleet',
+    n_units, n_distinct, round(v_rad::numeric, 6), n_units,
+    round(ax::numeric, 3), round(ay::numeric, 3), round(sx::numeric, 3), round(sy::numeric, 3),
+    round((n_units / 4.0)::numeric, 4);
+end $$;
+
+-- ════════ DZCOMBAT_PASS_NODIRECTION (0338): NO DIRECTION TO COME FROM FALLS BACK TO 0336'S RING ══════
+-- THE OTHER HALF OF 0338, and the half a green origin assert cannot cover. 0338 makes a wave arrive
+-- on the bearing from the fight to the zone's own city. Some fights HAVE no such bearing, and they
+-- must fail to something sensible — never to a pile, never to a NULL coordinate, never to a raise
+-- inside the tick.
+-- THE CASE THE GAME CAN ACTUALLY PRODUCE, staged here end to end: a DELIBERATE HUNT AT THE SITE.
+-- combat_create_encounter hands the creator `l.x, l.y` — the location's own centre — for any fleet
+-- that is not in open space (read off the DEPLOYED body, 2026-08-04), so such a fight is anchored ON
+-- its city, the site and the anchor are the same point, and there is no direction to arrive from.
+-- The wave must then lay out on 0336's PLAIN RING, value for value: the same measured radius, the
+-- same per-slot stepping, and 0336's own constant phase. That is the fallback being the predecessor
+-- rather than a special case — and it is also the right game answer: if you are fighting inside the
+-- city, they come at you from all around.
+-- THE OTHER FALLBACK — an encounter with NO linked site at all — cannot be staged through any real
+-- verb, and saying so is more honest than manufacturing it: a zone with no settlement never opens a
+-- fight (pirate_intercept_resolve_due_for_movement answers 'standalone_zone_stub_forced_stop' and
+-- creates no encounter). Migration 0338 EXECUTES that case instead, over sixteen slots, in assert (c).
+do $$
+declare
+  r jsonb; n int; n_exp int; n_match int; n_null int; n_distinct int; n_units int;
+  uN2 uuid; sN2 uuid; gN2 uuid;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  lx double precision; ly double precision;
+  v_mv uuid; v_enc uuid; mv record;
+  ax double precision; ay double precision;
+  v_rad double precision; v_rmin double precision; v_rmax double precision;
+  k_ehp double precision; k_esb double precision; k_esp double precision;
+begin
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  -- Same staging law as WAVERING: the wave spawns and then MOVES inside the same tick, so a block
+  -- about where a wave ARRIVES must freeze the close arm. hp is raised so nothing dies mid-measure.
+  perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_hp_base',                        '100000'::jsonb);
+
+  select l.x, l.y into lx, ly from public.locations l where l.id = v_hunt;
+  if lx is null or ly is null then
+    raise exception 'NODIRECTION FAIL: the shared hunt site carries no coordinate — the anchor-equals-site precondition cannot be established';
+  end if;
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.nd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uN2;
+  insert into public.player_wallet (player_id, balance) values (uN2, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uN2, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'NODIRECTION FAIL: commission: %', r; end if;
+  select main_ship_id into sN2 from public.main_ship_instances where player_id = uN2;
+  r := pg_temp.call_as(uN2, 'public.upsert_ship_group(1, ''No Direction'')');
+  if (r->>'ok')::boolean is not true then raise exception 'NODIRECTION FAIL: group: %', r; end if;
+  gN2 := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uN2, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sN2, gN2));
+  if (r->>'ok')::boolean is not true then raise exception 'NODIRECTION FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uN2, format('public.set_fleet_command_ship(%L::uuid, true)', sN2));
+  if (r->>'ok')::boolean is not true then raise exception 'NODIRECTION FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uN2, format('public.set_group_auto_exit(%L::uuid, false, 30)', gN2));
+  if (r->>'ok')::boolean is not true then raise exception 'NODIRECTION FAIL: auto-exit off: %', r; end if;
+
+  -- ── A REAL HUNT, through the real verb — the fight is AT the site, not on a leg through a zone. ──
+  r := pg_temp.call_as(uN2, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gN2, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'NODIRECTION FAIL: hunt send: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters
+   where player_id = uN2 and status = 'active' order by created_at desc limit 1;
+  if v_enc is null then raise exception 'NODIRECTION FAIL: the hunt arrival opened no encounter'; end if;
+
+  -- ── THE PRECONDITION THIS BLOCK OWNS: the anchor IS the site. If a future creator ever stops
+  -- ── anchoring a site fight on its site, this block is measuring the wrong thing and must say so.
+  select engagement_x, engagement_y into ax, ay from public.combat_encounters where id = v_enc;
+  if ax is null or ay is null then
+    raise exception 'NODIRECTION FAIL: the site fight carries no engagement anchor — every geometry comparison below would be NULL and pass silently';
+  end if;
+  if abs(ax - lx) > 1e-6 or abs(ay - ly) > 1e-6 then
+    raise exception 'NODIRECTION FAIL: the site fight is anchored at (%,%) but its site is at (%,%) — there IS a direction to arrive from, so this block is no longer staging the no-direction fallback at all',
+      ax, ay, lx, ly;
+  end if;
+
+  -- a wave of at least THREE, for the same reason WAVERING needs one: a point cannot be told from a
+  -- ring, and two points cannot be told from a line. DERIVED from the tick's own danger formula.
+  update public.combat_encounters set started_at = started_at - interval '600 seconds' where id = v_enc;
+  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int,
+                 greatest(1, 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
+                            + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
+                                    / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int));
+  if n_exp < 3 then
+    raise exception 'NODIRECTION FAIL: staging derives only % pirate(s) — with fewer than 3 a ring cannot be told apart from a point or a line', n_exp;
+  end if;
+
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n_units <> n_exp then
+    raise exception 'NODIRECTION FAIL: % pirate unit(s) spawned (want the danger-derived %)', n_units, n_exp;
+  end if;
+  select count(*) into n_null from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and (pos_x is null or pos_y is null);
+  if n_null <> 0 then
+    raise exception 'NODIRECTION FAIL: % of % pirate(s) carry a NULL coordinate — the fallback must produce a ring, never a NULL', n_null, n_units;
+  end if;
+
+  -- (1) STILL NOT A PILE. The fallback is 0336, and 0336's whole point is that a wave is n points.
+  select count(distinct (pos_x, pos_y)) into n_distinct
+    from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n_distinct <> n_units then
+    raise exception 'NODIRECTION FAIL: % pirate(s) occupy only % distinct position(s) — falling back must not fall back to the pile',
+      n_units, n_distinct;
+  end if;
+
+  -- (2) ONE MEASURED RADIUS, nobody on the anchor — the radius is never assumed here either.
+  select min(public.osn_distance(ax, ay, pos_x, pos_y)),
+         max(public.osn_distance(ax, ay, pos_x, pos_y))
+    into v_rmin, v_rmax
+    from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if v_rmin is null or v_rmax is null then
+    raise exception 'NODIRECTION FAIL: the wave radius measured NULL — every assert here would be vacuous';
+  end if;
+  if v_rmin <= 0 then
+    raise exception 'NODIRECTION FAIL: a pirate stands % from the anchor — the fallback is planting the wave on the anchor itself', v_rmin;
+  end if;
+  if abs(v_rmax - v_rmin) > 1e-6 then
+    raise exception 'NODIRECTION FAIL: the wave spans radii % to % — it is not one ring', v_rmin, v_rmax;
+  end if;
+  v_rad := v_rmin;
+
+  -- (3) AND IT IS 0336'S RING, VALUE FOR VALUE — the constant phase, not the arrival bearing. This
+  --     is the assert that makes "the fallback is the predecessor" a fact rather than a claim.
+  select count(*) into n_match
+    from public.combat_units u8
+   where u8.encounter_id = v_enc and u8.side = 'enemy'
+     and exists (select 1 from generate_series(0, n_units - 1) as gs(k),
+                      lateral public.combat_formation_point(ax, ay, v_rad, gs.k, 0.5) fp
+                  where abs(fp.x - u8.pos_x) <= 1e-6 and abs(fp.y - u8.pos_y) <= 1e-6);
+  if n_match <> n_units then
+    raise exception 'NODIRECTION FAIL: only % of % pirate(s) sit on 0336''s plain ring — a fight with no direction to come from must fall back to the predecessor exactly, not to some third layout',
+      n_match, n_units;
+  end if;
+
+  -- (4) AND THE LEAF ITSELF SAYS SO, at exactly the arguments the tick composes it with.
+  for n in 0 .. n_units - 1 loop
+    if public.combat_wave_arrival_phase(ax, ay, lx, ly, n) is distinct from 0.5 then
+      raise exception 'NODIRECTION FAIL: with the anchor standing on the site the arrival leaf answered % at slot % — it must answer 0336''s own constant',
+        public.combat_wave_arrival_phase(ax, ay, lx, ly, n), n;
+    end if;
+  end loop;
+
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+
+  raise notice 'DZCOMBAT_PASS_NODIRECTION ok: a deliberate HUNT anchors its fight on the site itself (anchor %,% = site %,%), so there is no direction for a wave to arrive FROM — and the %-pirate wave fell back to 0336''s plain ring exactly: % distinct points, all at one measured radius of %, every one reproduced by combat_formation_point at 0336''s own constant phase, and the arrival leaf answering that constant at every slot. The fallback is the predecessor, not a special case, and it is still not a pile',
+    round(ax::numeric, 3), round(ay::numeric, 3), round(lx::numeric, 3), round(ly::numeric, 3),
+    n_units, n_distinct, round(v_rad::numeric, 6);
 end $$;
 
 -- ════════ DZCOMBAT_PASS_RETREATNOSPAWN (0336): PRESSING RETREAT DOES NOT SUMMON A BIGGER WAVE ═══════
