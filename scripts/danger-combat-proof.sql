@@ -3206,7 +3206,17 @@ declare
   px double precision; py double precision;
   cap1 int; cap2 int; cap3 int;
   v_lead_ship uuid; v_pri int; n_cmd int;
-begin
+  -- 0336: the wave arrives outside every gun on the field, so the opening tick is SILENT and the
+  -- fleet's first shot lands on a tick the engine's own recurrence PREDICTS. Everything below is
+  -- read off this encounter's own rows or derived from the same expressions the spawn arm evaluates.
+  v_extent double precision; v_players int; v_bd double precision;
+  v_r_en_pred double precision; v_sp_en_pred double precision;
+  v_sp_pl double precision; v_sp_lead double precision;
+  v_fx double precision; v_fy double precision;      -- the wave's slot-0 point, through the leaf
+  v_gap0 double precision;                            -- nearest hull (an escort) -> wave, at spawn
+  v_lead_d0 double precision; v_lead_d1 double precision;
+  v_lx double precision; v_ly double precision;      -- where ONE close puts the lead
+  v_sim double precision; v_exp_tick int; v_obs_tick int; i int; u_en uuid;
   -- ══ ARM A — three hulls, NO command ship anywhere ═══════════════════════════════════════════════
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
@@ -3347,34 +3357,180 @@ begin
       px, py, ax + v_ring * cos(2 * pi() / 8), ay + v_ring * sin(2 * pi() / 8);
   end if;
 
-  -- ★ THE FIGHT FIRES ON TICK 1 — the thing that is broken today. The premise first, DERIVED from
-  --   the escort's own frozen weapons_json: the ring exceeds an escort's range, so no escort can
-  --   open the fight and any tick-1 salvo is the lead's alone. If a later retune buries that, this
-  --   raises honestly instead of passing for the wrong reason.
+  -- ★ ── 0336 RE-PREMISED: THE FLEET STILL JOINS THE FIGHT, ON THE TICK THE ENGINE PREDICTS ────────
+  -- ★ WHAT THIS ASSERTED BEFORE: a salvo on TICK 1 whose unit_id is the LEAD (so a flagless fleet is
+  -- ★ not helpless), with ZERO escort salvos on tick 1 as the attribution, premised on
+  -- ★ `ring > escort range` so no escort could have opened the fight instead.
+  -- ★ EVERY ONE OF THOSE THREE IS A STATEMENT ABOUT THE PRE-0336 WORLD, and two of them are now
+  -- ★ inverted rather than merely late:
+  -- ★   • "on tick 1" — 0336 stands a wave at (the MEASURED formation extent + its own weapon range
+  -- ★     + 1), strictly outside its own reach of every player ship, so the opening tick is SILENT ON
+  -- ★     BOTH SIDES by construction. The lead fired on tick 1 only because the wave used to be
+  -- ★     inserted ON the anchor, which is where the lead stands — at distance 0.
+  -- ★   • "the LEAD fires, an escort cannot" — DEAD, and unrescuable. This fixture is THREE hulls, so
+  -- ★     the extent is the escort ring (6), not 0: the lead alone on the anchor is a full RADIUS
+  -- ★     from the wave while each escort is a CHORD from it. Measured on the real fixture: the lead
+  -- ★     stands 11.0 away and both escorts 5.92. The escorts are nearer and open the fight; the lead
+  -- ★     is the LAST hull that can reach, not the first, and there is no ring radius that inverts a
+  -- ★     chord and a radius (the same finding CLOSURE's header records).
+  -- ★   • the `ring > escort range` premise measured the wrong gap: what decides who can fire is the
+  -- ★     ESCORT-TO-WAVE gap, which is not the ring at all once the wave stops spawning on the anchor.
+  -- ★ WHAT IS ASSERTED NOW, AND WHY IT IS AT LEAST AS STRONG. The defect this block guards —
+  -- ★ A FLAGLESS FLEET OPENS A FIGHT IT CANNOT JOIN — is proven by two things instead of one, and
+  -- ★ neither of them is "fires eventually":
+  -- ★   (1) THE FLEET JOINS ON EXACTLY THE PREDICTED TICK. The engine's own recurrence (both sides
+  -- ★       step from the same frozen pre-move snapshot, each capped at the remaining distance) is
+  -- ★       run over this encounter's real frozen speeds, real frozen ranges and the MEASURED extent;
+  -- ★       ticks are then driven until a salvo is OBSERVED, and the two must AGREE. A fleet that
+  -- ★       cannot join never fires and fails; a fleet whose silence GROWS fires later than the
+  -- ★       recurrence says and fails on the same line. Bounded 2..3, the bound 0316 already ships.
+  -- ★   (2) THE LEAD IS CLOSING, EXACTLY, FROM THE ANCHOR. On the spawn tick the lead's CLOSE arm
+  -- ★       must run and land it on the EXACT point one step of its own frozen move_speed toward the
+  -- ★       wave puts it. This is the direct "it can join" evidence and it is STRICTLY MORE than the
+  -- ★       old form ever had: the old assert only proved the lead fired BECAUSE it happened to be
+  -- ★       standing at distance 0, and it could not have caught a lead that was stranded.
+  -- ★ Plus the attribution, repointed to the statement that is now true and load-bearing: the lead is
+  -- ★ STRICTLY FURTHER from the wave than every escort — which is the formation working, and is
+  -- ★ exactly why electing a lead onto the anchor at aggro 100 behind an aggro-0 screen is the fix.
   select max((w->>'range')::double precision) into v_r_esc
     from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_e0;
   if v_r_esc is null then
-    raise exception 'LEAD FAIL: the escort carries no ranged weapon at all — the tick-1 attribution has no premise';
+    raise exception 'LEAD FAIL: the escort carries no ranged weapon at all — the approach premise below has nothing to measure against';
   end if;
-  if v_ring <= v_r_esc then
-    raise exception 'LEAD FAIL premise: the % ring no longer exceeds the escort range % — an escort could open the fight from its formation slot and tick-1 fire would prove nothing about the lead',
-      v_ring, v_r_esc;
+  -- THE MEASURED EXTENT — the spawn arm's own input, read with its own expression and predicates.
+  select count(*), coalesce(max(public.osn_distance(ax, ay, u.pos_x, u.pos_y)), 0)
+    into v_players, v_extent
+    from public.combat_units u
+   where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0
+     and u.pos_x is not null and u.pos_y is not null;
+  if v_players <> 3 then
+    raise exception 'LEAD FAIL: % positioned living player row(s) entering the spawn tick (want the 3 this arm staged — one lead on the anchor, two escorts on the ring) — the measured extent would not be this formation''s', v_players;
   end if;
+  if abs(v_extent - v_ring) > 1e-6 then
+    raise exception 'LEAD FAIL: the measured formation extent is % but the escorts stand on the % ring — the wave is standing clear of a hull this block is not tracking', v_extent, v_ring;
+  end if;
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
+  v_r_en_pred  := public.cfg_num('enemy_synthetic_range_base') + v_bd * public.cfg_num('enemy_synthetic_range_per_difficulty');
+  v_sp_en_pred := public.cfg_num('enemy_synthetic_speed_base') + v_bd * public.cfg_num('enemy_synthetic_speed_per_difficulty');
+  select move_speed into v_sp_pl   from public.combat_units where id = u_e0;
+  select move_speed into v_sp_lead from public.combat_units where id = u_lead;
+  if v_bd is null or v_r_en_pred is null or v_sp_en_pred is null or v_sp_pl is null or v_sp_lead is null then
+    raise exception 'LEAD FAIL: the site difficulty (%), the derived wave range/speed (% / %) or a frozen hull speed (escort %, lead %) is NULL — the recurrence below would be NULL and every comparison vacuously true',
+      v_bd, v_r_en_pred, v_sp_en_pred, v_sp_pl, v_sp_lead;
+  end if;
+  if v_sp_pl <= 0 or v_sp_lead <= 0 or v_sp_en_pred <= 0 then
+    raise exception 'LEAD FAIL: a closing speed is not positive (escort %, lead %, wave %) — a side that cannot close cannot join, and the approach is not a phase of the fight', v_sp_pl, v_sp_lead, v_sp_en_pred;
+  end if;
+  -- the wave's slot-0 point, from the MEASURED extent, through the SAME leaf the tick composes.
+  select fp.x, fp.y into v_fx, v_fy
+    from public.combat_formation_point(ax, ay, v_extent + v_r_en_pred + 1, 0, 0.5) fp;
+  if v_fx is null or v_fy is null then
+    raise exception 'LEAD FAIL: the wave slot-0 point is NULL — the recurrence would have no gap to start from';
+  end if;
+  -- the NEAREST hull's gap, minimised over BOTH escorts rather than assumed of one: they sit half a
+  -- slot either side of the wave and are equidistant by construction, so the uuid tie-break that
+  -- picks the wave's target cannot decide which number this block measures.
+  select min(public.osn_distance(e2.pos_x, e2.pos_y, v_fx, v_fy)) into v_gap0
+    from public.combat_units e2 where e2.id in (u_e0, u_e1);
+  v_lead_d0 := public.osn_distance(ax, ay, v_fx, v_fy);
+  if v_gap0 is null or v_lead_d0 is null or v_gap0 <= 0 or v_lead_d0 <= 0 then
+    raise exception 'LEAD FAIL: the spawn geometry measures escort-gap % / lead-gap % — there is no approach to observe', v_gap0, v_lead_d0;
+  end if;
+  -- THE ATTRIBUTION, REPOINTED: the lead is on the anchor and the escorts on the ring, so the lead is
+  -- a RADIUS from the wave while an escort is a CHORD. It is the FURTHEST hull, never the first to
+  -- fire — that is the screen working, and the old "only the lead can reach" premise is its inverse.
+  if v_lead_d0 <= v_gap0 then
+    raise exception 'LEAD FAIL premise: the lead stands % from the wave and an escort %, so the lead is not the screened hull any more — the formation has stopped putting the escorts between the lead and what it fights',
+      v_lead_d0, v_gap0;
+  end if;
+  -- and NOTHING can fire on the spawn tick: the nearest hull is outside its own range, and the wave
+  -- is outside its own by the structural +1. Derived, so a retune that buries it raises honestly.
+  if v_gap0 <= v_r_esc then
+    raise exception 'LEAD FAIL premise: the escort-to-wave spawn gap % does not exceed the escort range % — a hull could open the fight from its spawn slot and the silent opening tick below would prove nothing',
+      v_gap0, v_r_esc;
+  end if;
+
+  -- ── THE SPAWN TICK: silent across the whole field, and the lead CLOSES off the anchor. ─────────
   perform pg_temp.ae_tick(v_enc);
-  select count(*) into n from public.combat_events
-   where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
-     and source = 'player' and payload_json->>'unit_id' = u_lead::text;
-  if n < 1 then
-    raise exception 'LEAD FAIL: the fight did not fire on tick 1 — the lead is on the anchor but did not shoot, so a flagless fleet still opens a fight it cannot join';
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  if n <> 1 then
+    raise exception 'LEAD FAIL: % living pirate(s) after the spawn tick (want exactly 1 — at danger 1 the wave is one unit, and the slot-0 point every assert here names is only identifiable while it is)', n;
   end if;
+  select id into u_en from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0 limit 1;
   select count(*) into n from public.combat_events
-   where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
-     and payload_json->>'unit_id' in (u_e0::text, u_e1::text);
+   where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo';
   if n <> 0 then
-    raise exception 'LEAD FAIL: % escort salvo(s) on tick 1 — an escort fired across a gap larger than its own range, so the tick-1 fire is not attributable to the lead', n;
+    raise exception 'LEAD FAIL: % salvo(s) on the spawn tick — 0336 stands the wave at (measured extent % + its own range % + 1), outside every gun on the field (nearest hull %, its range %), so the opening tick cannot start instantly any more',
+      n, v_extent, v_r_en_pred, v_gap0, v_r_esc;
+  end if;
+  -- (2) THE LEAD IS JOINING, NOT STRANDED — and the point is EXACT, not merely "it moved". A step
+  -- length alone would pass for a step in any direction; this pins the target choice, the direction
+  -- and the move_speed cap together, off the anchor the election put it on.
+  v_lx := ax + (v_fx - ax) / v_lead_d0 * least(v_sp_lead, v_lead_d0);
+  v_ly := ay + (v_fy - ay) / v_lead_d0 * least(v_sp_lead, v_lead_d0);
+  select pos_x, pos_y into px, py from public.combat_units where id = u_lead;
+  if px is null or py is null then
+    raise exception 'LEAD FAIL: the lead carries a NULL coordinate after the spawn tick — an unpositioned hull cannot prove it is closing, and a NULL would pass the comparison below while proving nothing';
+  end if;
+  if abs(px - v_lx) > 1e-6 or abs(py - v_ly) > 1e-6 then
+    raise exception 'LEAD FAIL: the lead stands at (%,%) after the spawn tick but one close of its own frozen speed % from the anchor (%,%) toward the wave lands at (%,%) — a flagless fleet still opens a fight its lead cannot join',
+      px, py, v_sp_lead, ax, ay, v_lx, v_ly;
+  end if;
+  select public.osn_distance(px, py, e.pos_x, e.pos_y) into v_lead_d1
+    from public.combat_units e where e.id = u_en;
+  if v_lead_d1 is null or v_lead_d1 >= v_lead_d0 then
+    raise exception 'LEAD FAIL: the lead is % from the wave after the spawn tick against % before it — it is not closing, so the fleet cannot join the fight it opened', v_lead_d1, v_lead_d0;
+  end if;
+
+  -- ── (1) THE PREDICTED JOINING TICK, from the engine's own recurrence over THIS encounter's rows.
+  -- The nearest hull is an escort; both sides step from the same frozen pre-move snapshot, so the
+  -- gap shrinks by the two frozen speeds together, each capped at what is left, and a hull fires on
+  -- the first tick whose PRE-MOVE gap is inside its own range.
+  v_sim := v_gap0; v_exp_tick := 1;
+  while v_sim > v_r_esc and v_exp_tick <= 24 loop
+    v_sim := v_sim - least(v_sp_pl, v_sim) - least(v_sp_en_pred, v_sim);
+    v_exp_tick := v_exp_tick + 1;
+  end loop;
+  if v_exp_tick < 2 then
+    raise exception 'LEAD FAIL: the recurrence says a hull is already in range at spawn (gap %, range %) — there would be nothing to close and the silent opening tick above would be vacuous', v_gap0, v_r_esc;
+  end if;
+  if v_exp_tick > 3 then
+    raise exception 'LEAD FAIL: the fleet needs % ticks to join its own fight (spawn gap %, range %, hull speed %, wave speed %) — the sprawl is back; a flagless fleet must open fire within one or two silent closing ticks, not stall',
+      v_exp_tick, v_gap0, v_r_esc, v_sp_pl, v_sp_en_pred;
+  end if;
+  -- OBSERVED: drive ticks until the fleet actually fires. The exit condition is the OBSERVATION.
+  for i in 1 .. 12 loop
+    exit when v_obs_tick is not null;
+    if (select status from public.combat_encounters where id = v_enc) <> 'active' then
+      raise exception 'LEAD FAIL: arm A''s encounter left ''active'' during the approach — the scenario is not measuring a live fight';
+    end if;
+    perform pg_temp.ae_tick(v_enc);
+    select tick_number into v_obs_tick from public.combat_events
+     where encounter_id = v_enc and event_type = 'missile_salvo' and source = 'player'
+     order by tick_number asc limit 1;
+  end loop;
+  if v_obs_tick is null then
+    raise exception 'LEAD FAIL: the fleet never fired within 12 ticks of the spawn — a flagless fleet still opens a fight it cannot join';
+  end if;
+  if v_obs_tick is distinct from v_exp_tick then
+    raise exception 'LEAD FAIL: the fleet joined its fight on tick % but the engine''s own recurrence over this encounter''s rows predicts tick % (spawn gap %, range %, hull speed %, wave speed %) — the movement/fire arithmetic no longer matches the geometry the formation was laid out for',
+      v_obs_tick, v_exp_tick, v_gap0, v_r_esc, v_sp_pl, v_sp_en_pred;
+  end if;
+  -- and it is an ESCORT that opened it — the nearest hull — with the LEAD still closing behind the
+  -- screen. This is the old attribution, inverted to the direction 0336's geometry actually runs in.
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and tick_number = v_obs_tick and event_type = 'missile_salvo'
+     and payload_json->>'unit_id' in (u_e0::text, u_e1::text);
+  if n < 1 then
+    raise exception 'LEAD FAIL: the tick-% opening salvo came from neither escort — the nearest hull to the wave is an escort on the ring (gap %) against the lead on the anchor (%), so an opener that is not an escort means the formation is not laid out the way this block measured it',
+      v_obs_tick, v_gap0, v_lead_d0;
   end if;
   if (select status from public.combat_encounters where id = v_enc) <> 'active' then
-    raise exception 'LEAD FAIL: arm A''s encounter left ''active'' on its first tick — the scenario is not measuring a live fight';
+    raise exception 'LEAD FAIL: arm A''s encounter left ''active'' by the tick it joined the fight — the scenario is not measuring a live fight';
   end if;
 
   -- ══ ARM B — a REAL command ship still wins, and the fallback never overrides it ═════════════════
