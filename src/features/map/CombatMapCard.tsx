@@ -30,6 +30,7 @@
 import type { CombatEncounter, CombatTick, CombatUnit } from '../combat/combatTypes'
 import { selectCombatPhase, nextWaveText } from '../combat/combatPhase'
 import { resolveAutoExitLine, type AutoExitSetting } from '../combat/autoExitLine'
+import { resolveRepositionCourse } from '../combat/repositionCourse'
 import { RetreatControl } from '../combat/RetreatControl'
 import { OverlayPanel } from '../../components/ui'
 
@@ -140,6 +141,9 @@ export function CombatMapCard({
         // THE SAFETY LINE — the ONE derivation (combat/autoExitLine); null when the setting is
         // unknown or the fleet has it off, and then nothing is said about it.
         const exit = resolveAutoExitLine(e, autoExit?.[e.id])
+        // THE STANDING COURSE — the SAME ONE derivation (combat/repositionCourse) the Mission
+        // panel reads, mounted a second time here. Null = no course, and then nothing is said.
+        const course = resolveRepositionCourse(e)
 
         return (
           // The ONE overlay chrome (OverlayPanel, danger tone) — this card was one of three
@@ -202,6 +206,29 @@ export function CombatMapCard({
                 className={`mt-1 text-[11px] ${exit.reached || exit.close ? 'text-warning' : 'text-ink-faint'}`}
               >
                 {exit.text}
+              </p>
+            )}
+
+            {/* "WHEN FIGHTING, I AM NOT ABLE TO MOVE MY FLEET." The owner's report, playing live —
+                and the order was being ACCEPTED. 0337 made a reposition a WALK, not a jump: the tick
+                advances the fleet at its own speed, which at normal zoom is on the order of a
+                sixteenth of a pixel per three-second tick. So the fleet really is moving and the
+                screen cannot show it. The sentence that closes that gap already existed and was
+                already mounted — on the Mission screen (ActiveCombatPanel), which a player fighting
+                on the MAP never opens. They got one transient success toast and then silence, which
+                reads as a dead button.
+
+                This is the SECOND MOUNT of that one sentence, never a second copy of it: the text,
+                the distance and the "is a course even running?" rule all stay inside
+                resolveRepositionCourse. It sits with the auto-exit line — both are one-line
+                statements of what the fight is doing — and above RetreatControl, which keeps its
+                place and its hit area (map-UX law: nothing crowds leaving the fight). */}
+            {course && (
+              <p
+                data-testid={`combat-map-reposition-${e.id}`}
+                className="mt-1 text-[11px] text-accent"
+              >
+                {course.text}
               </p>
             )}
 
