@@ -33,10 +33,14 @@ import { ItemChip } from '../../components/items'
 // attempt (surfaced by recruitCaptainErrorMessage).
 
 export function RecruitCaptainPanel({
+  // 0333: the ship whose dock names the port this recruit draws from. Null falls back to the
+  // server's sole-ship shim; the port is DERIVED server-side and is never a parameter.
+  mainShipId,
   // Re-reads roster + recipes whenever the main-ship lifecycle changes (the sibling-panel idiom).
   lifecycleKey,
   onChanged,
 }: {
+  mainShipId: string | null
   lifecycleKey: string
   // SHIP-DOSSIER: fires AFTER a successful recruit's own refetch (recruiting CONSUMES inventory
   // items) so sibling read surfaces (InventoryPanel) can re-read — never an optimistic patch.
@@ -81,7 +85,7 @@ export function RecruitCaptainPanel({
       guards,
       setPending: (on) => setPending((p) => ({ ...p, [rec.captain_type_id]: on })),
       setNote: (note) => setRowNote((n) => ({ ...n, [rec.captain_type_id]: note })),
-      exec: () => recruitCaptain(crypto.randomUUID(), rec.captain_type_id),
+      exec: () => recruitCaptain(crypto.randomUUID(), rec.captain_type_id, mainShipId),
       successNote: () => `Recruited ${rec.name}.`,
       errorNote: (res) => recruitCaptainErrorMessage(res),
       refresh: refreshAndNotify,

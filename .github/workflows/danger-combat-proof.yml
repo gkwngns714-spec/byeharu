@@ -29,74 +29,17 @@ on:
     branches:
       - main
       - 'autopilot/**'
-      - 'slice-danger-combat**'
-      # 0301 moved the ambush off the order path; this proof is now the apply-and-behaviour gate for
-      # every intercept-touching branch, so it must fire on them.
+      # ██ COLLAPSED (0335). Fifteen hand-appended `slice-<topic>**` globs used to live here, each
+      # added by the slice that needed it, and EVERY comment in that list warned of the same thing: a
+      # branch that forgets to name itself runs none of this. That list WAS the bug it kept warning
+      # about — one authority for "which branches run the combat gate", not fifteen kept in step by
+      # hand across every merge. `slice-**` is that authority: it strictly widens coverage (every
+      # previous glob is a prefix of it), it cannot be half-un-gated by a merge that takes one side of
+      # a UNION, and there is nothing left to remember to append. `main` and `pull_request` above
+      # still catch admin-override merges and direct pushes.
+      - 'slice-**'
+      - 'osn3-**'
       - 'wt-intercept**'
-      - 'slice-intercept**'
-      # 0308 rewrites the encounter builder + the ambush resolver — roster-touching branches must
-      # run the intercept apply-and-behaviour gate too.
-      - 'slice-combat-roster**'
-      # 0311 rewrites the mover's mid-combat arm (reposition inside the fight's zone) and this proof
-      # carries its three behaviour blocks — the branch must fire this gate or the net is empty.
-      - 'slice-reposition**'
-      # 0310 rewrites the combat tick itself (the HP auto-exit arm) and this proof carries its
-      # behaviour block (DZCOMBAT_PASS_AUTOEXIT) — auto-exit branches must run it.
-      - 'slice-combat-auto-exit**'
-      # 0312 rewrites the mover + the dock verb (the no-living-ships guard) and this proof carries
-      # its behaviour block (DZCOMBAT_PASS_NOLIVE) — dead-fleet branches must run it.
-      - 'slice-no-living-ships**'
-      # 0313 cuts the weapon ranges below the spawn gap and this proof carries its behaviour block
-      # (DZCOMBAT_PASS_CLOSURE — units MOVE, fire only after closure) — range branches must run it.
-      # UNION at the 0312/0313 merge, and AGAIN at 0313/0314: every side appended a branch here, so
-      # taking any one whole would silently un-gate the other slices' own proof blocks.
-      - 'slice-weapon-ranges**'
-      # 0314 rewrites the combat tick again (real attack intervals + per-hit rolls + the visible
-      # hitsplat) and this proof carries its behaviour block (DZCOMBAT_PASS_RSFEEL).
-      - 'slice-runescape-**'
-      # 0315 rewrites the ENCOUNTER BUILDER itself (every fleet entering combat gets a lead, flagged
-      # or not) and this proof carries its behaviour block (DZCOMBAT_PASS_LEAD) — a formation branch
-      # that does not fire this gate ships with nothing but its own text self-asserts behind it.
-      - 'slice-every-fleet**'
-      # 0316 divides EVERY combat distance and rate by 5 (ranges, the formation ring, the enemy
-      # speeds and projectile speeds by config; the player's world-travel speed converted into a
-      # combat speed by a new knob read in the encounter builder). This proof carries the CLOSURE
-      # block, which 0316 turned into a pinned tick-count property — a five-times-tighter branch
-      # that does not fire this gate ships the whole geometry on text self-asserts alone.
-      - 'slice-combat-five-times**'
-      # 0317 rewrites the combat tick again (a unit destroyed earlier in a tick takes no turn — no
-      # move, no shot, on either side) and this proof carries its behaviour block
-      # (DZCOMBAT_PASS_DEADFIRE), which is RED by construction on the pre-0317 body. A branch that
-      # changes who is allowed to act inside a tick and does not fire this gate ships on text alone.
-      - 'slice-the-dead**'
-      # 0332 rewrites the combat tick's SETTLE arm — the escape/completed exit now gives a member
-      # that died in a fight the fleet SURVIVED the same terminal write the defeat arm always gave
-      # it, so hp and status cannot end a fight disagreeing. This proof carries its behaviour block
-      # (DZCOMBAT_PASS_WRECKHOME), RED by construction on the pre-0332 body: it is the only runtime
-      # check anywhere that a SURVIVING fleet reconciles its casualties, and the only one that drives
-      # tow + repair end to end on a wreck the old arm stranded. The same `supabase start` also
-      # applies 0332's guarded backfill against the real chain. A branch that changes what a fight
-      # leaves behind and does not fire this gate ships on text self-asserts alone.
-      - 'slice-a-wreck**'
-      # UNION at the 0317/0318/0319 merges — BOTH globs stay. 0319 (drawn zones stay drawn) was
-      # authored as 0317 against the pre-#361 main, renumbered to 0318 when the-dead-do-not-shoot took
-      # that number and DEPLOYED it, then to 0319 when hidden-stays-hidden took THAT one and deployed
-      # too; each side had appended exactly one branch here. Taking either side whole would silently
-      # un-gate the other slice, which is the failure mode every UNION comment above records.
-      # 0319 adds gen-0319 to this file's GENERATED-MIGRATION PARITY GATE (danger-combat-proof.sh's
-      # GENERATORS list), the repo's ONLY runner of any generator's `--check`. It changes no combat
-      # function and adds no behaviour block here; the branch is named so its own generator is checked
-      # on the branch that introduces it rather than first on main.
-      - 'slice-drawn-zones**'
-      # 0320 DELETES eight game_config rows and writes three more. Its whole safety argument is an
-      # apply-time precondition ("no function in this database mentions these keys") that only a real
-      # Postgres can evaluate — a static read of the file proves nothing about it. This proof is the
-      # `supabase start` that applies the chain INCLUDING 0320, so a knob branch that does not fire
-      # it ships a DELETE against the live config table on text self-asserts alone.
-      - 'slice-knobs**'
-      # 0317 rewrites BOTH calculate_expedition_stats and combat_create_group_encounter and repoints
-      # this proof's weapon-power assertions, so it must run on the branch that does it.
-      - 'slice-one-authority**'
 
 permissions:
   contents: read

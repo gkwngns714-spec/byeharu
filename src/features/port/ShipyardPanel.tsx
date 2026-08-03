@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
-import { fetchMyItemBalances } from '../modules/modulesApi'
+import { fetchPortItemBalances } from '../modules/modulesApi'
 import { fetchMyMainShips } from '../map/mainshipApi'
 import { getMyCaptainInstances } from '../captains/captainsApi'
 import { getWalletBalance } from '../map/tradeApi'
@@ -71,11 +71,13 @@ import { ItemChip, titleCaseId } from '../../components/items'
 // loaded recipe actually carries the gate — zero extra reads on the T1 catalog.
 
 export function ShipyardPanel({
-  // The ship's server-reported docked location (PortScreen's dock projection). mainShipId rides
-  // the port-service sibling props contract (SalvageMarketPanel/HaulBoardPanel) but is unused
-  // here BY DESIGN: start_hull_build is player-scoped (0188 — no ship/dock parameter); the
-  // SHIPYARD-2 cancel follow-up is the expected consumer.
+  // The ship's server-reported docked location (PortScreen's dock projection).
   locationId,
+  // 0333: mainShipId is LOAD-BEARING now. start_hull_build was player-scoped (0188 — no ship, no
+  // dock), which meant a hull could be ordered from nowhere and its cancel refund had no port to
+  // return the ingredients to. The order now names the ship, the server derives the port from its
+  // dock, and the order RECORDS that store so the refund can find it.
+  mainShipId,
   // Re-reads whenever the main-ship dock lifecycle changes (the SalvageMarketPanel dep idiom).
   lifecycleKey,
 }: {
@@ -139,7 +141,7 @@ export function ShipyardPanel({
       getHullBuildRecipes(),
       getHullRecipeIngredients(),
       getHullTypeNames(),
-      fetchMyItemBalances(),
+      fetchPortItemBalances(mainShipId),
       getWalletBalance(),
       getMyActiveBuildOrders(),
     ])
@@ -170,7 +172,7 @@ export function ShipyardPanel({
     setOrders(ord)
     setOwnedHulls(owned)
     setCaptainLevel(level)
-  }, [activeRef, locationId]) // locationId is a real dep — refetch when the docked port changes
+  }, [activeRef, locationId, mainShipId]) // both are real deps — the port and the ship decide the stock
 
   // lifecycleKey is a deliberate re-fetch trigger (the SalvageMarketPanel dep idiom).
   useEffect(() => {
@@ -186,7 +188,7 @@ export function ShipyardPanel({
       guards,
       setPending: (on) => setPending((p) => ({ ...p, [hullTypeId]: on })),
       setNote: (note) => setRowNote((n) => ({ ...n, [hullTypeId]: note })),
-      exec: () => startHullBuild(crypto.randomUUID(), hullTypeId),
+      exec: () => startHullBuild(crypto.randomUUID(), hullTypeId, mainShipId),
       // Success feedback from the SERVER receipt (credits_spent + the exact bill) — never client
       // math. Rejects render the mapped copy PLUS the server's own reject context (have/need,
       // the cap, the gate identities — 0188's truthfulness channel, shipyardRejectNote).

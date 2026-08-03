@@ -84,7 +84,13 @@ if [ "$MODE" = "selftest" ]; then
   # three of which gen-0332's own head check names explicitly rather than widening the window — so
   # 0333 still cannot cut a slice from a head that has moved without failing here first. FOURTEEN
   # generators now. Same law as every line above: a missing or unrun generator is a HARD FAIL.
-  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn gen-0331-one-authority-for-attack gen-0332-a-wreck-can-always-come-home"
+  # 0333 joins: TWENTY-TWO hunks over TEN functions (reward_grant 0040, craft 0109, recruit 0126,
+  # salvage sell 0174, shipyard order 0188, shipyard refund 0194, port shop buy 0235) plus SIX
+  # signature widenings. It carries its OWN per-function drift gate — for each of those ten it
+  # refuses to generate if any later migration textually re-created the function or rewrote it by
+  # hunk surgery — so the same protection every line above describes is enforced ten times over.
+  # FIFTEEN generators now.
+  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn gen-0331-one-authority-for-attack gen-0332-a-wreck-can-always-come-home gen-0333-items-live-at-ports"
   if command -v node >/dev/null 2>&1; then
     # DIRECTION 1 — nothing on disk may be unregistered. This is the half that would have caught 0307
     # on the day the gate was written, and it needs no maintenance to keep working.
@@ -214,7 +220,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "public.mainship_mark_combat_destroyed(" "$SQL" || fail "harness does not wreck the ships through the tick's own terminal leaf (0312)"
   grep -q "public.mainship_sync_combat_hp("       "$SQL" || fail "harness does not damage a ship through the tick's own hp writer (the 0312 round-to-zero shape)"
   grep -q "public.mainship_emergency_tow("        "$SQL" || fail "harness does not exercise the tow on the dead fleet (the 0312 recovery half)"
-  grep -q "public.repair_main_ship("              "$SQL" || fail "harness does not exercise the repair on the towed wreck (the 0312 recovery half)"
+  grep -q "public.repair_ship_hull("              "$SQL" || fail "harness does not exercise the repair on the towed wreck (the 0312 recovery half)"
   grep -q "public.command_ship_group_dock("       "$SQL" || fail "harness does not exercise the dock refusal (the 0312 second compose site)"
 
   # the ambush must be fired by the REAL movement processor, never by calling the resolver to make it
@@ -511,7 +517,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "must not have broken the escape hatch"                 "$SQL" \
     || fail "harness lacks the tow-still-works assert (0297's escape hatch must survive for the case it was built for)"
   grep -q "the position gate must still be the thing that answers" "$SQL" \
-    || fail "harness lacks the nowhere-wreck reject-code assert (repair must still refuse with ship_not_at_port, not some other reason)"
+    || fail "harness lacks the nowhere-wreck reject-code assert (repair must still refuse with not_at_port, not some other reason)"
   grep -q "public.fleet_docked_location("                         "$SQL" \
     || fail "harness does not compose the 0306 docked authority when asserting the nowhere premise — it would be re-stating the docked test instead of using the one the fix uses"
 

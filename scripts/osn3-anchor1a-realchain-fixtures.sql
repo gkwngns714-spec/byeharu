@@ -239,7 +239,10 @@ begin
   if not found then raise exception '6b: destruction did not coordinate-complete the ship: %', d; end if;
   perform set_config('request.jwt.claim.sub', p::text, true);
   perform set_config('request.jwt.claims', json_build_object('sub', p)::text, true);
-  r := repair_main_ship();
+  -- 0335: ONE repair verb (repair_ship_hull). A whole-hull restore is a NULL amount; the request id
+  -- is the replay key and is required. Envelope-returning, so a refusal is a value, never a raise.
+  r := repair_ship_hull(null, null, gen_random_uuid());
+  if (r->>'ok')::boolean is not true then raise exception '6b: repair refused the destroyed ship: %', r; end if;
   perform set_config('request.jwt.claim.sub', '', true);
   perform set_config('request.jwt.claims', '', true);
   if (mainship_space_validate_context(s)->>'state') <> 'legacy_home' then raise exception '6b: repaired ship not legacy_home: %', mainship_space_validate_context(s); end if;

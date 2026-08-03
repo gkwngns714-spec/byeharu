@@ -83,7 +83,7 @@ begin
 end $$;
 -- canonical client-RPC inventory = prior 13 + command_main_ship_space_move; no server fn exposed
 do $$
-declare expected text[] := array['bootstrap_me','cancel_build_order','command_main_ship_space_move','get_combat_reports','get_my_expedition_preview','get_world_map','move_main_ship_to_location','repair_main_ship','request_leave_location','request_main_ship_return','request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
+declare expected text[] := array['bootstrap_me','cancel_build_order','command_main_ship_space_move','get_combat_reports','get_my_expedition_preview','get_world_map','move_main_ship_to_location','repair_ship_hull','request_leave_location','request_main_ship_return','request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
   actual text[]; server_only text[] := array['mainship_space_begin_move','process_mainship_space_arrivals','dev_set_main_ship_destroyed','mainship_space_lock_context','mainship_space_validate_context','mainship_space_resolve_origin','mainship_space_assert_cross_domain_exclusion'];
 begin
   select coalesce(array_agg(distinct p.proname order by p.proname),'{}') into actual from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and has_function_privilege('authenticated',p.oid,'EXECUTE');
@@ -91,7 +91,7 @@ begin
   if actual && server_only then raise exception 'LIVE FAIL: a server-only fn is authenticated-executable: %', actual; end if;
   if not (actual @> expected) then raise exception 'LIVE FAIL: a canonical client RPC missing: expected=% actual=%', expected, actual; end if;
   if not (expected @> actual) then raise notice 'LIVE NOTE: extra authenticated-executable fn(s): %', (select array_agg(x) from unnest(actual) x where not (x = any(expected))); end if;
-  if not has_function_privilege('authenticated','public.repair_main_ship()'::regprocedure,'EXECUTE') then raise exception 'LIVE FAIL: repair_main_ship lost authenticated execute'; end if;
+  if not has_function_privilege('authenticated','public.repair_ship_hull(uuid,numeric,uuid)'::regprocedure,'EXECUTE') then raise exception 'LIVE FAIL: repair_ship_hull lost authenticated execute'; end if;
   if not has_function_privilege('anon','public.get_world_map()'::regprocedure,'EXECUTE') then raise exception 'LIVE FAIL: anon lost get_world_map'; end if;
   raise notice 'LIVE ok: canonical client-RPC inventory = prior 13 + command_main_ship_space_move; legacy main-ship RPCs intact; no server fn exposed';
 end $$;

@@ -5,7 +5,7 @@ name: OSN-3 S5 — real-migration-chain proof (disposable Supabase)
 # chain 0001..0059 — real tables/CHECKs/indexes/RLS/grants/triggers/pg_cron and the real roles anon/
 # authenticated/service_role. NOT a stub; NEVER the shared/live DB. Proves the primitive's permission
 # boundary, the coherent-destruction matrix (in_transit/in_space/at_location/legacy), idempotency,
-# real repair_main_ship-after-destruction, the contradiction-abort matrix, real concurrent-session race
+# real repair_ship_hull-after-destruction, the contradiction-abort matrix, real concurrent-session race
 # behavior, REST/RPC denial, the unchanged S4 cron, and restores the simulated activated config. Runs
 # on push to the OSN-3 branch(es).
 

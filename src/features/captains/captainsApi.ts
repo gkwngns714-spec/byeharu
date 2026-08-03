@@ -118,10 +118,14 @@ export async function configureShipRoom(
 export async function recruitCaptain(
   requestId: string,
   captainType: string,
+  mainShipId: string | null,
 ): Promise<RecruitCaptainResult> {
+  // 0333 - LAW 3: recruiting consumes the DOCKED PORT'S storage, so the command carries the ship
+  // whose dock names that port. Never a location: the server derives the port itself.
   const { data, error } = await supabase.rpc('recruit_captain', {
     p_request_id: requestId,
     p_captain_type: captainType,
+    p_main_ship_id: mainShipId,
   })
   if (error) return { ok: false, code: 'unavailable' }
   return data as RecruitCaptainResult

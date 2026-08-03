@@ -142,7 +142,7 @@ checks as (
              and has_function_privilege('service_role', rpc.arrival_processor::oid, 'EXECUTE'), false)    as chk3_processor_service_role,
     -- [3b] authenticated public function surface equals the canonical set (exactly 17 at head 0068)
     coalesce(
-      surface.names = 'bootstrap_me,cancel_build_order,command_main_ship_space_move,command_main_ship_space_move_to_location,command_main_ship_space_stop,get_combat_reports,get_my_expedition_preview,get_osn_movement_readiness,get_world_map,move_main_ship_to_location,repair_main_ship,request_leave_location,request_main_ship_return,request_retreat,send_fleet_to_location,send_main_ship_expedition,train_units',
+      surface.names = 'bootstrap_me,cancel_build_order,command_main_ship_space_move,command_main_ship_space_move_to_location,command_main_ship_space_stop,get_combat_reports,get_my_expedition_preview,get_osn_movement_readiness,get_world_map,move_main_ship_to_location,repair_ship_hull,request_leave_location,request_main_ship_return,request_retreat,send_fleet_to_location,send_main_ship_expedition,train_units',
       false
     )                                                                             as chk3b_client_surface_is_canonical_17,
     -- [4] zero active coordinate movements (space + location target kinds) while dark

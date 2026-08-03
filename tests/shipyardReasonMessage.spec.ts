@@ -19,8 +19,13 @@ test('every known server code maps to specific player text (not the fallback)', 
     hull_prerequisite_not_met: 'You must own the required ship first.',
     captain_level_too_low: 'A higher-level captain is required.',
     queue_full: 'Your build queue is full.',
-    insufficient_items: 'Not enough materials to start this build.',
+    // 0333 — items live in PORT storage now, so the shortfall is about THIS port's stock, and the
+    // three law-3 codes the order path can newly return each get their own specific text.
+    insufficient_items: 'Not enough materials stored at this port.',
     insufficient_credits: 'Not enough credits to start this build.',
+    not_docked: 'Dock at a port to order from what is stored there.',
+    port_has_no_storage: 'This place has no storage.',
+    ship_not_found: 'No ship available.',
   }
   for (const [code, msg] of Object.entries(known)) {
     expect(shipyardReasonMessage(code)).toBe(msg)

@@ -8,6 +8,7 @@ import { join } from 'node:path'
 //   dock.html   — the real docked-port surface (useDockServices → <DockedPortCard>)
 //   camera.html — the real <GalaxyMap> + useWheelZoom, driven by a real pointer
 //   fold.html   — the real <ReportsSection> (the Collapsible primitive through its consumer)
+//   repair.html — the real <RepairPanel> (THE ONE repair surface) with an injected server API
 // (4A-POST deleted the PortNav + galaxy-coordinate harnesses with the per-ship movement client.)
 // Root is this harness dir; fs.allow is widened to the repo root so `../../src/...` imports resolve.
 // cacheDir is forced into the OS temp dir so Vite's dep-optimizer cache never lands on a OneDrive-synced

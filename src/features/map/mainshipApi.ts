@@ -14,7 +14,7 @@ import { parseDockedStore, DOCK_STORE_EMPTY, type DockedStore } from './dockStor
 // and the settle-arrival wrappers (both families unfireable — no writer can mint their rows). The
 // unified fleet mover (teamApi) is the only movement writer; ship placement is served exclusively
 // by get_my_fleet_positions. What remains here is owner READS (ship/fleet/presence/fleet-positions),
-// the repair + rename wrappers, and the dock reads. The client only REQUESTS; the server decides.
+// the rename wrapper, and the dock reads. The client only REQUESTS; the server decides.
 
 // (4C-CLIENT: the OSN-2 SpatialState type — the 0054 spatial-mode selector — is DELETED with its
 // last reader. No client code reads main_ship_instances.spatial_state anymore; 4c-mig-2 drops it.)
@@ -265,25 +265,24 @@ export async function fetchMyCurrentDockServices(mainShipId?: string | null): Pr
   return parseDockServices(data)
 }
 
-// STATION-STORAGE — the per-port hangar for the docked port (get_my_docked_store(); no args, server derives the
-// ship + validated dock). Any error collapses to the empty store default (panel hidden), like the dock-services
-// read above. Dark by default (server gates on station_storage_enabled).
-export async function fetchMyDockedStore(): Promise<DockedStore> {
-  const { data, error } = await supabase.rpc('get_my_docked_store')
+// STATION-STORAGE — the per-port hangar for the docked port. Any error collapses to the empty store default
+// (panel hidden), like the dock-services read above.
+//
+// ITEMS-HAVE-A-PLACE (0333): now passes the EXPLICIT selected ship, exactly as the dock-services read above
+// already did. Calling with NO argument fell back to the server's sole-ship shim, and
+// mainship_resolve_owned_ship (0159) returns NULL at N>1 — so for every player owning two or more ships this
+// read answered 'no_main_ship' and the Storage card silently rendered nothing at all. The owner has five
+// ships. Wiring a transfer to a card that never appears would have been half a slice.
+export async function fetchMyDockedStore(mainShipId?: string | null): Promise<DockedStore> {
+  const { data, error } = await supabase.rpc('get_my_docked_store', { p_main_ship_id: mainShipId ?? null })
   if (error) return DOCK_STORE_EMPTY
   return parseDockedStore(data)
 }
 
-// Phase 10F / TRADE-FLEET-0C §2.5 — repair a disabled main ship (status='destroyed' = disabled/needs-repair
-// for a PERSISTENT ship; never deletion). The only normal player recovery path; instant + free, restores
-// hp=max_hp and status='home'. Not routed through any legacy fleet API. Passes the EXPLICIT selected/sole
-// main-ship id (p_main_ship_id); the server asserts ownership (so it can only ever repair the caller's own
-// ship), and a null id preserves the sole-ship shim (behavior-identical while every player has exactly one).
-export async function repairMainShip(mainShipId?: string | null): Promise<{ main_ship_id: string; status: string; hp: number; max_hp: number }> {
-  const { data, error } = await supabase.rpc('repair_main_ship', { p_main_ship_id: mainShipId ?? null })
-  if (error) throw new Error(error.message)
-  return data as { main_ship_id: string; status: string; hp: number; max_hp: number }
-}
+// ONE WAY TO REPAIR (0335) — the repairMainShip wrapper that lived here is GONE, together with the
+// repair_main_ship RPC it called. Restoring a hull — wrecked or merely dented — is now ONE verb with
+// ONE client wrapper: repairShipHull in src/features/ship/repairApi.ts. This module keeps the reads
+// and the rename it already owned and carries no repair surface at all.
 
 // SHIP-IDENTITY (0184) / §2.5 — thin client wrapper over the player rename (rename_main_ship_self).
 // Sends the raw name plus the EXPLICIT selected/sole main-ship id (p_main_ship_id; null → server

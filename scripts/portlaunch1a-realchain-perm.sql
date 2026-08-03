@@ -50,7 +50,7 @@ declare actual text[]; n_total int; n_distinct int;
   expected text[] := array[   -- alphabetically sorted (matches array_agg order by proname)
     'bootstrap_me','cancel_build_order','command_main_ship_space_move','command_main_ship_space_move_to_location',
     'command_main_ship_space_stop','get_combat_reports','get_my_expedition_preview','get_osn_movement_readiness',
-    'get_world_map','move_main_ship_to_location','repair_main_ship','request_leave_location','request_main_ship_return',
+    'get_world_map','move_main_ship_to_location','repair_ship_hull','request_leave_location','request_main_ship_return',
     'request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
 begin
   select array_agg(p.proname order by p.proname), count(*), count(distinct p.proname)

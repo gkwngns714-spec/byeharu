@@ -87,8 +87,17 @@ export function PortScreen() {
   const chosenPos = map.fleetPositions.find((p) => p.main_ship_id === chosenShipId)
   const chosenBerthPort = chosenPos?.place === 'berthed' ? portOfShip(ports, chosenShipId) : null
   const chosenBerthShipName = chosenBerthPort?.ships.find((s) => s.mainShipId === chosenShipId)?.name ?? 'This ship'
-  // STATION-STORAGE — the docked port's own hangar (dark by default; server returns empty while the flag is off).
-  const store = useDockStore(lifecycleKey)
+  // STATION-STORAGE — the docked port's own hangar.
+  // ITEMS-HAVE-A-PLACE (0333): the read now carries the CHOSEN ship, the same way the dock-services
+  // read above always has. Without it the server's sole-ship shim resolved to NULL for anyone with
+  // two or more ships and this card never rendered at all. `storageRevision` re-reads THIS port's
+  // storage after a move; it is deliberately NOT folded into `lifecycleKey`, so moving an item does
+  // not make every other panel on the screen refetch — but it BUILDS ON lifecycleKey, so TRADE-MOUNT's
+  // cargoEpoch (and every other lifecycle trigger) still reaches the storage read unchanged.
+  const [storageRevision, setStorageRevision] = useState(0)
+  const storageKey = `${lifecycleKey}|s${storageRevision}`
+  const store = useDockStore(storageKey, { mainShipId: chosenShipId })
+  const onStorageChanged = useCallback(() => setStorageRevision((r) => r + 1), [])
   // UI R3 (composition): desktop ops split — main rail = the port's identity/services card + the
   // Workshop (WORKSHOP: module craft & fit — port-docked work, see below) + the market (the
   // trade surface belongs beside the port, not under the hangar); aside rail =
@@ -158,8 +167,10 @@ export function PortScreen() {
           <div className={screenRailClass('main')}>
             {/* The docked-port surface (identity → right now → service details). */}
             <DockedPortCard dock={dock} />
-            {/* WORKSHOP — module CRAFTING (non-spatial, 0109: player-scoped, no settled
-                precondition — reachable wherever the ship is docked). S6: the fit/unfit EDIT
+            {/* WORKSHOP — module CRAFTING. 0333: crafting is SPATIAL now — it consumes the stock
+                of the port this ship is DOCKED at, because that is where items live. The panel
+                addresses `chosenShipId`, the SAME acting ship as every other panel on this screen.
+                S6: the fit/unfit EDIT
                 surface moved to the Fitting tab's per-ship detail (FittingDetail — the ONE
                 fitting-edit surface; its enable derives from the ship's own fleet-positions row
                 and the server's 0114 settled-safe rule stays the enforcer), so this panel is
@@ -167,7 +178,11 @@ export function PortScreen() {
                 branch so a dark read never leaves a label over a void. No onChanged wiring: no
                 sibling on this screen reads the player inventory, and the Fitting tab's readers
                 refetch on route remount — screens unmount on navigation. */}
-            <ModulesPanel lifecycleKey={lifecycleKey} sectionLabel="Workshop" />
+            <ModulesPanel
+              lifecycleKey={lifecycleKey}
+              mainShipId={chosenShipId}
+              sectionLabel="Workshop"
+            />
             {/* TRADE-MARKET-1 (LIVE since 2026-08-03; server flag `trade_market_enabled` is lit and
                 re-checked on every RPC): buy/sell the port's cargo goods. This is the ONLY player-
                 reachable producer of ship_cargo_lots — the haul contract board below consumes them,
@@ -221,9 +236,16 @@ export function PortScreen() {
             />
           </div>
           <div className={screenRailClass('aside')}>
-            {/* STATION-STORAGE — this port's own hangar (per-port, per-player storage). Dark by default:
-                get_my_docked_store returns empty while station_storage_enabled is off → renders null. */}
-            <StationHangar store={store} />
+            {/* STATION-STORAGE + ITEMS-HAVE-A-PLACE (0333) — this port's own storage AND the one
+                surface that moves items between it and the ship's hold. Both halves live in one
+                card because the verb is a move BETWEEN them. Renders null unless the ship is
+                docked at a storable port (get_my_docked_store returns empty otherwise). */}
+            <StationHangar
+              store={store}
+              mainShipId={chosenShipId}
+              refreshKey={storageKey}
+              onChanged={onStorageChanged}
+            />
             {/* LOCATION-INVEST-P18 (dark, server-lit only): docked-port investment. Renders null
                 unless the server lit get_location_development, so production is byte-unchanged. */}
             <InvestmentPanel

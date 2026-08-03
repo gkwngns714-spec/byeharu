@@ -2,7 +2,7 @@ name: Verify — main-ship repair (10F)
 
 # Regression check for the Phase 10F destroyed/repair safelock: dev-destroy (service-role) cleans
 # up the linked fleet and wins over in-flight state; send/return blocked while destroyed;
-# repair_main_ship restores home + full hp; send works again; no fleet_units for main-ship fleets.
+# repair_ship_hull restores home + full hp, free; send works again; no fleet_units for main-ship fleets.
 # Temporarily enables the flag + shrinks travel config, restoring all of it in finally. Shares the
 # live-DB concurrency group. Dispatch on demand.
 

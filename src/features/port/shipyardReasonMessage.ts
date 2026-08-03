@@ -20,7 +20,11 @@ const REASON_MESSAGES: Record<string, string> = {
   hull_prerequisite_not_met: 'You must own the required ship first.',
   captain_level_too_low: 'A higher-level captain is required.',
   queue_full: 'Your build queue is full.',
-  insufficient_items: 'Not enough materials to start this build.',
+  insufficient_items: 'Not enough materials stored at this port.',
+  // 0333, law 3 in the player's words: you order a hull from the port you are standing in.
+  not_docked: 'Dock at a port to order from what is stored there.',
+  port_has_no_storage: 'This place has no storage.',
+  ship_not_found: 'No ship available.',
   insufficient_credits: 'Not enough credits to start this build.',
 }
 

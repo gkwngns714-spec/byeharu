@@ -330,8 +330,10 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT the wave-1 threshold holds at rate 1"
   grep -qF "won bundle carries % shard elements" "$SQL" \
     || fail "harness does not ASSERT the won encounter's bundle carries the shard (end-to-end)"
-  grep -qF "carried shard not deposited to player_inventory" "$SQL" \
-    || fail "harness does not ASSERT the shard deposit into player_inventory (the recruit currency)"
+  # 0333: the global player_inventory pool is DROPPED — items live PER PORT in base_items — so the
+  # .sql assertion now names the base the settle deposited into, and this pin follows it there.
+  grep -qF "carried shard not deposited into the settling base" "$SQL" \
+    || fail "harness does not ASSERT the shard deposit into the settling base's item store (the recruit currency)"
 
   # ── CAPXP (0177) pins, in assert form (a gutted .sql that only mentions them in prose cannot
   #    false-green): the accrual fn is exercised; the committed flag/knob seeds are pinned; the dark
@@ -402,8 +404,10 @@ if [ "$MODE" = "selftest" ]; then
   #    survival +12 / mining_yield +8 adapter deltas; and BOTH minus-key isolation pins. Plus the
   #    sole-writer negatives: the harness never writes a Modules/Fitting/Inventory-owned table
   #    directly — ingredients ride reward_grant, modules ride craft_module/fit_module_to_ship. ────
-  grep -qF "public.craft_module(''mod2-shield-1'', ''shield_lattice'')" "$SQL" \
-    || fail "harness does not craft the shield via the real craft_module RPC"
+  # 0333: craft_module gained a trailing ship argument and DERIVES the port it spends from that
+  # ship's validated dock, so every craft call in the .sql now names its ship; the pins follow.
+  grep -qF "public.craft_module(''mod2-shield-1'', ''shield_lattice'', %L::uuid)" "$SQL" \
+    || fail "harness does not craft the shield via the real craft_module RPC (naming the docked ship)"
   grep -qF "public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod2-fit-1'')" "$SQL" \
     || fail "harness does not fit the shield via the real fit_module_to_ship RPC"
   # 0300 lit both module gates, so the dark arms SET their precondition instead of asserting the seed.
@@ -424,7 +428,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "the rig moved a non-mining key" "$SQL" \
     || fail "harness does not ASSERT the rig minus-key isolation pin"
   grep -viE '^[[:space:]]*--' "$SQL" \
-    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(module_instances|module_craft_receipts|ship_module_fittings|module_fitting_receipts|module_types|module_recipe_ingredients|player_inventory|inventory_ledger|reward_grants)\b' \
+    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(module_instances|module_craft_receipts|ship_module_fittings|module_fitting_receipts|module_types|module_recipe_ingredients|base_items|fleet_items|inventory_ledger|reward_grants)\b' \
     && fail "harness directly mutates a Modules/Fitting/Inventory/Reward-owned table (sole-writer law violation)" || true
 
   # ── MOD22 (0202 / MOD2-2) pins, in assert form (a gutted .sql that only mentions them in prose
@@ -432,10 +436,10 @@ if [ "$MODE" = "selftest" ]; then
   #    Mk-II crafted + fitted via the real RPCs; the exact survival +20 shield delta (else-0 arm) and
   #    the FULL weapon tradeoff arm — combat_power +18, pirate_attention +4, the biting speed penalty
   #    — plus both isolation pins. The sole-writer negative is the shared grep above (whole file). ──
-  grep -qF "public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'')" "$SQL" \
-    || fail "harness does not craft the Mk-II shield via the real craft_module RPC"
-  grep -qF "public.craft_module(''mod22-auto-1'', ''autocannon_battery_mk2'')" "$SQL" \
-    || fail "harness does not craft the Mk-II autocannon via the real craft_module RPC"
+  grep -qF "public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'', %L::uuid)" "$SQL" \
+    || fail "harness does not craft the Mk-II shield via the real craft_module RPC (naming the docked ship)"
+  grep -qF "public.craft_module(''mod22-auto-1'', ''autocannon_battery_mk2'', %L::uuid)" "$SQL" \
+    || fail "harness does not craft the Mk-II autocannon via the real craft_module RPC (naming the docked ship)"
   grep -qF "public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod22-fit-a'')" "$SQL" \
     || fail "harness does not fit the Mk-II autocannon via the real fit_module_to_ship RPC"
   grep -qF "% of 2 Mk-II module rows carry the exact 0202 seed shape" "$SQL" \

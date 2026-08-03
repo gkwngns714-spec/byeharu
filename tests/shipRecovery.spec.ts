@@ -1,51 +1,31 @@
 import { test, expect } from '@playwright/test'
 import {
-  canRepair,
-  canTow,
   freshestShipStatus,
-  isAdriftError,
-  repairConcept,
-  repairErrorMessage,
+  recoveryReasonMessage,
   repairGate,
-  repairGateNote,
+  repairPosition,
+  repairPositionLine,
   towReasonMessage,
   towSuccessMessage,
   type DisabledShipRow,
 } from '../src/features/ship/shipRecovery'
+import { repairReasonMessage } from '../src/features/ship/repairReasonMessage'
 
-// 0297 REPAIR REQUIRES A PORT — specs for the pure recovery gate + its reason→copy maps.
+// 0297 REPAIR REQUIRES A PORT, unified by 0335 — specs for the pure recovery gate + its copy.
 // The rules under test are the ones that make the slice safe:
 //   · a disabled ship ALWAYS gets exactly one recovery action offered — never none;
 //   · an unavailable readiness read FAILS OPEN (Repair stays offered; the server is the enforcer);
-//   · no raw server code or raise text ever reaches the screen.
+//   · no raw server code ever reaches the screen, and there is now only ONE vocabulary to map.
+//
+// ONE-SURFACE (this slice): the client no longer carries a SECOND decider beside `repairGate`.
+// `repairConcept` — which existed only to choose between two mounted repair blocks — is deleted
+// with the second block, and so is the spec that had to assert the two deciders agreed. The gate
+// is the one decider, and `repairPosition` folds it (plus the living-hull projection) into the ONE
+// position vocabulary the surface renders from.
 // Run: `npx playwright test shipRecovery.spec.ts`.
 
 const AT_PORT: DisabledShipRow = { main_ship_id: 's1', name: 'Kestrel', at_port: true, location_id: 'haven' }
 const ADRIFT: DisabledShipRow = { main_ship_id: 's2', name: 'Vagrant', at_port: false, location_id: null }
-
-// ── repairConcept (REPAIR-WHERE-YOU-ARE: the ONE mount decision for the condition block) ─────────
-// Both FittingDetail mount sites read this single value (`surface === 'paid_mend'` /
-// `surface === 'free_recovery'`) — neither carries its own status comparison. HONESTY NOTE: these
-// specs pin the DECIDER; the JSX composition consuming it is not covered by any rendered test
-// (no harness mounts FittingDetail today) — stated plainly rather than papered over with a spec
-// that could not fail.
-test('repairConcept: destroyed → the free recovery block; every live status → the paid mend', () => {
-  expect(repairConcept('destroyed')).toBe('free_recovery')
-  for (const status of ['home', 'stationary', 'traveling', 'anything_else', '']) {
-    expect(repairConcept(status)).toBe('paid_mend')
-  }
-})
-
-test('repairConcept agrees with the free gate: free_recovery exactly when the gate has a surface', () => {
-  // The server's mutual exclusion, held between the two client deciders: the free block renders
-  // (gate ≠ not_disabled) exactly when repairConcept routes to it — one concept per state, never
-  // both, never neither.
-  for (const status of ['destroyed', 'home', 'stationary', 'traveling']) {
-    const routesFree = repairConcept(status) === 'free_recovery'
-    const gateActive = repairGate(status, null, 's1').kind !== 'not_disabled'
-    expect(routesFree).toBe(gateActive)
-  }
-})
 
 test('freshestShipStatus: the refetched shared read wins; the selection row is the fallback', () => {
   // fresher-read-first — a mid-session destruction lands in the shared read long before the
@@ -61,32 +41,30 @@ test('freshestShipStatus: the refetched shared read wins; the selection row is t
 test('a healthy ship has no recovery surface at all', () => {
   const gate = repairGate('home', [AT_PORT], 's1')
   expect(gate.kind).toBe('not_disabled')
-  expect(repairGateNote(gate)).toBeNull()
-  expect(canRepair(gate)).toBe(false)
-  expect(canTow(gate)).toBe(false)
 })
 
 test('a disabled ship IN PORT is offered Repair, never the tow', () => {
   const gate = repairGate('destroyed', [AT_PORT, ADRIFT], 's1')
   expect(gate).toEqual({ kind: 'at_port', locationId: 'haven' })
-  expect(canRepair(gate)).toBe(true)
-  expect(canTow(gate)).toBe(false)
+  expect(repairPosition(gate, undefined)).toBe('at_port')
 })
 
 test('a disabled ship ADRIFT is offered the tow, and Repair is refused with the reason', () => {
   const gate = repairGate('destroyed', [AT_PORT, ADRIFT], 's2')
   expect(gate).toEqual({ kind: 'adrift' })
-  expect(canRepair(gate)).toBe(false)
-  expect(canTow(gate)).toBe(true)
-  expect(repairGateNote(gate)).toContain('port')
+  expect(repairPosition(gate, undefined)).toBe('away')
+  expect(repairPositionLine(true, 'away')).toContain('port')
 })
 
 test('EVERY disabled state offers exactly one action — a wreck is never left with none', () => {
   for (const rows of [[AT_PORT, ADRIFT], null, [] as DisabledShipRow[]]) {
     for (const id of ['s1', 's2', 'unknown-ship']) {
       const gate = repairGate('destroyed', rows, id)
-      expect(canRepair(gate) !== canTow(gate)).toBe(true) // exactly one, never both, never neither
-      expect(repairGateNote(gate)).not.toBeNull()
+      const at = repairPosition(gate, undefined)
+      // Exactly one action, never both, never neither: 'away' is the tow, everything else is Repair.
+      expect(['at_port', 'away', 'unknown']).toContain(at)
+      // And the surface always has a sentence explaining which one, and why.
+      expect(repairPositionLine(true, at)).not.toBeNull()
     }
   }
 })
@@ -94,54 +72,121 @@ test('EVERY disabled state offers exactly one action — a wreck is never left w
 test('an unavailable readiness read FAILS OPEN — Repair stays offered (the server is the enforcer)', () => {
   const gate = repairGate('destroyed', null, 's1')
   expect(gate.kind).toBe('unknown')
-  expect(canRepair(gate)).toBe(true)
-  expect(canTow(gate)).toBe(false)
+  // 'unknown' is NOT 'away': the tow never displaces a Repair we cannot rule out.
+  expect(repairPosition(gate, undefined)).toBe('unknown')
 })
 
 test('a ship missing from a successful read is also unknown, not silently stranded', () => {
   const gate = repairGate('destroyed', [AT_PORT], 'not-in-the-read')
   expect(gate.kind).toBe('unknown')
-  expect(canRepair(gate)).toBe(true)
+  expect(repairPosition(gate, undefined)).toBe('unknown')
 })
 
-test("the server's ship_not_at_port reject outranks a stale readiness read", () => {
+test("the server's not_at_port reject outranks a stale readiness read", () => {
   // The read still claims this wreck is in port, but the repair just came back adrift.
   const gate = repairGate('destroyed', [AT_PORT], 's1', true)
   expect(gate).toEqual({ kind: 'adrift' })
-  expect(canTow(gate)).toBe(true)
+  expect(repairPosition(gate, undefined)).toBe('away')
 })
 
-test('every repair_main_ship raise maps to player words — never the raw message', () => {
-  const raises = [
-    'repair_main_ship: ship_not_at_port — this ship is adrift; tow it to a port before repairing',
-    'repair_main_ship: ship is not disabled (status home) — nothing to repair',
-    'repair_main_ship: no main ship found',
-    'repair_main_ship: not authenticated',
-    'repair_main_ship: invalid max_hp (0)',
-  ]
-  const seen = new Set<string>()
-  for (const r of raises) {
-    const msg = repairErrorMessage(new Error(r))
-    expect(msg.length).toBeGreaterThan(0)
-    expect(msg).not.toContain('repair_main_ship')
-    expect(msg).not.toContain('_') // no snake_case code leaks through
-    seen.add(msg)
+// ── repairPosition — THE ONE position answer, for a wreck and for a dent alike ────────────────────
+// Two client projections cover DISJOINT ship sets and neither can answer for the other:
+// get_my_fleet_positions EXCLUDES destroyed ships outright (shipRecoveryApi.ts), and
+// get_my_disabled_ships contains ONLY destroyed ships. The server asks one question through one
+// authority (mainship_port_of_ship — 0335); this fold is the client half of that, so the surface
+// reads ONE position value whatever state the hull is in.
+test('repairPosition: a WRECK reads its position from the gate, never from the fleet projection', () => {
+  // The wreck's fleet-positions row does not exist (the server excludes it), so a fold that only
+  // knew about `place` would answer 'unknown' forever and the tow could never appear.
+  expect(repairPosition({ kind: 'at_port', locationId: 'haven' }, undefined)).toBe('at_port')
+  expect(repairPosition({ kind: 'adrift' }, undefined)).toBe('away')
+  expect(repairPosition({ kind: 'unknown' }, undefined)).toBe('unknown')
+  // And the gate OUTRANKS a stale/foreign positions row for a wreck — one authority per state.
+  expect(repairPosition({ kind: 'adrift' }, { place: 'docked' })).toBe('away')
+  expect(repairPosition({ kind: 'at_port', locationId: 'h' }, { place: 'in_space' })).toBe('at_port')
+})
+
+test('repairPosition: a LIVING hull reads its position from the fleet-positions row', () => {
+  expect(repairPosition({ kind: 'not_disabled' }, { place: 'docked' })).toBe('at_port')
+  expect(repairPosition({ kind: 'not_disabled' }, { place: 'berthed' })).toBe('at_port')
+  expect(repairPosition({ kind: 'not_disabled' }, { place: 'in_space' })).toBe('away')
+  expect(repairPosition({ kind: 'not_disabled' }, { place: 'transit' })).toBe('away')
+  expect(repairPosition({ kind: 'not_disabled' }, { place: 'hidden' })).toBe('unknown')
+  expect(repairPosition({ kind: 'not_disabled' }, undefined)).toBe('unknown')
+})
+
+// ── repairPositionLine — ONE sentence source for the ONE surface ─────────────────────────────────
+// Replaces the pair that existed only because there were two blocks: repairGateNote (wreck copy,
+// keyed on the gate) and repairDockStateLine (dent copy, keyed on the dock state). One function,
+// keyed on the two facts that actually decide the sentence.
+test('repairPositionLine: a WRECK always gets a sentence — adrift names the tow, in port names Repair', () => {
+  const adrift = repairPositionLine(true, 'away')
+  expect(adrift).not.toBeNull()
+  expect(adrift!.toLowerCase()).toContain('tow')
+  for (const state of ['at_port', 'unknown'] as const) {
+    const line = repairPositionLine(true, state)
+    expect(line).not.toBeNull()
+    expect(line!.toLowerCase()).toContain('repair')
+    // NOT the tow sentence: a wreck we can repair is never told to tow it first.
+    expect(line).not.toBe(adrift)
   }
-  expect(seen.size).toBe(raises.length) // each raise has its OWN copy
+})
+
+test('repairPositionLine: a DENT speaks only when it cannot be mended here, in the server’s own words', () => {
+  // away → the availability mirror's not_at_port copy VERBATIM (one sentence source: a real server
+  // reject shows the same words).
+  expect(repairPositionLine(false, 'away')).toBe(repairReasonMessage('not_at_port'))
+  // at_port → the mend renders instead; unknown → no position claim is honest. Both say nothing.
+  expect(repairPositionLine(false, 'at_port')).toBeNull()
+  expect(repairPositionLine(false, 'unknown')).toBeNull()
+})
+
+test('repairPositionLine: no raw server code ever reaches the player, in any of the six cells', () => {
+  for (const wreck of [true, false]) {
+    for (const state of ['at_port', 'away', 'unknown'] as const) {
+      const line = repairPositionLine(wreck, state)
+      if (line !== null) expect(line).not.toContain('_')
+    }
+  }
+})
+
+// ── recovery copy: ONE vocabulary, ONE override (0335) ───────────────────────────────────────────
+// Before 0335 this module owned a whole private reason set, because repair_main_ship RAISED and its
+// codes arrived as exception SUBSTRINGS. The verb now returns the same {ok, reason} envelope the
+// priced mend always used, so recoveryReasonMessage delegates to the ONE map and overrides exactly
+// one key — the one where the generic sentence would be useless advice to a wreck.
+test('every 0335 reject reaching a wreck maps to player words — never a raw code', () => {
+  const reasons = [
+    'not_authenticated',
+    'invalid_request',
+    'ship_not_found',
+    'not_at_port',
+    'nothing_to_repair',
+    'hull_unrepairable',
+  ]
+  for (const r of reasons) {
+    const msg = recoveryReasonMessage(r)
+    expect(msg.length).toBeGreaterThan(0)
+    expect(msg).not.toContain('_') // no snake_case code leaks through
+  }
+})
+
+test('the ONE override: a wreck rejected for position is told to TOW, not to "take it to a port"', () => {
+  const wreck = recoveryReasonMessage('not_at_port')
+  expect(wreck.toLowerCase()).toContain('tow')
+  // deliberately NOT the generic line — a wreck cannot take itself anywhere.
+  expect(wreck).not.toBe(repairReasonMessage('not_at_port'))
+})
+
+test('every other reason is the SAME sentence the mend shows — one copy source, not two', () => {
+  for (const r of ['not_authenticated', 'ship_not_found', 'nothing_to_repair', 'hull_unrepairable']) {
+    expect(recoveryReasonMessage(r)).toBe(repairReasonMessage(r))
+  }
 })
 
 test('an unrecognised failure degrades to the generic line (no throw, no raw text)', () => {
-  expect(repairErrorMessage(new Error('TypeError: fetch failed'))).toBe(
-    'Repairs are unavailable right now. Try again in a moment.',
-  )
-  expect(repairErrorMessage(null)).toBe('Repairs are unavailable right now. Try again in a moment.')
-  expect(repairErrorMessage(undefined)).toBe('Repairs are unavailable right now. Try again in a moment.')
-})
-
-test('only the position reject flips the ship to adrift', () => {
-  expect(isAdriftError(new Error('repair_main_ship: ship_not_at_port — …'))).toBe(true)
-  expect(isAdriftError(new Error('repair_main_ship: ship is not disabled (status home)'))).toBe(false)
-  expect(isAdriftError(null)).toBe(false)
+  expect(recoveryReasonMessage('unavailable')).toBe('Repair unavailable.')
+  expect(recoveryReasonMessage('totally_unknown_code')).toBe('Repair unavailable.')
 })
 
 test('every mainship_emergency_tow reason maps to distinct player words', () => {

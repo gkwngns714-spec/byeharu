@@ -35,6 +35,13 @@ if [ "$MODE" = "selftest" ]; then
   # ── the ONE dark flag is enabled ONLY strictly inside the begin;..rollback; scope. ────────────────
   tp_assert_flags_inside_txn "$SQL" shipyard_enabled
 
+  # -- THE DARK BLOCK MUST SET ITS OWN PRECONDITION. Migration 0300 LIT shipyard_enabled, so a P0 block
+  #    that leans on the original seed is asserting a WORLD, not a property -- and it stayed
+  #    invisible for weeks because this workflow fired on no branch carrying 0300. Refuse to pass
+  #    unless the dark scenario forces the flag false itself, in-txn, before it probes.
+  grep -qE "update public\.game_config set value='false'::jsonb where key='shipyard_enabled';" "$SQL" \
+    || fail "the dark block does not FORCE shipyard_enabled false -- it is trusting a seed that 0300 already flipped"
+
   # ── NEVER-FLIP evasion catch (the 0185-era hardened pattern): the raw-update-inside-txn idiom is
   #    the ONLY sanctioned toggle; a set_game_config('shipyard_enabled', …) call would evade the
   #    inside-txn line check above, so its mere presence (outside comments) fails the selftest. ──────
@@ -49,13 +56,13 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "public.production_create_order(" "$SQL" || fail "harness does not create the parity unit order via the real Production creator"
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.(bases|base_units|main_ship_instances|fleets)' "$SQL" \
     && fail "harness inserts bases/units/ships/fleets directly (must ride the real leaves)" || true
-  grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.player_inventory' "$SQL" \
-    && fail "harness inserts player_inventory directly (must go through reward_grant)" || true
+  grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.(base_items|fleet_items)' "$SQL" \
+    && fail "harness inserts a port/fleet item store directly (must go through reward_grant)" || true
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.captain_instances' "$SQL" \
     && fail "harness inserts captain_instances directly (must go through captains_mint_instance)" || true
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.hull_build_receipts' "$SQL" \
     && fail "harness inserts hull_build_receipts directly (Production is sole writer)" || true
-  grep -qiE 'update[[:space:]]+public\.player_wallet|update[[:space:]]+public\.player_inventory' "$SQL" \
+  grep -qiE 'update[[:space:]]+public\.player_wallet|update[[:space:]]+public\.(base_items|fleet_items)' "$SQL" \
     && fail "harness updates wallet/inventory directly (sole-writer breach)" || true
 
   # ── the exact 0185 recipe economics are pinned in assert form. ────────────────────────────────────

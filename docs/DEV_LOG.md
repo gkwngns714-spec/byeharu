@@ -5,6 +5,172 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-03 — ITEMS LIVE AT PORTS (`slice-items-live-at-ports`, migration 0333 rev.3)
+
+**The owner's laws, restated because they had to be repeated:** items are not unlimited (VOLUME
+matters); storage is PER-PORT; you can only reach a port's storage while DOCKED there; moving items
+between the ship's hold and the port's storage is the core logistics verb.
+
+**The settled model, after two corrections:** ITEMS LIVE IN PORT STORAGE. The hold is purely what a
+FLEET carries.
+
+- `base_items` (per-port, keyed to the player's `bases` row) is where items LIVE.
+- `fleet_items` (per-FLEET, keyed on `fleets.id` via the ONE ship→fleet resolver
+  `mainship_resolve_fleet`, 0210) is the HOLD. Capacity = Σ `cargo_capacity_m3` over that fleet's
+  LIVING ships. rev.2 made the hold PLAYER-WIDE, which teleports goods between fleets standing in
+  different ports — the same violation as the global pool, just less visible.
+- **`player_inventory` is DROPPED.** A global, location-less, weightless pool is the thing that
+  contradicted laws 2 and 3; its 312 rows move into each owner's oldest active base first. A model
+  that ships while its predecessor stays live is spaghetti by construction.
+
+### What now draws from where
+
+| verb | draws from |
+|---|---|
+| `craft_module` / `recruit_captain` / `start_hull_build` | the port you are DOCKED AT |
+| `sell_item_at_port` / `buy_shop_offer_at_port` | the port you are DOCKED AT |
+| `reward_grant` (loot) | the base it is already handed; NULL → the oldest active base |
+| `cancel_build_order` (hull refund) | back to the port that PLACED the order |
+
+The three commands gained `p_main_ship_id uuid default null` — the established sole-ship shim shape
+(0081), so an existing single-ship caller keeps working. The PORT is DERIVED from that ship's
+validated dock; it is never a parameter, so "craft from a port I am not standing in" is not a
+request the surface can express. "Oldest base" was REJECTED for these three: it would let a player
+craft from Haven's materials while standing at Slagworks.
+
+### The refund answer
+
+`build_orders_kind_coherent` (0188:104-108) CHECK-constrained hull orders to `base_id IS NULL`, and
+the hull arm is the ONLY refund path that returns ITEMS (0194:404) — so the item refund had no port
+BY CONSTRUCTION. `production_start_hull_build` now records the docked port's store on the order and
+the CHECK is flipped to REQUIRE it. `build_orders` has ZERO rows on production, so nothing to
+backfill and no row can fail the new CHECK.
+
+### Deposits never strand; spends refuse
+
+`inventory_deposit(p_player, p_base, …)` accepts a NULL base and falls back to the oldest active
+base — never destroy an asset to satisfy a rule. `inventory_spend` / `inventory_get_balance` REFUSE
+a NULL base: a spend that does not name its port is not a spend. All three leaves changed signature
+so the place is a required argument — law 2 as a SHAPE, not a rule.
+
+### How it was built
+
+`scripts/gen-0333-items-live-at-ports.mjs` (the 15th generator, registered in the parity gate at
+`scripts/danger-combat-proof.sh:83`). Every one of the 22 body hunks over 10 live functions is
+SLICED VERBATIM from that function's own textual head (0040/0109/0126/0174/0188/0194/0235) and each
+`new_t` is built from that slice by exactly-once string edits — nothing in a deployed body is
+retyped. The 6 signature widenings read the argument list back from
+`pg_get_function_identity_arguments` at deploy time. Verified read-only against PRODUCTION before
+merge: all 22 hunks and all 6 signature heads occur EXACTLY ONCE in the deployed definitions.
+
+### Blast radius (measured on production, 2026-08-03)
+
+`module_craft_receipts` 3 rows / **1** player (all within 0.6s on 2026-07-19 — a scripted account,
+1 ship, docked at Haven, single active base at Haven). `captain_recruit_receipts` 0. `build_orders`
+0. `player_inventory` 312 rows / 157 players — **0 without an active base**, **0 whose base has no
+port**. Only **2** of the 157 own a ship at all, and **both** are docked at exactly the port their
+oldest base sits at, so both can craft the moment this lands.
+
+### The grant fix from rev.2 survives unweakened
+
+`revoke all … from public, anon, authenticated` (a superset of the project default `arwdDxtm`, which
+a disposable CI database reproduces none of), per-table intended posture, `item_types` keeping its
+anon SELECT as a PUBLIC-READ catalog, 120 `has_table_privilege` assertions across 5 tables × 8 verbs
+× 3 grantees, and the migration taking the `anon` seat for real with a positive control. rev.1
+aborted a production deploy on exactly this.
+
+### Proof
+
+`scripts/hold-transfer-proof.{sh,sql}` extended: items proven to LIVE at ports with an EMPTY fleet
+hold; the round trip, capacity (refuse, never clamp), law 3 three ways plus the three commands'
+signatures, isolation, replay atomicity, guards, reads — and three new blocks:
+`HOLD_PASS_CRAFT_AT_PORT` (the same craft REFUSED while its materials are at Slagworks and
+succeeding once they are at the docked port, RED by construction), `HOLD_PASS_HULL_REFUND` (the
+order records its store; the cancel returns every ingredient to that port and nowhere else), and
+`HOLD_PASS_NEVER_STRAND` (a placeless deposit lands at the OLDEST active base — not the newer one,
+not a hold, never nowhere — while a placeless SPEND is refused). Conservation is asserted across
+every call, including across a replay and across the order/cancel round trip.
+
+`shipyard-proof.yml` and `port-shop-proof.yml` now also fire on `slice-**`: 0333 changed both those
+verbs from a branch named nothing like `slice-shipyard`/`slice-port`, so those proofs would have
+gated nothing on the change that needed them most. **Known gap, not closed here:**
+`scripts/salvage-market-proof.{sh,sql}` has NO workflow at all and runs nowhere in CI.
+## 2026-08-03 — ONE WAY TO REPAIR (`slice-one-way-to-repair`, migration 0335)
+
+**The owner's ask:** *"why does command ship have separate repair system? unnecessary"*
+
+**The premise, corrected first.** There was never a command-ship repair system. `main_ship_instances`
+is EVERY ship (77 rows on production; only 2 carry `is_command_ship`). "Main ship" is legacy naming
+from when a player had one hull, and NO repair path anywhere reads `is_command_ship` — verified
+against the deployed bodies, not inferred. `repair_main_ship` was DISABLED-SHIP RECOVERY, and its
+misleading name is most of why the duplication looked like a privilege.
+
+**But the duplication was real, and incidental.** Two RPCs for one concept:
+
+| | `repair_main_ship` (0081/0231/0297) | `repair_ship_hull_at_port` (0201) |
+|---|---|---|
+| subject | `status='destroyed'` only | damaged-but-alive only (rejects destroyed) |
+| position | `mainship_port_of_ship` (fleet dock → group dock → berth) | `mainship_resolve_docked_location` (also demands a PRESENT FLEET) |
+| cost | free | `repair_credits_per_hp` × hp |
+| amount | always full | clamped to the request |
+| failure | RAISES (the client matched exception substrings) | `{ok,reason}` envelope |
+| receipt / lock | none / none | `repair_receipts` + a per-ship lock |
+
+Only THREE differences were essential, and all three are POLICY over one verb: the precondition (a
+state, not a concept), the amount, and the cost — of which only the cost is load-bearing, because a
+wreck must never be unrecoverable for want of credits (the 0052 no-softlock rule). Everything else
+had drifted apart: **two position authorities** that disagreed about a berthed ship (all three of
+production's destroyed ships are in exactly that shape), two error protocols, two client wrappers,
+and a dead branch in `repair_main_ship` whose two flag-selected UPDATE statements were byte-identical.
+
+### The live defect this also closed
+
+Production carried `repair_economy_enabled = true` with `repair_credits_per_hp = 0` (the owner set 0
+deliberately, to make repair free pending a combat audit). 0201's knob read rejected any price at or
+below zero as `repair_misconfigured`, so **setting the price to free turned the paid mend off for
+every player** — "Repair pricing is unavailable right now." The client fold agreed (`foldRepairRate`
+required `n > 0`). 0335 makes ZERO mean FREE on both sides; null/negative still fail closed. Nothing
+is hardcoded free — a deploy-time self-assert refuses the migration if `v_per_hp` is assigned anywhere
+other than the two cost-policy branches.
+
+### What shipped
+
+- **`supabase/migrations/20260618000335_one_way_to_repair.sql`** — hand-written (no generator: nothing
+  is re-created from a live body; two functions are DROPPED and one is written fresh). §1
+  `repair_ship_hull(p_main_ship_id, p_repair_hp, p_request_id)`; §2 drops both predecessors with
+  their grants — no shim, no deprecation; §3 REVOKES the client INSERT/UPDATE/DELETE
+  `repair_receipts` still carried from Supabase's project-default `GRANT ALL` (the 0254 drift);
+  §4 self-asserts, all valid on an empty database, asserting no seed and no flag VALUE.
+- **Client:** ONE wrapper (`repairShipHull` in `src/features/ship/repairApi.ts`); `repairMainShip`
+  deleted from `src/features/map/mainshipApi.ts`; `repairErrorMessage` / `isAdriftError` (which
+  matched Postgres exception SUBSTRINGS) deleted from `shipRecovery.ts`; ONE reason vocabulary in
+  `repairReasonMessage.ts` (`not_docked` + `ship_not_at_port` → `not_at_port`; `ship_destroyed`
+  retired); `RepairDockState` collapsed `docked`/`berthed` → `at_port`, which deletes the copy that
+  only existed to explain the split ("Add this ship to a fleet on the Fleet tab to mend its hull
+  here") — a berthed ship now mends where it plainly is.
+- **`scripts/activate-repair-econ.{sh,sql}` DELETED** — a spent activation script whose preconditions
+  pinned prosrc of two functions that no longer exist.
+- **Proof:** `scripts/repair-econ-proof.{sh,sql}` EXTENDED, not forked — 12 property markers. New:
+  the economy gate rejects a priced mend while a WRECK still recovers with the same flag dark; a
+  broke player recovers a wreck whole and free AT A NON-ZERO KNOB; **zero is free** (RED on 0201);
+  a negative knob still fails closed; **the knob still governs** at 3/hp (so restoring the price is
+  one `set-knob` call); one-authority by COUNT of client-executable `repair*` functions plus the
+  ledger lockdown; and a **berthed fleet-less ship mends**, with the old dock resolver proven to
+  disagree first so the phase cannot pass vacuously. The harness now SETS every flag and knob value
+  it asserts — the old P1 asserted the chain's seeded 0.5, an ambient default it did not own.
+- **Triggers widened:** `repair-econ-proof.yml` fired only on `slice-repairecon**`; it now runs on
+  `main`, PRs, `slice-**` and `osn3-**`. `danger-combat-proof.yml`'s fifteen hand-appended
+  `slice-<topic>**` globs are COLLAPSED to `slice-**` — that list was the bug its own comments kept
+  warning about.
+- **Repointed onto the one verb:** `danger-combat-proof.sql`, `team-command-proof.sql`, the osn3
+  realchain fixtures and every client-RPC allowlist (osn3 s2–s6a / dock0 / hub1a / portlaunch /
+  port-entry / enablement-preflight), plus `scripts/verify-mainship-repair.mjs`.
+
+**Deploy state:** built on `slice-one-way-to-repair`, NOT merged and NOT deployed. Production head is
+still `20260618000334`.
+
+---
+
 ## 2026-08-03 — Foldable reports + the Fleet tab (`slice-reports-fold-fleet-tab`, client-only)
 
 **The owner's ask:** *"combat report, mission report, and so on, i want you to separate them and
