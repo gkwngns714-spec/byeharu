@@ -5,7 +5,211 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-08-03 — HUNTING IS FINDABLE, AND A NEAR MISS IS NOT SILENCE (client only)
+## 2026-08-04 — ENEMIES COME OUT OF THE ZONE'S OWN CITY (`slice-enemies-emerge`, migration 0338)
+
+**The owner:** *"make the enemy come out from the city of the zone. for example snare."*
+
+Measured across the owner's last 8 encounters, read-only: **`distinct_enemy_points = 1` on every
+single one.** Every enemy in every fight spawned stacked on one identical point. They did not come
+from anywhere — they materialised in a pile. (Also established, so it is not re-asked: enemy wave
+size is **not** derived from player ship count — those fights ran 6, 2, 1, 6, 3, 0, 4.)
+
+### The link already existed — nothing was invented
+
+**`danger_zones.location_id`**, added back in `20260618000233:187`. All three live pirate zones
+carry it and point at their own site (Snare→Snare, Reaver→Reaver, Blackden→Blackden), and the
+ambush path already carries it into the fight unaided: `pirate_intercept_leg_zone_hits` selects
+`z.location_id` → `pirate_intercepts.location_id` → `presence_create` →
+`combat_encounters.location_id`. The tick **already reads that row**. So the origin costs **no new
+read, no new join, no new column** — and it is DATA: moving a zone's raiders to another city is one row.
+
+**Which "Snare" is the city:** the `locations` row **Snare, `pirate_hunt`, (-45,120)** is the CITY;
+the drawn polygon named "Snare" is the REGION. The zone says which city owns that stretch of space.
+
+### What changes: the angle, and only the angle
+
+One new leaf — `combat_wave_arrival_phase(anchor_x, anchor_y, site_x, site_y, slot)`, the one
+authority for "which way does a wave arrive from", composed by both spawn arms and nothing else,
+immutable, revoked from every client role. It returns the phase in SLOTS (0336's own unit), so the
+slot still selects 0336's radius ring and the phase carries the whole angle. A half-slot fan opens
+the wave into a compact arc **centred** on the city — a 6-pirate wave spans 112.5°, not 225°.
+0336's bare constant is deleted from the tick in the same statement.
+
+**0336's radius is untouched** — the clearance invariant, the silent spawn tick and the
+closing-tick count are exactly what 0336 established. **The origin is a BEARING, never a
+position**: a city forty units away would otherwise mean a forty-tick walk, which is precisely the
+silence 0336's most valuable fix exists to remove.
+
+### Proof
+
+Self-asserts (c)/(d)/(e) **execute** the leaf: the fallback is 0336 value-for-value over 16 slots,
+slot 0 lands exactly on the ray anchor→city for 8 bearings, and 16 slots stand at identical
+distances to 0336's with 16 distinct points.
+
+> `DZCOMBAT_PASS_WAVERING ok: a 4-pirate wave arrived on 4 DISTINCT points … and (0338) it CAME OUT
+> OF THE CITY: exactly one pirate stands where the ray from the anchor (-150,-40) toward the zone's
+> own settlement (-45,120) crosses that radius, with the whole wave inside a 1.0-slot arc of that
+> bearing rather than encircling the fleet`
+
+Six proof files predicted the spawn point; all now compose the leaf. **Four are value-identical**
+(hunt fixtures ⇒ anchor = site ⇒ the constant) — that removes a second authority without changing
+geometry.
+
+### Residual raised, not built
+
+A **screened** fleet whose escorts don't face the city has a longer approach — the escort-to-wave
+chord ranges over `[range+1, range+1+2·extent]`. The floor is 0336's clearance, unchanged; the
+ceiling is bounded by the fleet's **own formation extent**, never by the city's distance, and is
+**identically zero for a lone hull** — 71 of 77 production ships. The structural fix is measuring
+the extent along the arrival bearing, but `v_formation_extent` is 0336's and out of scope here.
+
+**DEPLOYED & verified on target — prod head `20260618000338`.**
+
+---
+
+## 2026-08-04 — COMBAT THAT FLOWS: one fleet, moving, shooting real ordnance (`slice-combat-that-flows`, client only)
+
+Three owner reports, one surface, one slice: *"all the combat looks so laggy, not smooth"* ·
+*"i see nothing, i see just numbers, a health bar going down. I want to see an ammo of some sort —
+based on what i fit, if nothing, default by command ship"* · *"why are there four ships? because i
+have 4 ships in fleet? no, show only fleet. it is as a whole"*
+
+### Measured cause of the lag
+
+Server ticks every **3 s**; the client polls ~1.5 s; **fleet travel was interpolated and combat
+positions were not** — glyphs snapped. `GalaxyMap.tsx:602` claimed "approach + kiting + fire animate
+as ticks land"; a position updated on tick arrival is a step function, not animation. Comment fixed.
+
+### Compose vs generalise: GENERALISE — one authority, two callers
+
+`movementInterpolation` took a `fleet_movements` row with ISO timestamps; a combat keyframe's bounds
+are *client clock readings*, and stringifying those would have been a **fake server timestamp**. The
+lerp is lifted into `segmentProgress`/`interpolateSegment` over millisecond bounds and **fleet travel
+repointed at it** — the old entry points are now three-line adapters. **Still exactly one lerp in the
+codebase**; unit motion, ordnance flight and the shot trail all call it.
+
+### Smoothing the ROWS, not the glyphs
+
+`fleetFightPosition` stands the fleet badge on a real ship, so smoothing inside the layer would have
+moved the glyphs and left the badge on the raw point — the "same fleet in two places" defect.
+`smoothCombatUnits` moves `pos_x/pos_y` on the rows once, so every consumer of that one filter
+agrees. Step duration is the server's own, from `combat_units.updated_at` — no hard-coded 3000, no
+clock skew. rAF over CSS transitions (a transition's intermediate state is not a value a spec can
+read as a function of a clock, it would be a second smoother, and it cannot position a round between
+two *moving* hulls); the loop stops dead when nothing is in motion.
+
+### Fleet as one
+
+`combatActors.ts` folds player rows into one actor per encounter, **composing
+`resolveFleetFightPosition`**, so glyph and badge are the same point by construction. Health is
+Σhp_current/Σhp_max (a dead hull contributes 0 current and its **full** max) plus a literal `3/4`.
+**Enemies are not folded** — no `fleet_id`, `aggro_priority` NULL on every enemy row, and how many
+hostiles are still shooting is the player's central read.
+
+### Ordnance — derived, with two gaps reported rather than invented
+
+The live `process_combat_ticks` already writes `projectile_type = weapon.module_type_id` and
+`impact_delay_ms = 1000·dist/projectile_speed`. Heft is the gun's share of its ship's volley —
+**0331's own definition**. The unfitted fallback reads `aggro_priority = 100`, **0315's own
+election**, never a client-side command-ship rule. **Gaps stated, not papered over:** nothing in the
+schema names a weapon's *appearance* (not `weapons_json`, not `combat_events`, not `module_types`),
+and 0262 already substitutes a synthetic weapon for an unfitted ship, so client-side "fitted nothing"
+and "fitted the fallback" are the same row. No module id was hashed into a made-up shape.
+
+**Caught during the merge:** the rebase left the new fleet layer reading the *raw* `combatUnits`
+while the glyphs rode the smoothed ones — the badge and its own ships would have drifted apart
+between ticks. Fixed before merging.
+
+**DEPLOYED & verified in the live bundle.**
+
+---
+
+## 2026-08-04 — A FLEET IS ALWAYS ON THE MAP, AND REPAIRING ANY SHIP IS ONE ACTION (`slice-where-are-my-fleets`, client only)
+
+**The owner:** *"in map, tell me where my fleets are too"* and *"i told you there should be same,
+fixing commnand ship = fixing other ships. right now there is command ship fixing that is different"*
+
+### Verified in the live DOM before building
+
+One `fleet-marker` for two fleets — Fleet 2's dock badge at Slagworks. **Fleet 1 had no marker at
+all**, and that specificity named the cause. Fleet 1 has four ships: Sparrow is `docked` at Haven;
+Sparrow III/IV/V are `place='hidden'` (`legacy_home`, null `berth_location_id`, null
+`mainship_resolve_fleet`). `deriveDockedTeamRollups` saw 1 of 4, `locationId` came back null, and the
+fleet vanished. A coverage hole, not a regression.
+
+### The design call
+
+Four resolvers each answered *existence* with a different predicate over a different input. Their
+union is not a partition of the state space — it is four holes with badges around them, and a fifth
+resolver buys the next hole. **All four are deleted**, replaced by one presence per group, always,
+with the state deciding **presentation, never existence**. `FLEET_PRESENCE_STATES` is exported and
+the spec iterates it, so a future state added without a marker fails CI. Places come from
+`get_my_fleet_positions` — the server's own projection whose `place` domain is the exhaustive set —
+already polled: **no new read, no new RPC.**
+
+Honest at the edges: the badge says how much of the fleet is really placed ("Fleet 1 1/4"); a split
+fleet gets ONE badge at the port holding most of it; a fleet nothing can place goes to the overlay
+rail rather than being given a coordinate nobody committed.
+
+### Repair — what was actually wrong
+
+**The server and the panel were already unified, and the price was already identical.** 0335 is
+deployed; the single `RepairPanel` is live; with `repair_credits_per_hp = 0` a wreck and a dent both
+already read "Free". **Policy was not what the owner was seeing.** What remained was entirely
+presentational, and it was all of it: different heading, different button word *and* shape ("Repair
+ship" full-width warning vs "Repair" small primary), a credits line on one only, an amount field on
+one only. Same verb, two systems on screen. Now one body; the only surviving difference is a number,
+because a wreck restores whole.
+
+Two defects only the rendered result showed: the dock label sat **14px under the marker centre,
+struck through by the Slagworks diamond**, and `ShipScreen.tsx:313` rendered **"FLEET 1 · FLEET 1 ·
+4 SHIPS"**.
+
+**DEPLOYED & verified in the live bundle.**
+
+---
+
+## 2026-08-04 — ASSETS: what I own, where it is, and what it is worth there (`slice-assets-tab`, client only)
+
+**The owner:** *"i need to be able to see my assets. make a assets tab and show what i have, the
+estimate price, on which city etc."* — asked straight after *"where is my ship's cargo?"*, so this is
+a findability slice as much as a data one.
+
+A sixth destination `/assets`, grouped by **city**: port storage, each fleet's hold with the server's
+own capacity meter, and each ship's trade cargo. **`InventoryPanel` is DELETED, not duplicated** — it
+was the only way to see what you carried and reaching it meant opening Ships and picking a ship
+first, the per-ship framing the owner had already rejected.
+
+### The valuation — the briefing premise was WRONG
+
+I briefed the agent that `market_offers` was the only price source. **It is not, and using it would
+have fabricated prices:**
+
+- **`port_item_demand (location_id, item_id, unit_price, active)` prices ITEMS** — it is literally
+  what `sell_item_at_port` pays. This is the honest source.
+- `market_offers` prices **TRADE GOODS** (`trade_goods` ⇄ `ship_cargo_lots`) — a different namespace.
+- The two share exactly one string: `ore`. `item_types.ore` is "Ore", 2.00 m³; `trade_goods.ore` is
+  "Raw Ore", 1.00 m³. Pricing a held item off `market_offers` because the id matched would be a
+  **cross-namespace fabrication wearing a plausible disguise.** A spec now holds both at one port and
+  *requires two different answers*.
+
+Measured coverage: 4 of 6 held item kinds are priced; **crystal and ore are priced by nothing
+anywhere** — 122 of 312 rows render "No price here". Prices genuinely differ per city (scrap: Haven
+5, Driftmarch 6, Slagworks 8). Enforced structurally: a missing price is `null` with **no arithmetic
+path from null to a number**; `0` stays a *real* price; no total renders without its `unpricedKinds`
+count; no nearest-port or average fallback exists.
+
+### The nav ceiling was never measured
+
+`navTabs.ts` claimed *"six would drop cells to 53px and start clipping labels; five is the ceiling."*
+That was an estimate **nobody had ever rendered**, believed for months. Rendered at 320px with the
+real design system: **cells are 53.33px × 56px, both clear the 44px touch floor, nothing clips.**
+Six fits. The comment is now the readout of a CI proof that gates any future destination.
+
+**DEPLOYED & verified in the live bundle.**
+
+---
+
 ## 2026-08-04 — A REPOSITION IS A MOVE (`slice-reposition-is-a-move`, migration 0337)
 
 **The owner:** *"when in combat, and i move, i teleport."*
@@ -74,6 +278,66 @@ landing point.
 `gen-0317` / `gen-0332` / `gen-0336` each name `20260618000337` in their KNOWN_LATER_REWRITERS — by
 name, never by widening the window, exactly as gen-0336's own comment anticipated. No emitted
 migration changed.
+
+---
+
+---
+
+## 2026-08-03 — HUNTING IS FINDABLE, AND A NEAR MISS IS NOT SILENCE (client only)
+
+Branch `slice-hunting-is-findable` off `97447b3`. **No migration, no `game_config` write, no
+production write** — every fact below was READ from production (head `20260618000335`).
+
+### The complaint
+Owner, playing: *"i went to snare, zone, no fighting happens. why are you keep messing things up?
+spaghetti of course. do it properly"*
+
+### What actually happened (verified, not inferred)
+Their four trips that afternoon were `mission_type='rally'`, `target_type='space'`, aimed at
+**(-45,88), (-43,94), (-43,98), (-35,99)**. The Snare **site** is a `locations` row at
+**(-45,120)**. They were aiming at the Snare **danger zone** — a drawn blob that shares the site's
+name and covers 7.2× its declared area — and never targeted the site. Two of the four rolled an
+ambush and **missed** (risk 0.545 / roll 0.697; risk 0.240 / roll 0.336); two never rolled. No
+encounter was created. **The server was right the whole time.**
+
+The cause was ours, in two halves:
+1. **Three screens described combat three different ways**, and the one they read named the zone:
+   `MissionScreen.tsx:93` *"…or into a pirate zone to hunt"*; `zoneInfoModel.ts` *"A fleet crossing
+   this zone is almost always attacked"* (written against 0236's [0.98,1.0] pin, long gone from
+   prod); and the map's own idle prompt, which listed ports and open space and **never mentioned
+   hunting at all**.
+2. **The zone panel was a dead end.** "What's here" named the danger and never said what to do
+   about it, even though `danger_zones.location_id` already carries the site the zone wraps.
+
+### What changed
+- **`src/features/command/howAFightStarts.ts` — ONE description, composed everywhere.**
+  Six surfaces import it: MissionScreen, TeamRosterPanel, teamReasonMessage (the
+  `combat_destination` refusal, now actionable instead of flat), zoneInfoModel, FleetCommandPanel's
+  idle prompt, and the First Orders checklist. `tests/howAFightStarts.spec.ts` **scans all of
+  `src/`** and fails on any surface that re-invents the sentence or reintroduces the banned shapes.
+- **The signpost.** `buildZoneInfo` now resolves the zone's hunt site through
+  `teamDestinationKind` — *the same classifier the map uses to decide the hunt section renders* —
+  and `ZoneInfoPanel` offers **"Hunt at Snare"**, which hands the id to `MapScreen.handleSelect`:
+  the map's own marker-selection path, opening the **existing** hunt control. No second hunt path.
+- **The near miss.** A rolled-and-missed crossing used to leave no trace anywhere. With the
+  probabilistic ambush kept by owner decision, silence is indistinguishable from a broken game.
+  New: `nearMissNotice.ts` (pure) + `fetchInterceptMisses()` on the shell's existing 3s wave, a map
+  alert beside the ambush notice (expires after 10 min) and a "Close calls" record on Mission.
+  **Established, not assumed:** `pirate_intercepts` grants SELECT to `authenticated`, RLS is
+  `player_id = auth.uid()`, and **no existing function returns these rows to a client** — so no
+  server read is missing. Three rules pinned: never for a leg that had no roll (structural — the
+  deployed `pirate_intercept_plan_leg` inserts only for a zone actually crossed), no raw risk/roll
+  numbers, and nothing announced while the leg is still in flight.
+
+### Proofs
+`tsc -b` clean · `vite build` clean · eslint unchanged from baseline (27 problems, all
+pre-existing) · **1742 node specs** (baseline 1716 on `97447b3`, +26) · **55 rendered-UI proofs**
+(baseline 49, +6 in `huntDiscoverability.uispec.ts` over a new `hunt.html` harness).
+
+`tests/zoneInfoModel.spec.ts`'s warning pin was **repointed and strengthened** — it now composes
+the authority and asserts the absence of "almost always", instead of restating a literal.
+
+---
 
 ---
 
@@ -208,78 +472,6 @@ empty since launch; repair at 0.5/hp was 2.5× the break-even of the BEST locati
 - The DANGER-ZONE fixture guard fails at random because seeded zones are rebuilt with `random()` per
   fresh DB — a randomly-shaped world vs a fixed coordinate. Re-run past four times; being fixed at
   the root in 0336.
-## 2026-08-03 — COMBAT ENGINE REPAIRS (`slice-combat-engine-repairs`, migration 0336)
-
-Eight defects in the fight itself, each read off the **deployed** `process_combat_ticks` body
-(73,160 chars — no migration file holds it whole) and each confirmed against live production rows,
-read-only, at prod head **0335**.
-
-| # | defect | live evidence |
-|---|---|---|
-| 1 | A multi-gun ship **threw away its extra guns on kill ticks** — the target is resolved once, before the per-weapon loop, so when gun 1 killed it the damage step's found-guard dropped guns 2 and 3 instead of re-aiming | one prod ship carries **3 fitted autocannons**, and 0331 had just split its `combat_power` three ways to feed them |
-| 2 | **Every enemy in a wave spawned on one identical point** — both spawn arms inserted all N at the engagement anchor | every prod encounter that ever held enemies holds them at **exactly 1 distinct position** |
-| 3 | **Retreating spawned a fresh wave** that shot at a fleet which could not shoot back — the offense gate silences the player only, and the spawn block had no status guard | **4 prod encounters died inside the retreat window** (3.4 / 4.6 / 4.8 / 5.8 s in), each → `defeat` → `total_rewards_json = '{}'` |
-| 4 | The **four terminal arms were unconfined raise sites** — `fleet_destroy` and `presence_complete` both raise on a status mismatch, before their arm's own status write, so a mismatch rolled back the tick *including* `last_resolved_at` and retried identically, forever, silently | structural; only 0310's auto-exit arm already carried a subtransaction |
-| 5 | **Three of four arms leaked `fleets.retreat_target_*`** — only the settle arm cleared it, while its own header states the invariant that it is always consumed | structural |
-| 6 | **The actor loop order was heap order** — the population freeze had no `ORDER BY`, so *who fires first* was nondeterministic, and with sequential damage that decides whose shots are wasted | structural; any determinism harness over this tick was unsound |
-| 7 | **A longer gun silently disabled a shorter one** — the freeze carried `my_range = max(range)` and the mover uses that for both the close decision and the kite cap, while the fire gate is per weapon | latent (no prod ship carries two weapon *types* yet; the Mk-II is craftable) |
-| 8 | **The highest-difficulty site was an unwinnable standoff** — at The Furnace (difficulty 60) the synthetic enemy range is `3.6 + 0.04·60 = 6.0` and the formation ring was 6.0, so the wave spawned INSIDE its own reach, kited on tick 1, and settled at `5.8 = enemy_range − player_speed`; the player's gun reaches 5 | **executed against the deployed `combat_unit_decide_move`**, read-only, at live knobs |
-
-**Four new leaves, each the one authority for one concept, each COMPOSED rather than copied:**
-`combat_formation_point` (where slot *k* of a formation ring sits — composed by both wave-spawn arms
-*and* by the encounter creator's escort ring, so the ring formula no longer exists twice),
-`combat_acquire_target` (the tick's own candidates/tier CTE, lifted whole, plus ONE liveness
-predicate — composed at first acquisition and at per-weapon re-acquisition),
-`fleet_consume_retreat_target` (read-and-clear, composed by all four arms),
-`combat_encounter_release` (the confined world-state release, composed by all four arms).
-
-**No knob moves, and that is the interesting part.** The first draft raised
-`spatial_formation_ring_radius` 6.0 → 7.0 so the ring would clear the widest enemy range. Adversarial
-review killed it, correctly: spawning the wave on the *escort ring* does not establish the invariant,
-because the escorts sit on that same circle — the nearest escort is a chord away, `2·R·sin(π/16) =
-0.39·R`, i.e. **2.73 against a reach of 6.0**. The property held only for the lead, the one hull at
-the anchor, and rescuing it by knob would have needed `R > 2.56 · enemy_range` — a ring of 16.
-
-The wave instead spawns at **`spatial_formation_ring_radius + its own range + 1`**. Every player ship
-sits at radius ≤ the ring, so the minimum distance from *any* player ship to *any* enemy is that
-range + 1 — outside the wave's reach **by construction**, at every difficulty, with no tuning that can
-drift and no balance change riding along. Defect 8 is fixed structurally rather than numerically.
-
-That leaves exactly one half the geometry cannot establish, and it is what the CI assertion now
-checks: when the closing wave *stops* closing it must be inside the player's range, i.e. for every
-location with a positive difficulty (hidden included)
-`enemy_range(D) ≤ player_min_range` **or** `enemy_speed(D) > enemy_range(D) − player_min_range`,
-where `player_min_range` is derived from the fallback knob and the catalog's firing weapons — the
-weakest gun in the game, because that is the hull that decides whether a site is playable.
-
-Verified against the **deployed** `combat_unit_decide_move` at live knobs: from the structural opening
-gap the player fires on tick 0–1 and the fight settles at 3.8–4.0 at all six live and hidden
-difficulties — including The Furnace, where today it never fires at all.
-
-**Built with `scripts/gen-0336-combat-engine-repairs.mjs`** (the 16th generator): 17 hunks over two
-functions, every `old_t` sliced verbatim from the migration that owns its deployed text (0299 for the
-tick, 0315 for the escort ring), every `new_t` derived from that slice by `edit()`. Nothing retyped.
-All 17 were verified to occur **exactly once in the deployed production bodies** before the migration
-was written, and the whole rewrite was replayed locally against those bodies.
-
-### Also fixed here: the DANGER-ZONE proof's random failure
-
-`danger-combat-proof` failed and passed on **identical commits four times in one day**, always at
-`REPOSITION FAIL fixture: 1 unrelated active zone(s) also hold the engagement point (… Reaver)`,
-naming Reaver every time with a different uuid. Not a flake — a mechanism: the seeded pirate zones are
-regenerated on every fresh disposable database by a generator built on `random()` (0296:174-186 —
-12..24 vertices, 3..6 lobes, random phase, per-vertex jitter, radial wobble `0.6..1.5 ×
-territory_radius` modulated by `1 ± 0.18`), so a blob's reach is anywhere in
-`[0.492, 1.77] × territory_radius`. The ROSTERAUTH fixture's engagement point sits **18.03** units
-from Reaver's centre, whose max reach is **21.24** — inside that annulus.
-
-Fixed by making the proof **own its zone world**: a new `DZCOMBAT_PASS_OWNWORLD` block deactivates
-every non-drawn zone in-txn before any fixture geometry exists, so the only active zones are ones the
-file drew itself at coordinates it chose. The REPOSITION guard is untouched and stays exactly as
-strong — a real overlap still invalidates the property it proves.
-
----
-
 ## 2026-08-03 — ITEMS LIVE AT PORTS (`slice-items-live-at-ports`, migration 0333 rev.3)
 
 **The owner's laws, restated because they had to be repeated:** items are not unlimited (VOLUME
