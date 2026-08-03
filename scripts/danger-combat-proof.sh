@@ -44,7 +44,13 @@ SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 # block is the ONLY runtime check that a fight the fleet SURVIVES still reconciles its casualties,
 # and dropping the marker in a merge would leave that entirely unverified while the suite prints
 # ALL PASSED. Union, always.
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK"
+# 0336 appends NINE — OWNWORLD (which the 0336 branch added ahead of the PROVISION banner and which
+# had no marker at all until now) plus the slice's own eight: RANGEINVARIANT VOLLEY WAVERING
+# RETREATNOSPAWN NOWEDGE ORDERSTABLE SHORTGUN RETREATCLEAR. THIRTY-FOUR markers now, from ten
+# slices. Same law as every line above, for the seventh hand-resolved union of this one string: a
+# resolution that takes either side WHOLE drops the other's markers, the local run then never checks
+# for those notices, and the suite prints OVERALL_PASS with entire runtime blocks unverified.
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -90,7 +96,7 @@ if [ "$MODE" = "selftest" ]; then
   # refuses to generate if any later migration textually re-created the function or rewrote it by
   # hunk surgery — so the same protection every line above describes is enforced ten times over.
   # FIFTEEN generators now.
-  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn gen-0331-one-authority-for-attack gen-0332-a-wreck-can-always-come-home gen-0333-items-live-at-ports"
+  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn gen-0331-one-authority-for-attack gen-0332-a-wreck-can-always-come-home gen-0333-items-live-at-ports gen-0336-combat-engine-repairs"
   if command -v node >/dev/null 2>&1; then
     # DIRECTION 1 — nothing on disk may be unregistered. This is the half that would have caught 0307
     # on the day the gate was written, and it needs no maintenance to keep working.
@@ -230,21 +236,24 @@ if [ "$MODE" = "selftest" ]; then
   n="$(grep -c 'public\.pirate_intercept_resolve_due_for_movement(' "$SQL" || true)"
   [ "$n" = "1" ] || fail "expected exactly 1 direct resolver call (the negative re-fire probe), found $n"
 
-  # exactly THREE process_combat_ticks() call sites, and no other combat engine:
-  #   1. PIRATEFIRE    — the first wave spawn + fire pass.
-  #   2. MANIFESTHELD  — the drain that FINISHES the hunt sortie, so its manifest becomes a RETAINED
-  #                      one and the later course change is ambushed while holding it (0303).
-  #   3. AUTOEXIT + CLOSURE + RSFEEL — pg_temp.ae_tick, the one-encounter tick driver (rewinds ONE
-  #                      encounter's cadence clock then runs the real engine); AUTOEXIT (0310) uses
-  #                      it to erode a fleet to its threshold, CLOSURE (0313) to walk an escort and
-  #                      a pirate into range across ticks, RSFEEL (0314) to drive its two ticks.
-  #                      One helper, one engine call site — three slices, no fourth driver.
-  # Still a real pin: a fourth, unexplained invocation fails here.
+  # exactly TWO process_combat_ticks() call sites, and no other combat engine:
+  #   1. MANIFESTHELD  — pg_temp.drain_encounter, the drain that FINISHES the hunt sortie, so its
+  #                      manifest becomes a RETAINED one and the later course change is ambushed
+  #                      while holding it (0303).
+  #   2. THE ONE CADENCE DRIVER — pg_temp.ae_tick (rewinds ONE encounter's cadence clock then runs
+  #                      the real engine). AUTOEXIT (0310) uses it to erode a fleet to its threshold,
+  #                      CLOSURE (0313) to walk an escort and a pirate into range across ticks,
+  #                      RSFEEL (0314) to drive its two ticks, and — from 0336 — PIRATEFIRE to drive
+  #                      the wave's SILENT spawn tick plus the closing ticks up to its first salvo.
+  # THIS PIN WENT 3 -> 2 WITH 0336, DELIBERATELY. PIRATEFIRE used to hand-roll the rewind-then-tick
+  # idiom as a third direct engine site; it now composes pg_temp.ae_tick, which is the same idiom with
+  # a name. Fewer engine call sites is the direction this pin exists to protect: a THIRD, unexplained
+  # invocation still fails here.
   n="$(grep -c 'perform public\.process_combat_ticks();' "$SQL" || true)"
-  [ "$n" = "3" ] || fail "expected exactly 3 process_combat_ticks() call sites (PIRATEFIRE + the MANIFESTHELD hunt-fight drain + the AUTOEXIT ae_tick driver), found $n"
+  [ "$n" = "2" ] || fail "expected exactly 2 process_combat_ticks() call sites (the MANIFESTHELD drain_encounter + the ae_tick cadence driver), found $n"
   # and process_combat_ticks must remain the ONLY combat engine this proof drives.
   n="$(grep -cE 'perform public\.process_(combat|encounter)[a-z_]*\(' "$SQL" || true)"
-  [ "$n" = "3" ] || fail "the proof invokes a combat engine other than process_combat_ticks ($n engine calls)"
+  [ "$n" = "2" ] || fail "the proof invokes a combat engine other than process_combat_ticks ($n engine calls)"
 
   # every property is asserted in assert-form (gutting any block fails here).
   grep -q "the order-time ambush is still cancelling it"          "$SQL" || fail "harness lacks the leg-still-moving assert"
@@ -271,6 +280,16 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "no positioned synthetic pirate spawned"                "$SQL" || fail "harness lacks the synthetic-pirate-spawn assert"
   grep -q "no pirate-sourced spatial missile_salvo"               "$SQL" || fail "harness lacks the pirate-fire assert"
   grep -q "no damage exchanged"                                   "$SQL" || fail "harness lacks the damage-dealt assert"
+  # 0336 PIRATEFIRE re-premise, in assert form. The wave now arrives OUTSIDE its own reach, so the
+  # spawn tick is silent and the fire is reached by driving ticks until it is OBSERVED. Each of these
+  # is a line the repoint added; a resolution that drops one takes a real property with it.
+  grep -q "pirate salvo(s) on the SPAWN tick"                     "$SQL" || fail "harness lacks the 0336 wave-is-SILENT-on-its-spawn-tick assert"
+  grep -q "the spawn tick is numbered"                            "$SQL" || fail "harness lacks the PIRATEFIRE spawn-tick-is-tick-1 pin (the silence assert must read the tick the wave actually arrived on)"
+  grep -q "within 12 ticks of the spawn"                          "$SQL" || fail "harness lacks the PIRATEFIRE bounded closing-loop failure (a wave that never fires must fail loudly, not hang)"
+  grep -q "this block observed no closing approach at all"        "$SQL" || fail "harness lacks the PIRATEFIRE non-vacuity pin (the first salvo must land strictly after the silent spawn tick)"
+  grep -q "the encounter went % during the approach"              "$SQL" || fail "harness lacks the PIRATEFIRE approach-not-interrupted guard"
+  grep -q "does not RESOLVE to a real firer/target pair"          "$SQL" || fail "harness lacks the PIRATEFIRE payload-resolves assert (unit_id/target_id must name real rows, not merely exist)"
+  grep -q "the pirate carries a NULL hp column"                   "$SQL" || fail "harness lacks the PIRATEFIRE hp NULL-pin (a NULL hp column would make the damage comparison vacuous)"
   # 0308 — the roster-authority + weapon-authority properties are asserted in assert-form too.
   grep -q "was seeded into its next fight (the 0308 defect)"      "$SQL" || fail "harness lacks the departed-ship-not-seeded assert"
   grep -q "the snapshot was replaced"                             "$SQL" || fail "harness lacks the freeze-replaces-the-snapshot assert"
@@ -350,6 +369,23 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "a zero-cooldown weapon must stay ready every tick"     "$SQL" || fail "harness lacks the fail-open zero-cooldown assert (today's cadence must survive for cooldowns at or under the tick)"
   grep -q "the wave is too small to exercise the roll spread"     "$SQL" || fail "harness lacks the multi-unit-volley vacuity guard"
   grep -q "silence would be vacuous"                              "$SQL" || fail "harness lacks the tick-2 silence vacuity guard (live wave, active fight)"
+  # 0336 RSFEEL re-premise, in assert form. The volley is no longer on tick 1 — a wave arrives at
+  # (measured player extent + its own range + 1), so it is SILENT on its spawn tick and the volley is
+  # OBSERVED by driving ticks. Every 0314 clause above is unchanged; these are the lines the repoint
+  # added, and each pattern is worded so it matches exactly ONE line (PIRATEFIRE carries its own
+  # near-identical wording a thousand lines up — a shortened pattern here would match THAT line and
+  # this block could then be gutted with the grep still passing).
+  grep -q "pirate salvo(s) on the tick the wave arrived on"       "$SQL" || fail "harness lacks the RSFEEL wave-is-SILENT-on-its-spawn-tick assert (the property only 0336 makes statable)"
+  grep -q "the arrival tick is numbered"                          "$SQL" || fail "harness lacks the RSFEEL arrival-tick-is-tick-1 pin (the silence assert must read the tick the wave actually arrived on)"
+  grep -q "no pirate volley in 12 ticks after the spawn"          "$SQL" || fail "harness lacks the RSFEEL bounded closing-loop failure (a wave that never fires must fail loudly, not hang)"
+  grep -q "the volley loop observed nothing"                      "$SQL" || fail "harness lacks the RSFEEL non-vacuity pin (the volley must land strictly after the silent spawn tick)"
+  grep -q "the encounter went % while the wave was closing"       "$SQL" || fail "harness lacks the RSFEEL approach-not-interrupted guard"
+  grep -q "pirate salvo(s) on the volley tick"                    "$SQL" || fail "harness lacks the RSFEEL full-volley vacuity guard (the measured tick must carry a real volley)"
+  grep -q "the tick after the volley did not advance"             "$SQL" || fail "harness lacks the RSFEEL cadence pin (the silence tick must be the volley tick + 1)"
+  grep -q "set_game_config('combat_player_speed_scale',       '0'" "$SQL" \
+    || fail "harness lost RSFEEL's held-anchor precondition — a KITING hull makes one arc of the wave's ring arrive before another, and \"six identical guns in ONE tick\" becomes a statement about a split volley"
+  grep -q "set_game_config('combat_player_speed_scale',        to_jsonb(v_ps_before))" "$SQL" \
+    || fail "RSFEEL borrows combat_player_speed_scale without giving it back (every block after it would inherit a frozen player fleet)"
   # 0312 — the no-living-ships properties are asserted in assert-form too (gutting any block fails here).
   grep -q "a dead fleet was ordered onto the map"                 "$SQL" || fail "harness lacks the dead-fleet refusal assert (the pre-0312 red)"
   grep -q "minted a fleet or a leg"                               "$SQL" || fail "harness lacks the refused-volley-writes-nothing assert (the pre-0312 bootstrap mint)"
@@ -361,7 +397,33 @@ if [ "$MODE" = "selftest" ]; then
   # asserted in assert-form too, and the SPATIAL range expectation must stay catalog-DERIVED.
   grep -q "the catalog autocannon_battery range"                  "$SQL" || fail "harness's SPATIAL range assert is no longer derived from the catalog (the 0313 repoint regressed to a hard-coded seed)"
   grep -q "the seeded world no longer forces closure"             "$SQL" || fail "harness lacks the CLOSURE gap-exceeds-both-ranges premise assert"
-  grep -q "the fight no longer starts instantly"                  "$SQL" || fail "harness lacks the command-ship-fires-tick-1 assert (combat must start despite the gap)"
+  # 0336 REPOINT of the old command-ship-fires-tick-1 pin. That assert held only because the wave
+  # spawned ON the engagement anchor, which is where the lead stands; 0336 moves the wave onto a
+  # formation ring, so nothing sits at distance 0 any more and an escort (on the ring) is ALWAYS
+  # nearer the wave than the lead (on the anchor) — there is no radius that rescues it. The property
+  # is repointed to the STRONGER statement 0336 actually establishes, quantified over BOTH sides:
+  # the opening tick of a fight is silent because the wave arrives outside every gun on the field.
+  grep -q "the opening tick cannot start instantly any more"      "$SQL" || fail "harness lacks the CLOSURE silent-opening-tick assert (the 0336 repoint of the command-ship-fires-tick-1 pin)"
+  grep -q "did not move off its own ring spawn point"             "$SQL" || fail "harness lacks the CLOSURE pirate-moved-off-its-OWN-spawn-point assert (comparing against the engagement anchor went vacuous the moment 0336 stopped spawning there)"
+  grep -q "or the CLOSE step is no longer capped by move_speed"   "$SQL" || fail "harness lacks the CLOSURE exact-step pin (the one line that fails loudly if the wave stops spawning where combat_formation_point puts it)"
+  grep -q "spawn gap does not exceed both ranges"                 "$SQL" || fail "harness lacks the CLOSURE measured-spawn-gap premise (seeding the recurrence with the ring is only correct while the pirate stands on the anchor)"
+  # ── THE WAVE RADIUS HAS ONE AUTHORITY, AND IT IS THE MEASURED FORMATION EXTENT ────────────────
+  # An earlier draft OWNED spatial_formation_ring_radius: it solved for a ring, wrote the knob AFTER
+  # the encounter was created, and predicted the wave's spawn point from the value it wrote. 0336
+  # does not read that knob to place a wave — it measures `max(distance from the anchor to each
+  # LIVING player unit)` — so the escort spawned on the committed ring, the wave stood clear of THAT,
+  # and the two authorities drifted apart. CI caught it as `the pirate moved 1.9398 from the slot-0
+  # formation point but its own frozen move_speed is 1`. The solve is DELETED, not corrected. These
+  # greps are what stop a second lever growing back.
+  grep -q "the MEASURED formation extent, which is the one authority for the wave radius" "$SQL" \
+    || fail "harness lacks the CLOSURE one-authority pin (the wave radius is the measured extent; a block predicting from the ring knob is predicting from something that no longer controls it)"
+  grep -q "derived its spawn point for"                           "$SQL" || fail "harness lacks the CLOSURE derived-vs-actual wave pin (the spawn point is derived from a PREDICTED range/speed before the wave exists, so the spawned row must agree with the prediction)"
+  grep -q "some other hull is now the outermost one"              "$SQL" || fail "harness lacks the CLOSURE extent-is-the-escort pin (a further-out hull would make the wave stand clear of THAT one, and the chord this block models would be the wrong one)"
+  grep -q "the measured extent below would not be this formation" "$SQL" || fail "harness lacks the CLOSURE positioned-living-player non-vacuity guard (a defaulted extent of 0 looks exactly like a lone hull standing on the anchor)"
+  grep -q "the escort-to-wave spawn gap measures"                 "$SQL" || fail "harness lacks the CLOSURE measured-gap NULL/positive pin"
+  grep -q "an id-ordered pick over a larger wave would not find"  "$SQL" || fail "harness lacks the CLOSURE one-unit-wave pin (combat_units.id is a random uuid, so slot 0 is only identifiable while the wave is a single unit)"
+  grep -q "it either closed on a different hull than the lowest-aggro escort" "$SQL" \
+    || fail "harness lacks the CLOSURE exact-landing-point pin (step LENGTH alone would pass for a step in any direction; the end point pins the target choice, the direction and the cap together)"
   grep -q "the CLOSE arm never ran"                               "$SQL" || fail "harness lacks the escort-moved-on-tick-1 assert (the first observed movement)"
   grep -q "the enemy CLOSE arm never ran"                         "$SQL" || fail "harness lacks the pirate-moved-off-anchor assert"
   grep -q "they are not closing"                                  "$SQL" || fail "harness lacks the gap-shrinks assert"
@@ -417,9 +479,29 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "a hull standing on the enemy spawn point with no screen" "$SQL" || fail "harness lacks the lead-carries-priority-100 assert"
   grep -q "do not carry aggro priority 0"                         "$SQL" || fail "harness lacks the escorts-are-screened assert"
   grep -q "the escort ring slot moved"                            "$SQL" || fail "harness lacks the exact ring-slot assert (this slice moves ONE hull, it does not retune the formation)"
-  grep -q "the fight did not fire on tick 1"                      "$SQL" || fail "harness lacks the fires-on-tick-1 assert (the thing that is broken today)"
-  grep -q "the tick-1 fire is not attributable to the lead"       "$SQL" || fail "harness lacks the escorts-silent-on-tick-1 attribution assert"
-  grep -q "ring no longer exceeds the escort range"               "$SQL" || fail "harness lacks the LEAD tick-1 attribution premise (a retune that puts escorts in range must raise, not pass)"
+  # ── 0336 REPOINT OF THE LEAD BLOCK'S BEHAVIOURAL HALF ─────────────────────────────────────────
+  # It asserted a TICK-1 salvo from the lead, with zero escort salvos as the attribution, premised on
+  # `ring > escort range`. All three were statements about the pre-0336 world and two of them are
+  # INVERTED, not merely late: this fixture is THREE hulls, so the extent is the escort ring and the
+  # lead — alone on the anchor — is a full RADIUS from the wave (11.0) while each escort is a CHORD
+  # from it (5.92). The escorts are NEARER and open the fight; the lead is the last hull that can
+  # reach, and no ring radius inverts a chord and a radius. The defect the block guards (a flagless
+  # fleet opens a fight it cannot join) is now proven by TWO things, and neither is "fires
+  # eventually": the fleet joins on exactly the tick the engine's own recurrence predicts, and the
+  # lead is proven to be CLOSING off the anchor by exactly its own frozen move_speed.
+  grep -q "a flagless fleet still opens a fight its lead cannot join" "$SQL" \
+    || fail "harness lacks the LEAD is-CLOSING-off-the-anchor assert (the direct 'it can join' evidence, and strictly more than the old form, which only proved the lead fired BECAUSE it stood at distance 0)"
+  grep -q "the fleet never fired within 12 ticks of the spawn"    "$SQL" || fail "harness lacks the LEAD bounded joining loop (a fleet that cannot join must fail loudly, not hang)"
+  grep -q "the fleet joined its fight on tick % but the engine"   "$SQL" || fail "harness lacks the LEAD predicted-equals-observed joining tick (growing silence must fail here, not pass as 'fires eventually')"
+  grep -q "the fleet needs % ticks to join its own fight"         "$SQL" || fail "harness lacks the LEAD joining-tick upper bound (the sprawl must fail here, not in a playtest)"
+  grep -q "there would be nothing to close and the silent opening tick above would be vacuous" "$SQL" \
+    || fail "harness lacks the LEAD joining-tick lower bound (a hull already in range at spawn makes the silent opening tick vacuous)"
+  grep -q "so the lead is not the screened hull any more"         "$SQL" \
+    || fail "harness lacks the LEAD attribution, repointed: the lead must be STRICTLY FURTHER from the wave than every escort (that is the screen working, and it is the inverse of the dead 'only the lead can reach' premise)"
+  grep -q "a hull could open the fight from its spawn slot"       "$SQL" || fail "harness lacks the LEAD silent-spawn-tick premise (measured on the escort-to-wave gap, which is the gap that decides who can fire — never the ring)"
+  grep -q "salvo(s) on the spawn tick"                            "$SQL" || fail "harness lacks the LEAD silent-opening-tick assert (the property only 0336 makes statable)"
+  grep -q "an opener that is not an escort"                       "$SQL" || fail "harness lacks the LEAD opener-is-the-nearest-hull assert"
+  grep -q "the measured extent would not be this formation"       "$SQL" || fail "harness lacks the LEAD positioned-living-player non-vacuity guard"
   grep -q "the derivation overrode a real command ship"           "$SQL" || fail "harness lacks the flagged-fleet control assert (the fallback is never an override)"
   grep -qF "flagged ship(s) were provisioned into the flagless fleet" "$SQL" || fail "harness lacks the no-command-ship precondition assert (owned, never inherited)"
   grep -q "the single hull did not lead"                          "$SQL" || fail "harness lacks the single-hull-fleet assert"
@@ -442,10 +524,33 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks the survivor-is-unhit assert"
   grep -q "a living unit went silent"                             "$SQL" \
     || fail "harness lacks the survivors-still-act assert (the failure mode where 0317 goes green by silencing everybody)"
-  grep -q "the second shooter re-acquired a live target"          "$SQL" \
-    || fail "harness lacks the frozen-snapshot assert (0317 must re-read the ACTOR's liveness only, never the population)"
-  grep -q "the second shot must land on a corpse and deal nothing" "$SQL" \
-    || fail "harness lacks the corpse-shot assert (the positive proof that targeting was not re-read)"
+  # ── 0336 REVERSED THE CORPSE SHOT ON PURPOSE, SO THIS PAIR IS REPOINTED, NOT RELAXED ───────────
+  # Arm B asserted that the second hull kept firing at the pirate the frozen snapshot named and that
+  # its shot landed on the corpse for nothing — "the positive proof that targeting was not re-read".
+  # 0336's hunk 13 quotes 0317's own wording and answers "That is no longer true, and it should not
+  # have been the rule": a shot thrown away on a corpse is the defect that slice was written to end,
+  # so targeting asks for a LIVE target at BOTH acquisition sites. What still IS simultaneous is
+  # POSITION, and that is what the repoint pins instead — a strictly stronger claim, because no shot
+  # is wasted: two hulls produce two landed hits on two DISTINCT live pirates and two kills.
+  grep -q "which is the wasted shot 0336 exists to end"           "$SQL" \
+    || fail "harness lacks the no-wasted-shot assert (0336's reversal of the corpse shot: the second gun must RE-AIM onto a live target)"
+  grep -q "two shots must land on two DISTINCT pirates"           "$SQL" \
+    || fail "harness lacks the two-distinct-kills assert (arm B's repointed freeze claim)"
+  grep -q "every shot must reach a LIVE target"                   "$SQL" \
+    || fail "harness lacks the every-shot-lands assert (a shot that lands on a corpse and deals nothing is the pre-0336 waste)"
+  grep -q "the surviving pirates stand at % distinct radii"       "$SQL" \
+    || fail "harness lacks arm B's POSITION-simultaneity pin (position is the half of the freeze 0336 kept, and it is what the corpse shot used to stand in for)"
+  # ── AND THE ZERO-MARGIN CLASS, NAMED ──────────────────────────────────────────────────────────
+  # DEADFIRE's non-vacuity premise compared a distance against a range with NO margin and CI caught
+  # it at `4.00000000000001 > 4`: 0336 had moved the wave from distance 0 to (extent + its own range
+  # + 1), and at this site's difficulty the wave's closing step is EXACTLY the +1 clearance, so it
+  # came to rest precisely on its own range edge. The fixture is re-staged with a whole unit of
+  # margin and the margin is now MEASURED and asserted, so a future retune that lands on the boundary
+  # fails with the number instead of on the last ulp of a sqrt.
+  grep -q "sits exactly on the range boundary"                    "$SQL" \
+    || fail "harness lacks DEADFIRE's named-margin assert (a premise resting on exact float equality is a coin flip, not a property)"
+  grep -q "at the PRE-MOVE distance the fire gate evaluated"      "$SQL" \
+    || fail "harness lacks DEADFIRE's pre-move distance repoint (the fire gate reads the FROZEN distance; measuring the post-tick one compares against a number the decision never saw)"
   grep -q "the dead unit fired after its own destruction"         "$SQL" \
     || fail "harness lacks the both-sides ordering invariant (no salvo at a seq later than the destruction event naming its firer)"
   grep -q "the ordering invariant would be vacuous"               "$SQL" \
@@ -521,12 +626,103 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "public.fleet_docked_location("                         "$SQL" \
     || fail "harness does not compose the 0306 docked authority when asserting the nowhere premise — it would be re-stating the docked test instead of using the one the fix uses"
 
+  # ── 0336 COMBAT ENGINE REPAIRS, in assert-form. Every one of the eight blocks is RED by
+  # construction on the pre-0336 tick, and these pins are what stops a block being deleted, or
+  # quietly weakened, without CI noticing. Every vacuity guard gets its own pin beside its property,
+  # because on this chain the guard is the half that rots first.
+  # NOTE: matched on apostrophe-free phrases on purpose — the assert text lives inside a SQL string
+  # literal, so every apostrophe in it is DOUBLED and a natural-English pattern will not hit.
+  #
+  # OWNWORLD — the proof owns its zone world (the randomly-shaped-seed flake, ended).
+  grep -q "randomly-shaped seeded zone(s) are still active"       "$SQL" || fail "harness lacks the OWNWORLD deactivation assert (a seeded blob redrawn with random() on every CI database would keep covering a fixed test coordinate at random)"
+  grep -q "seeded ZERO active non-drawn danger zones"             "$SQL" || fail "harness lacks the OWNWORLD non-vacuity guard (an empty seed satisfies the deactivation asserts while proving nothing)"
+  grep -q "active zone(s) remain before any fixture is drawn"     "$SQL" || fail "harness lacks the OWNWORLD ordering pin (it must run before the first pirate_zone_create or it is not establishing the world it claims)"
+  # RANGEINVARIANT — a wave must never arrive inside its own reach. There is deliberately NO grep for
+  # a knob inequality (`ring > enemy_range(D)`) and there must never be one again: 0336 spawns the
+  # wave at `ring + THAT WAVE'S OWN range + 1`, so the clearance is structural and an inequality
+  # between two knobs would be asserting a coincidence that goes red the moment either knob moves.
+  # The measured form below replaces it and is strictly stronger — it witnesses the geometry.
+  grep -q "not one location carries a positive base_difficulty"   "$SQL" || fail "harness lacks the RANGEINVARIANT empty-location-set vacuity guard"
+  grep -q "fall outside this quantifier"                          "$SQL" || fail "harness lacks the RANGEINVARIANT NULL-difficulty pin (a row with an unknown difficulty slips out of the quantifier unnoticed)"
+  grep -q "inside the wave own reach of"                          "$SQL" || fail "harness lacks the RANGEINVARIANT measured-on-a-real-wave assert (a knob inequality that stopped describing the geometry would pass the arithmetic and fail here)"
+  grep -q "there is no wave to measure"                           "$SQL" || fail "harness lacks the RANGEINVARIANT empty-wave vacuity guard"
+  grep -q "it stops in the kite band at"                          "$SQL" || fail "harness lacks the RANGEINVARIANT kite-band assert (spawning outside its own reach is not enough if the closing enemy STOPS beyond the player shortest gun)"
+  # VOLLEY — a kill does not disarm the rest of the volley.
+  grep -q "the target was resolved ONCE above the per-weapon loop" "$SQL" || fail "harness lacks the VOLLEY distinct-targets assert (the pre-0336 red: three guns, one target)"
+  grep -q "landed hit(s) from a three-gun volley"                 "$SQL" || fail "harness lacks the VOLLEY three-landed-hits assert"
+  grep -q "destroyed by a three-gun volley"                       "$SQL" || fail "harness lacks the VOLLEY three-kills assert"
+  grep -q "one gun does not one-shot it"                          "$SQL" || fail "harness lacks the VOLLEY one-shot-sizing pin (if a pirate survived a single gun the re-aim could not happen on ANY body)"
+  grep -q "the wave must hold strictly more pirates than the ship has guns" "$SQL" || fail "harness lacks the VOLLEY wave-size vacuity guard (the last gun must have something left to re-aim at)"
+  grep -q "this block is about a THREE-gun ship"                  "$SQL" || fail "harness lacks the VOLLEY three-guns-really-fitted fixture pin"
+  grep -q "name no target at all"                                 "$SQL" || fail "harness lacks the VOLLEY NULL-target pin (a distinct count over NULLs proves nothing)"
+  # WAVERING — a wave arrives on a ring, not on one point.
+  grep -q "the whole wave was inserted at one identical point"    "$SQL" || fail "harness lacks the WAVERING distinct-positions assert (the pre-0336 red: production holds every wave at exactly ONE position)"
+  grep -q "the wave is still being planted on the anchor itself"  "$SQL" || fail "harness lacks the WAVERING nobody-on-the-anchor assert"
+  grep -q "it is not one ring"                                    "$SQL" || fail "harness lacks the WAVERING equidistant-radius assert"
+  grep -q "sit on a slot of combat_formation_point(anchor"        "$SQL" || fail "harness lacks the WAVERING formation-leaf assert (the radius is MEASURED and every unit must be reproduced by the leaf at half-slot phase on a slot no other unit used — so a later change to the spawn radius cannot make this block wrong)"
+  grep -q "a ring cannot be told apart from a point or a line"    "$SQL" || fail "harness lacks the WAVERING wave-size vacuity guard"
+  grep -q "an unpositioned wave cannot prove it arrived anywhere" "$SQL" || fail "harness lacks the WAVERING NULL-coordinate pin (the 0313 law)"
+  # RETREATNOSPAWN — pressing Retreat does not summon a bigger wave.
+  grep -q "wave_spawned event(s) fired on the retreat tick"       "$SQL" || fail "harness lacks the RETREATNOSPAWN no-spawn assert (the pre-0336 red: four production encounters died to the wave their own Retreat summoned)"
+  grep -q "the transition window is still OPEN"                   "$SQL" || fail "harness lacks the RETREATNOSPAWN transition-window vacuity guard (with the window open the head takes the next_wave_incoming pause and this block goes green on the defect)"
+  grep -q "the wave was never cleared"                            "$SQL" || fail "harness lacks the RETREATNOSPAWN wave-really-cleared premise"
+  grep -q "living pirate(s) exist after the retreat tick"         "$SQL" || fail "harness lacks the RETREATNOSPAWN no-living-enemy assert"
+  grep -q "the wave counter advanced"                             "$SQL" || fail "harness lacks the RETREATNOSPAWN wave-counter assert"
+  grep -q "it completed instead of running the combat step"       "$SQL" || fail "harness lacks the RETREATNOSPAWN still-retreating pin (a tick that took the completion branch never evaluated the spawn guard)"
+  # NOWEDGE — a terminal-arm mismatch concludes instead of wedging.
+  grep -q "the encounter is wedged retrying the identical tick forever" "$SQL" || fail "harness lacks the NOWEDGE reaches-a-terminal-status assert (the pre-0336 red)"
+  grep -q "last_resolved_at went BACKWARDS"                       "$SQL" || fail "harness lacks the NOWEDGE cadence-clock-advanced assert (reaching a terminal status is not what separates the bodies; the head rolls the whole tick back)"
+  grep -q "tick_number did not advance"                           "$SQL" || fail "harness lacks the NOWEDGE tick-advanced assert"
+  grep -q "the mismatch this block exists to survive was never created" "$SQL" || fail "harness lacks the NOWEDGE mismatch-really-exists guard"
+  grep -q "presence_complete accepted the already-completed presence without raising" "$SQL" || fail "harness lacks the NOWEDGE the-leaf-really-raises guard (without it a body with no confinement at all would pass)"
+  grep -q "the wave never landed a hit in 10 ticks"               "$SQL" || fail "harness lacks the NOWEDGE reachability guard (the fixture must be able to reach a terminal arm)"
+  grep -q "must still CONCLUDE the encounter"                     "$SQL" || fail "harness lacks the NOWEDGE terminal-status assert"
+  # ORDERSTABLE — the actor loop order is decided, not heap order.
+  grep -q "acted out of id order on tick"                         "$SQL" || fail "harness lacks the ORDERSTABLE id-ascending-seq assert (the ORDER BY effect, stated as itself rather than as a difference from something)"
+  grep -q "an id-ascending sequence is not evidence of an ORDER BY" "$SQL" || fail "harness lacks the ORDERSTABLE firing-population vacuity guard (with too few firing units the head satisfies this by coincidence)"
+  grep -q "they must be CONSECUTIVE"                              "$SQL" || fail "harness lacks the ORDERSTABLE consecutive-ticks premise"
+  grep -q "an ordering over NULLs is vacuous"                     "$SQL" || fail "harness lacks the ORDERSTABLE NULL-unit_id pin"
+  grep -q "name a unit that is not in this encounter"             "$SQL" || fail "harness lacks the ORDERSTABLE ids-are-really-combat_units-ids pin"
+  # SHORTGUN — a longer gun no longer disables a shorter one.
+  grep -q "so it parks at the long gun edge and the short gun is silently disabled" "$SQL" || fail "harness lacks the SHORTGUN both-guns-fire assert (the pre-0336 red: my_range was max(range) for BOTH the close decision and the kite cap)"
+  grep -q "the kite cap is still the longest gun"                 "$SQL" || fail "harness lacks the SHORTGUN settled-distance assert (the hull must come to rest inside its SHORTEST gun)"
+  grep -q "there was never a tick on which only the LONGER gun could reach" "$SQL" || fail "harness lacks the SHORTGUN band vacuity guard (the fixture must pass through the band the head parks in, or a green run says nothing)"
+  grep -q "it never had to close"                                 "$SQL" || fail "harness lacks the SHORTGUN starts-outside-both-ranges premise"
+  grep -q "they must differ, with one strictly SHORTER"           "$SQL" || fail "harness lacks the SHORTGUN mixed-range fixture pin"
+  grep -q "a ship that cannot move can never settle anywhere"     "$SQL" || fail "harness lacks the SHORTGUN move_speed vacuity guard"
+  # ── 0336: THE RING ONLY PUSHES ANYTHING OUT IF A SECOND HULL STANDS ON IT ──────────────────────
+  # SHORTGUN set the ring to 8 to stand the wave beyond both guns, but commissioned ONE hull — and a
+  # lone hull is its own lead, so it holds the anchor, the MEASURED extent is 0, the ring is inert and
+  # the wave landed at 1.1, inside both guns. Third block staged as if the ring set the wave radius
+  # (CLOSURE predicted from it, LEAD asserted against it). The fix makes the extent REAL rather than
+  # predicting differently, so these greps pin the escort, the extent and the derived opening gap.
+  grep -q "without a second hull the ring is inert"               "$SQL" \
+    || fail "harness lacks SHORTGUN's escort (a ring with nobody on it leaves the measured extent at 0 and the wave spawns on top of the fixture)"
+  grep -q "the ring is inert again, so the wave will spawn on top of the fixture" "$SQL" \
+    || fail "harness lacks SHORTGUN's measured-extent pin (the extent must BE the owned ring, or the wave is not where this block thinks it is)"
+  grep -q "the wave is no longer arriving where 0336 puts it"     "$SQL" \
+    || fail "harness lacks SHORTGUN's derived opening-gap pin (extent + the wave's OWN frozen reach + 1, never the knob this block wrote)"
+  grep -q "can jump the approach straight past the only ticks"    "$SQL" \
+    || fail "harness lacks SHORTGUN's step-under-the-band premise (a band guard that holds only for some starting gaps holds by arithmetic luck, which is the zero-margin disease in another form)"
+  grep -q "is the defect surviving, not the fix landing"          "$SQL" \
+    || fail "harness lacks SHORTGUN's settle MARGIN against the LONG gun (the head parks AT that edge, so a full band width inside it is the defect's own signature and the number must be printed)"
+  grep -q "the fitted hull seeded no combat unit"                 "$SQL" \
+    || fail "harness lacks SHORTGUN's fitted-hull scoping guard (the unscoped SELECT INTO would silently take the ESCORT's ranges once the fleet is two ships)"
+  # RETREATCLEAR — every terminal arm consumes fleets.retreat_target_*.
+  grep -q "the DEATH arm left the retreat destination behind"     "$SQL" || fail "harness lacks the RETREATCLEAR death-arm assert (the pre-0336 red: three of the four arms leaked the recording into the next sortie)"
+  grep -q "the SETTLE arm left the retreat destination behind"    "$SQL" || fail "harness lacks the RETREATCLEAR settle-arm assert (not a regression test — it is what stops the shared leaf being dropped from the arm that always did this correctly)"
+  grep -q "cleared the recording without READING it"              "$SQL" || fail "harness lacks the RETREATCLEAR consumed-means-read-and-clear assert (the return leg must depart for the point the player ordered)"
+  grep -q "there is nothing for a terminal arm to leak"           "$SQL" || fail "harness lacks the RETREATCLEAR destination-really-armed guard"
+  grep -q "that order repositions instead of retreating"          "$SQL" || fail "harness lacks the RETREATCLEAR unadmitted-destination guard (an admitted point repositions under 0311 and records nothing)"
+  grep -q "would be re-proving part (B)"                          "$SQL" || fail "harness lacks the RETREATCLEAR death-arm attribution pin (a completed retreat routes through the settle arm, which was never broken)"
+  grep -q "owned the knob and did not give it back"               "$SQL" || fail "harness lacks the 0336 formation-ring leak pin (every block below RANGEINVARIANT owns that knob; a restore that leaks would silently repoint the invariant instead of failing)"
+
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "DANGER-ZONE COMBAT SELFTEST: ALL PASSED (self-rolling-back; every dark flag enabled only inside the txn; combat_telegraph kept dark; risk knobs = 1.0 for a certain plan; sole-writer law for group_sortie_members + combat_units AND for the intercept lifecycle/geometry — only a symmetric depart/arrive/trigger time-travel is allowed; provisioning + entry 100% real-RPC incl. pirate_zone_create, command_ship_group_go, command_ship_group_go_route, command_ship_group_stop and set_group_auto_exit; the ambush is fired by the REAL process_fleet_movements and the single direct resolver call is the negative re-fire probe; exactly 3 known tick call sites; every property — the order starts a journey and no fight, the point is the zone EDGE not its centre, trigger_at is the leg's own interpolated clock, nothing fires early, the arrival cannot be settled past a due ambush, the fleet parks at the entry point, the route is abandoned, engagement_x/y equals the entry point with the command ship seeded on it, it cannot fire twice, stop/re-order before due cancels and re-plans while stop after due is refused, positioned spatial units, spawned + firing pirate + damage; the 0310 HP auto-exit fires at the player's threshold of REAL CAPACITY and never earlier, never re-requests, completes like a human press, exits a damaged fleet on re-entry (the compounding-denominator regression) and stays silent with the toggle OFF; and (0311) an in-zone order REPOSITIONS the fight (exact-delta translate, restamp, no retreat write, no leg), overlapping zones are QUANTIFIED over rather than chosen (a lower-area holder can neither veto nor decide), a destination admitted by no anchor-holding zone retreats byte-identically, a retreating fight never jumps, and a site fight falls through to the retreat — never repositioned, never refused — asserted in assert-form; no random() and the 0312 no-living-ships law — a dead fleet is refused go/go_route/dock with the typed no_living_ships and mints nothing, a damaged-but-alive hp-0 ship still moves, empty_group stays its own state, and the recovery path (brake/tow/repair/re-assign) works on exactly the dead fleet; and the 0313 CLOSURE properties (spawn gap exceeds the seeded cut ranges, command ship still fires tick 1, escort + pirate MOVE and hold fire until their own pre-move distance is inside their own range, and every positional comparison is NULL-pinned so absence is failure rather than a silent pass); and the 0314 RuneScape feel — a 3600s-cooldown wave holds fire on tick 2 while a zero-cooldown weapon keeps firing, six identical guns roll distinct damage in one tick, every landed hit emits its visible hull_damage under EVENT logging with debug pinned dark, and every fired clock armed now()+cooldown exactly); and the 0315 LEAD law — a fleet with NO command ship anywhere still elects one hull by the stated rule (a real flag first, then the greatest max_hp, then the lowest main_ship_id, over living hulls), anchors exactly THAT hull on the engagement point at aggro 100 with every escort at 0 on its unchanged ring slot, and fires on tick 1 from the anchor alone; a fleet that DOES carry a designated command ship is placed exactly as today even when the fallback would name a different hull on both derived keys; and a single-hull fleet is its own lead; and the 0316 FIVE-TIMES-TIGHTER geometry — the CLOSURE block now runs the engine own recurrence over the encounter real ring, weapon range and frozen move_speeds, demands the escort reach firing range within one or two silent closing ticks, demands the OBSERVED first salvo land on exactly the tick that recurrence predicts, and refuses a pirate that crosses the whole ring in a single step: a range cut made without the matching ring and speed cuts fails here instead of in a playtest; and the 0317 DEAD-DO-NOT-SHOOT law — a mutual one-shot kill now produces exactly ONE salvo, ONE landed hit and ONE destroyed unit (the head produced two of each), the silenced loser is proven to have been able to destroy the survivor, every surviving pirate still fires and both hulls still fire at the pirate the FROZEN snapshot named with only one of the two shots landing, and across both staged fights no unit emits an attack event at a seq later than the destruction event naming it'; and the 0331 ONE-AUTHORITY-FOR-ATTACK law — a ship's weapons_json totals to EXACTLY its folded combat_power, a ship trait (a source no weapon row can carry) moves the damage by exactly its own attack, two identical guns SHARE that power in equal parts summing to 1 instead of each carrying it, the no-weapon hull obeys the same identity through the synthesized weapon with the old power_from_attack knob deleted, and the stronger gun never deals less than the weaker one — every one of those RED on the pre-0317 builder, each with its own non-vacuity pin so none can pass on a fold that happens to equal the catalog weight'"
+  echo "DANGER-ZONE COMBAT SELFTEST: ALL PASSED (self-rolling-back; every dark flag enabled only inside the txn; combat_telegraph kept dark; risk knobs = 1.0 for a certain plan; sole-writer law for group_sortie_members + combat_units AND for the intercept lifecycle/geometry — only a symmetric depart/arrive/trigger time-travel is allowed; provisioning + entry 100% real-RPC incl. pirate_zone_create, command_ship_group_go, command_ship_group_go_route, command_ship_group_stop and set_group_auto_exit; the ambush is fired by the REAL process_fleet_movements and the single direct resolver call is the negative re-fire probe; exactly 2 known tick call sites (0336 folded PIRATEFIRE hand-rolled rewind-then-tick into pg_temp.ae_tick); every property — the order starts a journey and no fight, the point is the zone EDGE not its centre, trigger_at is the leg's own interpolated clock, nothing fires early, the arrival cannot be settled past a due ambush, the fleet parks at the entry point, the route is abandoned, engagement_x/y equals the entry point with the command ship seeded on it, it cannot fire twice, stop/re-order before due cancels and re-plans while stop after due is refused, positioned spatial units, and (0336) a wave that arrives SILENT on its spawn tick, CLOSES, and then fires a salvo whose unit_id/target_id RESOLVE to real rows, taking real damage back; the 0310 HP auto-exit fires at the player's threshold of REAL CAPACITY and never earlier, never re-requests, completes like a human press, exits a damaged fleet on re-entry (the compounding-denominator regression) and stays silent with the toggle OFF; and (0311) an in-zone order REPOSITIONS the fight (exact-delta translate, restamp, no retreat write, no leg), overlapping zones are QUANTIFIED over rather than chosen (a lower-area holder can neither veto nor decide), a destination admitted by no anchor-holding zone retreats byte-identically, a retreating fight never jumps, and a site fight falls through to the retreat — never repositioned, never refused — asserted in assert-form; no random() and the 0312 no-living-ships law — a dead fleet is refused go/go_route/dock with the typed no_living_ships and mints nothing, a damaged-but-alive hp-0 ship still moves, empty_group stays its own state, and the recovery path (brake/tow/repair/re-assign) works on exactly the dead fleet; and the 0313 CLOSURE properties (the escort-pirate spawn gap is MEASURED off combat_formation_point at the radius the tick itself derives -- the MEASURED formation extent plus the wave own range plus one, the ONE authority for a wave radius, with no geometry knob written by the block at all -- and exceeds the seeded cut ranges, the opening tick is silent on BOTH sides because 0336 moved the wave off the anchor and outside every gun on the field, escort + pirate MOVE and hold fire until their own pre-move distance is inside their own range, and every positional comparison is NULL-pinned so absence is failure rather than a silent pass); and the 0314 RuneScape feel — a 3600s-cooldown wave holds fire on tick 2 while a zero-cooldown weapon keeps firing, six identical guns roll distinct damage in one tick, every landed hit emits its visible hull_damage under EVENT logging with debug pinned dark, and every fired clock armed now()+cooldown exactly); and the 0315 LEAD law — a fleet with NO command ship anywhere still elects one hull by the stated rule (a real flag first, then the greatest max_hp, then the lowest main_ship_id, over living hulls), anchors exactly THAT hull on the engagement point at aggro 100 with every escort at 0 on its unchanged ring slot, and (0336 re-premised) the opening tick is SILENT across the field while the lead CLOSES off the anchor by exactly its own frozen move_speed, the fleet then joining its fight on EXACTLY the tick the engine own recurrence predicts, opened by an escort -- the lead being a full RADIUS from the wave where an escort is a CHORD, which is the screen working; a fleet that DOES carry a designated command ship is placed exactly as today even when the fallback would name a different hull on both derived keys; and a single-hull fleet is its own lead; and the 0316 FIVE-TIMES-TIGHTER geometry — the CLOSURE block now runs the engine own recurrence over the encounter real ring, weapon range and frozen move_speeds, demands the escort reach firing range within one or two silent closing ticks, demands the OBSERVED first salvo land on exactly the tick that recurrence predicts, and refuses a pirate that crosses the whole ring in a single step: a range cut made without the matching ring and speed cuts fails here instead of in a playtest; and the 0317 DEAD-DO-NOT-SHOOT law — a mutual one-shot kill now produces exactly ONE salvo, ONE landed hit and ONE destroyed unit (the head produced two of each), the silenced loser is proven to have been able to destroy the survivor, every surviving pirate still fires and both hulls still fire at the pirate the FROZEN snapshot named with only one of the two shots landing, and across both staged fights no unit emits an attack event at a seq later than the destruction event naming it'; and the 0331 ONE-AUTHORITY-FOR-ATTACK law — a ship's weapons_json totals to EXACTLY its folded combat_power, a ship trait (a source no weapon row can carry) moves the damage by exactly its own attack, two identical guns SHARE that power in equal parts summing to 1 instead of each carrying it, the no-weapon hull obeys the same identity through the synthesized weapon with the old power_from_attack knob deleted, and the stronger gun never deals less than the weaker one — every one of those RED on the pre-0317 builder, each with its own non-vacuity pin so none can pass on a fold that happens to equal the catalog weight and (0336) the COMBAT ENGINE REPAIRS -- the proof first OWNS its zone world by deactivating every randomly-shaped seeded zone in-txn (the flake that failed and passed on identical commits, ended at the source rather than by widening a guard); a wave must never arrive inside its own reach -- MEASURED on a real staged wave (min distance from every player unit to every enemy against the wave own frozen range) rather than inferred from a knob inequality, because 0336 makes that clearance structural (spawn radius = ring + that wave own range + 1) and an inequality between two knobs would assert a coincidence; plus the kite band the closing enemy actually stops in, over EVERY location with a positive difficulty including hidden ones; a THREE-gun hull meeting a wave larger than its gun count fires 3 salvos at 3 DISTINCT targets for 3 landed hits and 3 kills (the head resolved the target once above the per-weapon loop and dropped guns 2 and 3); a wave arrives on a RING -- every unit on its own point, none on the anchor, all at one MEASURED radius and every one of them reproduced by combat_formation_point at half-slot phase on a slot no other unit used; pressing Retreat with the transition window PROVEN closed raises no wave_spawned, adds no enemy row and moves neither wave counter; a terminal arm meeting a presence that was completed out of band (with presence_complete PROVEN to raise for it) still CONCLUDES the encounter and advances both last_resolved_at and tick_number instead of rolling the tick back forever; six firing units emit their salvos in ascending combat_units.id on two consecutive ticks; a hull carrying an autocannon beside an Mk-II passes through the band where only the Mk-II reaches and then settles inside its SHORTEST gun with both module types on the record; and a fleet that DIES with a recorded retreat destination comes back with all three retreat_target_* columns NULL while the settle arm still both clears that recording and USES it -- each with its own non-vacuity pin, and a formation-ring leak pin so a block that owns the knob and fails to give it back cannot silently repoint the range invariant'"
   exit 0
 fi
 

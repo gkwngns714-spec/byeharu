@@ -26,13 +26,20 @@ name: ELITE STAT WIRING — dark resolver-only elite split + real-chain disposab
 
 on:
   workflow_dispatch:
+  # 0336 WIDENS THIS TRIGGER, and the widening is the point. This proof asserts over the LIVE
+  # process_combat_ticks body — the random( call count, the elite-blindness, and five named anchors —
+  # and it fired only on branches that happened to name themselves in. It did not fire on `main` and
+  # it did not fire on `pull_request`, so a slice that rewrote the tick (0336 does, in 16 hunks)
+  # could land without this ever running once. That is the same shape as the four dead suites found
+  # on 2026-08-03: a proof that fires only on the branches that remembered is not a net. Every PR and
+  # every merge to main runs it now.
+  pull_request:
   push:
     branches:
+      - main
       - 'autopilot/**'
-      - 'slice-elite-**'
+      - 'slice-**'
       - 'osn3-*'
-      # 0314 adds the per-hit damage roll — this proof's random( count pin repointed 2 -> 3.
-      - 'slice-runescape-**'
 
 permissions:
   contents: read

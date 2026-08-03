@@ -8,9 +8,17 @@ name: COMBAT-SPATIAL — 0234 spatial-combat disposable proof (no production)
 #      assert-form;
 #   2. a disposable local Supabase (the full chain incl. 0234) running the real-chain scenario:
 #      commission 3 ships → craft/fit 2 real weapons → form a team, designate a command ship → send
-#      the hunt → settle arrival (spawns the spatial encounter) → tick 1 (HOLD/KITE/CLOSE movement,
-#      player fire, pirate hp falls) → tick 2 (the pirate has closed in and fires back — the S1
-#      aggro-tier screening holds: only an escort ever takes the hit, never the command ship).
+#      the hunt → settle arrival (spawns the spatial encounter) → tick 1 (KITE/CLOSE movement, the
+#      DERIVED player fire count, pirate hp falls) → a derived-length guarded approach → the arrived
+#      HOLD, and the S1 aggro-tier screen holding (only an escort takes the hit, never the lead).
+#      0336 REPOINTED THIS SCENARIO, and the reason is worth stating: the wave no longer spawns ON
+#      the anchor. It stands at (the player formation's own extent + the wave's own weapon range + 1),
+#      so no player hull is inside the wave's reach at spawn — and `hold` requires BOTH
+#      `dist <= my_range` and `dist <= target_range`, the second of which is now false by
+#      construction. There is therefore no knob setting that puts the lead in HOLD on tick 1; asking
+#      for one would be asking for 0336 to be reverted. HOLD is proven where it now exists: on the
+#      hull that CLOSES to contact. The lead, on the anchor, is now the furthest player hull from the
+#      wave rather than the nearest.
 # HOST DECISION (recorded, the decks-proof.yml precedent): this is a NEW, standalone workflow rather
 # than a block appended to fleetgo-proof or team-command-proof — both of those pairs are CONTENDED by
 # concurrently in-flight slices repointing them. The proof flips NO committed flag; no `environment:`
@@ -28,16 +36,16 @@ on:
     branches:
       - main
       - 'autopilot/**'
-      - 'slice-combat-s3**'
-      # 0313 cuts the seeded ranges this proof's geometry sits on (catalog gun 150->25) — its
-      # asserts were repointed in the same slice, so range branches must run it.
-      - 'slice-weapon-ranges**'
-      # 0316 divides the catalog gun again (25 -> 5) and this proof's engineered ring/pirate
-      # geometry was re-sized against it in the same slice — tighter-combat branches must run it.
-      - 'slice-combat-five-times**'
-      # 0317 rewrites BOTH calculate_expedition_stats and combat_create_group_encounter and repoints
-      # this proof's weapon-power assertions, so it must run on the branch that does it.
-      - 'slice-one-authority**'
+      # 0336 collapses the hand-maintained slice list into one glob: this proof reads the LIVE
+      # process_combat_ticks geometry, so EVERY slice branch must run it, not the ones that
+      # remembered to add themselves. That list is how this gate went dark for two weeks once.
+      - 'slice-**'
+      # The named entries this glob replaces are kept as history, not as triggers: 0313 cut the
+      # seeded ranges this proof's geometry sits on (catalog gun 150->25); 0316 divided that gun
+      # again (25 -> 5) and the engineered ring/pirate geometry was re-sized against it; 0317
+      # rewrote calculate_expedition_stats and combat_create_group_encounter and repointed the
+      # weapon-power assertions; 0336 moved the wave off the anchor entirely. Every one of those
+      # had to remember to add itself. That is the failure mode, so the list is now a glob.
 
 permissions:
   contents: read

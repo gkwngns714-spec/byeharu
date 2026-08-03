@@ -378,19 +378,66 @@ end $$;
 --
 -- The knob is CAPTURED and RESTORED, never restored to a hard-coded literal — the committed seed is
 -- the chain's to own, not this file's.
-create or replace function pg_temp.wipe_tick(p_enc uuid) returns void language plpgsql as $$
-declare v_prev jsonb;
+--
+-- ── pg_temp.spend_wave — THE ONE AUTHORITY for "the live wave is spent" (added 2026-08-04) ────────
+-- Split out of wipe_tick because it has a SECOND caller now, and the reason is the same defect in a
+-- different place: a wave freezes enemy_hp_base (and enemy_attack_base) into its own rows AT SPAWN,
+-- so RESTORING a borrowed knob does not give back the wave the borrowed value already minted. Any
+-- block that borrows either knob has to spend the wave as well as restore the knob, or it hands the
+-- next block a fight staged at numbers that block never chose. Two callers, ONE spelling — a second
+-- spelling of "spend the wave" is exactly the duplication this file's own header argues against.
+create or replace function pg_temp.spend_wave(p_enc uuid) returns void language plpgsql as $$
 begin
-  select value into v_prev from public.game_config where key = 'enemy_attack_base';
-  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);
-  -- spend the live wave in both arms, then make the tick due
   delete from public.combat_units where encounter_id = p_enc and side = 'enemy';
   update public.combat_encounters
      set enemy_integrity_current = 0,
-         next_wave_at            = null,
-         last_resolved_at        = last_resolved_at - interval '1 minute'
+         next_wave_at            = null
    where id = p_enc;
-  perform public.process_combat_ticks();
+end $$;
+create or replace function pg_temp.wipe_tick(p_enc uuid) returns void language plpgsql as $$
+declare v_prev jsonb; v_prev_hp jsonb; i int; v_status text; v_int double precision; v_alive int;
+begin
+  select status into v_status from public.combat_encounters where id = p_enc;
+  if v_status is distinct from 'active' then
+    raise exception 'wipe_tick: the encounter is % on entry (want active) — there is no live fight to make lethal, so the caller''s destroyed-ship assert would be about a fleet this helper never touched', v_status;
+  end if;
+  select value into v_prev    from public.game_config where key = 'enemy_attack_base';
+  select value into v_prev_hp from public.game_config where key = 'enemy_hp_base';
+  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);
+  -- ── 0336: THE LETHAL WAVE HAS TO SURVIVE ITS OWN APPROACH ────────────────────────────────────────
+  -- The replacement wave no longer spawns on top of the fleet; it spawns at (the measured player
+  -- formation extent + its own weapon range + 1) and CLOSES, with the fleet firing at it every tick of
+  -- the way. At the seeded enemy_hp_base a fleet destroys it before it ever fires, which clears the
+  -- wave, spawns another, and loops — so the durability is borrowed for exactly the same reason and in
+  -- exactly the same shape as the attack, and restored with it.
+  perform public.set_game_config('enemy_hp_base', '100000'::jsonb);
+  perform pg_temp.spend_wave(p_enc);
+  -- ── 0336: ONE TICK IS NO LONGER LETHAL, SO DRIVE UNTIL THE WAVE IS SPENT ─────────────────────────
+  -- This helper ticked ONCE. That was correct while every enemy was inserted on the engagement anchor
+  -- — on top of the lead, at distance 0 — because the wave that spawned in that tick also fired in it.
+  -- 0336 makes the arriving wave silent by construction, so a single tick spawns a wave that has not
+  -- shot yet and both callers' "the ship is destroyed" assert reads a fleet that is still alive. The
+  -- property the callers own is UNCHANGED — a fleet meeting a wave at enemy_attack_base 1000000 dies —
+  -- and the exit condition is the OBSERVATION (the encounter reached a terminal state), never a tick
+  -- count, because how many closing ticks a wave needs is a function of the site's difficulty and the
+  -- fleet's own combat speed. Bounded, and a fight that will not end fails LOUDLY here rather than
+  -- leaving the caller to report a confusing "the terminal did not fire".
+  for i in 1 .. 12 loop
+    select status into v_status from public.combat_encounters where id = p_enc;
+    exit when v_status not in ('active', 'retreating');
+    update public.combat_encounters
+       set last_resolved_at = last_resolved_at - interval '1 minute'
+     where id = p_enc;
+    perform public.process_combat_ticks();
+  end loop;
+  select status, player_integrity_current into v_status, v_int
+    from public.combat_encounters where id = p_enc;
+  select count(*) into v_alive from public.combat_units
+   where encounter_id = p_enc and side = 'enemy' and alive_count > 0;
+  if v_status in ('active', 'retreating') then
+    raise exception 'wipe_tick: the encounter is still % after 12 ticks at enemy_attack_base 1000000 (player integrity %, % living enemy row(s)) — the lethal wave never closed into its own range, and both callers assert the fleet is DEAD', v_status, v_int, v_alive;
+  end if;
+  perform public.set_game_config('enemy_hp_base',     coalesce(v_prev_hp, '6'::jsonb));
   perform public.set_game_config('enemy_attack_base', coalesce(v_prev, '1'::jsonb));
 end $$;
 
@@ -1337,6 +1384,7 @@ declare r jsonb; t jsonb; s1 jsonb; s2 jsonb; n int;
   v_hp1 double precision; v_hp2 double precision; v_hp1b double precision; v_hp2b double precision;
   v_err text;
   v_ring_before jsonb;
+  v_ehp_before jsonb;
 begin
   -- config surgery must be in effect for the exact-damage pins: re-apply the COMBATPARITY in-txn
   -- surgery (idempotent; the real set_game_config; all reverted by ROLLBACK), including the OWNED
@@ -1353,6 +1401,22 @@ begin
     raise exception 'TEAMHUNT FAIL: game_config.spatial_formation_ring_radius is absent — this block cannot borrow-and-restore a knob that does not exist, and every later block would inherit the ring-0 override';
   end if;
   perform public.set_game_config('spatial_formation_ring_radius', '0'::jsonb);
+
+  -- ── 0336: THE WAVE MUST SURVIVE ITS OWN APPROACH, AND THAT IS THIS BLOCK'S PRECONDITION TO OWN ──
+  -- 0336 stands a wave at (measured player extent + its own range + 1), so it spends one or two ticks
+  -- CLOSING before it can shoot back. The focused-fire assert below drives ticks until a member is
+  -- observed to take a hit — which is only a real experiment while the wave is still alive to deliver
+  -- it. At the seeded enemy_hp_base a fleet firing every one of those closing ticks can plausibly wipe
+  -- the wave first, and the block would then fail on a CORRECT engine. So the survival is STATED, not
+  -- hoped for. Borrowed and restored at the end of this block exactly as the ring is: leaving it raised
+  -- would hand every later block of this file an unkillable enemy.
+  -- Nothing in this block asserts an enemy hp, an enemy integrity or a wave clear, so the raise is
+  -- invisible to every pin here; only the approach is protected by it.
+  select value into v_ehp_before from public.game_config where key = 'enemy_hp_base';
+  if v_ehp_before is null then
+    raise exception 'TEAMHUNT FAIL: game_config.enemy_hp_base is absent — this block cannot borrow-and-restore a knob that does not exist, and every later block would inherit the raised value';
+  end if;
+  perform public.set_game_config('enemy_hp_base', '100000'::jsonb);
 
   -- the same seeded hunt destination COMBATPARITY used (lowest entry gate first).
   select id into v_hunt from public.locations
@@ -1594,6 +1658,48 @@ begin
   -- ── TICK 1: the member path's first live execution ────────────────────────────────────────────────
   select hp_current into v_hp1 from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
   select hp_current into v_hp2 from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
+  -- ── 0336: THE LAST TICK-1 FIRE PIN IN EITHER FILE, AND ITS MARGIN IS NOW NAMED ──────────────────
+  -- The aggregation pin below needs every member to FIRE on tick 1, and after 0336 that is a
+  -- geometric PRECONDITION rather than a given. This block owns a ring of 0, so every member stands
+  -- ON the anchor and the MEASURED formation extent is 0 — which puts the wave at exactly (its own
+  -- weapon range + 1) from all of them. A member reaches it only while
+  --     extent + wave range + 1  <=  its own range,
+  -- i.e. at the seeded knobs while 3.6 + 0.04*D + 1 <= 5, i.e. while the site difficulty D <= 10.
+  -- That holds here and the pin is GREEN — but the margin is (4 - wave range) and it hits ZERO at
+  -- D = 10: one point of site difficulty more and every member is out of reach on the spawn tick,
+  -- player_damage is 0, and the pin below fails with "player_damage is distinct from
+  -- sum(attack_snapshot)" — which names the arithmetic and not the cause. This guard turns that into
+  -- a diagnosis. It is TRUE exactly when the pin below passes, so it cannot redden a run that would
+  -- otherwise have been carried. (The same class red DZCOMBAT_PASS_LEAD; every other tick-1 read in
+  -- these files asserts SILENCE, which 0336 makes true rather than false.)
+  declare v_ext double precision; v_wr double precision; v_reach double precision; v_np int;
+  begin
+    select count(*),
+           coalesce(max(public.osn_distance(coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), u.pos_x, u.pos_y)), 0)
+      into v_np, v_ext
+      from public.combat_units u
+      join public.combat_encounters ce on ce.id = u.encounter_id
+      join public.locations l          on l.id = ce.location_id
+     where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0
+       and u.pos_x is not null and u.pos_y is not null;
+    select min((select max((w->>'range')::double precision) from jsonb_array_elements(u.weapons_json) w))
+      into v_reach
+      from public.combat_units u
+     where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0;
+    select coalesce(public.cfg_num('enemy_synthetic_range_base'), 120)
+           + l.base_difficulty * coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 5)
+      into v_wr
+      from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+     where ce.id = v_enc;
+    -- NON-VACUITY: a defaulted extent of 0 over zero rows looks exactly like a real ring-0 formation.
+    if v_np < 1 or v_reach is null or v_wr is null then
+      raise exception 'TEAMHUNT FAIL: % positioned living member row(s), weakest reach %, derived wave range % — the tick-1 reach premise would be read from a default rather than from this encounter', v_np, v_reach, v_wr;
+    end if;
+    if v_ext + v_wr + 1 > v_reach then
+      raise exception 'TEAMHUNT FAIL premise: 0336 stands the wave at (measured extent % + its own range % + 1) = %, OUTSIDE the weakest member reach % — no member can fire on the spawn tick, so the tick-1 aggregation pin below would be measuring a fleet that could not shoot',
+        v_ext, v_wr, v_ext + v_wr + 1, v_reach;
+    end if;
+  end;
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
   -- tick player_damage == Σ member attack_snapshot (the member-side aggregation pin; variance 0).
@@ -1612,10 +1718,32 @@ begin
   -- ★ So the property becomes the real one — focused fire — and it is strictly stronger than the old
   -- ★ check: the screening row must take damage, the screened row must take NONE, and the screen must
   -- ★ be the lowest-aggro alive row rather than whichever one happened to be hit.
-  select hp_current into v_hp1b from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
-  select hp_current into v_hp2b from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
+  -- ★
+  -- ★ ── 0336 RE-PREMISED: THE SCREEN TAKES THE HIT AFTER THE APPROACH, NOT ON THE SPAWN TICK ──────
+  -- ★ 0336 spawns a wave at (the MEASURED player-formation extent + THAT wave's own weapon range + 1)
+  -- ★ from the engagement anchor. This block owns a ring of 0, so every member stands ON the anchor and
+  -- ★ the wave therefore arrives at exactly its own range + 1 from BOTH of them — strictly outside its
+  -- ★ own reach, by construction. It cannot fire on the tick it spawns; it has to close first. CI read
+  -- ★ exactly that: c1 500→500, c2 350→350 on tick 1. "on tick 1" was never the property — it was the
+  -- ★ pre-0336 geometry, in which every enemy was inserted on top of the lead at distance 0.
+  -- ★ THE PROPERTY IS UNCHANGED AND EVERY HALF OF IT IS KEPT AT FULL STRENGTH: when the hit finally
+  -- ★ lands, the LOWEST-AGGRO alive member absorbs it and every screened row takes NONE. What changes
+  -- ★ is only how the tick under test is reached: ticks are driven until a member is OBSERVED to take
+  -- ★ damage, bounded, with a loud failure if that never happens — never a pinned tick number, because
+  -- ★ how many closing ticks a wave needs is a function of the site's difficulty and the fleet's own
+  -- ★ combat speed, which is precisely the ambient assumption this repoint exists to remove.
+  -- ★ THREE THINGS ARE STRICTLY STRONGER THAN BEFORE:
+  -- ★   * the screen is chosen BEFORE any hit lands, so the assert cannot be quietly re-pointed at
+  -- ★     whoever happened to be hit;
+  -- ★   * the tier is proven non-degenerate — two members alive, two DISTINCT aggro priorities — so
+  -- ★     "only the screen was hit" can never be a statement about a set of one;
+  -- ★   * the first hit is proven to land strictly AFTER the spawn tick, which is a property only 0336
+  -- ★     makes true and which the old form could not have stated.
+  -- ★ The wave's survival through the approach is OWNED, not hoped for: enemy_hp_base is borrowed at the
+  -- ★ top of this block so the fleet cannot destroy the wave before it gets to shoot back, and restored
+  -- ★ with the ring at the end.
   declare
-    v_screen uuid; v_hit int; v_untouched int;
+    v_screen uuid; v_hit int; v_untouched int; i int; v_fire_tick int := null; v_alive int;
   begin
     select main_ship_id into v_screen from public.combat_units
      where encounter_id = v_enc and main_ship_id is not null and alive_count > 0
@@ -1623,12 +1751,54 @@ begin
     if v_screen is null then
       raise exception 'TEAMHUNT FAIL: no alive member row to absorb the hit';
     end if;
+    -- NON-VACUITY (1): a one-row tier screens nothing.
+    select count(*) into n from public.combat_units
+     where encounter_id = v_enc and main_ship_id is not null and alive_count > 0;
+    if n <> 2 then
+      raise exception 'TEAMHUNT FAIL: % alive member row(s) entering the approach (want 2 — with a single row there is nothing to screen and the focused-fire assert is a statement about a set of one)', n; end if;
+    -- NON-VACUITY (2): both rows in the SAME tier would make the tier screen unobservable.
+    select count(distinct aggro_priority) into n from public.combat_units
+     where encounter_id = v_enc and main_ship_id is not null and aggro_priority is not null;
+    if n <> 2 then
+      raise exception 'TEAMHUNT FAIL: the members carry % distinct aggro_priority value(s) (want 2 — the S1 tier screen cannot be witnessed when every row sits in one tier)', n; end if;
+
+    -- ── DRIVE TICKS UNTIL A MEMBER IS OBSERVED TO TAKE A HIT ──────────────────────────────────────
+    for i in 1 .. 12 loop
+      exit when v_fire_tick is not null;
+      select count(*) into v_alive from public.combat_units
+       where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+      if v_alive < 1 then
+        raise exception 'TEAMHUNT FAIL: no living enemy remains during the approach — the wave was destroyed before it closed, so the S1 screen was never exercised (enemy_hp_base is owned by this block precisely to stop that)';
+      end if;
+      update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+      perform public.process_combat_ticks();
+      select count(*) into n from public.combat_units cu
+       where cu.encounter_id = v_enc and cu.main_ship_id is not null
+         and cu.hp_current < case when cu.main_ship_id = c1 then v_hp1 else v_hp2 end;
+      if n > 0 then
+        select tick_number into v_fire_tick from public.combat_encounters where id = v_enc;
+      end if;
+    end loop;
+    select hp_current into v_hp1b from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
+    select hp_current into v_hp2b from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
+    if v_fire_tick is null then
+      raise exception 'TEAMHUNT FAIL: no member row took a hit within 12 ticks of the spawn (c1 %→%, c2 %→%) — the wave never closed into its own range',
+        v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+    -- NON-VACUITY (3): the first hit must land strictly AFTER the spawn tick. 0336 stands the wave
+    -- outside its own reach at spawn, so a hit ON tick 1 means the clearance is gone.
+    if v_fire_tick < 2 then
+      raise exception 'TEAMHUNT FAIL: a member was hit on tick % — 0336 stands the wave at (extent + its own range + 1), strictly outside its own reach of every member, so the first hit cannot land on the spawn tick', v_fire_tick; end if;
+    -- NULL-PIN: hp_current is nullable, and a NULL on either side of the `<` comparisons below makes
+    -- them NULL — the count comes back 0, `v_hit <> 1` raises for the wrong reason, and worse, the
+    -- screened-rows count comes back 0 and PASSES while proving nothing.
+    if v_hp1b is null or v_hp2b is null then
+      raise exception 'TEAMHUNT FAIL: a member row carries a NULL hp_current (c1 %, c2 %) — every damage comparison below would be vacuous', v_hp1b, v_hp2b; end if;
     select count(*) into v_hit from public.combat_units cu
      where cu.encounter_id = v_enc and cu.main_ship_id = v_screen
        and cu.hp_current < case when v_screen = c1 then v_hp1 else v_hp2 end;
     if v_hit <> 1 then
-      raise exception 'TEAMHUNT FAIL: the screening member (lowest aggro, %) took no damage on tick 1 (c1 %→%, c2 %→%)',
-        v_screen, v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+      raise exception 'TEAMHUNT FAIL: the screening member (lowest aggro, %) took no damage on tick % (c1 %→%, c2 %→%)',
+        v_screen, v_fire_tick, v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
     select count(*) into v_untouched from public.combat_units cu
      where cu.encounter_id = v_enc and cu.main_ship_id is not null and cu.main_ship_id <> v_screen
        and cu.hp_current < case when cu.main_ship_id = c1 then v_hp1 else v_hp2 end;
@@ -1724,10 +1894,28 @@ begin
   select count(*) into n from public.fleets where id = v_fleet2 and status = 'destroyed';
   if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: sortie fleet not destroyed on defeat'; end if;
 
-  -- give the borrowed geometry back (derived from the capture above, never a hard-coded 30).
+  -- give the borrowed geometry back (derived from the capture above, never a hard-coded 30), and the
+  -- borrowed wave durability with it (0336) — a block that owns a knob and fails to give it back
+  -- silently re-premises every block after it.
+  -- ── …AND THE WAVE THE BORROWED VALUE ALREADY MINTED. THIS IS THE OTHER HALF OF THE GIVE-BACK ─────
+  -- enemy_hp_base is read ONCE, at SPAWN, and frozen into combat_units.hp_max/hp_current. Restoring
+  -- the knob therefore does NOT give back the 100000-coefficient wave that is still standing on the
+  -- field — and this encounter is handed on LIVE to TEAMSETTLE, which must destroy TWO waves to earn
+  -- the reward its end-to-end carry depends on. It inherited an unkillable one: that is exactly what
+  -- `TEAMSETTLE FAIL: two waves not cleared in 60 ticks (rewards {})` was, and no tick budget could
+  -- ever have fixed it. Restoring a knob without spending its wave is a half give-back.
+  -- NOTHING IS GIVEN AWAY BY SPENDING IT: rows removed OUTSIDE a tick never increment waves_cleared
+  -- and never pay a reward (v_cleared is computed at the END of a tick, over a wave that damage
+  -- destroyed), so the next block still has to earn both of its clears against a wave minted at the
+  -- RESTORED coefficient — which is the wave it was always meant to fight.
   perform public.set_game_config('spatial_formation_ring_radius', v_ring_before);
+  perform public.set_game_config('enemy_hp_base', v_ehp_before);
+  perform pg_temp.spend_wave(v_enc);
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> 0 then
+    raise exception 'TEAMHUNT FAIL give-back: % enemy row(s) survived the wave spend — the next block would inherit a wave minted at the BORROWED enemy_hp_base and could never clear it', n; end if;
 
-  raise notice 'TEAMCMD_PASS_TEAMHUNT ok: rejects (group_not_found×2/empty_group/invalid_location-before-readiness/member_not_ready incl. zero-hp), ONE fleet + 2-row manifest + hunting ships, speed_used = independent D0 totals.speed, races reject (single send + double team send), member encounter (attack_snapshot = per-member adapter, hp carries pre-existing damage, power_start = totals.combat_power), tick damage = sum(attack_snapshot) with ship-hp sync, manifest wins over a mid-flight unassign, and the H1 cron-safety degrade: settle succeeds despite an adapter-refused member, whose row lands alive_count=0/zero-snapshot and defeats cleanly';
+  raise notice 'TEAMCMD_PASS_TEAMHUNT ok: rejects (group_not_found×2/empty_group/invalid_location-before-readiness/member_not_ready incl. zero-hp), ONE fleet + 2-row manifest + hunting ships, speed_used = independent D0 totals.speed, races reject (single send + double team send), member encounter (attack_snapshot = per-member adapter, hp carries pre-existing damage, power_start = totals.combat_power), tick damage = sum(attack_snapshot) with ship-hp sync, the S1 aggro-tier screen observed AFTER the 0336 approach (the wave arrives outside its own reach and cannot hit on its spawn tick; when the hit lands the lowest-aggro member absorbs it and every screened row takes NONE, over a tier proven non-degenerate), manifest wins over a mid-flight unassign, and the H1 cron-safety degrade: settle succeeds despite an adapter-refused member, whose row lands alive_count=0/zero-snapshot and defeats cleanly';
 end $$;
 
 -- ════════ BLOCK SHARDDROP (captains launch, 0171): config-gated captain_memory_shard drop ════════
@@ -1843,6 +2031,13 @@ declare r jsonb; n int; i int; v_err text;
   v_rw jsonb; v_minspeed double precision; v_cbase uuid; v_metal_before double precision;
   v_shard_before integer;
   v_hp1 integer; v_hp2 integer;
+  -- 0336: the DERIVED closing budget (see the loop) — every input read off this encounter's own rows
+  -- and the same knobs the spawn arm evaluates, never a number typed into the harness.
+  v_ax double precision; v_ay double precision;
+  v_extent double precision; v_preach double precision; v_pspeed double precision;
+  v_erange double precision; v_espeed double precision; v_bd double precision;
+  v_close int; v_bound int; v_players int;
+  v_status text; v_cleared int; v_ehp double precision;
 begin
   -- config surgery re-applied (idempotent; the real set_game_config; all reverted by ROLLBACK).
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
@@ -1873,7 +2068,49 @@ begin
   -- bundle must carry a shard for the end-to-end deposit pin below. Each tick needs a
   -- last_resolved_at rewind, and the wave-2 spawn needs a next_wave_at rewind too, because now()
   -- is txn-constant (the SHARDDROP-era extension of the same clock-rewind fixture kind).
-  for i in 1..60 loop
+  --
+  -- ── 0336: THE BUDGET GREW BY A DERIVABLE AMOUNT, AND ONLY BY THAT AMOUNT ────────────────────────
+  -- The exit condition is unchanged and is still the OBSERVATION — waves_cleared reaching 2 with a
+  -- non-empty bundle. What changed is how long reaching it takes: before 0336 a wave was inserted ON
+  -- the engagement anchor, so every member was in range of it the instant it existed and 60 was a
+  -- pure DAMAGE budget. 0336 lays each unit out at (the MEASURED player-formation extent + that
+  -- wave's own weapon range + 1), so a wave now has to CLOSE before the fleet's guns reach it, twice
+  -- — once per wave. Raising 60 to a bigger round number would be replacing one ambient assumption
+  -- with another, so the extra is DERIVED from this encounter's own rows and the same expressions the
+  -- spawn arm evaluates: the widest gap any member can face is (2 x extent + the wave's range + 1),
+  -- the fleet's guns reach v_preach, and both sides step from the same frozen pre-move snapshot so
+  -- the gap shrinks by (the member's frozen combat speed + the wave's frozen speed) every tick.
+  -- The DAMAGE budget is left EXACTLY as it was: 0336 changed nothing about how fast a wave dies
+  -- once it is in reach — its two other effects (a wave on a ring instead of one point, and a kill no
+  -- longer disarming the rest of the volley) both make it die FASTER, never slower.
+  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), l.base_difficulty
+    into v_ax, v_ay, v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
+  if v_ax is null or v_ay is null or v_bd is null then
+    raise exception 'TEAMSETTLE FAIL: the encounter carries no anchor / no site difficulty (%,% / %) — the closing budget below would be derived from nothing', v_ax, v_ay, v_bd; end if;
+  select count(*),
+         coalesce(max(public.osn_distance(v_ax, v_ay, u.pos_x, u.pos_y)), 0),
+         min((select max((w->>'range')::double precision) from jsonb_array_elements(u.weapons_json) w)),
+         min(coalesce(u.move_speed, 0))
+    into v_players, v_extent, v_preach, v_pspeed
+    from public.combat_units u
+   where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0
+     and u.pos_x is not null and u.pos_y is not null;
+  -- NON-VACUITY: with no positioned living member the coalesce hands back a DEFAULT 0 extent that
+  -- looks exactly like a real measurement of a fleet standing on its anchor, and v_preach comes back
+  -- NULL — which would make every comparison below NULL and the derived bound meaningless.
+  if v_players < 1 or v_preach is null then
+    raise exception 'TEAMSETTLE FAIL: % positioned living member row(s), weakest reach % — the closing budget would be a default rather than a measurement', v_players, v_preach; end if;
+  v_erange := coalesce(public.cfg_num('enemy_synthetic_range_base'), 120)
+              + v_bd * coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 5);
+  v_espeed := coalesce(public.cfg_num('enemy_synthetic_speed_base'), 3)
+              + v_bd * coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.2);
+  if not (v_pspeed + v_espeed > 0) then
+    raise exception 'TEAMSETTLE FAIL: neither side can move (member speed %, wave speed %) — a wave that spawns outside the fleet''s reach could never be reached and no bound would be honest', v_pspeed, v_espeed; end if;
+  v_close := greatest(0, ceil((2 * v_extent + v_erange + 1 - v_preach) / (v_pspeed + v_espeed))::int);
+  v_bound := 60 + 2 * v_close;
+  for i in 1..v_bound loop
     select total_rewards_json into v_rw from public.combat_encounters where id = v_enc;
     exit when v_rw is not null and v_rw <> '{}'::jsonb
           and (select waves_cleared from public.combat_encounters where id = v_enc) >= 2;
@@ -1883,9 +2120,16 @@ begin
      where id = v_enc;
     perform public.process_combat_ticks();
   end loop;
-  if v_rw is null or v_rw = '{}'::jsonb
-     or (select waves_cleared from public.combat_encounters where id = v_enc) < 2 then
-    raise exception 'TEAMSETTLE FAIL: two waves not cleared in 60 ticks (rewards %)', v_rw; end if;
+  -- re-read after the loop: the exit test reads v_rw at the TOP of an iteration, so on exhaustion the
+  -- variable is one tick stale — and the shard assert below consumes it.
+  select total_rewards_json, waves_cleared, status into v_rw, v_cleared, v_status
+    from public.combat_encounters where id = v_enc;
+  if v_rw is null or v_rw = '{}'::jsonb or v_cleared < 2 then
+    select coalesce(sum(hp_current), 0) into v_ehp from public.combat_units
+     where encounter_id = v_enc and side = 'enemy';
+    raise exception 'TEAMSETTLE FAIL: two waves not cleared in % ticks (60 damage + 2 x % derived closing, from extent % / wave range % / weakest member reach % / speeds %+%): waves_cleared %, encounter %, living enemy hp %, rewards %',
+      v_bound, v_close, round(v_extent::numeric,2), round(v_erange::numeric,2), round(v_preach::numeric,2),
+      round(v_pspeed::numeric,2), round(v_espeed::numeric,2), v_cleared, v_status, round(v_ehp::numeric,2), v_rw; end if;
   -- THE 0171 SHARD CARRY: at rate 1 the wave-2 clear must have merged EXACTLY one shard element
   -- (qty 1 — wave 1 contributes none, the threshold) into the pending bundle.
   select count(*) into n from jsonb_array_elements(v_rw->'items') e
@@ -3336,6 +3580,15 @@ end $$;
 --          is HULL-only, integrity lands 0, the D1 destroyed terminal fires on the ship row.
 --          Knob restored in-txn after; enemy_attack_base is captured/restored by the helper
 --          (leak checks stay meaningful).
+-- ── 0336: THE FOUR TICKS ARE STILL FOUR, BUT THEY NO LONGER START AT 1 ───────────────────────────
+-- A wave spawns at (the measured player-formation extent + its own weapon range + 1), strictly
+-- outside its own reach, so it cannot hit on the tick it arrives. The absorb tick is therefore
+-- OBSERVED (the first tick recording real enemy damage), the three ticks after it are that tick + 1,
+-- + 2, + 3, and every silent closing tick in between is proven to have left the fixture untouched.
+-- Every arithmetic identity above is unchanged byte for byte — only the tick numbers moved. The
+-- block also borrows enemy_hp_base for the duration (captured/restored) so ONE wave survives the
+-- whole sequence: a wave destroyed mid-approach would be replaced at a HIGHER danger, which moves
+-- the per-tick damage this block derives independently.
 do $$
 declare r jsonb; n int; uV uuid; sV uuid; gV uuid;
   v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
@@ -3345,6 +3598,10 @@ declare r jsonb; n int; uV uuid; sV uuid; gV uuid;
   v_sh_exp double precision; v_hull_exp double precision; v_hull0 double precision;
   v_sh double precision; v_hull double precision; v_shmax double precision; v_pre double precision;
   v_val text; t record;
+  -- 0336: the wave arrives outside its own reach and has to CLOSE, so the tick the four-tick
+  -- arithmetic starts on is OBSERVED (v_t0), never the literal 1; and the wave has to survive that
+  -- approach under this fixture's own fire, which is what the borrowed durability buys.
+  v_t0 int; i int; v_ehp_before jsonb; v_status text;
 begin
   -- ── ZERO-PARITY arm (asserted BEFORE any shield is lit in this txn) ──────────────────────────
   -- the combat knob must still be the COMMITTED '0' here (SHIELD0 pinned it committed; this block
@@ -3370,6 +3627,20 @@ begin
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
   perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);
+  -- ── 0336: THE WAVE MUST SURVIVE ITS OWN APPROACH (the TEAMHUNT borrow, same shape, same reason) ──
+  -- A wave now spawns at (the measured player-formation extent + its own weapon range + 1) and closes
+  -- over the next few ticks, with this fixture's hull firing at it the whole way. At the seeded
+  -- enemy_hp_base a hull can destroy it before it lands its first hit; the engine then spawns a
+  -- REPLACEMENT wave at a HIGHER danger, which moves the per-tick damage this block derives
+  -- independently below — so the four exact arithmetic pins would be measuring a different fight from
+  -- the one they were derived for. Borrowing the durability keeps ONE wave on the field for the whole
+  -- sequence, and it moves NOTHING this block asserts: every pin below is player-side (pool, hull,
+  -- integrity) and the damage derivation reads enemy_attack_base, which is untouched here.
+  -- Captured, never assumed, and given back before the wipe_tick arm (which borrows its own).
+  select value into v_ehp_before from public.game_config where key = 'enemy_hp_base';
+  if v_ehp_before is null then
+    raise exception 'SHIELD1 FAIL: game_config.enemy_hp_base is absent — this block cannot borrow-and-restore a knob that does not exist, and every later block would inherit the raised value'; end if;
+  perform public.set_game_config('enemy_hp_base', '100000'::jsonb);
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
             'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -3448,13 +3719,50 @@ begin
   if v_dmg <= 3 or v_dmg >= 40 then
     raise exception 'SHIELD1 FAIL guard: per-tick damage % outside (3, 40) — the absorb/cap pins would degenerate (re-size the fixture)', v_dmg; end if;
 
-  -- ── TICK 1 (knob '0'): regen inert on a LIT pool; absorb-first exact ──────────────────────────
+  -- ── THE ABSORB TICK (knob '0'): regen inert on a LIT pool; absorb-first exact ─────────────────
+  -- ★ 0336 RE-PREMISED. This was "TICK 1", and it was tick 1 only because every enemy used to be
+  -- ★ inserted ON the engagement anchor — on top of the lead, at distance 0 — so the wave that
+  -- ★ spawned in a tick also fired in it. 0336 stands a wave at (the measured player-formation extent
+  -- ★ + its own weapon range + 1), strictly outside its own reach of every player ship, so it cannot
+  -- ★ hit on the tick it arrives and the first absorb lands a few ticks later. EVERY ARITHMETIC
+  -- ★ IDENTITY BELOW IS UNCHANGED, byte for byte — the pool entering the absorb, min(pool, damage),
+  -- ★ the hull taking only the overflow, the regen climb, the cap, the leaf mirror, the hull-only
+  -- ★ integrity. What moved is ONLY which tick they are read from, and that tick is now OBSERVED
+  -- ★ (the first tick that records real enemy damage) instead of assumed, bounded, with a loud
+  -- ★ failure. Two things are STRICTLY STRONGER than the old form: every silent closing tick is
+  -- ★ proven to have left the fixture untouched (so the arithmetic still starts from the ENTRY state
+  -- ★ it was derived for), and the first hit is proven to land strictly AFTER the spawn tick — a
+  -- ★ property only 0336 makes true and which "tick 1" could not have stated.
   v_pool := v_sh;                                   -- 3, regen term = 40 × 0 = 0 (knob-zero inertness)
   v_abs  := least(v_pool, v_dmg);                   -- = 3 (full drain; guard: dmg > 3)
   v_sh_exp   := v_pool - v_abs;                     -- = 0
   v_hull_exp := v_hull0 - (v_dmg - v_abs);          -- hull takes ONLY the overflow
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
+  for i in 1 .. 12 loop
+    exit when v_t0 is not null;
+    select status into v_status from public.combat_encounters where id = v_enc;
+    if v_status is distinct from 'active' then
+      raise exception 'SHIELD1 FAIL approach: the encounter went % before the wave landed a hit — the exact arithmetic below would be measuring a fight that had already ended', v_status; end if;
+    update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+    perform public.process_combat_ticks();
+    select tick_number into v_t0 from public.combat_ticks
+     where encounter_id = v_enc and coalesce(enemy_damage, 0) > 0 order by tick_number asc limit 1;
+    if v_t0 is null then
+      -- A SILENT CLOSING TICK MUST LEAVE THE FIXTURE EXACTLY AS IT ENTERED. The absorb arithmetic is
+      -- derived from the ENTRY pool and the ENTRY hull; a closing tick that moved either would make
+      -- every pin below read a state nobody derived. NULL-pinned: hp_current/shield_current are
+      -- nullable, and `is distinct from` treats a NULL as a difference, so absence fails here too.
+      select shield_current, hp_current into v_sh, v_hull
+        from public.combat_units where encounter_id = v_enc and main_ship_id = sV;
+      if v_sh is distinct from v_pool or v_hull is distinct from v_hull0 then
+        raise exception 'SHIELD1 FAIL approach: a silent closing tick moved the fixture (shield % -> %, hull % -> %) — the absorb arithmetic below is derived from the ENTRY state and would no longer be reading it', v_pool, v_sh, v_hull0, v_hull; end if;
+    end if;
+  end loop;
+  if v_t0 is null then
+    raise exception 'SHIELD1 FAIL approach: the wave landed no hit within 12 ticks of the spawn — 0336 stands it outside its own reach and it never closed, so there is no absorb tick to measure'; end if;
+  -- NON-VACUITY: 0336 makes the spawn tick silent by construction, so the first absorb must land
+  -- strictly later. A tick-1 answer means the structural clearance is gone, not that the pins hold.
+  if v_t0 < 2 then
+    raise exception 'SHIELD1 FAIL approach: the first hit landed on tick % — 0336 stands the wave outside its own reach at spawn, so it cannot hit on the tick it arrived', v_t0; end if;
   select shield_max, shield_current, hp_current into v_shmax, v_sh, v_hull
     from public.combat_units where encounter_id = v_enc and main_ship_id = sV;
   if v_sh is distinct from v_sh_exp then
@@ -3468,7 +3776,8 @@ begin
       and shield = round(v_sh_exp)::integer and hp = round(greatest(0, v_hull_exp))::integer;
   if n <> 1 then raise exception 'SHIELD1 FAIL tick1: the leaf did not mirror round(pool) to the ship row (want shield % / hp %)', round(v_sh_exp)::integer, round(greatest(0, v_hull_exp))::integer; end if;
 
-  -- ── TICK 2 (knob '1' in-txn): regen climbs 0 → max exactly; hull untouched (zero overflow) ────
+  -- ── THE NEXT TICK (knob '1' in-txn): regen climbs 0 → max exactly; hull untouched (zero overflow)
+  --    The old "tick 2" — the absorb tick + 1. Nothing about the arithmetic moved; only the number.
   perform public.set_game_config('shield_regen_combat_pct', '1'::jsonb);
   v_pool := least(40::double precision, v_sh + 40 * 1);   -- 0 + 40 = 40: the exact climb
   v_abs  := least(v_pool, v_dmg);                         -- = dmg (guard: dmg < 40)
@@ -3483,8 +3792,9 @@ begin
     raise exception 'SHIELD1 FAIL tick2: hull % moved under a full-absorb tick (want % untouched)', v_hull, v_hull_exp; end if;
   -- integrity stays HULL-only while the pool is NONZERO (the accounting-unchanged pin, made
   -- non-degenerate by the guard: v_sh_exp = 40 - dmg > 0 here).
-  select * into t from public.combat_ticks where encounter_id = v_enc and tick_number = 2;
-  if t.id is null then raise exception 'SHIELD1 FAIL: no tick-2 row (tick logging is on)'; end if;
+  -- 0336: the pinned tick number is OFFSET by the observed absorb tick, never the literal 2.
+  select * into t from public.combat_ticks where encounter_id = v_enc and tick_number = v_t0 + 1;
+  if t.id is null then raise exception 'SHIELD1 FAIL: no tick-% row (tick logging is on)', v_t0 + 1; end if;
   if t.player_integrity_before is distinct from v_hull_exp or t.player_integrity_after is distinct from greatest(0, v_hull_exp) then
     raise exception 'SHIELD1 FAIL tick2 integrity: %/% (want %/% — hull-only, the shield pool is NOT integrity)',
       t.player_integrity_before, t.player_integrity_after, v_hull_exp, greatest(0, v_hull_exp); end if;
@@ -3492,7 +3802,7 @@ begin
     where main_ship_id = sV and shield = round(v_sh_exp)::integer;
   if n <> 1 then raise exception 'SHIELD1 FAIL tick2: the leaf did not mirror the regenerated pool (want shield %)', round(v_sh_exp)::integer; end if;
 
-  -- ── TICK 3: the regen CAP — least(max, pool + max × knob) must bind ───────────────────────────
+  -- ── THE TICK AFTER THAT: the regen CAP — least(max, pool + max × knob) must bind ──────────────
   -- uncapped would be (40 - dmg) + 40 - dmg = 80 - 2×dmg; capped is 40 - dmg; strictly different
   -- while 0 < dmg < 40 (guarded above), so equality below IS the cap pin.
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
@@ -3507,7 +3817,12 @@ begin
   if n <> v_waves then
     raise exception 'SHIELD1 FAIL guard: a wave cleared mid-test (danger drifted — the exact pins above are void)'; end if;
 
-  -- ── TICK 4: DEFEAT IS HULL-ONLY — a shielded ship at hull 0 is dead ───────────────────────────
+  -- ── THE DEFEAT ARM: DEFEAT IS HULL-ONLY — a shielded ship at hull 0 is dead ───────────────────
+  -- Give the borrowed wave durability back FIRST, and give back the wave it minted with it (0336:
+  -- enemy_hp_base is frozen into a wave's rows at SPAWN, so restoring the knob alone would leave a
+  -- 100000-coefficient wave standing). wipe_tick spends the wave itself and borrows its own copy of
+  -- both combat knobs, so this hands it a clean, restored world to borrow from.
+  perform public.set_game_config('enemy_hp_base', v_ehp_before);
   v_pre := v_sh;   -- the pool entering the defeat tick (> 0 by the guard; regen even tops it to 40)
   if v_pre <= 0 then raise exception 'SHIELD1 FAIL guard: the defeat-arm pool is not positive (the pin would be vacuous)'; end if;
   -- ★ REPOINTED 2026-08-03. This raised enemy_attack_base and ticked once. Under the SPATIAL engine
@@ -3530,7 +3845,8 @@ begin
   -- chain's to own — a hard-coded restore is the same ambient-default disease in reverse).
   perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);    -- restore the dark seed in-txn
 
-  raise notice 'TEAMCMD_PASS_SHIELD1 ok: zero state pinned (member rows exist, none carries a snapshot, no fought ship''s instance shield ever moved — COMBATPARITY/TEAMHUNT/TEAMSETTLE ran their exact pins against THIS tick as the parity proof); lit arm exact vs the independent damage derivation — snapshot 40/3 carries the CURRENT pool, knob-0 tick fully drains min(pool,damage) with the hull taking only the overflow, knob-1 regen climbs 0→40 then CAPS at max, the leaf mirrors round(pool) each tick with hp consistent, integrity stays hull-only at a nonzero pool, and the fully-shielded ship still dies at hull 0 (defeat hull-only, D1 terminal); knob + enemy_attack_base restored in-txn';
+  raise notice 'TEAMCMD_PASS_SHIELD1 ok: zero state pinned (member rows exist, none carries a snapshot, no fought ship''s instance shield ever moved — COMBATPARITY/TEAMHUNT/TEAMSETTLE ran their exact pins against THIS tick as the parity proof); lit arm exact vs the independent damage derivation, read off the OBSERVED absorb tick % (0336: the wave arrives outside its own reach and every silent closing tick before % is proven to have left the fixture untouched) — snapshot 40/3 carries the CURRENT pool, the knob-0 absorb tick fully drains min(pool,damage) with the hull taking only the overflow, knob-1 regen climbs 0→40 then CAPS at max, the leaf mirrors round(pool) each tick with hp consistent, integrity stays hull-only at a nonzero pool, and the fully-shielded ship still dies at hull 0 (defeat hull-only, D1 terminal); knob + enemy_hp_base + enemy_attack_base restored in-txn',
+    v_t0, v_t0;
 end $$;
 
 -- ════════ BLOCK DECKS3 (DECKS-3, 0196): station affinity — knob-0 parity + the exact matched bonus ════════
