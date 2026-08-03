@@ -1122,6 +1122,15 @@ if [ "$MODE" = "selftest" ]; then
     || fail "TERRITORY_MAPREAD does not guard that slag is actually IN the map read"
   grep -q "the NULL-key probe would be vacuous" "$SQL" \
     || fail "TERRITORY_MAPREAD does not guard that the NULL-territory fixture is IN the map read"
+  # 0318: the visibility rule lives in ONE leaf now, and TERRITORY_MAPREAD is where the map read is
+  # pinned to it. Both halves are named so a deletion is actionable: the body must COMPOSE the
+  # authority, and it must not have re-inlined a literal beside it (that duality is the leak).
+  grep -q "public.world_location_is_visible(l.status, l.zone_id)" "$SQL" \
+    || fail "TERRITORY_MAPREAD no longer pins get_world_map to the 0318 visibility authority — the hidden-port leak would return unnoticed"
+  grep -q "carries its OWN copy of the visibility rule again" "$SQL" \
+    || fail "TERRITORY_MAPREAD lost the no-second-copy pin (a re-inlined status literal beside the authority IS the two-authority defect)"
+  grep -q "a HIDDEN location appears in get_world_map output" "$SQL" \
+    || fail "TERRITORY_MAPREAD lost the BEHAVIOURAL hidden-absence probe — a text pin alone cannot prove the map hides anything"
   rm -f "$MIGS2_TMP"
 
   # ── S2-RETUNE (0220): the audit fix — overlap-free radii sized to the MEASURED world. ───────────
