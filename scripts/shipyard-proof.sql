@@ -95,6 +95,14 @@ begin
   insert into sy1 values ('store', public.get_or_create_store(uB, 'b1a00001-0066-4a00-8a00-000000000001'::uuid));
 end $$;
 
+-- ⚠ THE PRECONDITION IS STATED, NOT ASSUMED. Migration 0300 LIT shipyard_enabled (it is one of the 44
+-- capability flags that migration turned on), so the 0185/0235-era seed this block used to lean on
+-- is gone: on the real chain the flag is TRUE by the time this proof runs. Asserting the seed was
+-- asserting a WORLD rather than a property — the exact failure recorded after 0300's lights-on wave
+-- — and it went unnoticed only because this workflow fired on no branch that carried 0300. The dark
+-- scenario now SETS its own precondition in-txn (the hold-transfer-proof idiom); the ROLLBACK
+-- reverts it either way, so the block is correct whichever way the committed flag ever points.
+update public.game_config set value='false'::jsonb where key='shipyard_enabled';
 -- ════════ P0 — DARK gate: shipyard_enabled OFF → gate-first reject, IDENTICAL for a real and a
 --          garbage hull (no existence oracle), zero writes; the PRIVATE writer rejects dark too. ════════
 do $$

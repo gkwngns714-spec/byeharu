@@ -85,6 +85,14 @@ begin
                                                                (select v from ps1 where k='haven')));
 end $$;
 
+-- ⚠ THE PRECONDITION IS STATED, NOT ASSUMED. Migration 0300 LIT port_shop_enabled (it is one of the 44
+-- capability flags that migration turned on), so the 0185/0235-era seed this block used to lean on
+-- is gone: on the real chain the flag is TRUE by the time this proof runs. Asserting the seed was
+-- asserting a WORLD rather than a property — the exact failure recorded after 0300's lights-on wave
+-- — and it went unnoticed only because this workflow fired on no branch that carried 0300. The dark
+-- scenario now SETS its own precondition in-txn (the hold-transfer-proof idiom); the ROLLBACK
+-- reverts it either way, so the block is correct whichever way the committed flag ever points.
+update public.game_config set value='false'::jsonb where key='port_shop_enabled';
 -- ════════ P0 — DARK gate: with port_shop_enabled OFF, the buy RPC rejects and writes NOTHING. ════════
 do $$
 declare r jsonb; uB uuid := (select v from ps1 where k='uB'); v_ship uuid; v_bal numeric; ninst int; nrec int;

@@ -88,7 +88,8 @@
 --            bundle gains EXACTLY one appended shard qty 1 (additive-only) while wave 1 stays
 --            deterministic scrap-only at ANY rate; the rate is left 1 in-txn so TEAMSETTLE's won
 --            encounter carries a shard end-to-end (drop → bundle → return → reward_grant →
---            player_inventory — the recruit currency really arrives).
+--            the settling base's base_items store, 0333 — the recruit currency really arrives, and
+--            it arrives somewhere: items live PER PORT now, the global pool is gone).
 --   CAPXP (CAPXP-0/1, 0177) — the captain-XP foundation, consuming the TEAMSETTLE fixture AS the
 --            captained team sortie: committed seeds dark (captain_growth_enabled 'false', combat
 --            knob '10'); every instance at the additive defaults (xp 0 / level 1);
@@ -1811,7 +1812,8 @@ end $$;
 --   RETURN SETTLE      — movement_settle_arrival's base branch completes the fleet and deposits the
 --                        carried bundle (reward_grants row keyed by the encounter; base_resources
 --                        metal grows by exactly the carried metal; the 0171 wave-2 shard lands in
---                        player_inventory — the SHARDDROP end-to-end carry), touching NO member ship;
+--                        THAT SAME base's base_items item store, 0333 — the SHARDDROP end-to-end
+--                        carry, now measured at the port it landed at), touching NO member ship;
 --   RECONCILE          — the next reconciler run re-homes both members in the head branch's exact
 --                        write shape (status='home', spatial_state stays NULL — the clean
 --                        legacy_home) with damage persisted; the manifest rows are RETAINED (the D3
@@ -1963,7 +1965,9 @@ begin
   select id into v_cbase from public.bases where player_id = uC and status = 'active' order by created_at limit 1;
   select coalesce((select amount from public.base_resources where base_id = v_cbase and resource_code = 'metal'), 0)
     into v_metal_before;
-  v_shard_before := public.inventory_get_balance(uC, 'captain_memory_shard');
+  -- 0333: a balance is always AT a port. The shard lands in whatever base the settle hands
+  -- reward_grant — the SAME v_cbase the metal assertion below pins — so measure it THERE.
+  v_shard_before := public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard');
   update public.fleet_movements
      set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
    where id = v_rmv;
@@ -1980,11 +1984,14 @@ begin
     where base_id = v_cbase and resource_code = 'metal'
       and amount is not distinct from v_metal_before + (v_rw->>'metal')::double precision;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: base metal did not grow by the carried reward metal'; end if;
-  -- THE 0171 SHARD DEPOSIT: the carried shard landed in player_inventory (reward_grant's item
-  -- path) — the recruit currency (0125: every recipe costs exactly 1 shard) really arrives.
-  if public.inventory_get_balance(uC, 'captain_memory_shard') is distinct from v_shard_before + 1 then
-    raise exception 'TEAMSETTLE FAIL: carried shard not deposited to player_inventory (have %, want % — the recruit currency)',
-      public.inventory_get_balance(uC, 'captain_memory_shard'), v_shard_before + 1; end if;
+  -- THE 0171 SHARD DEPOSIT: the carried shard landed in THIS BASE's item store (0333 base_items —
+  -- reward_grant's item arm now deposits into the very base it is handed, the same one the metal
+  -- above landed in) — the recruit currency (0125: every recipe costs exactly 1 shard) really
+  -- arrives, and it arrives somewhere. Asserting it AT v_cbase is the stronger statement: a deposit
+  -- that landed in some other port of uC's would now fail here instead of passing invisibly.
+  if public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard') is distinct from v_shard_before + 1 then
+    raise exception 'TEAMSETTLE FAIL: carried shard not deposited into the settling base''s item store (have %, want % — the recruit currency)',
+      public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard'), v_shard_before + 1; end if;
   -- the base settle itself never touches member ships (untagged fleet): still 'returning'.
   select count(*) into n from public.main_ship_instances
     where main_ship_id in (c1, c2) and status = 'returning';
@@ -2111,7 +2118,7 @@ begin
     where main_ship_id = c2 and status = 'home';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: self-heal did not re-home the orphaned hunting member'; end if;
 
-  raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into player_inventory), reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, and both self-heal re-homes';
+  raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into that base''s base_items store), reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, and both self-heal re-homes';
 end $$;
 
 -- ════════ BLOCK CAPXP (CAPXP-0/1, 0177): captain-XP foundation — dark no-op, exact accrual, ledger ════════
@@ -2397,6 +2404,11 @@ update public.game_config set value='true'::jsonb where key='module_fitting_enab
 do $$
 declare r jsonb; s0 jsonb; s1 jsonb; s2 jsonb; n int;
   uD uuid; d1 uuid; v_shield uuid; v_rig uuid; v_hulldef numeric; ing record;
+  -- 0333: items live PER PORT (`base_items`) and craft_module spends from the port the crafting
+  -- ship is DOCKED at. uD's ship is commissioned canonically docked at Haven Reach, so this is the
+  -- store every balance below names — and the store a NULL-base reward_grant lands in, uD's oldest
+  -- active base being its Home Base, whose location_id IS Haven.
+  v_store uuid;
 begin
   -- fresh fixture user (the signup idiom above) + the FREE first commission → canonically docked.
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -2407,6 +2419,7 @@ begin
   r := pg_temp.call_as(uD, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'MOD2 FAIL provision: %', r; end if;
   select main_ship_id into d1 from public.main_ship_instances where player_id = uD;
+  v_store := public.get_or_create_store(uD, 'b1a00001-0066-4a00-8a00-000000000001'::uuid);  -- Haven Reach
 
   -- the 0183 catalog seeds, pinned verbatim (shape + stats + slot_cost + full recipes).
   select count(*) into n from public.module_types
@@ -2424,9 +2437,9 @@ begin
   perform public.reward_grant('combat', gen_random_uuid(), uD, null,
     '{"items": [{"item_id": "repair_parts", "quantity": 4}, {"item_id": "pirate_alloy", "quantity": 3}, {"item_id": "scrap", "quantity": 8}]}'::jsonb);
   for ing in select item_id, qty from public.module_recipe_ingredients where module_type_id = 'shield_lattice' loop
-    if public.inventory_get_balance(uD, ing.item_id) <> ing.qty then
-      raise exception 'MOD2 FAIL: pre-craft balance of % is % (want exactly the recipe qty %)',
-        ing.item_id, public.inventory_get_balance(uD, ing.item_id), ing.qty; end if;
+    if public.inventory_get_balance(uD, v_store, ing.item_id) <> ing.qty then
+      raise exception 'MOD2 FAIL: pre-craft Haven balance of % is % (want exactly the recipe qty %)',
+        ing.item_id, public.inventory_get_balance(uD, v_store, ing.item_id), ing.qty; end if;
   end loop;
 
   -- the survival BASELINE decomposes to the hull defense seed exactly (uD is captain/module/loadout-free).
@@ -2439,22 +2452,22 @@ begin
       s0->>'survival', v_hulldef; end if;
 
   -- CRAFT via the real RPC: exact spend to ZERO, one instance + one receipt, verbatim replay.
-  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-shield-1'', ''shield_lattice'')');
+  r := pg_temp.call_as(uD, format('public.craft_module(''mod2-shield-1'', ''shield_lattice'', %L::uuid)', d1));
   if (r->>'ok')::boolean is not true or coalesce((r->>'idempotent_replay')::boolean, false) then
     raise exception 'MOD2 FAIL craft: %', r; end if;
   v_shield := (r->>'instance_id')::uuid;
   for ing in select item_id from public.module_recipe_ingredients where module_type_id = 'shield_lattice' loop
-    if public.inventory_get_balance(uD, ing.item_id) <> 0 then
-      raise exception 'MOD2 FAIL: post-craft balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
-        ing.item_id, public.inventory_get_balance(uD, ing.item_id); end if;
+    if public.inventory_get_balance(uD, v_store, ing.item_id) <> 0 then
+      raise exception 'MOD2 FAIL: post-craft Haven balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
+        ing.item_id, public.inventory_get_balance(uD, v_store, ing.item_id); end if;
   end loop;
-  -- the insufficient boundary: with the price fully spent, a SECOND craft must answer
+  -- the insufficient boundary: with the price fully spent AT THIS PORT, a SECOND craft must answer
   -- insufficient_items (the 0109 envelope) and mint nothing.
-  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-shield-2'', ''shield_lattice'')');
+  r := pg_temp.call_as(uD, format('public.craft_module(''mod2-shield-2'', ''shield_lattice'', %L::uuid)', d1));
   if (r->>'code') is distinct from 'insufficient_items' then
     raise exception 'MOD2 FAIL: second craft answered % (want insufficient_items — the exact-price boundary)', r; end if;
   -- verbatim replay of the FIRST craft: no double spend, no double mint.
-  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-shield-1'', ''shield_lattice'')');
+  r := pg_temp.call_as(uD, format('public.craft_module(''mod2-shield-1'', ''shield_lattice'', %L::uuid)', d1));
   if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is not true
      or (r->>'instance_id')::uuid is distinct from v_shield then
     raise exception 'MOD2 FAIL replay: %', r; end if;
@@ -2478,7 +2491,7 @@ begin
   -- mining_yield = +8 EXACTLY, slots 1 → 2, same isolation pin.
   perform public.reward_grant('combat', gen_random_uuid(), uD, null,
     '{"items": [{"item_id": "crystal", "quantity": 2}, {"item_id": "ore", "quantity": 6}, {"item_id": "scrap", "quantity": 4}]}'::jsonb);
-  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-rig-1'', ''mining_rig_extension'')');
+  r := pg_temp.call_as(uD, format('public.craft_module(''mod2-rig-1'', ''mining_rig_extension'', %L::uuid)', d1));
   if (r->>'ok')::boolean is not true then raise exception 'MOD2 FAIL craft rig: %', r; end if;
   v_rig := (r->>'instance_id')::uuid;
   r := pg_temp.call_as(uD, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod2-fit-2'')', v_rig, d1));
@@ -2511,6 +2524,11 @@ do $$
 declare r jsonb; s0 jsonb; s1 jsonb; n int;
   uE uuid; uF uuid; dE uuid; dF uuid; v_mk2s uuid; v_mk2a uuid; ing record;
   v_base_speed numeric; v_exp_speed numeric;
+  -- 0333: items live PER PORT (`base_items`) and craft_module spends from the port the crafting
+  -- ship is DOCKED at. Both fixture ships are commissioned canonically docked at Haven Reach, and
+  -- a NULL-base reward_grant lands in each player's oldest active base — the Home Base, whose
+  -- location_id IS Haven — so these two stores are exactly where the grants and the spends meet.
+  v_storeE uuid; v_storeF uuid;
 begin
   -- the gates are LIT in-txn by the MOD2 block above (module_crafting/fitting_enabled → true);
   -- this block depends on that lit state (the craft/fit RPCs run the lit path). Asserted, not
@@ -2540,32 +2558,33 @@ begin
   r := pg_temp.call_as(uE, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'MOD22 FAIL provision uE: %', r; end if;
   select main_ship_id into dE from public.main_ship_instances where player_id = uE;
+  v_storeE := public.get_or_create_store(uE, 'b1a00001-0066-4a00-8a00-000000000001'::uuid);  -- Haven Reach
 
-  -- grant EXACTLY the shield-Mk-II recipe via the real Reward sole writer; verify it landed.
+  -- grant EXACTLY the shield-Mk-II recipe via the real Reward sole writer; verify it landed AT HAVEN.
   perform public.reward_grant('combat', gen_random_uuid(), uE, null,
     '{"items": [{"item_id": "blueprint_fragment", "quantity": 2}, {"item_id": "artifact_core", "quantity": 1}, {"item_id": "repair_parts", "quantity": 6}]}'::jsonb);
   for ing in select item_id, qty from public.module_recipe_ingredients where module_type_id = 'shield_lattice_mk2' loop
-    if public.inventory_get_balance(uE, ing.item_id) <> ing.qty then
-      raise exception 'MOD22 FAIL: pre-craft balance of % is % (want exactly the recipe qty %)',
-        ing.item_id, public.inventory_get_balance(uE, ing.item_id), ing.qty; end if;
+    if public.inventory_get_balance(uE, v_storeE, ing.item_id) <> ing.qty then
+      raise exception 'MOD22 FAIL: pre-craft Haven balance of % is % (want exactly the recipe qty %)',
+        ing.item_id, public.inventory_get_balance(uE, v_storeE, ing.item_id), ing.qty; end if;
   end loop;
 
   s0 := public.calculate_expedition_stats(uE, dE, '[]'::jsonb, 'none');
 
   -- CRAFT via the real RPC: exact spend to ZERO, insufficient_items boundary, verbatim replay, 1 mint.
-  r := pg_temp.call_as(uE, 'public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'')');
+  r := pg_temp.call_as(uE, format('public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'', %L::uuid)', dE));
   if (r->>'ok')::boolean is not true or coalesce((r->>'idempotent_replay')::boolean, false) then
     raise exception 'MOD22 FAIL craft shield: %', r; end if;
   v_mk2s := (r->>'instance_id')::uuid;
   for ing in select item_id from public.module_recipe_ingredients where module_type_id = 'shield_lattice_mk2' loop
-    if public.inventory_get_balance(uE, ing.item_id) <> 0 then
-      raise exception 'MOD22 FAIL: post-craft balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
-        ing.item_id, public.inventory_get_balance(uE, ing.item_id); end if;
+    if public.inventory_get_balance(uE, v_storeE, ing.item_id) <> 0 then
+      raise exception 'MOD22 FAIL: post-craft Haven balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
+        ing.item_id, public.inventory_get_balance(uE, v_storeE, ing.item_id); end if;
   end loop;
-  r := pg_temp.call_as(uE, 'public.craft_module(''mod22-shield-2'', ''shield_lattice_mk2'')');
+  r := pg_temp.call_as(uE, format('public.craft_module(''mod22-shield-2'', ''shield_lattice_mk2'', %L::uuid)', dE));
   if (r->>'code') is distinct from 'insufficient_items' then
     raise exception 'MOD22 FAIL: second shield craft answered % (want insufficient_items — the exact-price boundary)', r; end if;
-  r := pg_temp.call_as(uE, 'public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'')');
+  r := pg_temp.call_as(uE, format('public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'', %L::uuid)', dE));
   if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is not true
      or (r->>'instance_id')::uuid is distinct from v_mk2s then
     raise exception 'MOD22 FAIL replay shield: %', r; end if;
@@ -2594,6 +2613,7 @@ begin
   r := pg_temp.call_as(uF, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'MOD22 FAIL provision uF: %', r; end if;
   select main_ship_id into dF from public.main_ship_instances where player_id = uF;
+  v_storeF := public.get_or_create_store(uF, 'b1a00001-0066-4a00-8a00-000000000001'::uuid);  -- Haven Reach
   select h.base_speed into v_base_speed
     from public.main_ship_instances i join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
     where i.main_ship_id = dF;
@@ -2601,9 +2621,9 @@ begin
   perform public.reward_grant('combat', gen_random_uuid(), uF, null,
     '{"items": [{"item_id": "blueprint_fragment", "quantity": 2}, {"item_id": "artifact_core", "quantity": 1}, {"item_id": "weapon_parts", "quantity": 6}]}'::jsonb);
   for ing in select item_id, qty from public.module_recipe_ingredients where module_type_id = 'autocannon_battery_mk2' loop
-    if public.inventory_get_balance(uF, ing.item_id) <> ing.qty then
-      raise exception 'MOD22 FAIL: pre-craft balance of % is % (want exactly the recipe qty %)',
-        ing.item_id, public.inventory_get_balance(uF, ing.item_id), ing.qty; end if;
+    if public.inventory_get_balance(uF, v_storeF, ing.item_id) <> ing.qty then
+      raise exception 'MOD22 FAIL: pre-craft Haven balance of % is % (want exactly the recipe qty %)',
+        ing.item_id, public.inventory_get_balance(uF, v_storeF, ing.item_id), ing.qty; end if;
   end loop;
 
   s0 := public.calculate_expedition_stats(uF, dF, '[]'::jsonb, 'none');
@@ -2611,16 +2631,16 @@ begin
   if (s0->>'speed')::numeric is distinct from round(greatest(0.2, v_base_speed), 3) then
     raise exception 'MOD22 FAIL: bare-ship speed % (want the un-penalized hull base_speed % exactly)', s0->>'speed', round(greatest(0.2, v_base_speed), 3); end if;
 
-  r := pg_temp.call_as(uF, 'public.craft_module(''mod22-auto-1'', ''autocannon_battery_mk2'')');
+  r := pg_temp.call_as(uF, format('public.craft_module(''mod22-auto-1'', ''autocannon_battery_mk2'', %L::uuid)', dF));
   if (r->>'ok')::boolean is not true or coalesce((r->>'idempotent_replay')::boolean, false) then
     raise exception 'MOD22 FAIL craft autocannon: %', r; end if;
   v_mk2a := (r->>'instance_id')::uuid;
   for ing in select item_id from public.module_recipe_ingredients where module_type_id = 'autocannon_battery_mk2' loop
-    if public.inventory_get_balance(uF, ing.item_id) <> 0 then
-      raise exception 'MOD22 FAIL: post-craft balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
-        ing.item_id, public.inventory_get_balance(uF, ing.item_id); end if;
+    if public.inventory_get_balance(uF, v_storeF, ing.item_id) <> 0 then
+      raise exception 'MOD22 FAIL: post-craft Haven balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
+        ing.item_id, public.inventory_get_balance(uF, v_storeF, ing.item_id); end if;
   end loop;
-  r := pg_temp.call_as(uF, 'public.craft_module(''mod22-auto-2'', ''autocannon_battery_mk2'')');
+  r := pg_temp.call_as(uF, format('public.craft_module(''mod22-auto-2'', ''autocannon_battery_mk2'', %L::uuid)', dF));
   if (r->>'code') is distinct from 'insufficient_items' then
     raise exception 'MOD22 FAIL: second autocannon craft answered % (want insufficient_items — the exact-price boundary)', r; end if;
 

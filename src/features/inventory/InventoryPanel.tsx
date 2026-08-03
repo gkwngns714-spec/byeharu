@@ -73,7 +73,11 @@ export function InventoryPanel({
 
   return (
     <Card data-testid="inventory-panel" aria-busy={hold === null || undefined}>
-      <CardHeader title="Inventory" subtitle="Items you carry — crafting & recruiting materials." className="mb-2" />
+      <CardHeader
+        title="Fleet hold"
+        subtitle="What this fleet is carrying. Materials live in a port’s storage — dock to use them."
+        className="mb-2"
+      />
       {hold === null ? (
         <>
           <Skeleton className="mt-2 h-8 w-full rounded-lg" />
@@ -152,7 +156,8 @@ export function InventoryPanel({
             </>
           ) : (
             <p data-testid="inventory-empty" className="mt-3 text-sm text-ink-faint">
-              No items yet — hunt pirates to salvage materials.
+              Carrying nothing. Salvage and rewards are banked in a port’s storage — dock and load
+              what you want to take with you.
             </p>
           )}
         </>

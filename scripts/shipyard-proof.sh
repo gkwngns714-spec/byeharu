@@ -35,6 +35,13 @@ if [ "$MODE" = "selftest" ]; then
   # ── the ONE dark flag is enabled ONLY strictly inside the begin;..rollback; scope. ────────────────
   tp_assert_flags_inside_txn "$SQL" shipyard_enabled
 
+  # -- THE DARK BLOCK MUST SET ITS OWN PRECONDITION. Migration 0300 LIT shipyard_enabled, so a P0 block
+  #    that leans on the original seed is asserting a WORLD, not a property -- and it stayed
+  #    invisible for weeks because this workflow fired on no branch carrying 0300. Refuse to pass
+  #    unless the dark scenario forces the flag false itself, in-txn, before it probes.
+  grep -qE "update public\.game_config set value='false'::jsonb where key='shipyard_enabled';" "$SQL" \
+    || fail "the dark block does not FORCE shipyard_enabled false -- it is trusting a seed that 0300 already flipped"
+
   # ── NEVER-FLIP evasion catch (the 0185-era hardened pattern): the raw-update-inside-txn idiom is
   #    the ONLY sanctioned toggle; a set_game_config('shipyard_enabled', …) call would evade the
   #    inside-txn line check above, so its mere presence (outside comments) fails the selftest. ──────

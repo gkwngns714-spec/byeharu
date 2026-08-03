@@ -27,6 +27,13 @@ if [ "$MODE" = "selftest" ]; then
   # ── the ONE dark flag is enabled ONLY strictly inside the begin;..rollback; scope. ────────────────
   tp_assert_flags_inside_txn "$SQL" port_shop_enabled
 
+  # -- THE DARK BLOCK MUST SET ITS OWN PRECONDITION. Migration 0300 LIT port_shop_enabled, so a P0 block
+  #    that leans on the original seed is asserting a WORLD, not a property -- and it stayed
+  #    invisible for weeks because this workflow fired on no branch carrying 0300. Refuse to pass
+  #    unless the dark scenario forces the flag false itself, in-txn, before it probes.
+  grep -qE "update public\.game_config set value='false'::jsonb where key='port_shop_enabled';" "$SQL" \
+    || fail "the dark block does not FORCE port_shop_enabled false -- it is trusting a seed that 0300 already flipped"
+
   # ── all three starter-port identities (fixed 0066 UUIDs) are asserted. ────────────────────────────
   for pid in b1a00001-0066-4a00-8a00-000000000001 \
              b1a00002-0066-4a00-8a00-000000000002 \
