@@ -55,12 +55,19 @@ export type MiningValidationReport = DraftValidationReport<MiningValidationIssue
  *  only (get_active_mining_fields is the client's whole view of mining_fields). */
 export type MiningValidationContext = DraftValidationContext<MiningDraftPayload, MiningField>
 
-/** NON-AUTHORITATIVE FALLBACK (C1) — mirrors the server's own coalesce(cfg_num(
- *  'mining_extract_radius'), 750) DEFAULT (0104), used ONLY when the context carries no
- *  server-authoritative radius. The AUTHORITY is game_config.mining_extract_radius, read by the
- *  editor snapshot (worldEditorData.miningExtractRadius) and threaded in as ctx.overlapRadius —
- *  this pure module never fetches, so absent context falls back to the server's documented default. */
-export const MINING_FIELD_OVERLAP_RADIUS_FALLBACK = 750
+/** NON-AUTHORITATIVE FALLBACK (C1) — used ONLY when the context carries no server-authoritative
+ *  radius. The AUTHORITY is game_config.mining_extract_radius, read by the editor snapshot
+ *  (worldEditorData.miningExtractRadius) and threaded in as ctx.overlapRadius; this pure module
+ *  never fetches, so an absent context has to fall back to something.
+ *
+ *  60 is the LIVE value (production, re-read 2026-08-03) and, since migration 0320, the chain's
+ *  too. It used to be 750, copied from the server's own stale
+ *  `coalesce(cfg_num('mining_extract_radius'), 750)` (0104): the overlap rule then rejected two
+ *  fields as "ambiguous" at any separation under 750 world units when the game only calls them
+ *  ambiguous under 60 — the editor refused twelve and a half times more layouts than the runtime
+ *  actually forbids. A fallback that disagrees with production is a second, wrong authority.
+ *  (The server-side 750 literals are a separate slice — see docs/DEV_LOG.md.) */
+export const MINING_FIELD_OVERLAP_RADIUS_FALLBACK = 60
 
 /** The effective extract radius for the overlap rule: the server-authoritative ctx.overlapRadius
  *  when present (finite, > 0), else the labeled fallback. Pure — context in, number out. */

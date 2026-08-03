@@ -16,31 +16,13 @@
 // import the harness (adopter count reaches 27 / remaining reaches 0).
 
 import { createClient } from '@supabase/supabase-js'
-import { readFileSync } from 'node:fs'
 
-// .env.local-style file loader (tolerant: missing file → {}).
-export function loadEnv(p) {
-  const e = {}
-  try {
-    for (const l of readFileSync(p, 'utf8').split('\n')) {
-      const m = l.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/)
-      if (m) e[m[1]] = m[2].trim().replace(/^['"]|['"]$/g, '')
-    }
-  } catch {}
-  return e
-}
-
-// Standard env resolution: .env.local overlaid by process.env; URL + anon key are required
-// (exit 2 — the shared "misconfigured, not failed" exit code); the service key is OPTIONAL
-// at this layer.
-export function resolveEnv() {
-  const env = { ...loadEnv('.env.local'), ...process.env }
-  const url = env.VITE_SUPABASE_URL
-  const anonKey = env.VITE_SUPABASE_ANON_KEY
-  const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_KEY || env.SUPABASE_SECRET_KEY
-  if (!url || !anonKey) { console.error('Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY'); process.exit(2) }
-  return { env, url, anonKey, serviceKey }
-}
+// `loadEnv` / `resolveEnv` MOVED to ./env.mjs and are re-exported here unchanged, so every existing
+// importer of this harness keeps working. They live there because this file imports the Supabase
+// client at module scope, which made reading two environment variables require node_modules — and
+// scripts/set-knob.mjs / scripts/list-knobs.mjs must run in a bare checkout. Still ONE copy of the
+// logic; never re-inline it.
+export { loadEnv, resolveEnv } from './env.mjs'
 
 // Reporting harness: Abort ends the run early through the caller's catch; die throws it.
 export class Abort extends Error {}

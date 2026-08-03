@@ -64,6 +64,12 @@ on:
       # block, which 0316 turned into a pinned tick-count property — a five-times-tighter branch
       # that does not fire this gate ships the whole geometry on text self-asserts alone.
       - 'slice-combat-five-times**'
+      # 0320 DELETES eight game_config rows and writes three more. Its whole safety argument is an
+      # apply-time precondition ("no function in this database mentions these keys") that only a real
+      # Postgres can evaluate — a static read of the file proves nothing about it. This proof is the
+      # `supabase start` that applies the chain INCLUDING 0320, so a knob branch that does not fire
+      # it ships a DELETE against the live config table on text self-asserts alone.
+      - 'slice-knobs**'
 
 permissions:
   contents: read
