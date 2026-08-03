@@ -714,7 +714,7 @@ insert into _0317_before
 select 'hull_' || hull_type_id, base_stats_json::text from public.main_ship_hull_types;
 
 insert into _0317_before
-select 'fn_' || p.proname, pg_get_userbyid(p.proowner) || '|' || p.prosecdef::text || '|' || p.provolatile
+select 'fn_' || p.proname, pg_get_userbyid(p.proowner) || '|' || p.prosecdef::text || '|' || p.provolatile::text
        || '|' || coalesce(array_to_string(p.proconfig, ','), '') || '|' || pg_get_function_identity_arguments(p.oid)
        || '|' || pg_get_function_result(p.oid) || '|' || coalesce(p.proacl::text, '')
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -997,7 +997,7 @@ begin
   select string_agg(b.k || ': ' || b.v || ' -> ' || cur.v, '; ') into v_bad
     from _0317_before b
     join (select 'fn_' || p.proname as k,
-                 pg_get_userbyid(p.proowner) || '|' || p.prosecdef::text || '|' || p.provolatile
+                 pg_get_userbyid(p.proowner) || '|' || p.prosecdef::text || '|' || p.provolatile::text
                  || '|' || coalesce(array_to_string(p.proconfig, ','), '') || '|' || pg_get_function_identity_arguments(p.oid)
                  || '|' || pg_get_function_result(p.oid) || '|' || coalesce(p.proacl::text, '') as v
             from pg_proc p join pg_namespace n on n.oid = p.pronamespace
