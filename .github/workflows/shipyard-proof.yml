@@ -21,6 +21,11 @@ on:
     branches:
       - 'autopilot/**'
       - 'slice-shipyard**'
+      # 0333 (ITEMS LIVE AT PORTS) changed what start_hull_build spends and where a cancel refund
+      # returns it to, from a branch named nothing like 'slice-shipyard' — so this proof would have
+      # gated NOTHING on the change that needed it most. Any slice-** branch may touch the order
+      # path; a proof that only fires on the branches that remembered is not a net (0313 rev.3).
+      - 'slice-**'
 
 permissions:
   contents: read

@@ -332,7 +332,10 @@ begin
   -- a number in this comment would be one more thing to forget to update.
   perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
     '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
-  r := pg_temp.call_as(uZ, 'public.craft_module(''dzc-gun-1'', ''autocannon_battery'')');
+  -- 0333: a craft draws on the store of the port the NAMED ship is DOCKED at. s_cmd is freshly
+  -- commissioned, so it sits at Haven Reach — the same store the NULL-base grant above landed in
+  -- (the player's oldest active base is the Home Base, whose location_id IS Haven).
+  r := pg_temp.call_as(uZ, format('public.craft_module(''dzc-gun-1'', ''autocannon_battery'', %L::uuid)', s_cmd));
   if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft: %', r; end if;
   v_mod := (r->>'instance_id')::uuid;
   r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-fit-1'')', v_mod, s_cmd));
@@ -994,7 +997,11 @@ begin
   -- encounter below is what FITTEDEXACT pins field-for-field against the catalog.
   perform public.reward_grant('combat', gen_random_uuid(), uL, null,
     '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
-  r := pg_temp.call_as(uL, 'public.craft_module(''ral-gun-1'', ''autocannon_battery'')');
+  -- 0333: crafted AT s_l's dock — Haven Reach, where it was just commissioned, and where the
+  -- NULL-base grant above landed (uL's oldest active base is its Home Base at Haven). The craft
+  -- happens BEFORE uL's second ship is commissioned, but the ship is named anyway: the port is the
+  -- point, and the sole-ship shim would stop resolving the moment a second hull exists.
+  r := pg_temp.call_as(uL, format('public.craft_module(''ral-gun-1'', ''autocannon_battery'', %L::uuid)', s_l));
   if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: craft gun: %', r; end if;
   r := pg_temp.call_as(uL, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''ral-fit-1'')', (r->>'instance_id')::uuid, s_l));
   if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: fit gun: %', r; end if;
@@ -1174,7 +1181,10 @@ begin
   -- fund + craft + fit ONE mining rig via the real writers (recipe: crystal/ore/scrap, 0183).
   perform public.reward_grant('combat', gen_random_uuid(), uL, null,
     '{"items": [{"item_id": "crystal", "quantity": 4}, {"item_id": "ore", "quantity": 8}, {"item_id": "scrap", "quantity": 8}]}'::jsonb);
-  r := pg_temp.call_as(uL, 'public.craft_module(''dzc-rig-1'', ''mining_rig_extension'')');
+  -- 0333: uL owns THREE ships here (s_l, s_d and this new s_m), so the sole-ship shim cannot
+  -- resolve one — the craft NAMES s_m, which is freshly commissioned and therefore docked at Haven
+  -- Reach, the same store the NULL-base grant above deposited into.
+  r := pg_temp.call_as(uL, format('public.craft_module(''dzc-rig-1'', ''mining_rig_extension'', %L::uuid)', s_m));
   if (r->>'ok')::boolean is not true then raise exception 'RIGFALLBACK FAIL: craft rig: %', r; end if;
   v_modinst := (r->>'instance_id')::uuid;
   r := pg_temp.call_as(uL, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-fit-rig'')', v_modinst, s_m));
@@ -3816,26 +3826,30 @@ begin
     raise exception 'ONEPOWER FAIL: module_recipe_ingredients carries no recipe for the two guns this block crafts — the grant would be empty and the failure would surface as a craft error rather than as this message'; end if;
   perform public.reward_grant('combat', gen_random_uuid(), uP, null, r);
 
-  r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-a1'', ''autocannon_battery'')');
+  -- 0333: uP owns FIVE ships, so every craft below NAMES the hull it will be fitted to. All five
+  -- are freshly commissioned and therefore docked at Haven Reach, which is also where the NULL-base
+  -- grant above landed (uP's oldest active base is its Home Base at Haven) — so all five draw on
+  -- the one stock that was just funded.
+  r := pg_temp.call_as(uP, format('public.craft_module(''dzc-op-a1'', ''autocannon_battery'', %L::uuid)', sA));
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft A: %', r; end if;
   r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-op-fa'')', (r->>'instance_id')::uuid, sA));
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit A: %', r; end if;
 
-  r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-b1'', ''autocannon_battery'')');
+  r := pg_temp.call_as(uP, format('public.craft_module(''dzc-op-b1'', ''autocannon_battery'', %L::uuid)', sB));
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft B: %', r; end if;
   r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-op-fb'')', (r->>'instance_id')::uuid, sB));
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit B: %', r; end if;
 
-  r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-d1'', ''autocannon_battery'')');
+  r := pg_temp.call_as(uP, format('public.craft_module(''dzc-op-d1'', ''autocannon_battery'', %L::uuid)', sD));
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft D1: %', r; end if;
   r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-op-fd1'')', (r->>'instance_id')::uuid, sD));
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit D1: %', r; end if;
-  r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-d2'', ''autocannon_battery'')');
+  r := pg_temp.call_as(uP, format('public.craft_module(''dzc-op-d2'', ''autocannon_battery'', %L::uuid)', sD));
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft D2: %', r; end if;
   r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-op-fd2'')', (r->>'instance_id')::uuid, sD));
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit D2: %', r; end if;
 
-  r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-e1'', ''autocannon_battery_mk2'')');
+  r := pg_temp.call_as(uP, format('public.craft_module(''dzc-op-e1'', ''autocannon_battery_mk2'', %L::uuid)', sE));
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft E (mk2): %', r; end if;
   r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-op-fe'')', (r->>'instance_id')::uuid, sE));
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit E: %', r; end if;

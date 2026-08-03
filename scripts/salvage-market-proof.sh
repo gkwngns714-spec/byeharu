@@ -24,7 +24,15 @@ if [ "$MODE" = "selftest" ]; then
   tp_assert_self_rolling_back "$SQL"
 
   # ── the ONE dark flag is enabled ONLY strictly inside the begin;..rollback; scope. ────────────────
-  tp_assert_flags_inside_txn "$SQL" salvage_market_enabled
+  tp_assert_flags_inside_txn "$SQL" salvage_market_enabled team_command_enabled \
+                                    fleet_movement_unified_enabled fleet_control_enabled
+
+  # -- THE DARK BLOCK MUST SET ITS OWN PRECONDITION. Migration 0300 LIT salvage_market_enabled, so a P0 block
+  #    that leans on the original seed is asserting a WORLD, not a property -- and it stayed
+  #    invisible for weeks because this workflow fired on no branch carrying 0300. Refuse to pass
+  #    unless the dark scenario forces the flag false itself, in-txn, before it probes.
+  grep -qE "update public\.game_config set value='false'::jsonb where key='salvage_market_enabled';" "$SQL" \
+    || fail "the dark block does not FORCE salvage_market_enabled false -- it is trusting a seed that 0300 already flipped"
 
   # ── all three starter-port identities (fixed 0066 UUIDs) are asserted. ────────────────────────────
   for pid in b1a00001-0066-4a00-8a00-000000000001 \
@@ -51,8 +59,8 @@ if [ "$MODE" = "selftest" ]; then
 
   # ── items are granted via the REAL reward pipeline leaf, never a direct inventory insert. ─────────
   grep -q "public.reward_grant(" "$SQL" || fail "harness does not provision via public.reward_grant (the real pipeline)"
-  grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.player_inventory' "$SQL" \
-    && fail "harness inserts player_inventory directly (must go through reward_grant)" || true
+  grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.(base_items|fleet_items)' "$SQL" \
+    && fail "harness inserts a port/fleet item store directly (must go through reward_grant)" || true
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.port_item_demand' "$SQL" \
     && fail "harness writes port_item_demand (Reference/Config — migration-seeded only)" || true
 

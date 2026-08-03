@@ -312,26 +312,34 @@ begin
   s2 := (r->>'main_ship_id')::uuid;
   insert into elfx values ('s1', s1), ('s2', s2);
 
+  -- ── ARM BOTH SHIPS BEFORE THE FLEET RETIREMENT BELOW (0333) ─────────────────────────────────
+  -- Items live PER PORT now (`base_items`) and `craft_module` derives the port it spends from the
+  -- crafting ship's VALIDATED DOCK. Retiring the commission fleets (immediately below) is exactly
+  -- what stops a ship being 'at_location', so a craft after it would answer `not_docked`. Both
+  -- crafts therefore run while s1/s2 are still docked at Haven Reach, and each NAMES its ship —
+  -- uZ owns TWO, so the sole-ship shim cannot resolve one and would answer `ship_not_found`.
+  -- A NULL-base grant lands in uZ's oldest active base (the Home Base, location_id = Haven), which
+  -- IS that store. Fitting is legal at 'at_location' as well as 'home' (0114's settled-SAFE set).
+  perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
+    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
+
+  r := pg_temp.call_as(uZ, format('public.craft_module(''elp-gun-1'', ''autocannon_battery'', %L::uuid)', s1));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft1: %', r; end if;
+  m1 := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''elp-fit-1'')', m1, s1));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit1: %', r; end if;
+  r := pg_temp.call_as(uZ, format('public.craft_module(''elp-gun-2'', ''autocannon_battery'', %L::uuid)', s2));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft2: %', r; end if;
+  m2 := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''elp-fit-2'')', m2, s2));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit2: %', r; end if;
+
   update public.main_ship_instances set status='home', updated_at=now() where main_ship_id in (s1, s2);
   update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
          current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null, updated_at=now()
    where main_ship_id in (s1, s2) and status='present';
   update public.location_presence set status='completed', updated_at=now()
    where fleet_id in (select id from public.fleets where main_ship_id in (s1, s2) and status='destroyed') and status='active';
-
-  perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
-    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
-
-  r := pg_temp.call_as(uZ, 'public.craft_module(''elp-gun-1'', ''autocannon_battery'')');
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft1: %', r; end if;
-  m1 := (r->>'instance_id')::uuid;
-  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''elp-fit-1'')', m1, s1));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit1: %', r; end if;
-  r := pg_temp.call_as(uZ, 'public.craft_module(''elp-gun-2'', ''autocannon_battery'')');
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft2: %', r; end if;
-  m2 := (r->>'instance_id')::uuid;
-  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''elp-fit-2'')', m2, s2));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit2: %', r; end if;
 
   r := pg_temp.call_as(uZ, 'public.upsert_ship_group(1, ''ELP One'')');
   if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL g1: %', r; end if;

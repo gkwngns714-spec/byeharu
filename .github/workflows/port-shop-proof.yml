@@ -21,6 +21,10 @@ on:
     branches:
       - 'autopilot/**'
       - 'slice-port**'
+      # 0333 (ITEMS LIVE AT PORTS) changed where buy_shop_offer_at_port puts what you bought, from a
+      # branch named nothing like 'slice-port' — so this proof would have gated NOTHING on the change
+      # that needed it most. Same reasoning as 0313 rev.3 on the combat proof.
+      - 'slice-**'
 
 permissions:
   contents: read

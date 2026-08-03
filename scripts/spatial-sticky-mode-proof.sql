@@ -102,13 +102,13 @@ begin
     v_ships := v_ships || (r->>'main_ship_id')::uuid;
   end loop;
 
-  update public.main_ship_instances set status = 'home', updated_at = now() where main_ship_id = any(v_ships);
-  update public.fleets set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
-         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null, updated_at = now()
-   where main_ship_id = any(v_ships) and status = 'present';
-  update public.location_presence set status = 'completed', updated_at = now()
-   where fleet_id in (select id from public.fleets where main_ship_id = any(v_ships) and status = 'destroyed') and status = 'active';
-
+  -- ── ARM BEFORE THE RETIREMENT BELOW (0333) ──────────────────────────────────────────────────
+  -- Items live PER PORT now (`base_items`) and craft_module derives the port it spends from the
+  -- crafting ship's VALIDATED DOCK. The retirement immediately below is exactly what stops a ship
+  -- being 'at_location', so a craft after it would answer `not_docked`. Each craft therefore runs
+  -- while the ships are still docked at Haven Reach and NAMES the ship it builds at — with p_total
+  -- > 1 the sole-ship shim cannot resolve one and would answer `ship_not_found`. A NULL-base grant
+  -- lands in the player's oldest active base (Home Base, location_id = Haven), which IS that store.
   if p_armed > 0 then
     perform public.reward_grant('combat', gen_random_uuid(), p_sub, null,
       jsonb_build_object('items', jsonb_build_array(
@@ -116,13 +116,20 @@ begin
         jsonb_build_object('item_id','pirate_alloy','quantity', 4 * p_armed),
         jsonb_build_object('item_id','scrap','quantity', 12 * p_armed))));
     for i in 1 .. p_armed loop
-      r := public.craft_module('sstick-craft-'||replace(gen_random_uuid()::text,'-',''), 'autocannon_battery');
+      r := public.craft_module('sstick-craft-'||replace(gen_random_uuid()::text,'-',''), 'autocannon_battery', v_ships[i]);
       if (r->>'ok')::boolean is not true then raise exception 'provision FAIL craft %: %', i, r; end if;
       v_mod := (r->>'instance_id')::uuid;
       r := public.fit_module_to_ship(v_mod, v_ships[i], 'sstick-fit-'||replace(gen_random_uuid()::text,'-',''));
       if (r->>'ok')::boolean is not true then raise exception 'provision FAIL fit %: %', i, r; end if;
     end loop;
   end if;
+
+  update public.main_ship_instances set status = 'home', updated_at = now() where main_ship_id = any(v_ships);
+  update public.fleets set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null, updated_at = now()
+   where main_ship_id = any(v_ships) and status = 'present';
+  update public.location_presence set status = 'completed', updated_at = now()
+   where fleet_id in (select id from public.fleets where main_ship_id = any(v_ships) and status = 'destroyed') and status = 'active';
 
   r := public.upsert_ship_group(1, 'SSTick');
   if (r->>'ok')::boolean is not true then raise exception 'provision FAIL group: %', r; end if;

@@ -84,7 +84,13 @@ if [ "$MODE" = "selftest" ]; then
   # three of which gen-0332's own head check names explicitly rather than widening the window — so
   # 0333 still cannot cut a slice from a head that has moved without failing here first. FOURTEEN
   # generators now. Same law as every line above: a missing or unrun generator is a HARD FAIL.
-  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn gen-0331-one-authority-for-attack gen-0332-a-wreck-can-always-come-home"
+  # 0333 joins: TWENTY-TWO hunks over TEN functions (reward_grant 0040, craft 0109, recruit 0126,
+  # salvage sell 0174, shipyard order 0188, shipyard refund 0194, port shop buy 0235) plus SIX
+  # signature widenings. It carries its OWN per-function drift gate — for each of those ten it
+  # refuses to generate if any later migration textually re-created the function or rewrote it by
+  # hunk surgery — so the same protection every line above describes is enforced ten times over.
+  # FIFTEEN generators now.
+  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn gen-0331-one-authority-for-attack gen-0332-a-wreck-can-always-come-home gen-0333-items-live-at-ports"
   if command -v node >/dev/null 2>&1; then
     # DIRECTION 1 — nothing on disk may be unregistered. This is the half that would have caught 0307
     # on the day the gate was written, and it needs no maintenance to keep working.
