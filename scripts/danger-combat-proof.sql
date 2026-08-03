@@ -1407,15 +1407,21 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit E: %', r; end if;
 
   -- the ONE difference between B and A: a birthmark trait. NOT a module — that is the whole point,
-  -- because a module can reach weapons_json and a trait never could. Written directly rather than
-  -- through soul_roll_traits_for_ship: that writer rolls a RANDOM pair, so it could hand this block
-  -- a zero-attack trait and make the property vacuous on some CI runs and not others. The row is a
-  -- FIXTURE, not the thing under test — what is under test is whether the fold carries it into
-  -- damage. Owned precondition first: these hulls must start with no traits at all, or "B is A plus
-  -- exactly one trait" is an assumption rather than a fact.
-  select count(*) into n from public.main_ship_traits where main_ship_id in (sA, sB, sC, sD, sE);
-  if n <> 0 then raise exception 'ONEPOWER FAIL: the five fresh hulls already carry % trait(s) — B would not be a controlled variant of A', n; end if;
+  -- because a module can reach weapons_json and a trait never could.
+  -- THE BLOCK OWNS THIS PRECONDITION RATHER THAN INHERITING IT (the lesson of every ambient-default
+  -- red in this suite). Commissioning ROLLS a random pair of traits onto every hull, so five fresh
+  -- hulls arrive carrying ten traits of unknown attack value — leaving them would make B differ from
+  -- A by an unknown amount and the exact +attack identity below would flake from run to run. The
+  -- rolled rows are cleared and B is given exactly one KNOWN trait. Written directly rather than
+  -- through soul_roll_traits_for_ship for the same reason: that writer is random by design, and it
+  -- could hand this block a zero-attack trait and make the property vacuous on some runs only. The
+  -- row is a FIXTURE; what is under test is whether the FOLD carries it into damage.
+  delete from public.main_ship_traits where main_ship_id in (sA, sB, sC, sD, sE);
   insert into public.main_ship_traits (main_ship_id, slot, trait_type_id) values (sB, 1, 'hungry_guns');
+  select count(*) into n from public.main_ship_traits where main_ship_id in (sA, sC, sD, sE);
+  if n <> 0 then raise exception 'ONEPOWER FAIL: % trait(s) survive on the control hulls — B is not a controlled variant of A', n; end if;
+  select count(*) into n from public.main_ship_traits where main_ship_id = sB;
+  if n <> 1 then raise exception 'ONEPOWER FAIL: hull B carries % trait(s) (want exactly the one this block gave it)', n; end if;
 
   -- ── fixture vacuity pins, BEFORE the fight: A and B differ by exactly the trait and nothing else,
   --    and D really did take two guns. ─────────────────────────────────────────────────────────────
