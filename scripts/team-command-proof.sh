@@ -279,6 +279,28 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT encounter player_power_start = the independent D0 totals.combat_power"
   grep -qF "(select sum(attack_snapshot * alive_count) from public.combat_units where encounter_id = v_enc)" "$SQL" \
     || fail "harness does not ASSERT tick player_damage = the summed member attack_snapshots"
+  # ── 0336 re-premise of the S1 aggro-tier screen, in assert form. The wave now arrives OUTSIDE its
+  #    own reach and cannot hit on its spawn tick, so the hit is reached by driving ticks until it is
+  #    OBSERVED. Both halves of the property are still pinned (the screen takes it, the screened take
+  #    NONE), plus the guards that make the observation non-vacuous. ────────────────────────────────
+  grep -qF "the screening member (lowest aggro, %) took no damage on tick %" "$SQL" \
+    || fail "harness does not ASSERT that the lowest-aggro member absorbs the hit (the S1 screen, half one)"
+  grep -qF "screened member row(s) also took damage — focused fire is not focused" "$SQL" \
+    || fail "harness does not ASSERT that every screened member row takes NONE (the S1 screen, half two)"
+  grep -qF "no member row took a hit within 12 ticks of the spawn" "$SQL" \
+    || fail "harness does not bound the 0336 closing loop with a loud failure (a wave that never closes must fail here, not hang)"
+  grep -qF "the first hit cannot land on the spawn tick" "$SQL" \
+    || fail "harness does not ASSERT the 0336 property that a wave cannot hit on the tick it spawns (TEAMHUNT non-vacuity)"
+  grep -qF "with a single row there is nothing to screen" "$SQL" \
+    || fail "harness lacks the TEAMHUNT two-alive-members non-vacuity guard"
+  grep -qF "the S1 tier screen cannot be witnessed when every row sits in one tier" "$SQL" \
+    || fail "harness lacks the TEAMHUNT distinct-aggro-tier non-vacuity guard"
+  grep -qF "a member row carries a NULL hp_current" "$SQL" \
+    || fail "harness lacks the TEAMHUNT hp_current NULL-pin (a NULL makes the screened-rows count 0 and PASSES while proving nothing)"
+  grep -qF "the wave was destroyed before it closed" "$SQL" \
+    || fail "harness lacks the TEAMHUNT wave-survives-its-approach guard"
+  grep -qF "perform public.set_game_config('enemy_hp_base', v_ehp_before);" "$SQL" \
+    || fail "harness borrows enemy_hp_base for the 0336 approach without giving it back (every later block would inherit an unkillable enemy)"
   # The manifest-wins pin. 0216 turned a mid-sortie unassign from "allowed, and the frozen manifest
   # governs anyway" into an outright refusal, so what is pinned is now the refusal itself plus the
   # untouched manifest — the same law, enforced one step earlier.
