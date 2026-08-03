@@ -37,8 +37,9 @@ export interface PortEntryCommandController {
 
 const INITIAL: PortEntryCommandState = { phase: 'idle', kind: null, message: null }
 
-const COMMISSION_SUCCESS_COPY = 'Your ship is commissioned and docked at Haven.'
-const COMMISSION_ALREADY_COPY = 'Your ship is already commissioned and docked.'
+// PLAIN-WORDS: player copy says "yours/ready", not "commissioned" (the const names stay internal).
+const COMMISSION_SUCCESS_COPY = 'Your ship is yours — docked at Haven and ready.'
+const COMMISSION_ALREADY_COPY = 'You already have your ship — it is docked and ready.'
 const NETWORK_COPY = 'Could not reach the server. Please check your connection and try again.'
 
 export function createPortEntryController(deps: PortEntryCommandDeps): PortEntryCommandController {

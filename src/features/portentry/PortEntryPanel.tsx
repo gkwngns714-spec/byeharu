@@ -57,7 +57,8 @@ export function PortEntryPanel({ deps }: { deps?: UsePortEntryOverrides }) {
       return (
         <div data-testid="port-entry-panel">
           <Card tone="accent" className="text-sm" data-testid="port-entry-claim">
-            <p className="font-medium text-accent">Commission your first ship</p>
+            {/* PLAIN-WORDS: "Commission" was navy jargon — the button says Claim, so the headline does too. */}
+            <p className="font-medium text-accent">Claim your first ship</p>
             <p className="mt-1 text-ink-muted">
               Claim your ship. It will begin docked at <span className="font-medium text-ink">Haven</span>, ready to explore.
             </p>

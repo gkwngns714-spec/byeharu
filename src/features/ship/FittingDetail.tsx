@@ -265,7 +265,7 @@ export function FittingDetail({
         <Skeleton className="h-5 w-36" />
         <Skeleton className="mt-3 h-8 w-full rounded-lg" />
         <Skeleton className="mt-2 h-8 w-2/3 rounded-lg" />
-        <span className="sr-only">Reading the ship&rsquo;s fitting…</span>
+        <span className="sr-only">Reading the ship&rsquo;s equipment…</span>
       </Card>
     )
   }
@@ -652,7 +652,7 @@ export function FittingDetail({
       {litFittings && (
         <>
           <div className="mt-4 flex items-baseline justify-between gap-2">
-            <SectionLabel className="mb-0">Fitted modules</SectionLabel>
+            <SectionLabel className="mb-0">Equipped modules</SectionLabel>
             <span data-testid="fitting-slot-usage" className="font-mono text-xs tabular-nums text-ink-muted">
               {slotLimit != null ? `${slotsUsed}/${slotLimit} slots` : `${slotsUsed} slots used`}
             </span>
@@ -697,16 +697,16 @@ export function FittingDetail({
                         data-testid={`fitting-unfit-${f.module_instance_id}`}
                         disabled={!gate.editable}
                         busy={isPending}
-                        busyLabel="Unfitting…"
+                        busyLabel="Removing…"
                         onClick={() =>
                           void runFitting(
                             { instance_id: f.module_instance_id, name: f.name },
                             () => unfitModuleFromShip(f.module_instance_id, crypto.randomUUID()),
-                            'Unfitted',
+                            'Removed',
                           )
                         }
                       >
-                        Unfit
+                        Remove
                       </Button>
                     </div>
                     {openModule === f.module_instance_id && moduleInfoPanel(f.module_type_id, f.module_instance_id)}
@@ -721,7 +721,7 @@ export function FittingDetail({
             </ul>
           ) : (
             <p data-testid="fitting-fitted-empty" className="mt-2 text-sm text-ink-faint">
-              No modules fitted.
+              No modules equipped.
             </p>
           )}
 
@@ -775,12 +775,12 @@ export function FittingDetail({
                             data-testid={`fitting-fit-${m.instance_id}`}
                             disabled={!gate.editable}
                             busy={isPending}
-                            busyLabel="Fitting…"
+                            busyLabel="Equipping…"
                             onClick={() =>
-                              void runFitting(m, () => fitModuleToShip(m.instance_id, shipId, crypto.randomUUID()), 'Fitted')
+                              void runFitting(m, () => fitModuleToShip(m.instance_id, shipId, crypto.randomUUID()), 'Equipped')
                             }
                           >
-                            Fit
+                            Equip
                           </Button>
                         </div>
                         {openModule === m.instance_id && moduleInfoPanel(m.module_type_id, m.instance_id)}

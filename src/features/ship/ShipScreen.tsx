@@ -383,12 +383,12 @@ export function ShipScreen() {
   if (!selection.loading && selection.ships.length === 0) {
     return (
       <Screen wide>
-        <PageHeader eyebrow="Ops · Vessel" title="Fitting" subtitle="Your ships' loadouts" />
+        <PageHeader eyebrow="Ops · Vessel" title="Ships" subtitle="Your ships & their equipment" />
         <EmptyState
           data-testid="fitting-no-ship"
           icon={<Icon name="ship" size={28} />}
           title="No ship yet"
-          body="Commission your first ship from Command — its fitting, captains, and cargo appear here."
+          body="Buy your first ship in Command — its equipment, captains, and cargo appear here."
           action={
             <span className="inline-flex items-center gap-2">
               <Link to="/command" className={buttonClasses('primary', 'md')}>
@@ -410,7 +410,7 @@ export function ShipScreen() {
 
   return (
     <Screen wide>
-      <PageHeader eyebrow="Ops · Vessel" title="Fitting" subtitle="Your ships, by fleet — select one to outfit it" />
+      <PageHeader eyebrow="Ops · Vessel" title="Ships" subtitle="Your ships, by fleet — select one to equip it" />
       <div className={screenSplitClass()}>
         <div className={screenRailClass('main')}>
           {/* THE ROSTER — grouped by fleet (read-only; composition lives in Command). */}
@@ -454,7 +454,7 @@ export function ShipScreen() {
                     resolve their berth port through the SAME location fold ('berthed' place →
                     "Docked at <port>"). */}
                 <div data-testid="fitting-berthed">
-                  <SectionLabel>Berthed — not in a fleet</SectionLabel>
+                  <SectionLabel>Docked — not in a fleet</SectionLabel>
                   {berthedShips.length > 0 ? (
                     <div className="mt-1.5 space-y-1.5">{berthedShips.map(shipRow)}</div>
                   ) : (

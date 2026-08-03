@@ -101,7 +101,7 @@ export function CommissionShipPanel({
       if (res.ok) {
         setNotice({
           tone: 'success',
-          text: `Ship commissioned — ${res.price} cr debited. It is docked at the port.`,
+          text: `Ship purchased — ${res.price} cr paid. It is docked at the port.`,
         })
         await onCommissioned() // refetch ship list + game state (never optimistic)
         await loadContext() // balance + cap headroom moved
@@ -115,7 +115,9 @@ export function CommissionShipPanel({
 
   return (
     <Card tone="warning" data-testid="commission-ship-panel">
-      <CardHeader title="Commission ship" subtitle="Grow your fleet — fleets need ships" />
+      {/* PLAIN-WORDS: "Commission" was navy jargon — a typical game just says Buy. The RPC and
+          testids keep their commission names (internal identifiers, not player copy). */}
+      <CardHeader title="Buy ship" subtitle="Grow your fleet — fleets need ships" />
       <div className="flex items-center justify-between gap-3 text-xs text-ink-muted">
         {/* Price + balance are SERVER data (public-read game_config / owner-read wallet).
             No wallet row ≠ broke: the lazy wallet (0093) means the effective balance is the
@@ -129,11 +131,11 @@ export function CommissionShipPanel({
           variant="warning"
           disabled={!avail.canCommission}
           busy={busy}
-          busyLabel="Commissioning…"
+          busyLabel="Buying…"
           onClick={() => void submit()}
           data-testid="commission-ship-button"
         >
-          Commission
+          Buy
         </Button>
       </div>
       {!avail.canCommission && (

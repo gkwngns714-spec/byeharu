@@ -31,7 +31,8 @@ export function StationHangar({ store }: { store: DockedStore }) {
       {/* 1 · IDENTITY — this port's own store */}
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-ink">Hangar</h2>
+          {/* PLAIN-WORDS: "Hangar" → "Storage" — what a typical game calls per-town item storage. */}
+          <h2 className="text-lg font-semibold text-ink">Storage</h2>
           <p className="mt-0.5 text-sm text-ink-muted">
             Stored at {store.locationName ?? 'this port'} — assets stay here until you move them.
           </p>
@@ -42,7 +43,7 @@ export function StationHangar({ store }: { store: DockedStore }) {
       {/* 2 · DETAILS — resources then units, plain-language rows */}
       {nothingStored ? (
         <p data-testid="station-hangar-empty" className="mt-4 text-sm text-ink-faint">
-          This hangar is empty.
+          Nothing stored here yet.
         </p>
       ) : (
         <>
