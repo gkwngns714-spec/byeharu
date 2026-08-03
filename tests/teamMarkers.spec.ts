@@ -314,11 +314,18 @@ test('combat badge: one badge per group (first wins on a duplicate); determinist
   expect(out.map((b) => b.groupId)).toEqual(['g1', 'g2'])
 })
 
-// ── THE FLEET FOLLOWS ITS FORMATION — the badge must not be a second copy of the fleet ────────────
-// The owner: "when fighting, my fleet location and the fighting location differs". Measured on the
-// last spatial fight in PRODUCTION: 3 enemy units all 5.00 from the parked anchor, 4 PLAYER units
-// 21.50-28.68 from it. The badge sat on the anchor; the fleet's own ships — drawn by
-// spatialCombatLayer from combat_units.pos_x/pos_y — were ~25 units away. One fleet, two places.
+// ── THE FLEET STANDS ON A REAL SHIP — the badge must not be a second copy of the fleet ────────────
+// The owner, first: "when fighting, my fleet location and the fighting location differs". The badge
+// sat on the fleet's parked point while its own ships — drawn by spatialCombatLayer from
+// combat_units.pos_x/pos_y — were 20-30 units away. One fleet, two places. The first fix moved the
+// badge to the CENTROID of those ships, and the owner, after it shipped: "the fleet arrived at
+// combat zone, it fights but in a different location. This is not fixed."
+//
+// The fixture below IS that production fight, measured: 3 enemy units on EXACTLY one point 5.0 from
+// the engagement anchor, 4 player ships scattered 20.7-28.1 from it. Their centroid is (-26.15,
+// 113.475) — a point with NO SHIP ON IT, ~16.3 from the enemy stack, while the shooting happens at
+// the stack. The badge must land on Sparrow V (-11.4, 99.0), 15.70 out: the point of attack.
+// (Distances to the enemy stack: Sparrow 15.70 · p2 21.60 · p3 26.01 · p4 27.45.)
 //
 // ⚑ AND IT IS THE SPACE BADGE THAT DRAWS IT. An ambush parks the fleet with fleet_set_in_space
 // (0301:1109 → 0231:1157-1161): status 'idle', location_mode 'space', current_location_id NULL. So
@@ -326,7 +333,10 @@ test('combat badge: one badge per group (first wins on a duplicate); determinist
 // resolveFleetCombatBadges NEVER SEES IT — verified in prod, where all eight of the owner's
 // off-centre encounters are idle/space/no-location. Both resolvers are proven here anyway: they
 // share one rule, and the deliberate-hunt path drifts identically once 0313/0314 move the units.
-const PARK = { x: -27, y: 97 } // the fleet's own space_x/space_y — where the badge used to sit
+const PARK = { x: -31.968, y: 96.627 } // space_x/space_y == the engagement anchor on the ambush arm
+const ENEMY = { x: -27.0, y: 97.2 } // the three enemy units, all on this one point, 5.0 from PARK
+const ATTACK = { x: -11.4, y: 99.0 } // Sparrow V — the hull nearest the enemy: where the badge goes
+const CENTROID = { x: -26.15, y: 113.475 } // the previous answer: empty space between the ships
 const unit = (o: Partial<CombatUnit> = {}): CombatUnit => ({
   id: 'u1',
   encounter_id: 'e1',
@@ -341,21 +351,19 @@ const unit = (o: Partial<CombatUnit> = {}): CombatUnit => ({
   pos_y: 0,
   ...o,
 })
-// Four player ships in a box 20-30 east of the park → centroid exactly PARK + (25, 0).
+// The owner's four real ships. Sparrow V is nearest BOTH the enemy stack and the anchor here, so the
+// same hull is correct whether or not `enemies()` is supplied — the two rules are told apart in
+// tests/fleetFightPosition.spec.ts, which owns the rule; these specs own the WIRING.
 const formation = (over: Partial<CombatUnit> = {}): CombatUnit[] => [
-  unit({ id: 'p1', pos_x: PARK.x + 20, pos_y: PARK.y + 10, ...over }),
-  unit({ id: 'p2', pos_x: PARK.x + 30, pos_y: PARK.y + 10, ...over }),
-  unit({ id: 'p3', pos_x: PARK.x + 20, pos_y: PARK.y - 10, ...over }),
-  unit({ id: 'p4', pos_x: PARK.x + 30, pos_y: PARK.y - 10, ...over }),
+  unit({ id: 'p1-sparrow', pos_x: ATTACK.x, pos_y: ATTACK.y, ...over }),
+  unit({ id: 'p2-kite', pos_x: -17.5, pos_y: 116.6, ...over }),
+  unit({ id: 'p3-far', pos_x: -47.1, pos_y: 113.7, ...over }),
+  unit({ id: 'p4-rear', pos_x: -28.6, pos_y: 124.6, ...over }),
 ]
-const CENTROID = { x: PARK.x + 25, y: PARK.y }
-// The enemies sit 5 units out, exactly as prod measured them. If they ever leaked into the player
-// centroid it would move — that is what makes this fixture a real guard, not decoration.
-const enemies = (): CombatUnit[] => [
-  unit({ id: 'e-a', side: 'enemy', pos_x: PARK.x + 5, pos_y: PARK.y }),
-  unit({ id: 'e-b', side: 'enemy', pos_x: PARK.x, pos_y: PARK.y + 5 }),
-  unit({ id: 'e-c', side: 'enemy', pos_x: PARK.x - 5, pos_y: PARK.y }),
-]
+// The enemy stack is the distance TARGET and never a position. If it ever leaked into the answer the
+// badge would land on it — that is what makes this fixture a real guard, not decoration.
+const enemies = (): CombatUnit[] =>
+  ['e-a', 'e-b', 'e-c'].map((id) => unit({ id, side: 'enemy', pos_x: ENEMY.x, pos_y: ENEMY.y }))
 const enc = (o: Partial<FleetEncounterLite> = {}): FleetEncounterLite => ({
   id: 'e1',
   fleet_id: 'fleet-g1',
@@ -367,47 +375,40 @@ const parkedFleet = (o: Partial<UnifiedGroupFleetLite> = {}): UnifiedGroupFleetL
 // the group's rollup — supplies the "· 2 ships" member count, exactly as the sibling specs do
 const crew = () => [rollup({ locationId: null, dockedCount: 0 })]
 
-test('space badge: an AMBUSHED fleet badges its FORMATION, not the parked point its ships have left', () => {
+test('space badge: an AMBUSHED fleet badges the SHIP at the point of attack, not its parked point', () => {
   const out = resolveFleetSpaceBadges([parkedFleet()], groups, crew(), [], [enc()], [...formation(), ...enemies()])
   expect(out).toHaveLength(1)
-  // THE BUG: this used to be PARK (-27, 97) — 25 units from the fleet's own ships.
-  expect({ x: out[0].x, y: out[0].y }).toEqual(CENTROID)
+  // THE FIRST BUG: this used to be PARK — 20-28 units from the fleet's own ships.
+  expect({ x: out[0].x, y: out[0].y }).not.toEqual(PARK)
+  // THE SECOND BUG: and then it was the CENTROID — a point where no ship of theirs is standing.
+  expect({ x: out[0].x, y: out[0].y }).not.toEqual(CENTROID)
+  expect({ x: out[0].x, y: out[0].y }).toEqual(ATTACK)
   expect(out[0].label).toBe('Fleet Alpha · 2 ships · in combat')
 })
 
-test('space badge: the formation centroid uses the PROD spread (21.50-28.68 from the anchor)', () => {
-  const A = { x: -27.37, y: 97.04 } // a real production engagement anchor
-  const units = [
-    unit({ id: 'p1', pos_x: A.x + 21.5, pos_y: A.y }),
-    unit({ id: 'p2', pos_x: A.x + 28.68, pos_y: A.y }),
-  ]
-  const [badge] = resolveFleetSpaceBadges(
-    [parkedFleet({ space_x: A.x, space_y: A.y })],
-    groups,
-    [],
-    [],
-    [enc()],
-    units,
-  )
-  expect(badge.x).toBeCloseTo(A.x + 25.09, 6) // the mean of the two real distances
-  expect(badge.y).toBeCloseTo(A.y, 6)
-  expect(Math.abs(badge.x - A.x)).toBeGreaterThan(21) // demonstrably OFF the parked anchor
+test('space badge: the drawn point IS one of the fleet’s own ships — membership, not proximity', () => {
+  const ships = formation()
+  const [badge] = resolveFleetSpaceBadges([parkedFleet()], groups, [], [], [enc()], [...ships, ...enemies()])
+  expect(ships.map((u) => `${u.pos_x},${u.pos_y}`)).toContain(`${badge.x},${badge.y}`)
+  // …and never the enemy stack it was measured against
+  expect({ x: badge.x, y: badge.y }).not.toEqual(ENEMY)
 })
 
-test('space badge: only LIVING, POSITIONED, PLAYER ships of THIS encounter move the badge', () => {
+test('space badge: only LIVING, POSITIONED, PLAYER ships of THIS encounter can take the badge', () => {
   const at = (units: CombatUnit[]) =>
     resolveFleetSpaceBadges([parkedFleet()], groups, [], [], [enc()], units)[0]
-  // a destroyed ship is not part of the formation (it has no glyph either)
-  expect({ ...at([...formation(), unit({ id: 'dead', alive_count: 0, pos_x: 9999, pos_y: 9999 })]) }).toMatchObject(
-    CENTROID,
-  )
-  // an unpositioned (aggregate) row cannot vote
-  expect({ ...at([...formation(), unit({ id: 'flat', pos_x: null, pos_y: null })]) }).toMatchObject(CENTROID)
+  const base = [...formation(), ...enemies()]
+  // each intruder below sits ON the enemy stack (it would win outright if it were eligible)
+  // a destroyed ship has no glyph, so it cannot carry the badge either
+  expect({ ...at([...base, unit({ id: 'a-dead', alive_count: 0, pos_x: ENEMY.x, pos_y: ENEMY.y })]) })
+    .toMatchObject(ATTACK)
+  // an unpositioned (aggregate) row cannot be stood on
+  expect({ ...at([...base, unit({ id: 'a-flat', pos_x: null, pos_y: null })]) }).toMatchObject(ATTACK)
   // another encounter's ships never drag this fleet
-  expect({ ...at([...formation(), unit({ id: 'other', encounter_id: 'e-other', pos_x: 9999, pos_y: 9999 })]) })
-    .toMatchObject(CENTROID)
-  // enemies never fold into the player formation
-  expect({ ...at([...formation(), ...enemies()]) }).toMatchObject(CENTROID)
+  expect({ ...at([...base, unit({ id: 'a-other', encounter_id: 'e-other', pos_x: ENEMY.x, pos_y: ENEMY.y })]) })
+    .toMatchObject(ATTACK)
+  // an enemy is the TARGET, never the answer
+  expect({ ...at(base) }).toMatchObject(ATTACK)
 })
 
 test('space badge: fighting with NO positioned ship keeps the parked point but still says "in combat"', () => {
@@ -431,8 +432,8 @@ test('space badge: no live fight → the parked point and today’s label, exact
 })
 
 test('space badge: the place name follows the DRAWN point, and reads as combat while fighting', () => {
-  // a territory centred on the CENTROID, not on the park: only a badge that actually moved is inside
-  const terr = [{ id: 'loc-T', name: 'Snare', x: CENTROID.x, y: CENTROID.y, territory_radius: 5 }]
+  // a territory centred on the CHOSEN SHIP, not on the park: only a badge that actually moved is inside
+  const terr = [{ id: 'loc-T', name: 'Snare', x: ATTACK.x, y: ATTACK.y, territory_radius: 5 }]
   const [fighting] = resolveFleetSpaceBadges([parkedFleet()], groups, crew(), terr, [enc()], formation())
   expect(fighting.label).toBe('Fleet Alpha · 2 ships · in combat near Snare')
   // at rest the same fleet is outside that territory, so it keeps the plain label
@@ -446,16 +447,25 @@ test('space badge: the place name follows the DRAWN point, and reads as combat w
 })
 
 test('combat badge: the deliberate-hunt path obeys the SAME rule (0234 seeds at the centre, 0313/0314 move)', () => {
-  // loc-A is (100,200); put the formation 25 east of it, exactly as a few ticks of movement would
+  // The owner's production fight, translated so its anchor lands on loc-A's centre (100,200) —
+  // exactly the geometry the hunt arm produces once a few ticks of movement have run.
   const site = { x: 100, y: 200 }
-  const units = [
-    unit({ id: 'p1', pos_x: site.x + 20, pos_y: site.y + 10 }),
-    unit({ id: 'p2', pos_x: site.x + 30, pos_y: site.y + 10 }),
-    unit({ id: 'p3', pos_x: site.x + 20, pos_y: site.y - 10 }),
-    unit({ id: 'p4', pos_x: site.x + 30, pos_y: site.y - 10 }),
-  ]
+  const onSite = (u: CombatUnit): CombatUnit => ({
+    ...u,
+    pos_x: (u.pos_x as number) - PARK.x + site.x,
+    pos_y: (u.pos_y as number) - PARK.y + site.y,
+  })
+  const units = [...formation(), ...enemies()].map(onSite)
   const [badge] = resolveFleetCombatBadges([combatFleet()], groups, [], locations, [enc()], units)
-  expect({ x: badge.x, y: badge.y }).toEqual({ x: 125, y: 200 })
+  const expected = { x: ATTACK.x - PARK.x + site.x, y: ATTACK.y - PARK.y + site.y }
+  expect({ x: badge.x, y: badge.y }).toEqual(expected)
+  expect({ x: badge.x, y: badge.y }).not.toEqual(site) // not the centre it used to be pinned to
+  expect({ x: badge.x, y: badge.y }).not.toEqual({
+    x: CENTROID.x - PARK.x + site.x,
+    y: CENTROID.y - PARK.y + site.y,
+  }) // and not the centroid either — no ship stands there
+  // the drawn point IS one of this fleet's ships
+  expect(units.map((u) => `${u.pos_x},${u.pos_y}`)).toContain(`${badge.x},${badge.y}`)
   // the SITE still owns the label and the stacking key — the player must still know where they are
   expect(badge.label).toBe('Fleet Alpha · in combat at Alpha Port')
   expect(badge.locationId).toBe('loc-A')
@@ -494,7 +504,7 @@ test('fail closed: an unusable resting point renders NO badge — never NaN, nev
 // spec that rendered a combat fleet with the data wired, so nothing noticed the combat badge silently
 // falling back to the site centre. Runtime was correct throughout; the guard was not. Do NOT fold these
 // into one spec — a single fixture exercising one arm is exactly how the hole opened.
-test('layer: the wired encounters + units move the COMBAT badge onto its formation, through the map norm', () => {
+test('layer: the wired encounters + units move the COMBAT badge onto its lead SHIP, through the map norm', () => {
   const layer = teamMarkersLayer({
     movements: [],
     groups,
@@ -509,12 +519,12 @@ test('layer: the wired encounters + units move the COMBAT badge onto its formati
   const badge = layer.find((e) => e.type === TeamCombatBadge)
   expect(badge).toBeTruthy()
   const props = badge!.props as { x: number; y: number; label: string }
-  // NOT the site centre (100, 200) this used to be pinned to, and not an un-normed centroid either.
-  expect({ x: props.x, y: props.y }).toEqual({ x: CENTROID.x + 1, y: CENTROID.y + 1 })
+  // NOT the site centre (100, 200) this used to be pinned to, and not an un-normed position either.
+  expect({ x: props.x, y: props.y }).toEqual({ x: ATTACK.x + 1, y: ATTACK.y + 1 })
   expect(props.label).toBe('Fleet Alpha · 2 ships · in combat at Alpha Port')
 })
 
-test('layer: the wired encounters + units move the SPACE badge onto its formation, through the map norm', () => {
+test('layer: the wired encounters + units move the SPACE badge onto its lead SHIP, through the map norm', () => {
   const layer = teamMarkersLayer({
     movements: [],
     groups,
@@ -530,7 +540,7 @@ test('layer: the wired encounters + units move the SPACE badge onto its formatio
   expect(space).toBeTruthy()
   const props = space!.props as { x: number; y: number; label: string; testIdPrefix?: string }
   expect(props.testIdPrefix).toBe('fleet-space-badge')
-  expect({ x: props.x, y: props.y }).toEqual({ x: CENTROID.x + 1, y: CENTROID.y + 1 })
+  expect({ x: props.x, y: props.y }).toEqual({ x: ATTACK.x + 1, y: ATTACK.y + 1 })
   expect(props.label).toBe('Fleet Alpha · in combat')
 })
 

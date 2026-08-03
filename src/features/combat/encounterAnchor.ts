@@ -18,13 +18,16 @@
 // The anchor is where a fight STARTED. It is NOT where the fleet currently is: the units seeded
 // around it then MOVE (0313/0314), so within a tick or two the formation has walked 20-30 units off
 // it. "Where is this fleet right now" is a different question with a different answer, owned by
-// map/fleetFightPosition (the centroid of the fleet's own living, positioned units). This module
-// deliberately does not answer it, and no badge positions itself from the anchor.
+// map/fleetFightPosition (the fleet's own living, positioned ship NEAREST THE ENEMY). No badge is
+// ever DRAWN on the anchor.
 //
 // Its two live jobs, both still ONE authority apiece:
-//   • `resolveEncounterAnchor` — map/ambushEncounterNotice's ambush-vs-hunt test: an anchor OFF the
+//   • `resolveEncounterAnchor` — two readers, both asking about the fight's ORIGIN, which is exactly
+//     what the anchor records. (a) map/ambushEncounterNotice's ambush-vs-hunt test: an anchor OFF the
 //     linked location's centre means the fleet was dragged into this fight en route (0293's own rule).
-//     That question is about the fight's ORIGIN, which is exactly what the anchor records.
+//     (b) map/fleetFightPosition's TARGET of last resort: with no living positioned enemy left to
+//     measure against, "nearest the enemy" degrades to "nearest where the fight began". The anchor
+//     supplies the distance target there; it never supplies the drawn point.
 //   • `liveEncounterForFleet` / `isLiveEncounter` / `LIVE_ENCOUNTER_STATUSES` — the shared "which
 //     encounter is this fleet's, and is it live" selection, read by the notice and by
 //     map/fleetFightPosition. Neither re-derives the live-status set or the ambiguity rule.
