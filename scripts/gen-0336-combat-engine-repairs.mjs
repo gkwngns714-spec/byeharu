@@ -106,9 +106,14 @@ const H1_NEW = H1_OLD + `
   -- ██ 0336 THE FORMATION WORKING SET ██
   -- v_ring_radius is read ONCE per invocation from the SAME game_config key the encounter creator
   -- reads for the player escort ring, so both formations are laid out by one knob and one leaf.
+  -- v_formation_extent is HOW FAR THE PLAYER FORMATION ACTUALLY REACHES from the anchor, measured
+  -- per wave off the living player rows rather than assumed from the knob. It is what the wave
+  -- stands clear of, and measuring it is what keeps a LONE hull — which is its own lead and stands
+  -- ON the anchor, extent 0 — from being made to wait out an approach it has no screen to justify.
   -- v_spawn_slot is the wave's running 0-based slot, carried ACROSS plan units so a resolved wave
   -- of several archetypes still lands on one ring rather than restarting at slot 0 per archetype.
   v_ring_radius            double precision;
+  v_formation_extent       double precision;
   v_spawn_slot             integer;
   v_slot_x                 double precision;
   v_slot_y                 double precision;`;
@@ -231,7 +236,24 @@ const H6A_OLD = slice(F299, '0299', 696, 698,
   "for v_weapon in select value from jsonb_array_elements(v_plan->'units') loop");
 const H6A_NEW = edit(H6A_OLD,
   "            for v_weapon in select value from jsonb_array_elements(v_plan->'units') loop",
-  `            -- 0336: the slot counter is initialised for the WHOLE resolved wave, outside the
+  `            -- 0336 THE EXTENT THE WAVE MUST STAND CLEAR OF, MEASURED — never assumed from the knob.
+            -- Max over the LIVING player rows of their distance from the anchor: the lead sits ON it
+            -- (0), escorts sit out on the escort ring, and a lone hull IS its own lead, so its extent
+            -- is 0. Every player ship is therefore within v_formation_extent of the anchor, which is
+            -- exactly what makes the clearance structural: the minimum separation between any player
+            -- ship and any enemy is (extent + range + 1) - extent = range + 1, whatever the shape.
+            -- WHY MEASURED AND NOT THE RING KNOB: a lone hull has no screen, so standing the wave a
+            -- whole escort ring further out bought it nothing and cost it the opening of every wave.
+            -- Against the deployed mover at live knobs that was 9-15 SECONDS of silence per wave, on
+            -- endless waves, for the 71 of 77 production ships that are in no fleet at all. Measuring
+            -- the extent gives a screened fleet the approach its screen justifies and gives a lone
+            -- hull its fight immediately, from one expression, with the invariant untouched.
+            select coalesce(max(public.osn_distance(v_anchor_x, v_anchor_y, u.pos_x, u.pos_y)), 0)
+              into v_formation_extent
+              from combat_units u
+             where u.encounter_id = e.id and u.side = 'player' and u.alive_count > 0
+               and u.pos_x is not null and u.pos_y is not null;
+            -- 0336: the slot counter is initialised for the WHOLE resolved wave, outside the
             -- per-archetype loop, so a plan of several unit types still lays out one ring.
             v_spawn_slot := 0;
             for v_weapon in select value from jsonb_array_elements(v_plan->'units') loop`);
@@ -243,7 +265,7 @@ const H6B_NEW = edit(
     edit(RING_NOTE('              ') + '\n' + H6B_OLD,
       '                insert into combat_units (',
       `                select fp.x, fp.y into v_slot_x, v_slot_y
-                  from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius + v_enemy_range + 1, v_spawn_slot, 0.5) fp;
+                  from public.combat_formation_point(v_anchor_x, v_anchor_y, v_formation_extent + v_enemy_range + 1, v_spawn_slot, 0.5) fp;
                 insert into combat_units (`),
     'v_enemy_unit_hp, v_enemy_unit_hp, v_anchor_x, v_anchor_y, v_enemy_speed,',
     'v_enemy_unit_hp, v_enemy_unit_hp, v_slot_x, v_slot_y, v_enemy_speed,'),
@@ -254,10 +276,29 @@ const H7_OLD = slice(F299, '0299', 768, 780,
   'for v_spawn_i in 1 .. v_enemy_count loop', 'end loop;');
 const H7_NEW = edit(
   edit(
-    edit(RING_NOTE('          ') + '\n          v_spawn_slot := 0;\n' + H7_OLD,
+    edit(RING_NOTE('          ') + `
+          -- 0336 THE EXTENT THE WAVE MUST STAND CLEAR OF, MEASURED — never assumed from the knob.
+          -- Max over the LIVING player rows of their distance from the anchor: the lead sits ON it
+          -- (0), escorts sit out on the escort ring, and a lone hull IS its own lead, so its extent
+          -- is 0. Every player ship is therefore within v_formation_extent of the anchor, which is
+          -- exactly what makes the clearance structural: the minimum separation between any player
+          -- ship and any enemy is (extent + range + 1) - extent = range + 1, whatever the shape.
+          -- WHY MEASURED AND NOT THE RING KNOB: a lone hull has no screen, so standing the wave a
+          -- whole escort ring further out bought it nothing and cost it the opening of every wave.
+          -- Against the deployed mover at live knobs that was 9-15 SECONDS of silence per wave, on
+          -- endless waves, for the 71 of 77 production ships that are in no fleet at all. Measuring
+          -- the extent gives a screened fleet the approach its screen justifies and gives a lone
+          -- hull its fight immediately, from one expression, with the invariant untouched.
+          select coalesce(max(public.osn_distance(v_anchor_x, v_anchor_y, u.pos_x, u.pos_y)), 0)
+            into v_formation_extent
+            from combat_units u
+           where u.encounter_id = e.id and u.side = 'player' and u.alive_count > 0
+             and u.pos_x is not null and u.pos_y is not null;
+          v_spawn_slot := 0;
+` + H7_OLD,
       '            insert into combat_units (',
       `            select fp.x, fp.y into v_slot_x, v_slot_y
-              from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius + v_enemy_range + 1, v_spawn_slot, 0.5) fp;
+              from public.combat_formation_point(v_anchor_x, v_anchor_y, v_formation_extent + v_enemy_range + 1, v_spawn_slot, 0.5) fp;
             insert into combat_units (`),
     'v_enemy_unit_hp, v_enemy_unit_hp, v_anchor_x, v_anchor_y, v_enemy_speed,',
     'v_enemy_unit_hp, v_enemy_unit_hp, v_slot_x, v_slot_y, v_enemy_speed,'),
@@ -947,8 +988,8 @@ begin
   select ${STRIP} into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'process_combat_ticks';
-  v_n := (length(v_code) - length(replace(v_code, 'public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius + v_enemy_range + 1, v_spawn_slot, 0.5)', '')))
-         / length('public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius + v_enemy_range + 1, v_spawn_slot, 0.5)');
+  v_n := (length(v_code) - length(replace(v_code, 'public.combat_formation_point(v_anchor_x, v_anchor_y, v_formation_extent + v_enemy_range + 1, v_spawn_slot, 0.5)', '')))
+         / length('public.combat_formation_point(v_anchor_x, v_anchor_y, v_formation_extent + v_enemy_range + 1, v_spawn_slot, 0.5)');
   if v_n <> 2 then
     raise exception '0336 ASSERT (d) FAIL: % spawn arm(s) place their wave through the formation leaf (want exactly 2: the resolved arm and the synthetic arm)', v_n;
   end if;

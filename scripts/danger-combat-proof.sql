@@ -176,6 +176,40 @@
 --                              missile_salvo at a seq later than the unit_destroyed event naming it
 --                              in the same tick. Quantified over every unit of every side, so a
 --                              violation anywhere fails it.
+--   DZCOMBAT_PASS_OWNWORLD   — (0336) the proof OWNS its zone world: every seeded (non-drawn) danger
+--                              zone is deactivated in-txn before the first fixture is drawn, so a
+--                              randomly-shaped seed blob can never again cover a fixed test
+--                              coordinate on some runs and not others.
+--   DZCOMBAT_PASS_RANGEINVARIANT — (0336) a wave must never arrive inside its own reach. The knob
+--                              inequality over EVERY location with a positive difficulty (hidden
+--                              ones included), the SAME thing measured on a real staged wave, and
+--                              the kite band the closing enemy stops in proven to be inside the
+--                              player's own shortest gun.
+--   DZCOMBAT_PASS_VOLLEY     — (0336) a kill does not disarm the rest of the volley: a THREE-gun
+--                              hull against a wave larger than its gun count fires 3 salvos at 3
+--                              DISTINCT targets, lands 3 hits and destroys 3. The head resolved the
+--                              target once above the per-weapon loop and dropped guns 2 and 3.
+--   DZCOMBAT_PASS_WAVERING   — (0336) a wave arrives on a RING, not on one point: every unit on its
+--                              own position, none on the anchor, all at one measured radius, and
+--                              every one of them reproduced by combat_formation_point at half-slot
+--                              phase on a slot no other unit used.
+--   DZCOMBAT_PASS_RETREATNOSPAWN — (0336) pressing Retreat does not summon a bigger wave: with the
+--                              transition window PROVEN closed, the retreat tick raises no
+--                              wave_spawned, adds no enemy row and advances neither wave counter.
+--   DZCOMBAT_PASS_NOWEDGE    — (0336) a terminal-arm status mismatch CONCLUDES the encounter with a
+--                              warning instead of rolling the tick back forever: with the presence
+--                              completed out of band (and presence_complete proven to raise for it)
+--                              the death arm still reaches 'defeat', and last_resolved_at and
+--                              tick_number both ADVANCE.
+--   DZCOMBAT_PASS_ORDERSTABLE — (0336) the actor loop order is decided: over two consecutive ticks,
+--                              six firing units emit their salvos in ascending combat_units.id.
+--   DZCOMBAT_PASS_SHORTGUN   — (0336) a longer gun no longer disables a shorter one: a hull with an
+--                              autocannon and an Mk-II passes through the band where only the Mk-II
+--                              reaches and then settles inside its SHORTEST gun, with both module
+--                              types on the record.
+--   DZCOMBAT_PASS_RETREATCLEAR — (0336) all four terminal arms consume fleets.retreat_target_*: the
+--                              DEATH arm (which leaked on the head) clears it, and the SETTLE arm
+--                              still both clears it and USES it.
 --
 -- Self-rolling-back (begin;…rollback;, no COMMIT); every dark flag flipped ONLY inside the txn;
 -- provisioning is 100% real-RPC; group_sortie_members and combat_units are NEVER hand-written.
@@ -321,7 +355,7 @@ end $$;
 -- naming Reaver every time, with a DIFFERENT uuid every run. It was never a flake. It is a
 -- randomly-shaped world colliding with a fixed test coordinate:
 --   * The seeded pirate zones are regenerated on every fresh disposable database, and the generator
---     (0237, carried into 0296's rematerializer) builds each polygon from random(): 12..24 vertices,
+--     (0237, carried into 0296's rematerializer) builds each polygon from the session RNG: 12..24 vertices,
 --     3..6 lobes, a random phase, per-vertex angular jitter, and a per-vertex radial wobble of
 --     0.6..1.5 x territory_radius modulated by (1 +/- 0.18). So a seeded blob's reach from its own
 --     centre lands anywhere in [0.492, 1.77] x territory_radius, redrawn on every CI run.
@@ -340,7 +374,8 @@ end $$;
 -- assertion — REPOSITION's single-holder guard, REPOOVERLAP's quantifier, the intercept plans, the
 -- entry-point geometry — becomes deterministic, on every database, forever.
 -- WHY DEACTIVATE RATHER THAN RESHAPE: the only in-repo reshaper is the random generator itself, and
--- this file may not call random() (the 0041 determinism law). Status is the one lever that is both
+-- this file may not draw a session RNG value at all (the 0041 determinism law, which the harness's own
+-- static gate enforces by refusing the literal call). Status is the one lever that is both
 -- deterministic and already the authority every reader uses: RLS, get_danger_zones and
 -- pirate_intercept_leg_zone_hits all filter status = 'active'.
 -- WHY IT WEAKENS NOTHING: no block in this file references a seeded zone, by name or by id; every
@@ -2479,6 +2514,42 @@ end $$;
 --     is within its own range, with at least one earlier silent tick (fire strictly AFTER closure),
 --     and the pirate's first salvo at the escort obeys ITS OWN shorter range the same way.
 --
+-- ── 0336 RE-PREMISED AGAIN: THE WAVE NO LONGER STANDS ON THE ANCHOR ──────────────────────────────
+-- 0336 moved the enemy wave off the engagement anchor and onto a formation ring (radius
+-- spatial_formation_ring_radius, phase 0.5 — half a slot off the player ring). THREE of this
+-- block's premises were statements about the OLD geometry and every one of them had to be
+-- repointed rather than left to rot green:
+--   (1) THE RECURRENCE SEED. It used to be the ring radius, which was correct only while the pirate
+--       stood on the anchor and the escort on the ring. The wave now stands on a ring of its own —
+--       further out than the player's, by its own weapon range plus one — at a different phase, so
+--       the escort-pirate gap is a chord between two different radii and is not the ring at all.
+--       The seed is now that gap, SOLVED FOR by this block and then verified against
+--       combat_formation_point, the very leaf the tick composes to place the wave.
+--   (2) "THE PIRATE MOVED OFF ITS SPAWN ANCHOR" compared the pirate's post-tick position against
+--       combat_encounters.engagement_x/y. After 0336 it never spawns there, so that comparison
+--       passes for free and proves nothing — a vacuity hole, not merely a wrong message. It now
+--       compares against the pirate's OWN spawn point and demands the step be exactly its own
+--       frozen move_speed.
+--   (3) "THE LEAD (dist 0) FIRES ON TICK 1" is DEAD, and it cannot be rescued. The lead stands on
+--       the anchor and every escort stands on the ring, so the escort is now ALWAYS closer to the
+--       wave than the lead is (0.39 of a radius against a whole radius). There is no ring radius at
+--       which the lead is in range and an escort is not, which is exactly what the old assert
+--       needed. THE HONEST REPOINT, and it is the STRONGER statement: after 0336 the opening tick
+--       of a fight is SILENT ON BOTH SIDES — the wave spawns outside every gun's reach, both sides
+--       CLOSE, and the first shot is fired after an approach. This block now asserts that, over
+--       every unit of both sides, and the lead is covered by it like everybody else.
+-- THE BLOCK ALSO OWNS ITS RING NOW, and it owns it for ONE window only. 0336 spawns a wave at
+-- `spatial_formation_ring_radius + THAT WAVE'S OWN weapon range + 1`, so the knob no longer means
+-- "how far out the enemy is" — it means "how far out the player formation is, and a floor under the
+-- enemy's clearance". The block therefore leaves it alone while the encounter is CREATED (so the
+-- escort spawns on the committed ring, exactly as every other fight in the world does) and then
+-- solves for the ring that puts the escort-to-wave SPAWN GAP at r_esc + 1.5 closing steps, from
+-- this encounter's own frozen speeds and the wave range derived from the same expression the spawn
+-- arm evaluates. That makes the approach take EXACTLY two closing ticks at any positive speed, so
+-- the tick count pinned below is a property of the construction rather than of whatever the seed
+-- happens to carry. The knob is restored at the end. Every OTHER geometry knob — both weapon
+-- ranges, both speeds — is still the seeded one: those are the subject, and they are not touched.
+--
 -- ── 0316 RE-PREMISED: THE TICK COUNT IS NOW A PINNED PROPERTY, NOT AN OBSERVATION ────────────────
 -- 0316 divided every combat DISTANCE and every combat RATE by 5 together (gun 25→5, ring 30→6,
 -- pirate range 18+0.2·D→3.6+0.04·D, pirate speed 3+0.2·D→0.6+0.04·D, and the player's world-travel
@@ -2521,6 +2592,14 @@ declare
   -- number typed into the harness.
   v_sp_esc double precision; v_sp_en double precision;
   v_exp_tick int; v_sim double precision;
+  -- 0336: the OWNED ring and the DERIVED spawn geometry that replaced it as the recurrence seed.
+  v_ring_before double precision; v_r_fb double precision;
+  v_fx double precision; v_fy double precision;   -- the pirate's own spawn point, through the leaf
+  v_gap0 double precision;                        -- the escort<->pirate gap AT SPAWN (never the ring)
+  v_step double precision;                        -- how far the pirate actually moved on tick 1
+  v_bd double precision;                          -- the site difficulty both wave formulas take
+  v_r_en_pred double precision;                   -- the wave's range, derived BEFORE it exists
+  v_sp_en_pred double precision;                  -- ditto its speed; both re-asserted against the row
 begin
   -- ── fresh funded player, two ships, ONE group, command designated — 100% real RPCs. ────────────
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -2552,6 +2631,18 @@ begin
   --    must never trigger mid-scenario. Captured and restored below. ───────────────────────────────
   select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
   perform public.set_game_config('enemy_attack_base', '0.001'::jsonb);
+
+  -- ── 0336: the block captures the ring but does NOT set it yet. The knob is used at TWO different
+  --    moments and this block needs them to say different things: the encounter creator reads it to
+  --    lay out the ESCORT ring, and the tick reads it to place the WAVE at
+  --    `ring + that wave's own weapon range + 1`. Leaving it alone until after creation means the
+  --    escort spawns on the committed ring (which is what every other block sees) while the wave
+  --    radius is then chosen, below, from numbers this encounter has actually produced — the escort's
+  --    real frozen range and speed. It is restored at the end of the block. Every OTHER geometry knob
+  --    — both weapon ranges, both speeds — stays seeded: those are the subject, and they are not
+  --    touched.
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30) into v_ring_before;
+  v_ring := v_ring_before;
 
   -- ── the REAL ambush, through the STANDING Auto Exit corridor (the AUTOEXIT re-entry idiom: the
   --    zone already stands; a new fleet crossing it gets its own certain pending intercept). ───────
@@ -2585,7 +2676,6 @@ begin
   select max((w->>'range')::double precision) into v_r_esc
     from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_esc;
   if v_r_esc is null then raise exception 'CLOSURE FAIL: the escort carries no ranged weapon at all (want the fitted/fallback range)'; end if;
-  v_ring := coalesce(public.cfg_num('spatial_formation_ring_radius'), 30);
   select public.osn_distance(e.pos_x, e.pos_y, c.pos_x, c.pos_y) into d_pre
     from public.combat_units e, public.combat_units c where e.id = u_esc and c.id = u_cmd;
   -- NULL IS FAILURE, not a pass. combat_units.pos_x/pos_y are NULLABLE (0234:173), so an
@@ -2599,9 +2689,63 @@ begin
     raise exception 'CLOSURE FAIL: escort spawned % from the command ship (want the % ring)', d_pre, v_ring;
   end if;
 
-  -- ── TICK 1: the wave spawns at the anchor (dist 0 from the command ship, one ring from the
-  --    escort) inside this very call, then everyone moves/fires once. ──────────────────────────────
+  -- ── 0336: CHOOSE THE WAVE'S SPAWN RADIUS FROM THIS ENCOUNTER'S OWN NUMBERS. ────────────────────
+  -- The tick places slot k of a wave at combat_formation_point(anchor, ring + THAT WAVE'S OWN weapon
+  -- range + 1, k, 0.5). Both terms are derivable before the wave exists: the ring is the knob, and
+  -- the wave's range is the same base + difficulty*per_difficulty expression the spawn arm
+  -- evaluates. So this block picks the ring that puts the escort-to-wave SPAWN GAP exactly where it
+  -- wants it, instead of accepting whatever the world happened to be set to.
+  -- THE TARGET GAP is r_esc + 1.5 closing steps, where a step is the two frozen speeds together
+  -- (both sides move from the same pre-move snapshot). That makes the approach take EXACTLY two
+  -- closing ticks at any positive speed — tick 2's pre-move gap is r_esc + 0.5 steps, still outside,
+  -- and tick 3's is r_esc - 0.5 steps, inside — so the pinned tick count below is a property of the
+  -- construction rather than of the particular speeds the seed happens to carry.
+  -- THE GEOMETRY: the escort sits at radius R1 from the anchor at slot 0 phase 0, the wave at radius
+  -- Re at slot 0 phase 0.5, i.e. pi/8 of arc apart. Solving |escort - wave| = G for Re gives
+  -- Re = R1*cos(pi/8) + sqrt(G^2 - R1^2*sin^2(pi/8)), and the ring to ask for is Re minus the
+  -- wave's own range minus 1.
+  select engagement_x, engagement_y into nx0, ny0 from public.combat_encounters where id = v_enc;
+  if nx0 is null or ny0 is null then
+    raise exception 'CLOSURE FAIL: the encounter carries no engagement anchor (engagement_x/y is NULL) — the spawn point this assert compares against does not exist';
+  end if;
   select pos_x, pos_y into ex0, ey0 from public.combat_units where id = u_esc;
+  select move_speed into v_sp_esc from public.combat_units where id = u_esc;
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
+  v_r_en_pred  := public.cfg_num('enemy_synthetic_range_base') + v_bd * public.cfg_num('enemy_synthetic_range_per_difficulty');
+  v_sp_en_pred := public.cfg_num('enemy_synthetic_speed_base') + v_bd * public.cfg_num('enemy_synthetic_speed_per_difficulty');
+  if ex0 is null or ey0 is null or v_sp_esc is null or v_bd is null
+     or v_r_en_pred is null or v_sp_en_pred is null then
+    raise exception 'CLOSURE FAIL: the escort spawn (%,%), its frozen speed (%), the site difficulty (%) or the derived wave range/speed (% / %) is NULL — the wave radius this block has to choose cannot be derived',
+      ex0, ey0, v_sp_esc, v_bd, v_r_en_pred, v_sp_en_pred;
+  end if;
+  if v_sp_esc <= 0 or v_sp_en_pred <= 0 then
+    raise exception 'CLOSURE FAIL: a closing speed is not positive (escort %, wave %) — one side cannot close at all, so the approach is not a phase of the fight', v_sp_esc, v_sp_en_pred;
+  end if;
+  v_gap0 := v_r_esc + 1.5 * (v_sp_esc + v_sp_en_pred);
+  v_ring := v_gap0 * v_gap0 - d_pre * d_pre * sin(pi() / 8) * sin(pi() / 8);
+  if v_ring <= 0 then
+    raise exception 'CLOSURE FAIL: the escort ring % is too wide for a % spawn gap — no wave radius on the far side of the anchor can produce it, so this block cannot stage its own approach', d_pre, v_gap0;
+  end if;
+  v_ring := d_pre * cos(pi() / 8) + sqrt(v_ring) - v_r_en_pred - 1;
+  if v_ring <= 0 then
+    raise exception 'CLOSURE FAIL: the required formation ring is % — the wave own reach (%) plus its structural unit of clearance already exceeds the gap this block needs, so the approach cannot be staged at these knobs', v_ring, v_r_en_pred;
+  end if;
+  perform public.set_game_config('spatial_formation_ring_radius', to_jsonb(round(v_ring::numeric, 9)));
+  v_ring := coalesce(public.cfg_num('spatial_formation_ring_radius'), v_ring);
+  -- and the slot-0 point that ring implies, through the SAME leaf the tick composes.
+  select fp.x, fp.y into v_fx, v_fy
+    from public.combat_formation_point(nx0, ny0, v_ring + v_r_en_pred + 1, 0, 0.5) fp;
+  if v_fx is null or v_fy is null then
+    raise exception 'CLOSURE FAIL: the wave slot-0 point is NULL — the closure recurrence would have no gap to start from';
+  end if;
+  -- SELF-CHECK, and it is the line that fails LOUDLY if the spawn radius formula ever changes: the
+  -- geometry this block just solved must reproduce the gap it asked for.
+  if abs(public.osn_distance(ex0, ey0, v_fx, v_fy) - v_gap0) > 1e-6 then
+    raise exception 'CLOSURE FAIL: the ring solved for a % spawn gap actually places slot 0 at % from the escort — the wave radius is no longer ring + its own range + 1, so re-derive the arithmetic above rather than loosening anything below',
+      v_gap0, public.osn_distance(ex0, ey0, v_fx, v_fy);
+  end if;
   perform pg_temp.ae_tick(v_enc);
   select id into u_en from public.combat_units
     where encounter_id = v_enc and side = 'enemy' and alive_count > 0
@@ -2611,10 +2755,11 @@ begin
     from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_en;
   if v_r_en is null then raise exception 'CLOSURE FAIL: the pirate carries no range in its weapons_json'; end if;
 
-  -- THE PREMISE 0313 ESTABLISHES, asserted not assumed: the spawn gap exceeds BOTH short ranges.
-  if v_ring <= v_r_esc or v_ring <= v_r_en then
-    raise exception 'CLOSURE FAIL premise: the % ring does not exceed both ranges (escort %, pirate %) — the seeded world no longer forces closure and this scenario proves nothing',
-      v_ring, v_r_esc, v_r_en;
+  -- THE PREMISE 0313 ESTABLISHES, asserted not assumed — now against the MEASURED spawn gap rather
+  -- than the ring, because after 0336 the ring is no longer the distance between these two units.
+  if v_gap0 <= v_r_esc or v_gap0 <= v_r_en then
+    raise exception 'CLOSURE FAIL premise: the % spawn gap does not exceed both ranges (escort %, pirate %) — the seeded world no longer forces closure and this scenario proves nothing',
+      v_gap0, v_r_esc, v_r_en;
   end if;
 
   -- ── 0316 THE PREDICTED CLOSURE TICK, from the engine's own recurrence over THIS encounter's rows.
@@ -2631,6 +2776,14 @@ begin
   if v_sp_esc <= 0 or v_sp_en <= 0 then
     raise exception 'CLOSURE FAIL: a frozen move_speed is not positive (escort %, pirate %) — one side cannot close at all, so the approach is not a phase of the fight', v_sp_esc, v_sp_en;
   end if;
+  -- THE DERIVATION THAT CHOSE THE RING MUST MATCH THE WAVE THAT ACTUALLY ARRIVED. The spawn radius
+  -- was solved from a PREDICTED range and speed (base + difficulty*per_difficulty, the same two
+  -- expressions the spawn arm evaluates) because the wave did not exist yet. If the row disagrees,
+  -- every number downstream was solved for a fight that is not the one on the table.
+  if abs(v_r_en - v_r_en_pred) > 1e-6 or abs(v_sp_en - v_sp_en_pred) > 1e-6 then
+    raise exception 'CLOSURE FAIL: the wave arrived with range % and speed % but this block solved its spawn radius for % and % — the synthetic wave formulas moved and the geometry below was chosen for the wrong fight',
+      v_r_en, v_sp_en, v_r_en_pred, v_sp_en_pred;
+  end if;
   -- THE MODEL'S OWN PREMISE, asserted rather than assumed: the recurrence below applies BOTH sides'
   -- CLOSE step on every tick it runs, which is only correct while BOTH are out of their own range.
   -- The loop condition covers the escort; the pirate is covered only if its range is the shorter of
@@ -2640,7 +2793,7 @@ begin
     raise exception 'CLOSURE FAIL premise: the pirate range % is not strictly under the escort range % — the closure recurrence assumes the escort out-ranges the pirate (otherwise the pirate KITEs or HOLDs during the approach and the predicted tick models a fight that is not happening)',
       v_r_en, v_r_esc;
   end if;
-  v_sim := v_ring; v_exp_tick := 1;
+  v_sim := v_gap0; v_exp_tick := 1;
   while v_sim > v_r_esc and v_exp_tick <= 24 loop
     v_sim := v_sim - least(v_sp_esc, v_sim) - least(v_sp_en, v_sim);
     v_exp_tick := v_exp_tick + 1;
@@ -2649,26 +2802,40 @@ begin
   -- that a range cut made WITHOUT the matching ring/speed cut must fail on — 25 units of gap closed
   -- at ~1.2 units/tick is ~21 ticks, i.e. about a minute of a fight in which the escorts do nothing.
   if v_exp_tick > 3 then
-    raise exception 'CLOSURE FAIL: the seeded world needs % ticks for an escort to reach firing range (ring %, escort range %, escort speed %, pirate speed %) — the sprawl is back; closure must complete within one or two silent ticks',
-      v_exp_tick, v_ring, v_r_esc, v_sp_esc, v_sp_en;
+    raise exception 'CLOSURE FAIL: the seeded world needs % ticks for an escort to reach firing range (spawn gap %, escort range %, escort speed %, pirate speed %) — the sprawl is back; closure must complete within one or two silent ticks',
+      v_exp_tick, v_gap0, v_r_esc, v_sp_esc, v_sp_en;
   end if;
   if v_exp_tick < 2 then
-    raise exception 'CLOSURE FAIL: the recurrence says the escort is already in range at spawn (ring %, escort range %) — there would be nothing to close and this block would prove nothing',
-      v_ring, v_r_esc;
+    raise exception 'CLOSURE FAIL: the recurrence says the escort is already in range at spawn (gap %, escort range %) — there would be nothing to close and this block would prove nothing',
+      v_gap0, v_r_esc;
   end if;
-  -- and the approach must not be a TELEPORT either: a single tick that swallows the whole ring puts
+  -- and the approach must not be a TELEPORT either: a single tick that swallows the whole gap puts
   -- the pirate on top of the escort and every unit HOLDs at contact forever after, which is position
   -- ceasing to matter — the very thing this block exists to witness.
-  if v_sp_en > v_ring / 2 then
-    raise exception 'CLOSURE FAIL: the pirate closes % of the % ring in one tick — it arrives on top of its target and the CLOSE/KITE arms run for a single tick before everything HOLDs at contact',
-      v_sp_en, v_ring;
+  if v_sp_en > v_gap0 / 2 then
+    raise exception 'CLOSURE FAIL: the pirate closes % of the % spawn gap in one tick — it arrives on top of its target and the CLOSE/KITE arms run for a single tick before everything HOLDs at contact',
+      v_sp_en, v_gap0;
   end if;
 
-  -- tick 1, the command ship (dist 0) FIRED — the fight starts immediately despite the gap.
+  -- ── 0336 REPOINT: TICK 1 IS SILENT ON BOTH SIDES, AND THAT IS THE STRONGER STATEMENT. ───────────
+  -- This assert used to read "the command ship (dist 0) FIRED on tick 1 — the fight starts instantly
+  -- despite the gap", and it was true only because every pirate spawned ON the engagement anchor,
+  -- which is where the lead stands. 0336 deletes that: the wave spawns on a formation ring, so
+  -- NOTHING is at distance 0 from anybody any more, and the lead — alone on the anchor while every
+  -- escort stands on the ring — is now the FURTHEST player hull from the wave, not the nearest.
+  -- There is no ring radius that rescues the old assert: the escort-to-wave gap is a chord of the
+  -- ring and the lead-to-wave gap is a radius, so an escort is always closer than the lead.
+  -- So the property is repointed to what 0336 actually establishes, quantified over EVERY unit of
+  -- BOTH sides rather than over one hull: the opening tick of a fight is silent, because the wave
+  -- arrives outside every gun's reach and both sides must CLOSE before anyone shoots. The lead is
+  -- covered by that like everybody else, and a body that let anything fire across the spawn gap —
+  -- either side — fails here.
   select count(*) into n from public.combat_events
-    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
-      and source = 'player' and payload_json->>'unit_id' = u_cmd::text;
-  if n < 1 then raise exception 'CLOSURE FAIL: the command ship (dist 0) did not fire on tick 1 — the fight no longer starts instantly'; end if;
+    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo';
+  if n <> 0 then
+    raise exception 'CLOSURE FAIL: % salvo(s) on tick 1 — the wave is meant to arrive OUTSIDE every gun on the field (escort gap %, escort range %, pirate range %), so the opening tick cannot start instantly any more; something fired across the spawn gap',
+      n, v_gap0, v_r_esc, v_r_en;
+  end if;
 
   -- tick 1, the escort and the pirate both MOVED (the first observed movement in a real fight)...
   -- Every operand is null-pinned FIRST. `x is not distinct from NULL` is FALSE for any real number,
@@ -2682,25 +2849,36 @@ begin
   if ex1 = ex0 and ey1 = ey0 then
     raise exception 'CLOSURE FAIL: the escort did not move on tick 1 (still at %,%) — the CLOSE arm never ran', ex0, ey0;
   end if;
-  select engagement_x, engagement_y into nx0, ny0 from public.combat_encounters where id = v_enc;
+  -- ── 0336 REPOINT: the pirate is measured against ITS OWN SPAWN POINT, never against the anchor.
+  -- This used to compare the pirate's post-tick position with combat_encounters.engagement_x/y. That
+  -- was only a movement test while the wave spawned ON the anchor; after 0336 it never spawns there,
+  -- so the comparison would pass for free on every run — a VACUITY hole, not a wrong message. It now
+  -- compares against (v_fx, v_fy), the slot-0 point combat_formation_point itself produces, and it
+  -- demands the step be EXACTLY the pirate's own frozen move_speed — which pins the spawn point and
+  -- the CLOSE step in one assert. IF THE WAVE'S SPAWN RADIUS EVER STOPS BEING
+  -- spatial_formation_ring_radius, this is the line that fails, loudly and diagnosably, because
+  -- (v_fx, v_fy) will no longer be where the unit started: re-derive the owned ring above, do not
+  -- loosen this.
   select pos_x, pos_y into nx1, ny1 from public.combat_units where id = u_en;
-  if nx0 is null or ny0 is null then
-    raise exception 'CLOSURE FAIL: the encounter carries no engagement anchor (engagement_x/y is NULL) — the spawn point this assert compares against does not exist';
-  end if;
   if nx1 is null or ny1 is null then
     raise exception 'CLOSURE FAIL: the pirate has a NULL position after tick 1 — an unpositioned enemy cannot prove it moved off the anchor';
   end if;
-  if nx1 = nx0 and ny1 = ny0 then
-    raise exception 'CLOSURE FAIL: the pirate did not move off its spawn anchor on tick 1 — the enemy CLOSE arm never ran';
+  if nx1 = v_fx and ny1 = v_fy then
+    raise exception 'CLOSURE FAIL: the pirate did not move off its own ring spawn point (%,%) on tick 1 — the enemy CLOSE arm never ran', v_fx, v_fy;
   end if;
-  -- ...toward each other: the gap after tick 1 is smaller than the spawn ring.
+  v_step := public.osn_distance(v_fx, v_fy, nx1, ny1);
+  if v_step is null or abs(v_step - least(v_sp_en, v_gap0)) > 1e-6 then
+    raise exception 'CLOSURE FAIL: the pirate moved % from the slot-0 formation point (%,%) but its own frozen move_speed is % — either the wave did not spawn where combat_formation_point puts it (re-derive this block''s owned ring) or the CLOSE step is no longer capped by move_speed',
+      v_step, v_fx, v_fy, v_sp_en;
+  end if;
+  -- ...toward each other: the gap after tick 1 is smaller than the MEASURED spawn gap.
   select public.osn_distance(e.pos_x, e.pos_y, x.pos_x, x.pos_y) into d_t1
     from public.combat_units e, public.combat_units x where e.id = u_esc and x.id = u_en;
   if d_t1 is null then
     raise exception 'CLOSURE FAIL: the escort-pirate gap after tick 1 is NULL — the closure comparison would be vacuous';
   end if;
-  if d_t1 >= v_ring then
-    raise exception 'CLOSURE FAIL: the escort-pirate gap after tick 1 is % (want < the % spawn gap) — they are not closing', d_t1, v_ring;
+  if d_t1 >= v_gap0 then
+    raise exception 'CLOSURE FAIL: the escort-pirate gap after tick 1 is % (want < the % spawn gap) — they are not closing', d_t1, v_gap0;
   end if;
   -- ...and NEITHER of them fired (both pre-move distances were the full ring, beyond both ranges).
   select count(*) into n from public.combat_events
@@ -2751,8 +2929,8 @@ begin
   -- either the tick no longer moves both sides from one frozen snapshot, or the fire gate no longer
   -- reads the PRE-move distance — both silent, both invisible to every static check in the repo.
   if v_esc_fire_tick is distinct from v_exp_tick then
-    raise exception 'CLOSURE FAIL: the escort''s first salvo landed on tick % but the engine''s own recurrence over this encounter (ring %, escort range %, escort speed %, pirate speed %) predicts tick % — the movement/fire arithmetic no longer matches the geometry the knobs were chosen for',
-      v_esc_fire_tick, v_ring, v_r_esc, v_sp_esc, v_sp_en, v_exp_tick;
+    raise exception 'CLOSURE FAIL: the escort''s first salvo landed on tick % but the engine''s own recurrence over this encounter (spawn gap %, escort range %, escort speed %, pirate speed %) predicts tick % — the movement/fire arithmetic no longer matches the geometry the knobs were chosen for',
+      v_esc_fire_tick, v_gap0, v_r_esc, v_sp_esc, v_sp_en, v_exp_tick;
   end if;
   if v_esc_fire_dist > v_r_esc + 1e-6 then
     raise exception 'CLOSURE FAIL: the escort''s first salvo (tick %) left at pre-move distance % — OUTSIDE its own % range; the fire gate is not honouring the cut range',
@@ -2776,9 +2954,13 @@ begin
   end if;
 
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
+  -- and give the ring back exactly as it was found: this block OWNS it (0336 raises it by
+  -- derivation) and must leave the world as it entered it, or DZCOMBAT_PASS_RANGEINVARIANT below
+  -- would be measuring this block's fixture instead of the migration's own derived value.
+  perform public.set_game_config('spatial_formation_ring_radius', to_jsonb(v_ring_before));
 
-  raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED post-0316 geometry (escort range %, pirate range %, spawn gap %, escort speed %, pirate speed %), the lead fired on tick 1 while the escort and the pirate MOVED across ticks (gap % -> % after tick 1) and held fire until closure — escort''s first salvo tick %, EXACTLY the tick the engine''s own recurrence predicts, at pre-move distance % (<= its range); pirate''s tick % at % (<= its range); % additional silent closing tick(s) after the verified-silent tick 1: position matters in a real fight, and the number of ticks it takes is now pinned',
-    v_r_esc, v_r_en, v_ring, v_sp_esc, v_sp_en, v_ring, d_t1, v_esc_fire_tick, round(v_esc_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
+  raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED ranges and speeds (escort range %, pirate range %, escort speed %, pirate speed %) and a ring SOLVED to % so the wave would arrive exactly % from the escort, the wave landed on its own ring — outside every gun on the field, so tick 1 was SILENT ON BOTH SIDES (0336 moved the wave off the anchor and out past its own reach; nothing stands at distance 0 any more) — and the escort and the pirate then MOVED toward each other (gap % -> % after tick 1, the pirate stepping exactly its own frozen speed off the slot-0 formation point) and held fire until closure: escort''s first salvo tick %, EXACTLY the tick the engine''s own recurrence predicts, at pre-move distance % (<= its range); pirate''s tick % at % (<= its range); % additional silent closing tick(s): position matters in a real fight, and the number of ticks it takes is still pinned',
+    v_r_esc, v_r_en, v_sp_esc, v_sp_en, v_ring, v_gap0, v_gap0, d_t1, v_esc_fire_tick, round(v_esc_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_LEAD (0315): EVERY FLEET ENTERING COMBAT HAS A LEAD ══════════════════════════
@@ -4687,6 +4869,1526 @@ begin
 
   raise notice 'DZCOMBAT_PASS_DOCKWRECK ok: in a group with NO unified fleet (production''s own shape), a wreck that owns no fleet row and — being grouped — can hold no berth resolved its FLEETMATE''S dock (%) instead of nothing, through the member-ownership clause alone (the fleetmate''s commission fleet carries no group_id). The living ship and the wreck report the SAME port, get_my_disabled_ships lists it at_port=true, and it repaired to %/% WITHOUT a tow — still in its group, still berthless, so no haul occurred. A wreck whose group holds no docked fleet still resolves nothing, is still refused with not_at_port, and is still recovered by tow-then-repair; and a stranger''s tow and repair are both refused, writing nothing',
     v_port, v_hp, v_max;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_RANGEINVARIANT (0336): A WAVE MUST NEVER ARRIVE INSIDE ITS OWN REACH ════════
+-- THE DEFECT, executed read-only against the deployed mover at production's live knobs: at The
+-- Furnace (base_difficulty 60, hidden) the synthetic enemy range is 3.6 + 0.04*60 = 6.0 and the
+-- formation ring was 6.0, so the wave spawned INSIDE its own range, KITEd on tick one and settled at
+-- enemy_range - player_speed = 5.8 — beyond the player's 5. It never fired; the pirate fired every
+-- tick. A firing squad, not a fight, and it was decided by one comparison between two numbers.
+-- WHY THERE IS NO KNOB INEQUALITY IN THIS BLOCK, AND WHY ITS ABSENCE IS THE BETTER PROOF. The first
+-- cut asserted `spatial_formation_ring_radius > enemy_synthetic_range_base + D *
+-- enemy_synthetic_range_per_difficulty` for every location — the shape the fix took when it was a
+-- one-off raise of the ring at apply time. That is deleted, deliberately. 0336 now spawns the wave
+-- at `spatial_formation_ring_radius + THAT WAVE'S OWN weapon range + 1`, so the clearance is a
+-- STRUCTURE rather than a tuning and no knob value can violate it. Asserting the old inequality
+-- would now be asserting a coincidence, and it would go RED on a correct system the moment either
+-- knob moved: the ambient-default law, in the form it takes when a fix stops being a number.
+-- TWO PROPERTIES, deliberately of different kinds:
+--   (1) THE CLEARANCE, MEASURED on a real staged wave through the real chain — the minimum distance
+--       from EVERY player unit to EVERY enemy unit must exceed the wave's own frozen weapon range.
+--       This WITNESSES the geometry instead of inferring it, so it survives any future change to
+--       how the spawn radius is computed and fails the moment a wave can arrive somewhere it can
+--       shoot from and not be shot back at.
+--   (2) THE CLOSING ENEMY MUST STOP SOMEWHERE THE PLAYER CAN REACH, over EVERY location that can
+--       host a fight — including hidden ones, because a hidden site is one that has not been
+--       RELEASED yet, not one that cannot be fought. (1) only guarantees the wave STARTS outside its
+--       own reach and therefore closes. Where it STOPS is the kite band at enemy_range -
+--       player_speed, and if that is beyond the player's own gun the standoff is back in a different
+--       costume. Derived from game_config and the module catalog, never hard-coded. The migration
+--       carries an equivalent in its own assert (g); the duplication is wanted — that one proves the
+--       TEXT, this one proves the BEHAVIOUR.
+-- IT RUNS FIRST AMONG THE 0336 BLOCKS ON PURPOSE: every block below OWNS a formation ring (each
+-- needs its fixture in contact on the tick it measures) and restores it, so this is the one place
+-- the COMMITTED value is still the value in the row. It captures that value and the last block
+-- re-asserts it, so a restore that leaks fails loudly instead of moving the world under a later run.
+do $$
+declare
+  r jsonb; n int;
+  uV uuid; sV uuid; gV uuid;
+  o_x double precision; o_y double precision;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  v_mv uuid; v_enc uuid; mv record; pi record;
+  v_ring double precision; v_base double precision; v_per double precision;
+  v_pmin double precision; v_fb double precision; v_cat double precision;
+  v_spd_base double precision; v_spd_per double precision;
+  v_name text; v_status text; v_bd double precision; v_need double precision;
+  v_er double precision; v_espd double precision;
+  v_minsep double precision; v_wr double precision;
+  n_locs int; n_enemy int; n_null int;
+begin
+  -- ── THE KNOBS THE QUANTIFIED HALF IS MADE OF, read from the live rows, none assumed. v_ring is
+  --    NOT asserted against anything — 0336 stopped making the clearance a comparison between two
+  --    knobs — it is captured only so the last 0336 block can prove no fixture leaked it. ──────────
+  v_ring := public.cfg_num('spatial_formation_ring_radius');
+  v_base := public.cfg_num('enemy_synthetic_range_base');
+  v_per  := public.cfg_num('enemy_synthetic_range_per_difficulty');
+  if v_ring is null or v_base is null or v_per is null then
+    raise exception 'RANGEINVARIANT FAIL: a knob this invariant is made of is missing (ring %, enemy range base %, per difficulty %) — a comparison against NULL is TRUE for nothing and FALSE for nothing, so the whole check would prove nothing',
+      v_ring, v_base, v_per;
+  end if;
+  -- NON-VACUITY, first half: an empty location set satisfies a universally quantified claim for
+  -- free. If nothing in the world can host a fight, that is a fact about the seed the next author
+  -- must decide about — never a green run.
+  select count(*) into n_locs from public.locations where base_difficulty > 0;
+  if n_locs = 0 then
+    raise exception 'RANGEINVARIANT FAIL: not one location carries a positive base_difficulty — there is no site to quantify over and this invariant would be vacuously true on an empty world';
+  end if;
+  -- NON-VACUITY, second half: a NULL difficulty is not covered by `base_difficulty > 0`, so a row
+  -- with an unknown difficulty would slip out of the quantifier unnoticed.
+  select count(*) into n_null from public.locations where base_difficulty is null;
+  if n_null <> 0 then
+    raise exception 'RANGEINVARIANT FAIL: % location(s) carry a NULL base_difficulty — they fall outside this quantifier and their wave geometry is unchecked', n_null;
+  end if;
+  -- the widest synthetic range any live site can produce — reported in the notice as the scale the
+  -- structural clearance has to cover, never compared against the ring.
+  select max(v_base + l.base_difficulty * v_per) into v_need
+    from public.locations l where l.base_difficulty > 0;
+
+  -- ── (2) WHERE THE CLOSING ENEMY STOPS. The kite band is enemy_range - player_speed; a wave that
+  --    settles beyond the player's own shortest gun rebuilds the standoff even though (1) holds. The
+  --    player's reach is the SMALLEST thing that can be brought to a fight: the synthesized fallback
+  --    weapon, or the shortest FIRING module in the catalog (a rig is not a gun — 0308's predicate
+  --    is the authority, reused rather than re-stated). ──────────────────────────────────────────
+  v_fb := public.cfg_num('combat_player_fallback_weapon_range');
+  select min(t.range) into v_cat from public.module_types t
+   where t.range is not null and public.module_is_firing_weapon(t);
+  if v_fb is null or v_cat is null then
+    raise exception 'RANGEINVARIANT FAIL: the player fallback range (%) or the shortest catalog firing weapon (%) is missing — there is no player reach to compare the kite band against', v_fb, v_cat;
+  end if;
+  v_pmin := least(v_fb, v_cat);
+  v_spd_base := public.cfg_num('enemy_synthetic_speed_base');
+  v_spd_per  := public.cfg_num('enemy_synthetic_speed_per_difficulty');
+  if v_spd_base is null or v_spd_per is null then
+    raise exception 'RANGEINVARIANT FAIL: the enemy speed knobs are missing (base %, per difficulty %) — the kite band has no width', v_spd_base, v_spd_per;
+  end if;
+  select l.name, l.status, l.base_difficulty,
+         v_base + l.base_difficulty * v_per, v_spd_base + l.base_difficulty * v_spd_per
+    into v_name, v_status, v_bd, v_er, v_espd
+    from public.locations l
+   where l.base_difficulty > 0
+     and (v_base + l.base_difficulty * v_per) > v_pmin
+     and (v_spd_base + l.base_difficulty * v_spd_per) <= (v_base + l.base_difficulty * v_per) - v_pmin
+   order by l.base_difficulty desc, l.name asc
+   limit 1;
+  if v_name is not null then
+    raise exception 'RANGEINVARIANT FAIL: at % (status %, base_difficulty %) the enemy range is % against a player reach of %, and the enemy closes only % per tick — it stops in the kite band at % and the player can never reach it: the standoff is back in a different costume',
+      v_name, v_status, v_bd, v_er, v_pmin, v_espd, v_er - v_espd;
+  end if;
+
+  -- ── (1) THE CLEARANCE, MEASURED ON A REAL WAVE — the primary assert of this block. One hull, the
+  --    real ambush chain, the real tick, then the minimum distance from EVERY player unit to EVERY
+  --    enemy unit against the wave's own frozen weapon range. Enemy speed is zeroed for the
+  --    measurement so the positions read back are the SPAWN positions and not wherever the CLOSE arm
+  --    moved them; that knob is owned here and restored below. ─────────────────────────────────────
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6) into v_spd_base;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into v_spd_per;
+  perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.ri.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uV;
+  insert into public.player_wallet (player_id, balance) values (uV, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uV, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'RANGEINVARIANT FAIL: commission: %', r; end if;
+  select main_ship_id into sV from public.main_ship_instances where player_id = uV;
+  r := pg_temp.call_as(uV, 'public.upsert_ship_group(1, ''Range Invariant'')');
+  if (r->>'ok')::boolean is not true then raise exception 'RANGEINVARIANT FAIL: group: %', r; end if;
+  gV := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uV, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sV, gV));
+  if (r->>'ok')::boolean is not true then raise exception 'RANGEINVARIANT FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uV, format('public.set_fleet_command_ship(%L::uuid, true)', sV));
+  if (r->>'ok')::boolean is not true then raise exception 'RANGEINVARIANT FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uV, format('public.set_group_auto_exit(%L::uuid, false, 30)', gV));
+  if (r->>'ok')::boolean is not true then raise exception 'RANGEINVARIANT FAIL: auto-exit off: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uV and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gV
+   limit 1;
+  if o_x is null then raise exception 'RANGEINVARIANT FAIL: could not resolve the docked origin'; end if;
+  r := pg_temp.call_as(uV, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gV, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'RANGEINVARIANT FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'RANGEINVARIANT FAIL: no pending ambush on the leg (the standing north corridor should cover it)'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uV and status = 'active';
+  if v_enc is null then raise exception 'RANGEINVARIANT FAIL: the ambush opened no encounter'; end if;
+  perform pg_temp.ae_tick(v_enc);
+
+  select count(*) into n_enemy from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n_enemy < 1 then
+    raise exception 'RANGEINVARIANT FAIL: the tick spawned % enemy unit(s) — there is no wave to measure and the geometric half of this invariant would be vacuous', n_enemy;
+  end if;
+  select max((w->>'range')::double precision) into v_wr
+    from public.combat_units cu9, jsonb_array_elements(cu9.weapons_json) w
+   where cu9.encounter_id = v_enc and cu9.side = 'enemy';
+  -- NULL-VACUITY (the 0313 law): an unpositioned unit makes osn_distance NULL, and a NULL minimum
+  -- compares FALSE against everything — the measurement would pass while measuring nothing.
+  select count(*) into n_null from public.combat_units
+   where encounter_id = v_enc and (pos_x is null or pos_y is null);
+  if n_null <> 0 then
+    raise exception 'RANGEINVARIANT FAIL: % unit(s) in the staged fight carry a NULL coordinate — an unpositioned wave cannot prove where it arrived', n_null;
+  end if;
+  if v_wr is null or v_wr <= 0 then
+    raise exception 'RANGEINVARIANT FAIL: the wave carries no weapon range in its frozen weapons_json (%) — there is nothing to say it spawned outside', v_wr;
+  end if;
+  select min(public.osn_distance(p9.pos_x, p9.pos_y, e9.pos_x, e9.pos_y)) into v_minsep
+    from public.combat_units p9, public.combat_units e9
+   where p9.encounter_id = v_enc and p9.side = 'player'
+     and e9.encounter_id = v_enc and e9.side = 'enemy';
+  if v_minsep is null then
+    raise exception 'RANGEINVARIANT FAIL: the player-to-wave separation is NULL — the geometric half of this invariant would be vacuous';
+  end if;
+  if v_minsep <= v_wr then
+    raise exception 'RANGEINVARIANT FAIL: the nearest player hull stands % from the wave, inside the wave own reach of % — measured on a real fight, the wave arrived where it can shoot without being shot. 0336 makes that clearance STRUCTURAL (spawn radius = ring + that wave own range + 1), so this is not a knob that drifted: the spawn expression itself has been changed or lost',
+      v_minsep, v_wr;
+  end if;
+
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(v_spd_base));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(v_spd_per));
+  insert into dzn values ('ring0', v_ring);
+
+  raise notice 'DZCOMBAT_PASS_RANGEINVARIANT ok: measured on a REAL staged wave, the nearest player hull stood % away against a wave reach of % — the clearance is structural (spawn radius = ring % + that wave own range + 1), not a comparison between two knobs; and over all % location(s) with a positive difficulty (hidden ones included, widest synthetic range %) the closing enemy always stops inside the player shortest reach of %',
+    round(v_minsep::numeric, 3), v_wr, v_ring, n_locs, v_need, v_pmin;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_VOLLEY (0336): A KILL DOES NOT DISARM THE REST OF THE VOLLEY ════════════════
+-- THE DEFECT, RED BY CONSTRUCTION BELOW. The target was resolved ONCE, above the per-weapon loop, so
+-- every gun on a ship fired at that one row — and when gun 1 destroyed it, the damage step's `if
+-- found` guard simply DROPPED guns 2 and 3. Their shots were logged and then vanished. Production
+-- holds one ship with THREE fitted autocannons, and 0331 had just split its combat_power three ways
+-- to feed those three barrels, so two thirds of its damage disappeared on every kill tick.
+-- THE FIXTURE: one hull carrying THREE autocannon_battery (slot_cost 1 each against the starter
+-- hull's 3 module slots — the exact production shape), a wave with STRICTLY MORE pirates than the
+-- ship has guns, and each pirate sized from the fight's own numbers to die to ONE gun's shot.
+-- ON THE HEAD: 3 salvos, ONE distinct target across them, ONE landed hit, ONE kill.
+-- POST-0336:   3 salvos, THREE distinct targets, THREE landed hits, THREE kills.
+-- Every number is derived at assert time from the rows this encounter actually carries: the per-gun
+-- power is read off weapons_json (0331 SHARES a ship's power between identical guns, so a guess of
+-- "the catalog weight" would size the wave wrong), the wave size from the same danger formula the
+-- tick evaluates, and the one-shot sizing is asserted to really one-shot before anything is claimed.
+do $$
+declare
+  r jsonb; n int; n_exp int; n_guns int;
+  uY uuid; sY uuid; gY uuid;
+  o_x double precision; o_y double precision;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  v_mv uuid; v_enc uuid; mv record; pi record;
+  v_pw double precision; v_pw_max double precision; v_pool double precision; v_pdef double precision;
+  v_defb double precision; v_bd double precision; v_danger int;
+  v_hpsc double precision; v_atksc double precision; v_uhp double precision;
+  v_tick int; n_salvo int; n_targets int; n_dmg int; n_kill int; n_alive int;
+  k_ring double precision; k_ehp double precision; k_eatk double precision;
+  k_erb double precision; k_erp double precision; k_esb double precision; k_esp double precision;
+  k_srg double precision;
+begin
+  -- ── OWN EVERY PRECONDITION. The ring is pulled in so the wave lands inside the autocannon's own
+  --    range on tick one (0336 RAISES the shipped ring past that range — this block is about the
+  --    volley, not about closure, and CLOSURE above is where the approach is proven); the enemy
+  --    range is pulled in so the wave cannot shoot back and change the fight underneath the
+  --    measurement; the enemy speed is zeroed so the distances the fire gate reads are the spawn
+  --    distances. All captured and restored at the end. ────────────────────────────────────────────
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_attack_base'), 1.0)                     into k_eatk;
+  select coalesce(public.cfg_num('enemy_synthetic_range_base'), 3.6)            into k_erb;
+  select coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 0.04) into k_erp;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  select coalesce(public.cfg_num('shield_regen_combat_pct'), 0)                 into k_srg;
+  perform public.set_game_config('spatial_formation_ring_radius',          '1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_base',             '0.1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty',   '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_base',             '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty',   '0'::jsonb);
+  perform public.set_game_config('shield_regen_combat_pct',                '0'::jsonb);
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.vo.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uY;
+  insert into public.player_wallet (player_id, balance) values (uY, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uY, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'VOLLEY FAIL: commission: %', r; end if;
+  select main_ship_id into sY from public.main_ship_instances where player_id = uY;
+
+  -- Materials for THREE autocannon_batteries, DERIVED from the recipe rather than written out (the
+  -- ONEPOWER lesson: a hard-coded ingredient list answers insufficient_items after a recipe retune).
+  select jsonb_build_object('items', jsonb_agg(jsonb_build_object('item_id', i.item_id, 'quantity', i.q)))
+    into r
+    from (select item_id, sum(qty * 3)::int as q from public.module_recipe_ingredients
+           where module_type_id = 'autocannon_battery' group by item_id) i;
+  if r is null or jsonb_array_length(r->'items') < 1 then
+    raise exception 'VOLLEY FAIL: module_recipe_ingredients carries no recipe for autocannon_battery — the grant would be empty and the failure would surface as a craft error instead of this message';
+  end if;
+  perform public.reward_grant('combat', gen_random_uuid(), uY, null, r);
+  for n in 1 .. 3 loop
+    r := pg_temp.call_as(uY, format('public.craft_module(%L, ''autocannon_battery'', %L::uuid)', 'dzc-vo-g'||n, sY));
+    if (r->>'ok')::boolean is not true then raise exception 'VOLLEY FAIL: craft gun %: %', n, r; end if;
+    r := pg_temp.call_as(uY, format('public.fit_module_to_ship(%L::uuid, %L::uuid, %L)', (r->>'instance_id')::uuid, sY, 'dzc-vo-f'||n));
+    if (r->>'ok')::boolean is not true then raise exception 'VOLLEY FAIL: fit gun %: %', n, r; end if;
+  end loop;
+  -- FIXTURE VACUITY PIN, before the fight: three FIRING weapons really are fitted. A two-gun hull
+  -- would satisfy every count below with the head's own behaviour on a two-pirate wave.
+  select count(*) into n_guns from public.ship_module_fittings f
+    join public.module_instances i on i.id = f.module_instance_id
+    join public.module_types t on t.id = i.module_type_id
+   where f.main_ship_id = sY and public.module_is_firing_weapon(t);
+  if n_guns <> 3 then
+    raise exception 'VOLLEY FAIL: the hull carries % firing weapon(s) — this block is about a THREE-gun ship and with fewer guns there is no dropped volley to observe', n_guns;
+  end if;
+
+  r := pg_temp.call_as(uY, 'public.upsert_ship_group(1, ''Volley'')');
+  if (r->>'ok')::boolean is not true then raise exception 'VOLLEY FAIL: group: %', r; end if;
+  gY := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uY, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sY, gY));
+  if (r->>'ok')::boolean is not true then raise exception 'VOLLEY FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uY, format('public.set_fleet_command_ship(%L::uuid, true)', sY));
+  if (r->>'ok')::boolean is not true then raise exception 'VOLLEY FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uY, format('public.set_group_auto_exit(%L::uuid, false, 30)', gY));
+  if (r->>'ok')::boolean is not true then raise exception 'VOLLEY FAIL: auto-exit off: %', r; end if;
+
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uY and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gY
+   limit 1;
+  if o_x is null then raise exception 'VOLLEY FAIL: could not resolve the docked origin'; end if;
+  r := pg_temp.call_as(uY, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gY, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'VOLLEY FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'VOLLEY FAIL: no pending ambush on the leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uY and status = 'active';
+  if v_enc is null then raise exception 'VOLLEY FAIL: the ambush opened no encounter'; end if;
+
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'player';
+  if n <> 1 then raise exception 'VOLLEY FAIL: % player unit(s) fielded (this block needs exactly 1, so every salvo in the tick is attributable to one ship)', n; end if;
+  select jsonb_array_length(weapons_json) into n_guns from public.combat_units
+   where encounter_id = v_enc and side = 'player';
+  if n_guns <> 3 then
+    raise exception 'VOLLEY FAIL: the fielded hull carries % weapon entr(ies) in its frozen weapons_json (want 3) — the fixture is not a three-gun ship and there is nothing to re-aim', n_guns;
+  end if;
+  select min((w->>'power')::double precision), max((w->>'power')::double precision)
+    into v_pw, v_pw_max
+    from public.combat_units cu9, jsonb_array_elements(cu9.weapons_json) w
+   where cu9.encounter_id = v_enc and cu9.side = 'player';
+  select hp_current + coalesce(shield_current, 0), coalesce(defense_snapshot, 0)
+    into v_pool, v_pdef
+    from public.combat_units where encounter_id = v_enc and side = 'player';
+  -- NULL-VACUITY (the 0313 law): every one of these feeds a comparison, and a NULL turns the
+  -- comparison into a silent pass. Absence is failure, said out loud.
+  if v_pw is null or v_pw <= 0 or v_pool is null or v_pool <= 0 then
+    raise exception 'VOLLEY FAIL: per-gun power % / hull pool % — the one-shot sizing has nothing to size against and every count below would be measuring a fight that never happened', v_pw, v_pool;
+  end if;
+  v_defb := coalesce(public.cfg_num('defense_curve_base'), 100);
+  if v_defb <= 0 then raise exception 'VOLLEY FAIL: defense_curve_base is % — the mitigation arithmetic has no base', v_defb; end if;
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
+  if v_bd is null or v_bd <= 0 then raise exception 'VOLLEY FAIL: the encounter location carries base_difficulty % — the wave formulas have no scale', v_bd; end if;
+
+  -- A WAVE WITH MORE PIRATES THAN THE SHIP HAS GUNS. now() is frozen for the whole txn, so a fresh
+  -- encounter is always danger 1 (one pirate) — which is exactly the case that CANNOT distinguish
+  -- the two bodies. Rewinding the encounter's OWN started_at is a CLOCK-ONLY write, the same law
+  -- pg_temp.rewind_leg / drain_encounter / ae_tick already follow: no status, no outcome, no
+  -- geometry, no hp is written. The count is then DERIVED from the same formula the tick evaluates.
+  update public.combat_encounters set started_at = started_at - interval '600 seconds' where id = v_enc;
+  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
+              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
+                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
+  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
+  if n_exp <= 3 then
+    raise exception 'VOLLEY FAIL: staging derives % pirate(s) for a THREE-gun ship — the wave must hold strictly more pirates than the ship has guns, or the last gun has nothing left to re-aim at and the whole property is vacuous', n_exp;
+  end if;
+  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
+  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- each pirate dies to ONE gun's shot (unit hp = half a single gun's share) …
+  perform public.set_game_config('enemy_hp_base',
+    to_jsonb(round(((0.5 * v_pw * n_exp) / (v_bd * v_hpsc))::numeric, 9)));
+  -- … and the whole wave together costs the hull ~2% of its pool, so nothing about the player side
+  -- changes underneath the counts.
+  perform public.set_game_config('enemy_attack_base',
+    to_jsonb(round((((0.02 * v_pool) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+
+  perform pg_temp.ae_tick(v_enc);
+  select tick_number into v_tick from public.combat_encounters where id = v_enc;
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> n_exp then
+    raise exception 'VOLLEY FAIL: % pirate unit(s) spawned (want the danger-derived %)', n, n_exp;
+  end if;
+  -- THE ONE-SHOT SIZING REALLY ONE-SHOTS — asserted against the row the tick actually wrote, never
+  -- assumed from the formula that asked for it. If a pirate could survive a single gun, gun 2 would
+  -- have nothing to re-aim at and three distinct targets would be unreachable for a correct engine.
+  select max(ship_hp) into v_uhp from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if v_uhp is null or v_uhp <= 0 or v_uhp >= v_pw then
+    raise exception 'VOLLEY FAIL: a pirate carries % hull against a per-gun share of % — one gun does not one-shot it, so the re-aim this block measures could not happen on ANY body', v_uhp, v_pw;
+  end if;
+
+  select count(*) into n_salvo from public.combat_events
+   where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo' and source = 'player';
+  if n_salvo <> 3 then
+    raise exception 'VOLLEY FAIL: % player salvo(s) in the tick (want exactly 3 — one per fitted gun)', n_salvo;
+  end if;
+  select count(*) filter (where payload_json->>'target_id' is null),
+         count(distinct payload_json->>'target_id')
+    into n, n_targets
+    from public.combat_events
+   where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo' and source = 'player';
+  if n <> 0 then
+    raise exception 'VOLLEY FAIL: % player salvo(s) name no target at all — a distinct-target count over NULLs would prove nothing', n;
+  end if;
+  if n_targets <> 3 then
+    raise exception 'VOLLEY FAIL: the three guns aimed at % distinct pirate(s) (want 3) — the target was resolved ONCE above the per-weapon loop, so gun 2 and gun 3 fired at the row gun 1 had already destroyed and their shots were dropped by the damage step',
+      n_targets;
+  end if;
+  select count(*) into n_dmg from public.combat_events
+   where encounter_id = v_enc and tick_number = v_tick and event_type = 'hull_damage' and source = 'player';
+  if n_dmg <> 3 then
+    raise exception 'VOLLEY FAIL: % landed hit(s) from a three-gun volley (want 3) — a kill disarmed the rest of the volley', n_dmg;
+  end if;
+  select count(*) into n_kill from public.combat_events
+   where encounter_id = v_enc and tick_number = v_tick and event_type = 'unit_destroyed' and source = 'player';
+  if n_kill <> 3 then
+    raise exception 'VOLLEY FAIL: % pirate(s) destroyed by a three-gun volley (want 3) — two thirds of the ship damage vanished on the kill tick', n_kill;
+  end if;
+  select count(*) into n_alive from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  if n_alive <> n_exp - 3 then
+    raise exception 'VOLLEY FAIL: % pirate(s) survived the volley (want % — the wave minus one per gun)', n_alive, n_exp - 3;
+  end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'player' and alive_count > 0;
+  if n <> 1 then
+    raise exception 'VOLLEY FAIL: the firing hull did not survive its own volley — the wave was sized not to touch it and these counts would be describing a different fight';
+  end if;
+
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_attack_base',                    to_jsonb(k_eatk));
+  perform public.set_game_config('enemy_synthetic_range_base',           to_jsonb(k_erb));
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', to_jsonb(k_erp));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+  perform public.set_game_config('shield_regen_combat_pct',              to_jsonb(k_srg));
+
+  raise notice 'DZCOMBAT_PASS_VOLLEY ok: a THREE-gun hull (equal shares of % each, %.. max, 0331) met a %-pirate wave sized so one gun one-shots one pirate (% hull each) and fired 3 salvos at 3 DISTINCT targets, landing 3 hits and destroying 3 — the head resolved the target once and dropped guns 2 and 3 (1 distinct target, 1 hit, 1 kill); % pirate(s) were left standing and the hull came through untouched',
+    v_pw, v_pw_max, n_exp, round(v_uhp::numeric, 4), n_alive;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_WAVERING (0336): A WAVE ARRIVES ON A RING, NOT ON ONE POINT ═════════════════
+-- THE DEFECT, RED BY CONSTRUCTION BELOW. Both spawn arms inserted every unit of a wave at the
+-- identical engagement anchor. Measured on production: every encounter that ever held enemies holds
+-- them at exactly ONE distinct position. Three consequences, all bad — distance from any actor to
+-- every enemy became the same constant, so the id-ascending tiebreak in targeting was absolute and
+-- every gun of every ship converged on one row (which is what made the dropped-volley defect above
+-- as expensive as it was); the fight rendered as a single pixel; and the whole wave sat inside its
+-- own range from tick zero, which is the basin the standoff lives in.
+-- WHAT IS ASSERTED, and why it is written to survive a retune of the radius: the block does NOT
+-- assume how far out the ring is. It MEASURES the radius off the wave itself and then requires every
+-- unit's position to be reproduced by combat_formation_point — the leaf the tick composes — at that
+-- radius, at phase 0.5, at a slot that no other unit used. That pins the ring, the half-slot offset
+-- and the per-slot stepping without hard-coding the radius, so a later change to how far out a wave
+-- spawns cannot make this block wrong. ON THE HEAD the radius measures 0, every position is the
+-- anchor and the distinct-position count is 1.
+do $$
+declare
+  r jsonb; n int; n_exp int; n_match int; n_null int;
+  uW2 uuid; sW2 uuid; gW2 uuid;
+  o_x double precision; o_y double precision;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  v_mv uuid; v_enc uuid; mv record; pi record;
+  ax double precision; ay double precision;
+  v_rad double precision; v_rmin double precision; v_rmax double precision;
+  n_distinct int; n_units int;
+  k_ring double precision; k_ehp double precision; k_esb double precision; k_esp double precision;
+begin
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  -- The enemy speed is zeroed so the positions read back after the tick ARE the spawn positions:
+  -- the wave spawns and then moves inside the same tick, and a block about where a wave ARRIVES
+  -- must not be measuring where the CLOSE arm took it. hp is raised so nothing dies mid-measurement.
+  perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_hp_base',                        '100000'::jsonb);
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.wv.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uW2;
+  insert into public.player_wallet (player_id, balance) values (uW2, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uW2, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'WAVERING FAIL: commission: %', r; end if;
+  select main_ship_id into sW2 from public.main_ship_instances where player_id = uW2;
+  r := pg_temp.call_as(uW2, 'public.upsert_ship_group(1, ''Wavering'')');
+  if (r->>'ok')::boolean is not true then raise exception 'WAVERING FAIL: group: %', r; end if;
+  gW2 := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uW2, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sW2, gW2));
+  if (r->>'ok')::boolean is not true then raise exception 'WAVERING FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uW2, format('public.set_fleet_command_ship(%L::uuid, true)', sW2));
+  if (r->>'ok')::boolean is not true then raise exception 'WAVERING FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uW2, format('public.set_group_auto_exit(%L::uuid, false, 30)', gW2));
+  if (r->>'ok')::boolean is not true then raise exception 'WAVERING FAIL: auto-exit off: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uW2 and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gW2
+   limit 1;
+  if o_x is null then raise exception 'WAVERING FAIL: could not resolve the docked origin'; end if;
+  r := pg_temp.call_as(uW2, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                   gW2, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'WAVERING FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'WAVERING FAIL: no pending ambush on the leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uW2 and status = 'active';
+  if v_enc is null then raise exception 'WAVERING FAIL: the ambush opened no encounter'; end if;
+
+  -- a wave of at least THREE: one point cannot be told from a ring, and two cannot be told from a
+  -- line. CLOCK-ONLY rewind, the ae_tick/rewind_leg law, and the count DERIVED from the tick's own
+  -- danger formula rather than assumed.
+  update public.combat_encounters set started_at = started_at - interval '600 seconds' where id = v_enc;
+  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int,
+                 greatest(1, 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
+                            + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
+                                    / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int));
+  if n_exp < 3 then
+    raise exception 'WAVERING FAIL: staging derives only % pirate(s) — with fewer than 3 a ring cannot be told apart from a point or a line and this block would prove nothing', n_exp;
+  end if;
+
+  perform pg_temp.ae_tick(v_enc);
+  select engagement_x, engagement_y into ax, ay from public.combat_encounters where id = v_enc;
+  if ax is null or ay is null then
+    raise exception 'WAVERING FAIL: the encounter carries no engagement anchor — every distance below would be NULL and every comparison a silent pass';
+  end if;
+  select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n_units <> n_exp then
+    raise exception 'WAVERING FAIL: % pirate unit(s) spawned (want the danger-derived %)', n_units, n_exp;
+  end if;
+  -- NULL-VACUITY (the 0313 law) BEFORE any geometry: `x is distinct from NULL` is TRUE for every
+  -- real number, so an unpositioned unit would make the distinct-position count and every radius
+  -- comparison pass while proving nothing at all.
+  select count(*) into n_null from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and (pos_x is null or pos_y is null);
+  if n_null <> 0 then
+    raise exception 'WAVERING FAIL: % of % pirate(s) carry a NULL coordinate — an unpositioned wave cannot prove it arrived anywhere', n_null, n_units;
+  end if;
+
+  -- (1) EVERY UNIT ON ITS OWN POINT. On the head this count is 1, whatever the wave size.
+  select count(distinct (pos_x, pos_y)) into n_distinct
+    from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n_distinct <> n_units then
+    raise exception 'WAVERING FAIL: % pirate(s) occupy only % distinct position(s) — the whole wave was inserted at one identical point, so distance became a constant, the id tiebreak became absolute and every gun on the field converged on one row',
+      n_units, n_distinct;
+  end if;
+
+  -- (2) NOBODY ON THE ANCHOR, and every unit the SAME distance from it: that is what makes it a
+  --     ring rather than a scatter. The radius is MEASURED, never assumed — a later change to how
+  --     far out a wave spawns must not be able to make this block wrong.
+  select min(public.osn_distance(ax, ay, pos_x, pos_y)),
+         max(public.osn_distance(ax, ay, pos_x, pos_y))
+    into v_rmin, v_rmax
+    from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if v_rmin is null or v_rmax is null then
+    raise exception 'WAVERING FAIL: the wave radius measured NULL — the ring assert would be vacuous';
+  end if;
+  if v_rmin <= 0 then
+    raise exception 'WAVERING FAIL: a pirate stands % from the engagement anchor — the wave is still being planted on the anchor itself, which is where the player lead stands', v_rmin;
+  end if;
+  if abs(v_rmax - v_rmin) > 1e-6 then
+    raise exception 'WAVERING FAIL: the wave spans radii % to % — it is not one ring, so the formation leaf is not what placed it', v_rmin, v_rmax;
+  end if;
+  v_rad := v_rmin;
+
+  -- (3) AND IT IS THE FORMATION LEAF'S OWN RING. Every unit must sit exactly on
+  --     combat_formation_point(anchor, measured radius, k, 0.5) for some slot k in 0..n-1, and no
+  --     two units may claim the same k. This pins the half-slot phase and the per-slot stepping
+  --     — the two things that stop a wave landing on top of an escort or on top of itself —
+  --     without this block ever having to know how the radius is computed.
+  select count(*) into n_match
+    from public.combat_units u9
+   where u9.encounter_id = v_enc and u9.side = 'enemy'
+     and exists (select 1 from generate_series(0, n_units - 1) as gs(k),
+                      lateral public.combat_formation_point(ax, ay, v_rad, gs.k, 0.5) fp
+                  where abs(fp.x - u9.pos_x) <= 1e-6 and abs(fp.y - u9.pos_y) <= 1e-6);
+  if n_match <> n_units then
+    raise exception 'WAVERING FAIL: only % of % pirate(s) sit on a slot of combat_formation_point(anchor, %, k, 0.5) — the wave was not laid out by the one formation authority the player escort ring also composes',
+      n_match, n_units, v_rad;
+  end if;
+
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+
+  raise notice 'DZCOMBAT_PASS_WAVERING ok: a %-pirate wave arrived on % DISTINCT points, every one of them exactly % from the engagement anchor (never ON it) and every one of them reproduced by combat_formation_point at half-slot phase on a slot no other unit used — the head planted all % on the anchor itself (1 distinct point, radius 0)',
+    n_units, n_distinct, round(v_rad::numeric, 6), n_units;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_RETREATNOSPAWN (0336): PRESSING RETREAT DOES NOT SUMMON A BIGGER WAVE ═══════
+-- THE DEFECT, RED BY CONSTRUCTION BELOW, and the most expensive of the eight in real money. The
+-- offense gate silences the PLAYER while a fleet is retreating; the enemy side is never gated, by
+-- design. But the wave-SPAWN block carried no status guard at all — so a player who cleared a wave
+-- and then pressed Retreat was handed a FRESH, LARGER wave (danger rises with waves_cleared) which
+-- then shot at a fleet that could not shoot back for the rest of the window. Production carries four
+-- encounters that died exactly that way, 3.4 to 5.8 seconds into an 8-second window, and a death is
+-- a 'defeat', which zeroes total_rewards_json: the entire haul, destroyed by pressing Retreat.
+-- THE STAGING: clear the wave for real (the player's own gun, sized from the fight's own numbers),
+-- press Retreat through the REAL path the button uses (request_retreat -> presence_request_leave ->
+-- combat_set_retreating), then tick.
+-- THE VACUITY GUARD THAT MATTERS MOST: wave_transition_seconds is pulled to 0 and `now() >=
+-- next_wave_at` is ASSERTED before the retreat tick. Without it the head would take the
+-- next_wave_incoming pause instead of the spawn, and this block would go green on the defect.
+do $$
+declare
+  r jsonb; n int; n_exp int;
+  uN uuid; sN uuid; gN uuid;
+  o_x double precision; o_y double precision;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  v_mv uuid; v_enc uuid; v_pres uuid; mv record; pi record; enc record;
+  v_pw double precision; v_pool double precision; v_pdef double precision;
+  v_defb double precision; v_bd double precision; v_danger int;
+  v_hpsc double precision; v_atksc double precision; v_uhp double precision;
+  v_tick int; v_wc0 int; v_wn0 int; v_rows0 int; v_nwa timestamptz;
+  n_spawned int; n_live int;
+  k_ring double precision; k_ehp double precision; k_eatk double precision;
+  k_erb double precision; k_erp double precision; k_esb double precision; k_esp double precision;
+  k_wts double precision;
+begin
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_attack_base'), 1.0)                     into k_eatk;
+  select coalesce(public.cfg_num('enemy_synthetic_range_base'), 3.6)            into k_erb;
+  select coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 0.04) into k_erp;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  select coalesce(public.cfg_num('wave_transition_seconds'), 3)                 into k_wts;
+  perform public.set_game_config('spatial_formation_ring_radius',        '1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_base',           '0.1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  -- THE TRANSITION PAUSE IS CLOSED. now() is frozen for the txn, so ANY positive transition window
+  -- would still be open on the next tick and the head would take the next_wave_incoming branch —
+  -- which spawns nothing, passes every assert below, and proves precisely nothing about the guard
+  -- this block exists to test.
+  perform public.set_game_config('wave_transition_seconds',              '0'::jsonb);
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.rn.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uN;
+  insert into public.player_wallet (player_id, balance) values (uN, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uN, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATNOSPAWN FAIL: commission: %', r; end if;
+  select main_ship_id into sN from public.main_ship_instances where player_id = uN;
+  r := pg_temp.call_as(uN, 'public.upsert_ship_group(1, ''Retreat No Spawn'')');
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATNOSPAWN FAIL: group: %', r; end if;
+  gN := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uN, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sN, gN));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATNOSPAWN FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uN, format('public.set_fleet_command_ship(%L::uuid, true)', sN));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATNOSPAWN FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uN, format('public.set_group_auto_exit(%L::uuid, false, 30)', gN));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATNOSPAWN FAIL: auto-exit off: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uN and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gN
+   limit 1;
+  if o_x is null then raise exception 'RETREATNOSPAWN FAIL: could not resolve the docked origin'; end if;
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gN, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATNOSPAWN FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'RETREATNOSPAWN FAIL: no pending ambush on the leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id, presence_id into v_enc, v_pres from public.combat_encounters
+   where player_id = uN and status = 'active';
+  if v_enc is null then raise exception 'RETREATNOSPAWN FAIL: the ambush opened no encounter'; end if;
+
+  -- size the ONE pirate of a fresh (danger 1) wave to die to a single player shot.
+  select max((w->>'power')::double precision) into v_pw
+    from public.combat_units cu9, jsonb_array_elements(cu9.weapons_json) w
+   where cu9.encounter_id = v_enc and cu9.side = 'player';
+  select hp_current + coalesce(shield_current, 0), coalesce(defense_snapshot, 0)
+    into v_pool, v_pdef from public.combat_units where encounter_id = v_enc and side = 'player';
+  v_defb := coalesce(public.cfg_num('defense_curve_base'), 100);
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id where ce.id = v_enc;
+  if v_pw is null or v_pw <= 0 or v_pool is null or v_pool <= 0 or v_bd is null or v_bd <= 0 or v_defb <= 0 then
+    raise exception 'RETREATNOSPAWN FAIL: weapon power % / hull pool % / base_difficulty % / defense base % cannot size the wave', v_pw, v_pool, v_bd, v_defb;
+  end if;
+  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
+              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
+                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
+  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
+  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
+  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  perform public.set_game_config('enemy_hp_base',
+    to_jsonb(round(((0.5 * v_pw * n_exp) / (v_bd * v_hpsc))::numeric, 9)));
+  perform public.set_game_config('enemy_attack_base',
+    to_jsonb(round((((0.02 * v_pool) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+
+  -- ── TICK 1: the wave spawns and the player CLEARS it. ───────────────────────────────────────────
+  perform pg_temp.ae_tick(v_enc);
+  select * into enc from public.combat_encounters where id = v_enc;
+  select max(ship_hp) into v_uhp from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if v_uhp is null or v_uhp >= v_pw then
+    raise exception 'RETREATNOSPAWN FAIL: a pirate carries % hull against a shot of % — the wave was not sized to clear in one tick and the whole scenario below is a different fight', v_uhp, v_pw;
+  end if;
+  select count(*) into n_live from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  if n_live <> 0 or enc.waves_cleared <> 1 then
+    raise exception 'RETREATNOSPAWN FAIL: after the opening tick % pirate(s) are still alive and waves_cleared is % (want 0 and 1) — the wave was never cleared, so the spawn branch this block tests would not be reached on ANY body', n_live, enc.waves_cleared;
+  end if;
+  v_nwa := enc.next_wave_at;
+  if v_nwa is null or now() < v_nwa then
+    raise exception 'RETREATNOSPAWN FAIL: the next wave is scheduled at % and now() is % — the transition window is still OPEN, so the head would take the next_wave_incoming pause instead of the spawn and this block would be green on the defect',
+      v_nwa, now();
+  end if;
+
+  -- ── PRESS RETREAT — the real button path, not a status write. ───────────────────────────────────
+  r := pg_temp.call_as(uN, format('public.request_retreat(%L::uuid)', v_pres));
+  if r is null then raise exception 'RETREATNOSPAWN FAIL: request_retreat returned nothing'; end if;
+  select * into enc from public.combat_encounters where id = v_enc;
+  if enc.status <> 'retreating' or enc.retreat_started_at is null then
+    raise exception 'RETREATNOSPAWN FAIL: the encounter is %/% after request_retreat — the retreating state this block tests was never entered', enc.status, enc.retreat_started_at;
+  end if;
+  v_wc0 := enc.waves_cleared; v_wn0 := enc.wave_number;
+  select count(*) into v_rows0 from public.combat_units where encounter_id = v_enc and side = 'enemy';
+
+  -- ── THE RETREAT TICK. On the head this is where the fresh, larger wave arrives. ─────────────────
+  perform pg_temp.ae_tick(v_enc);
+  select * into enc from public.combat_encounters where id = v_enc;
+  v_tick := enc.tick_number;
+  -- the window must still be OPEN, or the tick took the completion branch and never reached the
+  -- spawn block at all — which would make every assert below vacuous.
+  if enc.status <> 'retreating' then
+    raise exception 'RETREATNOSPAWN FAIL: the encounter reached % on the retreat tick — it completed instead of running the combat step, so the spawn guard under test was never evaluated', enc.status;
+  end if;
+  select count(*) into n_spawned from public.combat_events
+   where encounter_id = v_enc and tick_number = v_tick and event_type = 'wave_spawned';
+  if n_spawned <> 0 then
+    raise exception 'RETREATNOSPAWN FAIL: % wave_spawned event(s) fired on the retreat tick — pressing Retreat summoned a fresh wave at a fleet that cannot shoot back, and a death inside the window zeroes the whole haul', n_spawned;
+  end if;
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> v_rows0 then
+    raise exception 'RETREATNOSPAWN FAIL: the enemy side went from % row(s) to % across the retreat tick — the spawn arm deleted the cleared wave and inserted a new one', v_rows0, n;
+  end if;
+  select count(*) into n_live from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  if n_live <> 0 then
+    raise exception 'RETREATNOSPAWN FAIL: % living pirate(s) exist after the retreat tick (want 0) — a retreating fleet was sent something to be shot by', n_live;
+  end if;
+  if enc.waves_cleared <> v_wc0 or enc.wave_number <> v_wn0 then
+    raise exception 'RETREATNOSPAWN FAIL: waves_cleared % -> % and wave_number % -> % across the retreat tick — the wave counter advanced, which only happens when a new wave was raised',
+      v_wc0, enc.waves_cleared, v_wn0, enc.wave_number;
+  end if;
+
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_attack_base',                    to_jsonb(k_eatk));
+  perform public.set_game_config('enemy_synthetic_range_base',           to_jsonb(k_erb));
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', to_jsonb(k_erp));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+  perform public.set_game_config('wave_transition_seconds',              to_jsonb(k_wts));
+
+  raise notice 'DZCOMBAT_PASS_RETREATNOSPAWN ok: the fleet cleared its wave (waves_cleared %), the transition window was PROVEN closed (next wave due %, now %), Retreat was pressed through the real request_retreat path — and the retreat tick raised NO wave_spawned event, left the enemy side at % row(s) and 0 living units, and moved neither waves_cleared (%) nor wave_number (%): on the head this is where a bigger wave arrived to shoot at a fleet that could not shoot back',
+    v_wc0, v_nwa, now(), v_rows0, enc.waves_cleared, enc.wave_number;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_NOWEDGE (0336): A TERMINAL-ARM MISMATCH CONCLUDES — IT DOES NOT WEDGE ═══════
+-- THE DEFECT, RED BY CONSTRUCTION BELOW. fleet_destroy and presence_complete both RAISE on a status
+-- mismatch, and all four terminal arms called them BEFORE their own status write — inside the per-
+-- encounter subtransaction the 0206 guard wraps. So a mismatch rolled the whole tick back INCLUDING
+-- last_resolved_at, the guard downgraded the raise to a warning, the cron returned normally, and the
+-- encounter retried the identical tick every three seconds FOREVER. Silently. That is the wedge
+-- send_ship_group_hunt already names in prose.
+-- THE MISMATCH IS ENGINEERED, NOT WAITED FOR: the presence is completed OUT OF BAND through the very
+-- leaf the arm composes, so the arm's own presence_complete call is guaranteed to raise. Both halves
+-- of the non-vacuity are proven rather than assumed — that the presence really is out of the state
+-- the leaf accepts, and that the leaf really does raise for it.
+-- THE ASSERT IS THE ONE THAT DISTINGUISHES THE BODIES: reaching a TERMINAL status is not enough on
+-- its own, because a body that rolls back leaves the encounter untouched rather than wrong. What
+-- separates them is that last_resolved_at ADVANCED and tick_number ADVANCED — on the head the whole
+-- per-encounter subtransaction unwinds and both are exactly where they were, every tick, forever.
+do $$
+declare
+  r jsonb; n int; i int;
+  uG uuid; sG uuid; gG uuid;
+  o_x double precision; o_y double precision;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  v_mv uuid; v_enc uuid; v_pres uuid; mv record; pi record; enc record;
+  v_pool double precision; v_pdef double precision; v_defb double precision; v_bd double precision;
+  v_danger int; v_atksc double precision;
+  v_lra_before timestamptz; v_tick_before int; v_pstatus text;
+  v_raised boolean := false; v_hit boolean := false; v_dead boolean := false;
+  k_ring double precision; k_ehp double precision; k_eatk double precision;
+  k_esb double precision; k_esp double precision; k_srg double precision;
+begin
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_attack_base'), 1.0)                     into k_eatk;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  select coalesce(public.cfg_num('shield_regen_combat_pct'), 0)                 into k_srg;
+  -- The wave must be able to KILL, which is the only way to reach a terminal arm without writing
+  -- combat_units by hand. It is given a big closing speed so it reaches its target in one step from
+  -- wherever the spawn geometry puts it (this block is not about the approach), and enough hull to
+  -- outlast the player's own fire. The ring is pulled in for the same reason.
+  perform public.set_game_config('spatial_formation_ring_radius',        '1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_base',           '20'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_hp_base',                        '100000'::jsonb);
+  perform public.set_game_config('shield_regen_combat_pct',              '0'::jsonb);
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.nw.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uG;
+  insert into public.player_wallet (player_id, balance) values (uG, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uG, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'NOWEDGE FAIL: commission: %', r; end if;
+  select main_ship_id into sG from public.main_ship_instances where player_id = uG;
+  r := pg_temp.call_as(uG, 'public.upsert_ship_group(1, ''No Wedge'')');
+  if (r->>'ok')::boolean is not true then raise exception 'NOWEDGE FAIL: group: %', r; end if;
+  gG := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uG, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sG, gG));
+  if (r->>'ok')::boolean is not true then raise exception 'NOWEDGE FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uG, format('public.set_fleet_command_ship(%L::uuid, true)', sG));
+  if (r->>'ok')::boolean is not true then raise exception 'NOWEDGE FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uG, format('public.set_group_auto_exit(%L::uuid, false, 30)', gG));
+  if (r->>'ok')::boolean is not true then raise exception 'NOWEDGE FAIL: auto-exit off: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uG and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gG
+   limit 1;
+  if o_x is null then raise exception 'NOWEDGE FAIL: could not resolve the docked origin'; end if;
+  r := pg_temp.call_as(uG, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gG, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'NOWEDGE FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'NOWEDGE FAIL: no pending ambush on the leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id, presence_id into v_enc, v_pres from public.combat_encounters
+   where player_id = uG and status = 'active';
+  if v_enc is null then raise exception 'NOWEDGE FAIL: the ambush opened no encounter'; end if;
+
+  -- the wave's shot costs the hull ~60% of its pool: one lands and it survives, two and it is gone.
+  select hp_current + coalesce(shield_current, 0), coalesce(defense_snapshot, 0)
+    into v_pool, v_pdef from public.combat_units where encounter_id = v_enc and side = 'player';
+  v_defb := coalesce(public.cfg_num('defense_curve_base'), 100);
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id where ce.id = v_enc;
+  if v_pool is null or v_pool <= 0 or v_bd is null or v_bd <= 0 or v_defb <= 0 then
+    raise exception 'NOWEDGE FAIL: hull pool % / base_difficulty % / defense base % cannot size the killing wave', v_pool, v_bd, v_defb;
+  end if;
+  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
+              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
+                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
+  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  perform public.set_game_config('enemy_attack_base',
+    to_jsonb(round((((0.6 * v_pool) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+
+  -- ── PHASE 1: let the wave land its FIRST hit. The approach length depends on the spawn geometry,
+  --    which this block deliberately does not pin, so it drives ticks until a pirate-sourced hit is
+  --    on the record and stops the moment there is one. ─────────────────────────────────────────────
+  for i in 1..10 loop
+    perform pg_temp.ae_tick(v_enc);
+    select count(*) into n from public.combat_events
+     where encounter_id = v_enc and event_type = 'hull_damage' and source = 'pirate';
+    if n > 0 then v_hit := true; exit; end if;
+    select status into v_pstatus from public.combat_encounters where id = v_enc;
+    if v_pstatus <> 'active' then exit; end if;
+  end loop;
+  if not v_hit then
+    raise exception 'NOWEDGE FAIL: the wave never landed a hit in 10 ticks — the fixture cannot reach a terminal arm at all and everything below would be unreachable';
+  end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'player' and alive_count > 0;
+  if n <> 1 then
+    raise exception 'NOWEDGE FAIL: the hull did not survive the FIRST landed hit — the mismatch below has to be armed while the fight is still running, so the killing tick is the one that meets it';
+  end if;
+
+  -- ── PHASE 2: ARM THE MISMATCH, through the real leaf, and prove it is real. ─────────────────────
+  perform public.presence_complete(v_pres);
+  select status into v_pstatus from public.location_presence where id = v_pres;
+  if v_pstatus <> 'completed' then
+    raise exception 'NOWEDGE FAIL: the presence reads % after being completed out of band (want completed) — the mismatch this block exists to survive was never created', v_pstatus;
+  end if;
+  -- and the leaf the terminal arm composes really does REFUSE this presence now. Without this the
+  -- block could pass on a world where presence_complete had quietly become idempotent, and the
+  -- confinement under test would never have been exercised.
+  begin
+    perform public.presence_complete(v_pres);
+    v_raised := false;
+  exception
+    when others then v_raised := true;
+  end;
+  if not v_raised then
+    raise exception 'NOWEDGE FAIL: presence_complete accepted the already-completed presence without raising — the terminal arm will meet no mismatch, so a body with no confinement at all would pass this block and it would prove nothing';
+  end if;
+
+  select last_resolved_at, tick_number into v_lra_before, v_tick_before
+    from public.combat_encounters where id = v_enc;
+  if v_lra_before is null then
+    raise exception 'NOWEDGE FAIL: the encounter has no last_resolved_at to compare against — the whole point is that the head does not advance it';
+  end if;
+
+  -- ── PHASE 3: DRIVE THE DEATH ARM INTO THE MISMATCH. ────────────────────────────────────────────
+  for i in 1..10 loop
+    perform pg_temp.ae_tick(v_enc);
+    select status into v_pstatus from public.combat_encounters where id = v_enc;
+    if v_pstatus not in ('active', 'retreating') then v_dead := true; exit; end if;
+  end loop;
+  select * into enc from public.combat_encounters where id = v_enc;
+  if not v_dead then
+    raise exception 'NOWEDGE FAIL: after 10 ticks against a completed presence the encounter is STILL % (tick %, last resolved %) — the terminal arm raised inside the per-encounter guard, the whole tick rolled back, and the encounter is wedged retrying the identical tick forever: exactly the failure this slice exists to end',
+      enc.status, enc.tick_number, enc.last_resolved_at;
+  end if;
+  if enc.status <> 'defeat' or enc.ended_at is null then
+    raise exception 'NOWEDGE FAIL: the encounter reached % / ended_at % — a terminal arm that meets a mismatch must still CONCLUDE the encounter, not leave it in some third state', enc.status, enc.ended_at;
+  end if;
+  if enc.last_resolved_at < v_lra_before then
+    raise exception 'NOWEDGE FAIL: last_resolved_at went BACKWARDS (% -> %) — the tick that hit the terminal arm was rolled back by the raise, which is the wedge itself: the cadence clock never moves and the same tick runs again in three seconds',
+      v_lra_before, enc.last_resolved_at;
+  end if;
+  if enc.tick_number <= v_tick_before then
+    raise exception 'NOWEDGE FAIL: tick_number did not advance (% -> %) — every tick after the mismatch was unwound, so no work survived at all', v_tick_before, enc.tick_number;
+  end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'player' and alive_count > 0;
+  if n <> 0 then
+    raise exception 'NOWEDGE FAIL: % player hull(s) are still alive on a concluded encounter — the death arm did not actually run and the conclusion above came from somewhere else', n;
+  end if;
+
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_attack_base',                    to_jsonb(k_eatk));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+  perform public.set_game_config('shield_regen_combat_pct',              to_jsonb(k_srg));
+
+  raise notice 'DZCOMBAT_PASS_NOWEDGE ok: with the presence completed OUT OF BAND (and presence_complete PROVEN to raise for it), the death arm still concluded the encounter — status %, ended_at stamped, tick % -> % and last_resolved_at % -> % both ADVANCED. On the head the arm raised before its own status write, the per-encounter guard downgraded it to a warning, the tick rolled back whole and the encounter retried the identical tick every three seconds forever',
+    enc.status, v_tick_before, enc.tick_number, v_lra_before, enc.last_resolved_at;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_ORDERSTABLE (0336): WHO FIRES FIRST IS DECIDED, NOT LEFT TO THE HEAP ════════
+-- THE DEFECT. The tick freezes its population into v_units with jsonb_agg and NO ORDER BY, so the
+-- actor loop ran in heap order. Targeting was deterministic; WHO SHOOTS FIRST was not — and with
+-- sequential damage inside a tick, who shoots first decides whose shots are wasted on a row that is
+-- already dead. Any determinism harness over this tick was unsound without it. 0336 adds
+-- `order by cu2.id` to the freeze.
+-- HOW THIS IS PROVEN OBSERVABLY, and the honest caveat. combat_events.seq is stamped in the order
+-- the loop emitted, so the ORDER BY's effect is directly visible: with several units on a side, the
+-- salvos of one tick, read in seq order, must carry NON-DECREASING combat_units.id. That is the
+-- property, stated as the ORDER BY's own effect rather than as "it differed from something".
+-- BE HONEST ABOUT WHAT THE HEAD DOES: heap order for a freshly inserted set is insertion order, and
+-- the encounter creator inserts player rows ordered by main_ship_id while combat_units.id is a fresh
+-- uuid — two unrelated orders. So the head satisfies this by coincidence with probability 1/n! per
+-- tick, and the block uses SIX hulls over TWO consecutive ticks (1/720 per tick) rather than the
+-- three the property needs, precisely so that coincidence is not a realistic outcome. It is stated
+-- here rather than hidden because a probabilistic red is not the same thing as a red by
+-- construction, and the next author is entitled to know which one this is.
+do $$
+declare
+  r jsonb; n int; i int; v_t int;
+  uO uuid; gO uuid; s_iter uuid;
+  o_x double precision; o_y double precision;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  v_mv uuid; v_enc uuid; mv record; pi record;
+  v_t1 int; v_t2 int; n_bad int; n_firers int; n_orphan int; n_nullid int;
+  k_ring double precision; k_ehp double precision; k_erb double precision; k_erp double precision;
+  k_esb double precision; k_esp double precision;
+begin
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_synthetic_range_base'), 3.6)            into k_erb;
+  select coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 0.04) into k_erp;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  -- The whole fleet must be firing on the SAME tick or there is no ordering to observe: the ring is
+  -- pulled in so every hull is inside its own range from the first tick, the wave is given a reach
+  -- of almost nothing (it is a target, not a participant) and a hull deep enough that nobody dies
+  -- and changes the population between the two ticks under comparison.
+  perform public.set_game_config('spatial_formation_ring_radius',        '1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_base',           '0.1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_hp_base',                        '100000'::jsonb);
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.os.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uO;
+  insert into public.player_wallet (player_id, balance) values (uO, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uO, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'ORDERSTABLE FAIL: commission 1: %', r; end if;
+  for i in 2 .. 6 loop
+    r := pg_temp.call_as(uO, 'public.commission_additional_main_ship()');
+    if (r->>'ok')::boolean is not true then raise exception 'ORDERSTABLE FAIL: commission %: %', i, r; end if;
+  end loop;
+  r := pg_temp.call_as(uO, 'public.upsert_ship_group(1, ''Order Stable'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ORDERSTABLE FAIL: group: %', r; end if;
+  gO := (r->>'group_id')::uuid;
+  for s_iter in select main_ship_id from public.main_ship_instances where player_id = uO loop
+    r := pg_temp.call_as(uO, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s_iter, gO));
+    if (r->>'ok')::boolean is not true then raise exception 'ORDERSTABLE FAIL: assign %: %', s_iter, r; end if;
+  end loop;
+  select main_ship_id into s_iter from public.main_ship_instances where player_id = uO order by main_ship_id limit 1;
+  r := pg_temp.call_as(uO, format('public.set_fleet_command_ship(%L::uuid, true)', s_iter));
+  if (r->>'ok')::boolean is not true then raise exception 'ORDERSTABLE FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uO, format('public.set_group_auto_exit(%L::uuid, false, 30)', gO));
+  if (r->>'ok')::boolean is not true then raise exception 'ORDERSTABLE FAIL: auto-exit off: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uO and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gO
+   limit 1;
+  if o_x is null then raise exception 'ORDERSTABLE FAIL: could not resolve the docked origin'; end if;
+  r := pg_temp.call_as(uO, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gO, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'ORDERSTABLE FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'ORDERSTABLE FAIL: no pending ambush on the leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uO and status = 'active';
+  if v_enc is null then raise exception 'ORDERSTABLE FAIL: the ambush opened no encounter'; end if;
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'player';
+  if n < 6 then
+    raise exception 'ORDERSTABLE FAIL: % player unit(s) fielded — with fewer than 6 the head satisfies an id-ascending order by coincidence often enough that a green run would mean nothing', n;
+  end if;
+
+  perform pg_temp.ae_tick(v_enc);
+  select tick_number into v_t1 from public.combat_encounters where id = v_enc;
+  perform pg_temp.ae_tick(v_enc);
+  select tick_number into v_t2 from public.combat_encounters where id = v_enc;
+  if v_t2 <> v_t1 + 1 then
+    raise exception 'ORDERSTABLE FAIL: the two observed ticks are % and % — they must be CONSECUTIVE, or a stable order between them proves nothing about a single run of the loop', v_t1, v_t2;
+  end if;
+
+  foreach v_t in array array[v_t1, v_t2] loop
+    -- NULL-VACUITY: a salvo that names no unit cannot participate in an ordering, and lag() over a
+    -- column of NULLs compares FALSE against everything — the inversion count would be 0 for free.
+    select count(*) into n_nullid from public.combat_events
+     where encounter_id = v_enc and tick_number = v_t and event_type = 'missile_salvo'
+       and payload_json->>'unit_id' is null;
+    if n_nullid <> 0 then
+      raise exception 'ORDERSTABLE FAIL: % salvo(s) on tick % name no firing unit — an ordering over NULLs is vacuous', n_nullid, v_t;
+    end if;
+    -- and every id named must be a real unit OF THIS ENCOUNTER, or the comparison is not being made
+    -- against combat_units.id at all.
+    select count(*) into n_orphan from public.combat_events ev
+     where ev.encounter_id = v_enc and ev.tick_number = v_t and ev.event_type = 'missile_salvo'
+       and not exists (select 1 from public.combat_units cu9
+                        where cu9.encounter_id = v_enc and cu9.id = (ev.payload_json->>'unit_id')::uuid);
+    if n_orphan <> 0 then
+      raise exception 'ORDERSTABLE FAIL: % salvo(s) on tick % name a unit that is not in this encounter', n_orphan, v_t;
+    end if;
+    select count(distinct payload_json->>'unit_id') into n_firers from public.combat_events
+     where encounter_id = v_enc and tick_number = v_t and event_type = 'missile_salvo';
+    if n_firers < 6 then
+      raise exception 'ORDERSTABLE FAIL: only % distinct unit(s) fired on tick % — with fewer than 6 firing units an id-ascending sequence is not evidence of an ORDER BY, it is a coincidence with odds better than one in a thousand', n_firers, v_t;
+    end if;
+    -- THE PROPERTY: read in seq order, the firing units ascend by combat_units.id. A unit carrying
+    -- several weapons emits several adjacent salvos, so the requirement is NON-DECREASING; a strict
+    -- decrease is a unit that acted out of turn.
+    select count(*) into n_bad from (
+      select (ev.payload_json->>'unit_id')::uuid as uid,
+             lag((ev.payload_json->>'unit_id')::uuid) over (order by ev.seq) as prv
+        from public.combat_events ev
+       where ev.encounter_id = v_enc and ev.tick_number = v_t and ev.event_type = 'missile_salvo'
+    ) z where z.prv is not null and z.uid < z.prv;
+    if n_bad <> 0 then
+      raise exception 'ORDERSTABLE FAIL: % unit(s) acted out of id order on tick % — the population freeze is running in heap order, so who fires first (and therefore whose shots are wasted on an already-dead row) is not decided by anything',
+        n_bad, v_t;
+    end if;
+  end loop;
+
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_synthetic_range_base',           to_jsonb(k_erb));
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', to_jsonb(k_erp));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+
+  raise notice 'DZCOMBAT_PASS_ORDERSTABLE ok: on BOTH of two consecutive ticks (% and %), % distinct firing units emitted their salvos in ascending combat_units.id order with zero inversions — the freeze carries its ORDER BY and the actor loop is decided rather than left to whatever order the heap happened to hand back',
+    v_t1, v_t2, n_firers;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_SHORTGUN (0336): A LONGER GUN NO LONGER DISABLES A SHORTER ONE ══════════════
+-- THE DEFECT, RED BY CONSTRUCTION BELOW. The population freeze carried my_range = MAX(range), and
+-- the mover uses that one value for BOTH the close decision and the kite cap — while the fire gate
+-- is PER WEAPON. So a ship carrying an Mk-II (range 6) beside an autocannon (range 5) parked itself
+-- at ~6 and the autocannon never fired once: a strictly better gun buying LESS damage, which is the
+-- very defect 0331 was written to end, recreated through geometry. 0336 passes my_min_range to the
+-- mover (MY engagement range) while the TARGET's my_range stays the longest (what I must respect
+-- about the enemy is its full reach) — two questions, two values.
+-- THE FIXTURE is exactly the production-plausible one: one starter hull, one autocannon_battery
+-- (slot 1) and one autocannon_battery_mk2 (slot 2) — three slots, both fitted, no room for a third.
+-- The wave is parked outside both ranges at spawn and given no reach and no speed of its own, so the
+-- ONLY thing that moves is the hull, and where it comes to rest is the whole measurement.
+-- ON THE HEAD it settles at exactly the LONG range and the short gun never appears in the log; the
+-- non-vacuity guard below proves the ship really did pass through that band first.
+do $$
+declare
+  r jsonb; n int; i int;
+  uS uuid; sS uuid; gS uuid;
+  o_x double precision; o_y double precision;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  v_mv uuid; v_enc uuid; mv record; pi record;
+  v_short double precision; v_long double precision; v_speed double precision;
+  v_u_pl uuid; v_u_en uuid; v_dist double precision; n_units int;
+  n_short int; n_long int; n_bandtick int;
+  k_ring double precision; k_ehp double precision; k_erb double precision; k_erp double precision;
+  k_esb double precision; k_esp double precision; k_pss double precision;
+begin
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_synthetic_range_base'), 3.6)            into k_erb;
+  select coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 0.04) into k_erp;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  select coalesce(public.cfg_num('combat_player_speed_scale'), 0.2)             into k_pss;
+  -- The wave is a fixed marker post: no reach, no speed, and hull enough to outlast the approach.
+  -- The ring is pushed OUT so the hull provably starts beyond BOTH of its guns, and the player's
+  -- combat speed is raised so the approach is a handful of ticks rather than dozens.
+  perform public.set_game_config('spatial_formation_ring_radius',        '8'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_base',           '0.1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_hp_base',                        '100000'::jsonb);
+  perform public.set_game_config('combat_player_speed_scale',            '2'::jsonb);
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.sg.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uS;
+  insert into public.player_wallet (player_id, balance) values (uS, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uS, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: commission: %', r; end if;
+  select main_ship_id into sS from public.main_ship_instances where player_id = uS;
+  select jsonb_build_object('items', jsonb_agg(jsonb_build_object('item_id', i2.item_id, 'quantity', i2.q)))
+    into r
+    from (select item_id, sum(qty)::int as q from (
+            select item_id, qty from public.module_recipe_ingredients where module_type_id = 'autocannon_battery'
+            union all
+            select item_id, qty from public.module_recipe_ingredients where module_type_id = 'autocannon_battery_mk2'
+          ) x group by item_id) i2;
+  if r is null or jsonb_array_length(r->'items') < 1 then
+    raise exception 'SHORTGUN FAIL: module_recipe_ingredients carries no recipe for the two guns this block fits — the grant would be empty and the failure would surface as a craft error instead of this message';
+  end if;
+  perform public.reward_grant('combat', gen_random_uuid(), uS, null, r);
+  r := pg_temp.call_as(uS, format('public.craft_module(''dzc-sg-s'', ''autocannon_battery'', %L::uuid)', sS));
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: craft short gun: %', r; end if;
+  r := pg_temp.call_as(uS, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-sg-fs'')', (r->>'instance_id')::uuid, sS));
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: fit short gun: %', r; end if;
+  r := pg_temp.call_as(uS, format('public.craft_module(''dzc-sg-l'', ''autocannon_battery_mk2'', %L::uuid)', sS));
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: craft long gun: %', r; end if;
+  r := pg_temp.call_as(uS, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-sg-fl'')', (r->>'instance_id')::uuid, sS));
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: fit long gun: %', r; end if;
+
+  r := pg_temp.call_as(uS, 'public.upsert_ship_group(1, ''Short Gun'')');
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: group: %', r; end if;
+  gS := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uS, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sS, gS));
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uS, format('public.set_fleet_command_ship(%L::uuid, true)', sS));
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uS, format('public.set_group_auto_exit(%L::uuid, false, 30)', gS));
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: auto-exit off: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uS and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gS
+   limit 1;
+  if o_x is null then raise exception 'SHORTGUN FAIL: could not resolve the docked origin'; end if;
+  r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gS, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'SHORTGUN FAIL: no pending ambush on the leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uS and status = 'active';
+  if v_enc is null then raise exception 'SHORTGUN FAIL: the ambush opened no encounter'; end if;
+
+  select id, move_speed into v_u_pl, v_speed from public.combat_units
+   where encounter_id = v_enc and side = 'player';
+  select min((w->>'range')::double precision), max((w->>'range')::double precision)
+    into v_short, v_long
+    from public.combat_units cu9, jsonb_array_elements(cu9.weapons_json) w
+   where cu9.id = v_u_pl;
+  select jsonb_array_length(weapons_json) into n from public.combat_units where id = v_u_pl;
+  if n <> 2 then
+    raise exception 'SHORTGUN FAIL: the hull carries % weapon entr(ies) (want 2) — a mixed-range ship is the entire fixture', n;
+  end if;
+  if v_short is null or v_long is null or v_short >= v_long then
+    raise exception 'SHORTGUN FAIL: the two fitted guns reach % and % — they must differ, with one strictly SHORTER, or there is no gun for a longer one to disable', v_short, v_long;
+  end if;
+  if v_speed is null or v_speed <= 0 then
+    raise exception 'SHORTGUN FAIL: the hull frozen move_speed is % — a ship that cannot move can never settle anywhere and the whole measurement is vacuous', v_speed;
+  end if;
+
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n_units <> 1 then
+    raise exception 'SHORTGUN FAIL: % pirate unit(s) spawned (this block needs exactly 1, so the settled distance is a single unambiguous number)', n_units;
+  end if;
+  select id into v_u_en from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  select public.osn_distance(a9.pos_x, a9.pos_y, b9.pos_x, b9.pos_y) into v_dist
+    from public.combat_units a9, public.combat_units b9 where a9.id = v_u_pl and b9.id = v_u_en;
+  if v_dist is null then
+    raise exception 'SHORTGUN FAIL: the hull-to-wave distance is NULL after the opening tick — an unpositioned fight cannot prove where anything settled';
+  end if;
+  if v_dist <= v_long then
+    raise exception 'SHORTGUN FAIL: the hull already stands % from the wave after one tick, inside its LONGER % range — it never had to close, so the approach that exposes the short gun was never exercised', v_dist, v_long;
+  end if;
+
+  -- ── DRIVE THE APPROACH TO ITS RESTING POINT. The hull is the only thing that moves. ─────────────
+  for i in 1..20 loop
+    perform pg_temp.ae_tick(v_enc);
+  end loop;
+  select public.osn_distance(a9.pos_x, a9.pos_y, b9.pos_x, b9.pos_y) into v_dist
+    from public.combat_units a9, public.combat_units b9 where a9.id = v_u_pl and b9.id = v_u_en;
+  if v_dist is null then
+    raise exception 'SHORTGUN FAIL: the settled hull-to-wave distance is NULL — the settle assert would be vacuous';
+  end if;
+
+  select count(*) into n_short from public.combat_events
+   where encounter_id = v_enc and event_type = 'missile_salvo' and source = 'player'
+     and projectile_type = 'autocannon_battery';
+  select count(*) into n_long from public.combat_events
+   where encounter_id = v_enc and event_type = 'missile_salvo' and source = 'player'
+     and projectile_type = 'autocannon_battery_mk2';
+  -- NON-VACUITY, and it is the one that matters: the ship must have PASSED THROUGH the band where
+  -- only the long gun reaches. That band is the head's permanent resting place, so a run that never
+  -- entered it would be green on both bodies and prove nothing.
+  select count(*) into n_bandtick from (
+    select ev.tick_number
+      from public.combat_events ev
+     where ev.encounter_id = v_enc and ev.event_type = 'missile_salvo' and ev.source = 'player'
+     group by ev.tick_number
+    having count(*) filter (where ev.projectile_type = 'autocannon_battery_mk2') > 0
+       and count(*) filter (where ev.projectile_type = 'autocannon_battery') = 0
+  ) z;
+  if n_bandtick = 0 then
+    raise exception 'SHORTGUN FAIL: there was never a tick on which only the LONGER gun could reach — the fixture never entered the band the head parks in, so a green result here would say nothing about the defect';
+  end if;
+  if n_long = 0 then
+    raise exception 'SHORTGUN FAIL: the longer gun never fired at all — the fixture never engaged and neither half of this block means anything';
+  end if;
+  if n_short = 0 then
+    raise exception 'SHORTGUN FAIL: the SHORTER gun (% range) never fired in 21 ticks while the longer one (% range) fired % time(s), and the hull came to rest % away — the mover was handed the ship LONGEST reach for both the close decision and the kite cap, so it parks at the long gun edge and the short gun is silently disabled: a better module buying less damage',
+      v_short, v_long, n_long, v_dist;
+  end if;
+  if v_dist > v_short + 1e-6 then
+    raise exception 'SHORTGUN FAIL: the hull settled % from its target, beyond its own SHORTEST gun (% range) — the kite cap is still the longest gun, so the ship holds where half its guns cannot reach',
+      v_dist, v_short;
+  end if;
+
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_synthetic_range_base',           to_jsonb(k_erb));
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', to_jsonb(k_erp));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+  perform public.set_game_config('combat_player_speed_scale',            to_jsonb(k_pss));
+
+  raise notice 'DZCOMBAT_PASS_SHORTGUN ok: a hull carrying a % range autocannon beside a % range Mk-II closed from beyond both, passed through % tick(s) where only the Mk-II could reach (the head resting place), and came to rest % from its target — inside its SHORTEST gun, with BOTH module types on the record (% short salvo(s), % long)',
+    v_short, v_long, n_bandtick, round(v_dist::numeric, 4), n_short, n_long;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_RETREATCLEAR (0336): EVERY TERMINAL ARM CONSUMES THE RETREAT TARGET ═════════
+-- THE DEFECT, RED BY CONSTRUCTION IN PART (A). fleets.retreat_target_location_id / _x / _y is the
+-- destination a player ordered mid-combat, and the settle arm's own header states the invariant that
+-- the recording is ALWAYS consumed. Only the settle arm ever cleared it. A fleet that DIED, or was
+-- wiped, kept a stale destination — and the NEXT sortie of that fleet would then fly to it.
+--   (A) THE DEATH ARM, the one that leaks on the head: arm a retreat destination through the real
+--       mover, then let the wave kill the fleet, then require all three columns NULL.
+--   (B) THE SETTLE ARM, which was never broken: arm the same recording, let the retreat COMPLETE,
+--       and require the columns cleared AND the destination actually USED (the minted return leg
+--       departs for exactly the ordered point). That half is not a regression test — it exists so
+--       that the shared leaf can never be removed from the arm that always did this correctly, and
+--       so that "consumed" keeps meaning read-and-clear rather than just clear.
+-- The destination is proven UNADMITTED by the fight's own zone authority first, so the order is a
+-- retreat rather than an in-zone reposition (0311) — otherwise nothing would be recorded at all and
+-- both halves would be vacuous.
+do $$
+declare
+  r jsonb; n int; i int;
+  uD uuid; sD uuid; gD uuid;
+  uE uuid; sE2 uuid; gE uuid;
+  o_x double precision; o_y double precision;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  v_mv uuid; v_enc uuid; v_fleet uuid; mv record; pi record; enc record; fl record;
+  v_pool double precision; v_pdef double precision; v_defb double precision; v_bd double precision;
+  v_danger int; v_atksc double precision;
+  dx double precision; dy double precision;
+  v_dead boolean := false; v_ring_now double precision; v_ring0 double precision;
+  k_ring double precision; k_ehp double precision; k_eatk double precision;
+  k_esb double precision; k_esp double precision; k_srg double precision;
+begin
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_attack_base'), 1.0)                     into k_eatk;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  select coalesce(public.cfg_num('shield_regen_combat_pct'), 0)                 into k_srg;
+  perform public.set_game_config('spatial_formation_ring_radius',        '1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_base',           '20'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_hp_base',                        '100000'::jsonb);
+  perform public.set_game_config('shield_regen_combat_pct',              '0'::jsonb);
+
+  -- ══ (A) THE DEATH ARM ══════════════════════════════════════════════════════════════════════════
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.rc.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uD;
+  insert into public.player_wallet (player_id, balance) values (uD, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uD, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: commission A: %', r; end if;
+  select main_ship_id into sD from public.main_ship_instances where player_id = uD;
+  r := pg_temp.call_as(uD, 'public.upsert_ship_group(1, ''Retreat Clear A'')');
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: group A: %', r; end if;
+  gD := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sD, gD));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: assign A: %', r; end if;
+  r := pg_temp.call_as(uD, format('public.set_fleet_command_ship(%L::uuid, true)', sD));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: command ship A: %', r; end if;
+  r := pg_temp.call_as(uD, format('public.set_group_auto_exit(%L::uuid, false, 30)', gD));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: auto-exit off A: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uD and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gD
+   limit 1;
+  if o_x is null then raise exception 'RETREATCLEAR FAIL: could not resolve A''s docked origin'; end if;
+  r := pg_temp.call_as(uD, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gD, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: go A: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'RETREATCLEAR FAIL: no pending ambush on A''s leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id, fleet_id into v_enc, v_fleet from public.combat_encounters
+   where player_id = uD and status = 'active';
+  if v_enc is null then raise exception 'RETREATCLEAR FAIL: the ambush opened no encounter for A'; end if;
+
+  select hp_current + coalesce(shield_current, 0), coalesce(defense_snapshot, 0)
+    into v_pool, v_pdef from public.combat_units where encounter_id = v_enc and side = 'player';
+  v_defb := coalesce(public.cfg_num('defense_curve_base'), 100);
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id where ce.id = v_enc;
+  if v_pool is null or v_pool <= 0 or v_bd is null or v_bd <= 0 or v_defb <= 0 then
+    raise exception 'RETREATCLEAR FAIL: hull pool % / base_difficulty % / defense base % cannot size the killing wave', v_pool, v_bd, v_defb;
+  end if;
+  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
+              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
+                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
+  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  perform public.set_game_config('enemy_attack_base',
+    to_jsonb(round((((0.6 * v_pool) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+  perform pg_temp.ae_tick(v_enc);
+
+  -- ARM THE DESTINATION, through the mover the Retreat-to-a-point UI uses. It must be a point the
+  -- fight's own zone authority does NOT admit, or 0311 would REPOSITION instead of retreating and
+  -- nothing would be recorded for a terminal arm to consume.
+  dx := round(o_x) + 300; dy := round(o_y) + 900;
+  if public.combat_encounter_zone_admits_point(v_enc, dx, dy) then
+    raise exception 'RETREATCLEAR FAIL: the destination (%,%) IS admitted by a zone that holds the fight — that order repositions instead of retreating, nothing is recorded, and both halves of this block would be vacuous', dx, dy;
+  end if;
+  r := pg_temp.call_as(uD, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gD, dx, dy));
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'retreat_started' then
+    raise exception 'RETREATCLEAR FAIL: the retreat order answered % — this block needs a real recorded destination', r;
+  end if;
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.retreat_target_x is distinct from dx or fl.retreat_target_y is distinct from dy then
+    raise exception 'RETREATCLEAR FAIL: the destination was not recorded (% , %) — there is nothing for a terminal arm to leak, so the death-arm assert below would pass on every body',
+      fl.retreat_target_x, fl.retreat_target_y;
+  end if;
+
+  -- KILL IT. The player holds fire while retreating, so this is the wave's work alone.
+  for i in 1..12 loop
+    perform pg_temp.ae_tick(v_enc);
+    select * into enc from public.combat_encounters where id = v_enc;
+    if enc.status not in ('active', 'retreating') then v_dead := true; exit; end if;
+  end loop;
+  if not v_dead then
+    raise exception 'RETREATCLEAR FAIL: after 12 ticks the encounter is still % — the fleet never died, so the DEATH arm this half is about was never reached', enc.status;
+  end if;
+  if enc.status <> 'defeat' then
+    raise exception 'RETREATCLEAR FAIL: the encounter concluded as % rather than defeat — a completed retreat routes through the SETTLE arm, which always cleared the recording, so this half would be re-proving part (B)', enc.status;
+  end if;
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.retreat_target_location_id is not null or fl.retreat_target_x is not null or fl.retreat_target_y is not null then
+    raise exception 'RETREATCLEAR FAIL: the DEATH arm left the retreat destination behind (%, %, %) — a fleet that died keeps a stale destination that the next sortie settle would fly to',
+      fl.retreat_target_location_id, fl.retreat_target_x, fl.retreat_target_y;
+  end if;
+
+  -- ══ (B) THE SETTLE ARM: still consumes, and still READS what it consumes ═══════════════════════
+  perform public.set_game_config('enemy_attack_base', '0.000001'::jsonb);
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.rc2.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uE;
+  insert into public.player_wallet (player_id, balance) values (uE, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uE, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: commission B: %', r; end if;
+  select main_ship_id into sE2 from public.main_ship_instances where player_id = uE;
+  r := pg_temp.call_as(uE, 'public.upsert_ship_group(1, ''Retreat Clear B'')');
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: group B: %', r; end if;
+  gE := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uE, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sE2, gE));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: assign B: %', r; end if;
+  r := pg_temp.call_as(uE, format('public.set_fleet_command_ship(%L::uuid, true)', sE2));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: command ship B: %', r; end if;
+  r := pg_temp.call_as(uE, format('public.set_group_auto_exit(%L::uuid, false, 30)', gE));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: auto-exit off B: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uE and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gE
+   limit 1;
+  if o_x is null then raise exception 'RETREATCLEAR FAIL: could not resolve B''s docked origin'; end if;
+  r := pg_temp.call_as(uE, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gE, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'RETREATCLEAR FAIL: go B: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'RETREATCLEAR FAIL: no pending ambush on B''s leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id, fleet_id into v_enc, v_fleet from public.combat_encounters
+   where player_id = uE and status = 'active';
+  if v_enc is null then raise exception 'RETREATCLEAR FAIL: the ambush opened no encounter for B'; end if;
+  perform pg_temp.ae_tick(v_enc);
+
+  dx := round(o_x) + 300; dy := round(o_y) + 900;
+  if public.combat_encounter_zone_admits_point(v_enc, dx, dy) then
+    raise exception 'RETREATCLEAR FAIL: B''s destination (%,%) IS admitted — the order would reposition and record nothing', dx, dy;
+  end if;
+  r := pg_temp.call_as(uE, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gE, dx, dy));
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'retreat_started' then
+    raise exception 'RETREATCLEAR FAIL: B''s retreat order answered %', r;
+  end if;
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.retreat_target_x is distinct from dx or fl.retreat_target_y is distinct from dy then
+    raise exception 'RETREATCLEAR FAIL: B''s destination was not recorded (%, %)', fl.retreat_target_x, fl.retreat_target_y;
+  end if;
+  -- LET THE WINDOW EXPIRE. CLOCK-ONLY, the drain_encounter law: the retreat delay is measured as
+  -- now() - retreat_started_at, and now() is frozen for the txn, so the only way the window can
+  -- close is to move the clock the engine reads. No status, no outcome, no geometry is written.
+  update public.combat_encounters set retreat_started_at = retreat_started_at - interval '1 hour'
+   where id = v_enc;
+  perform pg_temp.ae_tick(v_enc);
+  select * into enc from public.combat_encounters where id = v_enc;
+  if enc.status <> 'escaped' then
+    raise exception 'RETREATCLEAR FAIL: B''s encounter is % rather than escaped — the SETTLE arm was never reached, so the second half proves nothing', enc.status;
+  end if;
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.retreat_target_location_id is not null or fl.retreat_target_x is not null or fl.retreat_target_y is not null then
+    raise exception 'RETREATCLEAR FAIL: the SETTLE arm left the retreat destination behind (%, %, %) — the shared clearer has been dropped from the one arm that always did this correctly',
+      fl.retreat_target_location_id, fl.retreat_target_x, fl.retreat_target_y;
+  end if;
+  -- and it did not merely CLEAR the recording, it USED it: the return leg departs for that point.
+  select count(*) into n from public.fleet_movements
+   where fleet_id = v_fleet and mission_type = 'return_home'
+     and abs(target_x - dx) <= 1e-6 and abs(target_y - dy) <= 1e-6;
+  if n <> 1 then
+    raise exception 'RETREATCLEAR FAIL: % return leg(s) depart for the ordered destination (%,%) — the settle arm cleared the recording without READING it, so consumed has stopped meaning read-and-clear and the player is flown somewhere they did not choose',
+      n, dx, dy;
+  end if;
+
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_attack_base',                    to_jsonb(k_eatk));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+  perform public.set_game_config('shield_regen_combat_pct',              to_jsonb(k_srg));
+
+  -- ── THE LEAK PIN FOR THE WHOLE 0336 SECTION. Every block above OWNS a formation ring so its
+  --    fixture can be in contact on the tick it measures, and every one of them restores it. This
+  --    is the one place that is checked: the COMMITTED value RANGEINVARIANT captured before any
+  --    fixture touched it must be the value still in the row now. 0336 itself moves no knob — it
+  --    made the wave's clearance structural instead — so any drift here is a proof fixture that did
+  --    not give the world back, and it would move the geometry under every later run.
+  v_ring0 := (select v from dzn where k='ring0');
+  select public.cfg_num('spatial_formation_ring_radius') into v_ring_now;
+  if v_ring0 is null then
+    raise exception 'RETREATCLEAR FAIL: the committed formation ring was never captured — the leak pin has nothing to compare against';
+  end if;
+  if v_ring_now is distinct from v_ring0 then
+    raise exception 'RETREATCLEAR FAIL: the formation ring is % but the committed value is % — one of the 0336 blocks owned the knob and did not give it back, so every later fight in this run is being laid out on a fixture value',
+      v_ring_now, v_ring0;
+  end if;
+
+  raise notice 'DZCOMBAT_PASS_RETREATCLEAR ok: a fleet with a recorded destination (%,%) DIED and all three retreat_target_* columns came back NULL (the head leaked them into the next sortie); the same recording on a fleet that RETREATED to completion was both cleared and USED — exactly one return leg departs for that point — and the formation ring is back at its committed %',
+    dx, dy, v_ring0;
 end $$;
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;

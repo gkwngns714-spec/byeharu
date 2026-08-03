@@ -26,18 +26,18 @@ on:
     branches:
       - main
       - 'autopilot/**'
-      - 'fix/spatial-combat-empty-weapons'
+      # 0336 collapses the hand-maintained slice list into one glob: this proof reads the LIVE
+      # process_combat_ticks geometry, so EVERY slice branch must run it, not the ones that
+      # remembered to add themselves. That list is how this gate went dark for two weeks once.
+      - 'slice-**'
       # 0313 cuts combat_player_fallback_weapon_range (150->25) and the catalog gun — this proof's
       # expected values were repointed to knob/catalog derivation in the same slice, so range
-      # branches must run it.
-      - 'slice-weapon-ranges**'
-      # 0316 divides combat_player_fallback_weapon_range (25 -> 5) and its projectile speed
-      # (300 -> 60); this proof derives every expected value from those knobs, so it is the gate that
-      # proves the derivation still holds at the new scale.
-      - 'slice-combat-five-times**'
-      # 0317 rewrites BOTH calculate_expedition_stats and combat_create_group_encounter and repoints
-      # this proof's weapon-power assertions, so it must run on the branch that does it.
-      - 'slice-one-authority**'
+      # The named entries this glob replaces are kept as history, not as triggers: 0313 and 0316
+      # cut combat_player_fallback_weapon_range and its projectile speed, and this proof derives
+      # every expected value from those knobs; 0317 rewrote calculate_expedition_stats and
+      # combat_create_group_encounter and repointed the weapon-power assertions; 0336 moved the
+      # wave off the anchor, which is what retired the ring-500 separation this file used to use.
+      # Every one of those had to remember to add itself. That is the failure mode, so it is a glob.
 
 permissions:
   contents: read
