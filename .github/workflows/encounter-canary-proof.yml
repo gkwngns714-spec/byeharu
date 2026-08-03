@@ -28,6 +28,8 @@ on:
     branches:
       - 'autopilot/**'
       - 'slice-encounter-canary**'
+      # 0314 arms real weapon cooldowns — this harness owns the zeroed-cooldown precondition now.
+      - 'slice-runescape-**'
 
 permissions:
   contents: read

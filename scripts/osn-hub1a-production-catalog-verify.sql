@@ -98,7 +98,7 @@ SELECT 'N_AUTH='         || count(*)                  FROM (SELECT p.proname FRO
 SELECT 'N_AUTH_DISTINCT='|| count(DISTINCT proname)   FROM (SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f' AND has_function_privilege('authenticated',p.oid,'EXECUTE')) q;
 -- which of the canonical 17 does anon hold (must be exactly get_world_map)
 SELECT 'ANON_ON_17='     || coalesce(string_agg(v.name, ',' ORDER BY v.name), '')
-  FROM (VALUES ('bootstrap_me'),('cancel_build_order'),('command_main_ship_space_move'),('command_main_ship_space_move_to_location'),('command_main_ship_space_stop'),('get_combat_reports'),('get_my_expedition_preview'),('get_osn_movement_readiness'),('get_world_map'),('move_main_ship_to_location'),('repair_main_ship'),('request_leave_location'),('request_main_ship_return'),('request_retreat'),('send_fleet_to_location'),('send_main_ship_expedition'),('train_units')) v(name)
+  FROM (VALUES ('bootstrap_me'),('cancel_build_order'),('command_main_ship_space_move'),('command_main_ship_space_move_to_location'),('command_main_ship_space_stop'),('get_combat_reports'),('get_my_expedition_preview'),('get_osn_movement_readiness'),('get_world_map'),('move_main_ship_to_location'),('repair_ship_hull'),('request_leave_location'),('request_main_ship_return'),('request_retreat'),('send_fleet_to_location'),('send_main_ship_expedition'),('train_units')) v(name)
   JOIN pg_proc p ON p.proname=v.name JOIN pg_namespace n ON n.oid=p.pronamespace AND n.nspname='public'
   WHERE has_function_privilege('anon', p.oid, 'EXECUTE');
 SELECT 'GWM_ANON=' || has_function_privilege('anon','public.get_world_map()','EXECUTE')::int;

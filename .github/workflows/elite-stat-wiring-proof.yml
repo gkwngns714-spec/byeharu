@@ -31,6 +31,8 @@ on:
       - 'autopilot/**'
       - 'slice-elite-**'
       - 'osn3-*'
+      # 0314 adds the per-hit damage roll — this proof's random( count pin repointed 2 -> 3.
+      - 'slice-runescape-**'
 
 permissions:
   contents: read

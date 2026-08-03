@@ -8,6 +8,7 @@ export const ICON_NAMES = [
   'ship',
   'anchor',
   'command',
+  'fleet',
   'combat',
   'repair',
   'compass',
@@ -19,6 +20,8 @@ export const ICON_NAMES = [
   'info',
   'edit',
   'history',
+  'mission',
+  'profile',
 ] as const
 
 export type IconName = (typeof ICON_NAMES)[number]
@@ -44,6 +47,8 @@ export const ICON_PATHS: Record<IconName, readonly string[]> = {
   ],
   // Radar sweep — the Command destination (ops console).
   command: ['M12 3a9 9 0 1 0 9 9', 'M12 7.5A4.5 4.5 0 1 0 16.5 12', 'M18.4 5.6 12 12'],
+  // Three deltas in formation — the Fleet destination (ships flying together).
+  fleet: ['M12 3l3.2 5.5H8.8L12 3Z', 'M6.2 13l3.2 5.5H3L6.2 13Z', 'M17.8 13l3.2 5.5h-6.4L17.8 13Z'],
   // Crosshair — combat / targeting.
   combat: [
     'M12 5.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z',
@@ -77,4 +82,12 @@ export const ICON_PATHS: Record<IconName, readonly string[]> = {
   edit: ['M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z', 'm14.5 6.5 3 3'],
   // Clock with a back-arrow tick — the audit history.
   history: ['M12 3a9 9 0 1 0 9 9', 'M12 3 8.5 5.5 12 8', 'M12 7.5V12l3.5 2.5'],
+  // Flag on a pole — the Mission destination (what you're doing, what happened).
+  mission: ['M6 21V3.5', 'M6 4.5c2-1.2 4-1.2 6 0s4 1.2 6 0V13c-2 1.2-4 1.2-6 0s-4-1.2-6 0'],
+  // Head-and-shoulders in a circle — the Account (profile) affordance.
+  profile: [
+    'M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19Z',
+    'M12 7.2a3.1 3.1 0 1 0 0 6.2 3.1 3.1 0 0 0 0-6.2Z',
+    'M5.8 19a7.5 7.5 0 0 1 12.4 0',
+  ],
 }

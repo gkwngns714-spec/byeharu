@@ -53,8 +53,17 @@ body `text-sm` · metadata `text-xs` · micro-labels via `<SectionLabel>`.
   a panel pointer-transparent (e.g. the map legend). `overlayPanelClass`/`overlayRailClass` are the
   pure class builders (unit-tested in `tests/uiPrimitives.spec.ts`).
 - **`Icon`** — the ONE inline-SVG line-icon set (`./icons.ts` holds the glyph data:
-  `map ship anchor command combat repair compass chevron close plus`). `currentColor` strokes —
-  icons wear token text colors, never their own palette. `size` prop (px, default 20).
+  `map ship anchor command fleet combat repair compass chevron close plus …`). `currentColor`
+  strokes — icons wear token text colors, never their own palette. `size` prop (px, default 20).
+- **`Collapsible` / `CollapsibleCard`** — the ONE disclosure implementation (never hand-roll a
+  show/hide button + conditional div). Real `<button>` header (keyboard-native) with
+  `aria-expanded`/`aria-controls` + rotating chevron; uncontrolled (`defaultOpen`, optional
+  `storageKey` persists the player's choice via localStorage — stable SECTION ids only, see
+  `collapsibleState.ts`) or controlled (`open` + `onToggle`, for parent-owned policy or
+  fetch-on-open folds). `CollapsibleCard` is the panel-level composition (Card whose whole
+  header row toggles). Header content must be non-interactive. Pure state helpers in
+  `collapsibleState.ts` (pinned by `tests/collapsible.spec.ts`); rendered proof in
+  `tests/collapsibleUi.uispec.ts`.
 
 Add a primitive ONLY when a screen needs it (no speculative components). Converted so far:
 **Command Center** (Dashboard + its panels), **Galaxy map** (UI R1: backdrop/markers/labels via the

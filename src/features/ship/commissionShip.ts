@@ -86,20 +86,22 @@ export function commissionShortfallMessage(shortfall: number): string {
 // commission_additional_main_ship (0080/0091) + the tradeApi transport fallback ('unavailable'),
 // and the client availability mirror's reasons (commissionAvailability in teamRoster.ts:
 // gate_dark / cap_reached). Unknown → a generic line; never a raw code, never a throw.
+// PLAIN-WORDS: the player-facing verb is "buy" (the panel is "Buy ship"); the reason KEYS stay the
+// server's own commission vocabulary — internal identifiers, never shown.
 const REASON_MESSAGES: Record<string, string> = {
   // server rejects (commission_additional_main_ship, 0080/0091) + transport fallback
-  not_authenticated: 'Sign in to commission a ship.',
-  additional_commission_disabled: 'Commissioning is not available yet.',
-  no_first_ship: 'Your first ship comes with port entry — nothing to commission yet.',
+  not_authenticated: 'Sign in to buy a ship.',
+  additional_commission_disabled: 'Buying ships is not available yet.',
+  no_first_ship: 'Your first ship comes with port entry — nothing to buy yet.',
   ship_cap_reached: 'Ship cap reached.',
   insufficient_credits: 'Not enough credits.',
-  unavailable: 'Commissioning unavailable.',
+  unavailable: 'Ship purchase unavailable.',
   // client availability mirror (commissionAvailability — display-only, server stays authoritative)
-  gate_dark: 'Commissioning is not available yet.',
+  gate_dark: 'Buying ships is not available yet.',
   cap_reached: 'Ship cap reached.',
 }
 
 /** Short player-facing message for a commission reason; unknown → generic (never a raw code). */
 export function commissionReasonMessage(reason: string): string {
-  return REASON_MESSAGES[reason] ?? 'Commissioning unavailable.'
+  return REASON_MESSAGES[reason] ?? 'Ship purchase unavailable.'
 }

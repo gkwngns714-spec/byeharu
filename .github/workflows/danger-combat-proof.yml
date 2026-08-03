@@ -15,14 +15,31 @@ name: DANGER-ZONE COMBAT — intercept→spatial disposable proof (no production
 
 on:
   workflow_dispatch:
+  # 0313 rev.3 — THIS PROOF MUST GATE EVERY PR AND EVERY MERGE, not just the branches that remembered
+  # to name themselves. It now carries the behaviour blocks for 0310 (AUTOEXIT), 0311 (REPOSITION /
+  # REPOOVERLAP / REPOOUTSIDE / REPOMODE), 0312 (NOLIVE), 0313 (CLOSURE) and 0314 (RSFEEL) — 20 markers
+  # in all — plus the seven-generator parity gate. A branch-glob-only trigger means a branch that misses
+  # can change the combat tick and run none of it. That is not hypothetical: the sibling proofs
+  # combat-spatial and combat-fallback were branch-glob-only, went dark for three weeks, were silently
+  # broken by 0300 that whole time, and were found only by accident during this slice. Same failure
+  # mode, larger blast radius. `pull_request` catches it before it lands; `main` catches what a PR
+  # filter misses (admin-override merges, direct pushes).
+  pull_request:
   push:
     branches:
+      - main
       - 'autopilot/**'
-      - 'slice-danger-combat**'
-      # 0301 moved the ambush off the order path; this proof is now the apply-and-behaviour gate for
-      # every intercept-touching branch, so it must fire on them.
+      # ██ COLLAPSED (0335). Fifteen hand-appended `slice-<topic>**` globs used to live here, each
+      # added by the slice that needed it, and EVERY comment in that list warned of the same thing: a
+      # branch that forgets to name itself runs none of this. That list WAS the bug it kept warning
+      # about — one authority for "which branches run the combat gate", not fifteen kept in step by
+      # hand across every merge. `slice-**` is that authority: it strictly widens coverage (every
+      # previous glob is a prefix of it), it cannot be half-un-gated by a merge that takes one side of
+      # a UNION, and there is nothing left to remember to append. `main` and `pull_request` above
+      # still catch admin-override merges and direct pushes.
+      - 'slice-**'
+      - 'osn3-**'
       - 'wt-intercept**'
-      - 'slice-intercept**'
 
 permissions:
   contents: read

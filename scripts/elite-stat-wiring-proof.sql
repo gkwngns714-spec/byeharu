@@ -58,9 +58,13 @@ begin
      or strpos(v_tick, 'v_reward_metal := round(coalesce(cfg_num(''reward_metal_base''),10) * greatest(loc.reward_tier,1)') = 0 then
     raise exception 'ELITE PROOF FAIL SOURCE: a pinned process_combat_ticks anchor is gone (the tick must be untouched by 0272)';
   end if;
+  -- 0314 repointed this pin 2 -> 3: the tick's known RNG sites are the two wave-seed variance
+  -- rolls (spatial + aggregate arm) plus the PER-HIT damage roll 0314 added inside the fire loop
+  -- ("everytime it deals differently"). The property is unchanged — every RNG site is known and
+  -- counted; anything else is drift.
   v_n := (length(v_tick) - length(replace(v_tick, 'random(', ''))) / length('random(');
-  if v_n <> 2 then
-    raise exception 'ELITE PROOF FAIL SOURCE: process_combat_ticks carries % random( call(s) (want exactly 2)', v_n;
+  if v_n <> 3 then
+    raise exception 'ELITE PROOF FAIL SOURCE: process_combat_ticks carries % random( call(s) (want exactly 3: two wave seeds + the 0314 per-hit roll)', v_n;
   end if;
 
   -- the RESOLVER is deterministic and carries the elite salt + the honest tag.
@@ -110,10 +114,23 @@ update public.game_config set value='true'::jsonb where key='enemy_content_regis
 update public.game_config set value='true'::jsonb where key='encounter_authoring_enabled';
 update public.game_config set value='true'::jsonb where key='encounter_binding_authoring_enabled';
 update public.game_config set value='true'::jsonb where key='encounter_resolver_enabled';
+-- 0300 lit combat_telegraph_enabled in the CHAIN, so a hunt arrival now QUEUES a telegraph instead
+-- of opening combat inline — and this harness's send-then-settle staging found "no active
+-- encounter" on every post-0300 chain (verified 2026-08-02: identical failure on main, no 0314).
+-- This proof's subject is the TICK, not the telegraph — so it OWNS the inline-opening world the
+-- danger-combat way: telegraph pinned dark in-txn (rolled back with everything else).
+update public.game_config set value='false'::jsonb where key='combat_telegraph_enabled';
 
 do $$
 begin
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);   -- v_variance = 1 (exact numbers)
+  -- 0320 pins the SECOND spread knob too. The per-hit roll 0314 added reads
+  --   coalesce(cfg_num('combat_hit_variance_pct'), v_var_pct)
+  -- so it INHERITED the damage-variance pin above only while that key did not exist. 0320 seeds it
+  -- (production runs it at 0.5), and the moment it exists the inheritance stops and every exact
+  -- damage equality below becomes a +/-50% roll. A proof must state the precondition it owns
+  -- rather than rely on a row's ABSENCE.
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);      -- exact numbers (0314 per-hit roll)
   perform public.set_game_config('combat_tick_logging',  'true'::jsonb);
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_base', '10000'::jsonb); -- in range at dist 0
@@ -295,26 +312,34 @@ begin
   s2 := (r->>'main_ship_id')::uuid;
   insert into elfx values ('s1', s1), ('s2', s2);
 
+  -- ── ARM BOTH SHIPS BEFORE THE FLEET RETIREMENT BELOW (0333) ─────────────────────────────────
+  -- Items live PER PORT now (`base_items`) and `craft_module` derives the port it spends from the
+  -- crafting ship's VALIDATED DOCK. Retiring the commission fleets (immediately below) is exactly
+  -- what stops a ship being 'at_location', so a craft after it would answer `not_docked`. Both
+  -- crafts therefore run while s1/s2 are still docked at Haven Reach, and each NAMES its ship —
+  -- uZ owns TWO, so the sole-ship shim cannot resolve one and would answer `ship_not_found`.
+  -- A NULL-base grant lands in uZ's oldest active base (the Home Base, location_id = Haven), which
+  -- IS that store. Fitting is legal at 'at_location' as well as 'home' (0114's settled-SAFE set).
+  perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
+    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
+
+  r := pg_temp.call_as(uZ, format('public.craft_module(''elp-gun-1'', ''autocannon_battery'', %L::uuid)', s1));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft1: %', r; end if;
+  m1 := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''elp-fit-1'')', m1, s1));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit1: %', r; end if;
+  r := pg_temp.call_as(uZ, format('public.craft_module(''elp-gun-2'', ''autocannon_battery'', %L::uuid)', s2));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft2: %', r; end if;
+  m2 := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''elp-fit-2'')', m2, s2));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit2: %', r; end if;
+
   update public.main_ship_instances set status='home', updated_at=now() where main_ship_id in (s1, s2);
   update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
          current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null, updated_at=now()
    where main_ship_id in (s1, s2) and status='present';
   update public.location_presence set status='completed', updated_at=now()
    where fleet_id in (select id from public.fleets where main_ship_id in (s1, s2) and status='destroyed') and status='active';
-
-  perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
-    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
-
-  r := pg_temp.call_as(uZ, 'public.craft_module(''elp-gun-1'', ''autocannon_battery'')');
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft1: %', r; end if;
-  m1 := (r->>'instance_id')::uuid;
-  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''elp-fit-1'')', m1, s1));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit1: %', r; end if;
-  r := pg_temp.call_as(uZ, 'public.craft_module(''elp-gun-2'', ''autocannon_battery'')');
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft2: %', r; end if;
-  m2 := (r->>'instance_id')::uuid;
-  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''elp-fit-2'')', m2, s2));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit2: %', r; end if;
 
   r := pg_temp.call_as(uZ, 'public.upsert_ship_group(1, ''ELP One'')');
   if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL g1: %', r; end if;

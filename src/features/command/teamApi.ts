@@ -107,6 +107,11 @@ export async function fetchMyPresentShipFleets(): Promise<PresentShipFleetLite[]
 // unified mover refuses combat destinations (0208 combat_destination), so a group-shaped fleet
 // present at a hunt site can only be a sortie, never a dock.
 export interface UnifiedGroupFleetLite {
+  /** fleets.id — the row identity `combat_encounters.fleet_id` points at (0014:13, NOT NULL FK).
+   *  The map's in-combat badge joins on it to find THIS fleet's own fight, so it can draw itself at
+   *  the ENGAGEMENT ANCHOR instead of the site centre (map/teamMarkers + combat/encounterAnchor).
+   *  Without it the badge cannot tell its fleet's encounter from another fleet's. */
+  id: string
   group_id: string
   status: string
   location_mode: string
@@ -118,7 +123,7 @@ export interface UnifiedGroupFleetLite {
 export async function fetchMyUnifiedGroupFleets(): Promise<UnifiedGroupFleetLite[]> {
   const { data, error } = await supabase
     .from('fleets')
-    .select('group_id, status, location_mode, current_location_id, space_x, space_y')
+    .select('id, group_id, status, location_mode, current_location_id, space_x, space_y')
     .is('main_ship_id', null)
     .not('group_id', 'is', null)
     .in('status', ['idle', 'moving', 'present', 'returning'])
@@ -175,6 +180,52 @@ export async function setFleetCommandShip(mainShipId: string, isCommand: boolean
 // delete_ship_group (0162) — delete an owned team; its ships are un-grouped by ON DELETE SET NULL server-side.
 export async function deleteShipGroup(groupId: string): Promise<TeamRpcResult> {
   const { data, error } = await supabase.rpc('delete_ship_group', { p_group_id: groupId })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
+// ── HP AUTO-EXIT (0310) — the fleet's combat safety line. ──
+// The settings read is a SEPARATE query, NOT a widening of fetchMyShipGroupsChecked's select —
+// the same load-bearing deploy-order rule as the is_command_ship read above: the client (Pages)
+// auto-deploys AHEAD of the approval-gated migration, and a widened base select would error on a
+// pre-0310 database and blank every live fleet list. This one fail-closes to null instead, and the
+// panel simply does not render the control until the columns exist. Owner-RLS read (0160's
+// ship_groups_select_own covers the new columns).
+export interface GroupAutoExitRow {
+  enabled: boolean
+  pct: number
+}
+
+export async function fetchMyGroupAutoExit(): Promise<Record<string, GroupAutoExitRow> | null> {
+  const { data, error } = await supabase
+    .from('ship_groups')
+    .select('group_id, auto_exit_enabled, auto_exit_hp_pct')
+  if (error || !data) return null
+  const out: Record<string, GroupAutoExitRow> = {}
+  for (const r of data as { group_id: string; auto_exit_enabled: boolean | null; auto_exit_hp_pct: number | string | null }[]) {
+    // numeric arrives as a string over PostgREST; a malformed row fail-closes to hidden (skip),
+    // never to a fabricated setting.
+    const pct = typeof r.auto_exit_hp_pct === 'string' ? Number(r.auto_exit_hp_pct) : r.auto_exit_hp_pct
+    if (typeof r.auto_exit_enabled !== 'boolean' || typeof pct !== 'number' || !Number.isFinite(pct)) continue
+    out[r.group_id] = { enabled: r.auto_exit_enabled, pct }
+  }
+  return out
+}
+
+// set_group_auto_exit (0310) — THE one writer of the setting. Thin, normalize-don't-throw (the
+// file's write style): ids/values only; the server derives the player from auth.uid(), re-resolves
+// the group, and validates the percent to the table CHECK's exact [5,95] bounds (the client's
+// bounds in teamAutoExit.ts are UX only, never the authority).
+export async function setGroupAutoExit(
+  groupId: string,
+  enabled: boolean,
+  pct: number,
+): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('set_group_auto_exit', {
+    p_group_id: groupId,
+    p_enabled: enabled,
+    p_pct: pct,
+  })
   if (error) return { ok: false, reason: 'unavailable' }
   return data as TeamRpcResult
 }

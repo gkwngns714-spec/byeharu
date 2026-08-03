@@ -1,18 +1,28 @@
-name: Frontend tests (tests/*.spec.ts)
+name: Frontend tests (tests/*.spec.ts + rendered UI proofs)
 
+# THE frontend proof workflow — the one place every tests/ proof runs, on every PR and slice push.
 # Closes a real CI gap: build.yml only typechecks/builds, and the DB proof workflows only
 # cover Postgres invariants — the tests/*.spec.ts suite (World Editor adapters/geometry,
 # location/mining draft models + guards, team roster/stop/send, UI primitives, etc.) never
-# ran in CI, so a red frontend spec was able to land on main uncaught. This job runs the
-# whole suite on every PR and slice branch push.
+# ran in CI, so a red frontend spec was able to land on main uncaught.
+#
+# TWO JOBS, because the two kinds of proof need different machines:
+#   `frontend-tests` — the pure Node/TS specs. No browser binary is installed, so it stays fast.
+#   `rendered-ui`    — the *.uispec.ts proofs, which serve tests/harness through Vite and drive the
+#                      REAL components in Chromium. They are the only tests that can see a defect
+#                      living between the DOM and the code — a wheel listener that is never released,
+#                      a zoom anchor computed from the wrong origin, a pan scaled by the wrong axis —
+#                      so they have to run on the same events as everything else. They previously ran
+#                      ONLY from phase9-dock-services-ui-proof.yml, which triggered on `phase9-**`
+#                      branches, i.e. in practice never. That workflow is retired: its build step was
+#                      already build.yml's job and its UI step is the `rendered-ui` job below.
 #
 # galaxy.spec.ts is excluded on purpose: it is the only *.spec.ts that uses the Playwright
 # `page` fixture, and it drives the LIVE deployed Pages site with real Supabase secrets
 # (see browser-galaxy.yml, workflow_dispatch-only, serialized against the live DB). Every
-# other spec is a pure Node/TS proof (no `page` fixture anywhere else in tests/), so no
-# browser binaries are installed here — keeps this job fast and free of prod access.
-# dockServicesUi.uispec.ts is a distinct filename pattern (not *.spec.ts) already covered by
-# its own harness-server workflow (phase9-dock-services-ui-proof.yml).
+# other *.spec.ts is a pure Node/TS proof (no `page` fixture anywhere else in that set).
+# The harness the `rendered-ui` job serves injects its own data and connects to nothing;
+# neither job has production access.
 
 on:
   push:
@@ -50,5 +60,40 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: frontend-tests-report
+          path: playwright-report/
+          retention-days: 14
+
+  rendered-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+
+      # playwright.osnui.config.ts matches **/*.uispec.ts and starts the tests/harness Vite server
+      # itself. Today: dockServicesUi.uispec.ts (the real docked-port surface),
+      # cameraWiring.uispec.ts (the real <GalaxyMap> + useWheelZoom under a real pointer),
+      # collapsibleUi.uispec.ts (the real <ReportsSection> — the Collapsible fold contract) and
+      # repairSurface.uispec.ts (the real <RepairPanel> — that ONE repair action renders for a
+      # wreck and a dent alike, that the tow survives for an adrift wreck, and that a wreck's
+      # recovery outlives a dark flag and a failed hull read).
+      - name: Rendered UI proofs (tests/*.uispec.ts)
+        run: npx playwright test --config playwright.osnui.config.ts
+
+      - name: Upload playwright report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-ui-report
           path: playwright-report/
           retention-days: 14

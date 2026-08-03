@@ -110,8 +110,11 @@ begin
 
   -- the order RPC + queue engine + commission core + config leaves.
   foreach fn in array array[
-    'public.start_hull_build(uuid, text)',
-    'public.production_start_hull_build(uuid, text, uuid)',
+    -- 0333: a hull order now DERIVES its port from the acting ship's dock and RECORDS that
+    -- store on the order (so the cancel refund has somewhere to return the items). Both old
+    -- placeless signatures are DROPPED.
+    'public.start_hull_build(uuid, text, uuid)',
+    'public.production_start_hull_build(uuid, text, uuid, uuid)',
     'public.process_build_queue()',
     'public.cancel_build_order(uuid)',
     'public.port_entry_commission_build(uuid, text)',
@@ -125,7 +128,7 @@ begin
   end loop;
 
   -- the DEPLOYED order writer gate-rejects on shipyard_enabled (0188).
-  select prosrc into v_src from pg_proc where oid = to_regprocedure('public.production_start_hull_build(uuid, text, uuid)')::oid;
+  select prosrc into v_src from pg_proc where oid = to_regprocedure('public.production_start_hull_build(uuid, text, uuid, uuid)')::oid;   -- 0333 signature
   if position('cfg_bool(''shipyard_enabled''' in v_src) = 0 then
     raise exception 'PRECONDITION FAIL: the deployed production_start_hull_build does not gate on shipyard_enabled (deploy 0188)';
   end if;

@@ -51,7 +51,7 @@ end $$;
 
 -- ── canonical client-RPC inventory preserved; no server fn is player-facing ───────────────────────
 do $$
-declare expected text[] := array['bootstrap_me','cancel_build_order','get_combat_reports','get_my_expedition_preview','get_world_map','move_main_ship_to_location','repair_main_ship','request_leave_location','request_main_ship_return','request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
+declare expected text[] := array['bootstrap_me','cancel_build_order','get_combat_reports','get_my_expedition_preview','get_world_map','move_main_ship_to_location','repair_ship_hull','request_leave_location','request_main_ship_return','request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
   actual text[]; server_only text[] := array['dev_set_main_ship_destroyed','process_mainship_space_arrivals','mainship_space_begin_move','mainship_space_lock_context','mainship_space_validate_context','mainship_space_resolve_origin','mainship_space_assert_cross_domain_exclusion'];
 begin
   select coalesce(array_agg(distinct p.proname order by p.proname),'{}') into actual from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and has_function_privilege('authenticated',p.oid,'EXECUTE');
@@ -75,14 +75,14 @@ begin
   raise notice 'PERM ok: anon/authenticated cannot CREATE in public; S4 arrival cron present exactly once @ "30 seconds" (untouched by 0059)';
 end $$;
 
--- ── repair_main_ship remains a client RPC (unchanged); space flag + cap at chain defaults ─────────
+-- ── repair_ship_hull remains a client RPC (unchanged); space flag + cap at chain defaults ─────────
 do $$ declare b text; c text; begin
-  if not has_function_privilege('authenticated','public.repair_main_ship()'::regprocedure,'EXECUTE') then raise exception 'PERM FAIL: repair_main_ship lost authenticated execute'; end if;
+  if not has_function_privilege('authenticated','public.repair_ship_hull(uuid,numeric,uuid)'::regprocedure,'EXECUTE') then raise exception 'PERM FAIL: repair_ship_hull lost authenticated execute'; end if;
   select value::text into b from game_config where key='mainship_space_movement_enabled';
   select value::text into c from game_config where key='max_coordinate_travel_seconds';
   if b is distinct from 'false' then raise exception 'FLAG FAIL: mainship_space_movement_enabled=%', b; end if;
   if c is distinct from '86400' then raise exception 'CONFIG FAIL: max_coordinate_travel_seconds=%', c; end if;
-  raise notice 'PERM ok: repair_main_ship still authenticated-executable; mainship_space_movement_enabled=false, cap=86400 (chain defaults)';
+  raise notice 'PERM ok: repair_ship_hull still authenticated-executable; mainship_space_movement_enabled=false, cap=86400 (chain defaults)';
 end $$;
 
 select 'OSN-3 S5 REAL-CHAIN PERMISSION PROOF: ALL PASSED' as result;

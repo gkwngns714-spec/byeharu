@@ -29,6 +29,8 @@ on:
       - 'slice-e3-encounter-resolver**'
       - 'slice-e5-**'
       - 'slice-elite-**'
+      # 0314 arms real weapon cooldowns — this harness owns the zeroed-cooldown precondition now.
+      - 'slice-runescape-**'
 
 permissions:
   contents: read

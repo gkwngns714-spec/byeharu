@@ -81,7 +81,7 @@ MIGRATION_4C2A="$REPO_ROOT/supabase/migrations/20260618000222_movement_writer_re
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_RETIRED FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_HALTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE S3_PASS_POSLEAF_MIDPOINT S3_PASS_POSLEAF_AGREEMENT S3_PASS_POSLEAF_PARKED S3_PASS_POSLEAF_DOCKED S3_PASS_TERRITORY_IN S3_PASS_TERRITORY_OUT S4_PASS_DOCKLEG_MINT S4_PASS_DOCK_SETTLE S4_PASS_TRANSLATE_PARK S4_PASS_DARKPARITY_INSTANTDOCK S4_PASS_GUARD_NOTINTERRITORY S4_PASS_GUARD_ONSORTIE S4_PASS_GUARD_NOTPARKED S4_PASS_RALLY_UNTRANSLATED ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_NOOVERLAP TERRITORY_PASS_MAPREAD REPOINT_PASS_BERTHED_SETTLED REPOINT_PASS_FITGATE_BERTHED REPOINT_PASS_MAP_PARITY REPOINT_PASS_GROUPED_IDENTICAL REPOINT_PASS_SPACEPOS_FLEET REPOINT_PASS_LEGACYHOME_IDENTICAL"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_RETIRED FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_HALTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE S3_PASS_POSLEAF_MIDPOINT S3_PASS_POSLEAF_AGREEMENT S3_PASS_POSLEAF_PARKED S3_PASS_POSLEAF_DOCKED S3_PASS_TERRITORY_IN S3_PASS_TERRITORY_OUT S4_PASS_DOCKLEG_MINT S4_PASS_DOCK_SETTLE S4_PASS_TRANSLATE_PARK S4_PASS_DARKPARITY_INSTANTDOCK S4_PASS_GUARD_NOTINTERRITORY S4_PASS_GUARD_ONSORTIE S4_PASS_GUARD_NOTPARKED S4_PASS_RALLY_UNTRANSLATED ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_NOOVERLAP TERRITORY_PASS_MAPREAD REPOINT_PASS_BERTHED_SETTLED REPOINT_PASS_FITGATE_BERTHED REPOINT_PASS_MAP_PARITY REPOINT_PASS_GROUPED_IDENTICAL REPOINT_PASS_SPACEPOS_FLEET REPOINT_PASS_LEGACYHOME_IDENTICAL FLEETGO_PASS_EMPTY_FLEET FLEETGO_PASS_LOOT_SECURES"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -303,12 +303,17 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "unexpected length delta rewriting" "$MIG0306_TMP" \
     || fail "0306's rewrite does not assert the length moved by exactly the hunk delta — replace() could have touched more than the hunk"
   rm -f "$MIG0306_TMP"
-  # the migration must still be exactly what the generator's slices produce — a hand-edit here would
-  # silently drift the "old" text away from the deployed body and the rewrite would fail at deploy.
-  if command -v node >/dev/null 2>&1; then
-    node "$REPO_ROOT/scripts/gen-0306-dock-authority.mjs" --check >/dev/null 2>&1 \
-      || fail "0306 does not match the slices scripts/gen-0306-dock-authority.mjs takes from 0216 — it was hand-edited, or 0216 drifted"
-  fi
+  # "the migration must still be exactly what the generator's slices produce" is checked by the ONE
+  # generated-migration parity gate in scripts/danger-combat-proof.sh (selftest), which runs EVERY
+  # gen-*.mjs --check and hard-fails on an unregistered or missing one. A second copy of that check
+  # lived here for gen-0306 alone; it is deleted rather than extended. It was strictly weaker in
+  # three ways — it covered one generator of ten, it swallowed stderr (`>/dev/null 2>&1`, discarding
+  # the generator's own drifted-vs-hand-edited diagnostic, the only actionable line), and it silently
+  # skipped when node was absent. It was also narrower in CI: this suite fires on `osn3-**`/`slice-**`
+  # pushes only, while danger-combat-proof fires on `pull_request` and on push to main, so it gates
+  # every PR and every merge. Two mechanisms answering one question is the duplication the no-spaghetti
+  # law forbids, and the weaker one is what a reader would have trusted. 0307's own parity is covered
+  # there too; what belongs HERE is 0307's RUNTIME proof, asserted just below.
   # the runtime block must exist and must not be able to pass vacuously.
   grep -q "FLEETGO_PASS_EMPTY_FLEET" "$SQL" \
     || fail "no runtime proof that an emptied fleet is retired and the owner's deadlock is gone"
@@ -318,6 +323,20 @@ if [ "$MODE" = "selftest" ]; then
     || fail "the EMPTY_FLEET block does not guard that a CREWED fleet is never collected — a collector that over-fires destroys live players' fleets"
   grep -q "the phase would be vacuous" "$SQL" \
     || fail "the EMPTY_FLEET block does not guard that the staged ghost really sits at a different port"
+
+  # 0307 — the same static gate for the loot deposit. Both this pin and the MARKERS entry above were
+  # MISSING when the slice first shipped, and adversarial review caught it: a FAILING block reds CI
+  # (ON_ERROR_STOP), but a DELETED or commented-out block left CI green — the proof would have been
+  # gating nothing while looking like it did. That is this suite's own recorded failure class, so the
+  # sibling 0306 marker was registered in MARKERS at the same time rather than left as a known twin.
+  grep -q "FLEETGO_PASS_LOOT_SECURES" "$SQL" \
+    || fail "no runtime proof that a survivor's earned bundle is deposited where it ARRIVES (0307)"
+  grep -q "the mint-on-arrival probe would be vacuous" "$SQL" \
+    || fail "the LOOT_SECURES block does not prove the chosen port's store was MINTED by the arrival — without that it could be reading a store that already existed"
+  grep -q "the fallback probe is ambiguous" "$SQL" \
+    || fail "the LOOT_SECURES block does not prove the open-space fallback lands somewhere distinct from the chosen-port phase — otherwise both phases could pass on one pocket"
+  grep -q "the replay minted a second grant" "$SQL" \
+    || fail "the LOOT_SECURES block does not prove a replayed settle cannot double-credit"
 
   # the runtime must pin that the brake and the redirect agree on where "here" is.
   grep -q "disagrees with the redirect interpolation" "$SQL" \
@@ -1103,6 +1122,15 @@ if [ "$MODE" = "selftest" ]; then
     || fail "TERRITORY_MAPREAD does not guard that slag is actually IN the map read"
   grep -q "the NULL-key probe would be vacuous" "$SQL" \
     || fail "TERRITORY_MAPREAD does not guard that the NULL-territory fixture is IN the map read"
+  # 0318: the visibility rule lives in ONE leaf now, and TERRITORY_MAPREAD is where the map read is
+  # pinned to it. Both halves are named so a deletion is actionable: the body must COMPOSE the
+  # authority, and it must not have re-inlined a literal beside it (that duality is the leak).
+  grep -q "public.world_location_is_visible(l.status, l.zone_id)" "$SQL" \
+    || fail "TERRITORY_MAPREAD no longer pins get_world_map to the 0318 visibility authority — the hidden-port leak would return unnoticed"
+  grep -q "carries its OWN copy of the visibility rule again" "$SQL" \
+    || fail "TERRITORY_MAPREAD lost the no-second-copy pin (a re-inlined status literal beside the authority IS the two-authority defect)"
+  grep -q "a HIDDEN location appears in get_world_map output" "$SQL" \
+    || fail "TERRITORY_MAPREAD lost the BEHAVIOURAL hidden-absence probe — a text pin alone cannot prove the map hides anything"
   rm -f "$MIGS2_TMP"
 
   # ── S2-RETUNE (0220): the audit fix — overlap-free radii sized to the MEASURED world. ───────────

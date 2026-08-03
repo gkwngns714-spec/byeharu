@@ -5,7 +5,7 @@
 // get_my_module_instances' rows (0110), plus the two PUBLIC-READ Reference/Config catalogs the
 // client selects directly (module_types / module_recipe_ingredients, 0107 — the item_types/
 // hull-types direct-select convention; deliberately NO catalog RPC, see the 0110 header) and the
-// caller's own player_inventory rows (the 0039 own-row grant). No React/DOM/fetch here (the
+// caller's own stock AT THE PORT they are docked at (0333 — items live per-port). No React/DOM/fetch here (the
 // miningTypes.ts idiom). DARK: the server rejects every crafting RPC while
 // module_crafting_enabled is false; the panel renders nothing on that envelope — the UI is never
 // the control (fail-closed law), and no client-side flag constant gates visibility (server-driven).
@@ -89,7 +89,11 @@ const CRAFT_ERROR_COPY: Record<string, string> = {
   invalid_request: 'Invalid command request.',
   unknown_module: 'Unknown module design.',
   no_recipe: 'This module design cannot be crafted yet.',
-  insufficient_items: 'Not enough materials to craft this module.',
+  insufficient_items: 'Not enough materials stored at this port.',
+  // 0333, law 3 in the player's words: you build from the port you are standing in.
+  not_docked: 'Dock at a port to craft from what is stored there.',
+  port_has_no_storage: 'This place has no storage.',
+  ship_not_found: 'No ship available.',
   not_authenticated: 'You must be signed in.',
   unavailable: 'Module crafting is unavailable right now.',
 }
@@ -146,17 +150,19 @@ export type FittingCommandResult =
 
 // Player-facing copy for the code set the 0113/0114 wrappers can return, same tone as the craft
 // map above. The server's message is preferred when present; this map is the client-side fallback.
+// PLAIN-WORDS: the player verb is "equip/remove" (the Ships tab's buttons) — "fit/unfit" was EVE
+// jargon. Code KEYS stay the server contract, never shown.
 const FITTING_ERROR_COPY: Record<string, string> = {
-  feature_disabled: 'Module fitting is not available yet.',
+  feature_disabled: 'Equipping modules is not available yet.',
   invalid_request: 'Invalid command request.',
-  ship_not_settled: 'The ship must be settled at home or docked at a location to change its module loadout.',
+  ship_not_settled: 'The ship must be settled at a port to change its equipment — not in transit or open space.',
   module_not_owned: 'That module is not in your possession.',
   ship_not_owned: 'That ship is not yours.',
-  already_fitted: 'That module is already fitted to a ship. Unfit it first.',
-  not_fitted: 'That module is not fitted to any ship.',
+  already_fitted: 'That module is already equipped on a ship. Remove it there first.',
+  not_fitted: 'That module is not equipped on any ship.',
   insufficient_slots: 'Not enough free module slots on this ship.',
   not_authenticated: 'You must be signed in.',
-  unavailable: 'Module fitting is unavailable right now.',
+  unavailable: 'Equipping modules is unavailable right now.',
 }
 export function fittingErrorMessage(code: string): string {
   return FITTING_ERROR_COPY[code] ?? FITTING_ERROR_COPY.unavailable

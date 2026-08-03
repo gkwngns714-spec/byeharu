@@ -10,8 +10,16 @@
 //   • mining_extractions is own-row-only (a fresh user sees zero rows)
 //   • internal surfaces (mining_extract / process_mining_securing) are denied to client roles
 //     (osn_distance's denial is verify:exploration's assertion — its slice owns it; not re-asserted)
-//   • mining_enabled reads 'false', mining_extract_radius reads '750',
-//     mining_extract_cooldown_seconds reads '300' (READ-ONLY)
+//   • mining_enabled, mining_extract_radius and mining_extract_cooldown_seconds EXIST and carry a
+//     usable value — presence and shape, never a pinned seed (READ-ONLY; see §4 for why)
+//
+// ⚠ STALE BEYOND §4 — NOT REPAIRED HERE. Sections 1–3 assert the DARK path (command_mining_extract
+// → 'feature_disabled', get_my_mining_extractions → 'mining_disabled'), which was correct while
+// mining_enabled was seeded false. Migration 0300 LIT mining_enabled, and production reads it true
+// today, so those sections now assert a world that no longer exists. Repointing them onto the lit
+// path is its own slice: it needs the extract → pending row → cooldown → securing-deposit run this
+// header already defers, and this script is not wired into any CI workflow, so nothing regressed
+// silently. Do not read a green §1–3 as proof of anything until that repoint lands.
 //
 // DELIBERATELY NOT COPIED from verify-mainship-send.mjs: its set_game_config flag flip. This
 // script NEVER writes game_config and NEVER sets mining_enabled — lit-path verification
@@ -100,21 +108,36 @@ async function main() {
   }
 
   // ── 4) Config presence (READ-ONLY — this script never writes game_config) ─────────────────────
-  // game_config.value is jsonb (0003): the seeded literals 'false' / '750' / '300' (0102) store as
-  // JSON boolean/number, so supabase-js returns JS false / 750 / 300 — compare tolerantly of
-  // storage form (the server's cfg_bool/cfg_num are storage-form-agnostic the same way).
+  // game_config.value is jsonb (0003), so supabase-js returns a JS boolean/number; compare
+  // tolerantly of storage form (the server's cfg_bool/cfg_num are storage-form-agnostic the same
+  // way).
+  //
+  // THESE ASSERT SHAPE, NOT THE SEED. They used to pin the literals 0102 seeded — `mining_enabled`
+  // false, `mining_extract_radius` 750, cooldown 300 — and two of the three had gone false: 0300 lit
+  // mining_enabled, and production has run the radius at 60 since 2026-07-18. A check that asserts a
+  // seed is asserting a WORLD, so it fails on a correct system the moment the owner legitimately
+  // retunes it, and it was never testing what its name claimed. What this script OWNS is that the
+  // three keys EXIST and carry a usable value; what the value should BE is the owner's decision,
+  // recorded in migration 0320 and settable with `node scripts/set-knob.mjs <key> <value>`. Each
+  // check prints the live value so a drift is still visible to a human reading the output.
   console.log('\n4. Config presence:')
   {
     const v = await cfgVal(me, 'mining_enabled')
-    String(v) === 'false' ? ok('mining_enabled = false (dark)') : bad('mining_enabled', `reads ${JSON.stringify(v)}`)
+    typeof v === 'boolean'
+      ? ok(`mining_enabled present (currently ${v ? 'LIT' : 'dark'})`)
+      : bad('mining_enabled', `is not a boolean — reads ${JSON.stringify(v)}`)
   }
   {
     const v = await cfgVal(me, 'mining_extract_radius')
-    Number(v) === 750 ? ok('mining_extract_radius = 750') : bad('mining_extract_radius', `reads ${JSON.stringify(v)}`)
+    Number.isFinite(Number(v)) && Number(v) > 0
+      ? ok(`mining_extract_radius present and sane (${Number(v)} world units)`)
+      : bad('mining_extract_radius', `is not a positive number — reads ${JSON.stringify(v)}`)
   }
   {
     const v = await cfgVal(me, 'mining_extract_cooldown_seconds')
-    Number(v) === 300 ? ok('mining_extract_cooldown_seconds = 300') : bad('mining_extract_cooldown_seconds', `reads ${JSON.stringify(v)}`)
+    Number.isFinite(Number(v)) && Number(v) >= 0
+      ? ok(`mining_extract_cooldown_seconds present and sane (${Number(v)}s)`)
+      : bad('mining_extract_cooldown_seconds', `is not a non-negative number — reads ${JSON.stringify(v)}`)
   }
 }
 

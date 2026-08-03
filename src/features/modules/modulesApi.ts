@@ -22,11 +22,23 @@ import {
 // false (feature_disabled / module_crafting_disabled) — visibility is server-driven, no client
 // flag constant.
 
-/** Craft one module instance (idempotent on requestId; server-rejected while dark). */
-export async function craftModule(requestId: string, moduleType: string): Promise<CraftModuleResult> {
+/**
+ * Craft one module instance (idempotent on requestId; server-rejected while dark).
+ *
+ * 0333 - LAW 3: crafting consumes the DOCKED PORT'S storage, so the command carries the ship whose
+ * dock names that port. It is the ship, never a location: the server derives the port itself, so
+ * "craft from a port I am not standing in" is not a request this surface can express. Passing null
+ * falls back to the server's sole-ship shim.
+ */
+export async function craftModule(
+  requestId: string,
+  moduleType: string,
+  mainShipId: string | null,
+): Promise<CraftModuleResult> {
   const { data, error } = await supabase.rpc('craft_module', {
     p_request_id: requestId,
     p_module_type: moduleType,
+    p_main_ship_id: mainShipId,
   })
   if (error) return { ok: false, code: 'unavailable', message: craftModuleErrorMessage('unavailable') }
   return data as CraftModuleResult
@@ -120,15 +132,30 @@ export async function unfitModuleFromShip(
 }
 
 /**
- * Read the caller's own item balances (player_inventory own-row select, the 0039 grant — the
- * existing Inventory read path; no new server surface). Returns null on error.
+ * Read what THIS PORT is holding for the caller - the numbers every "have / need" line in a port
+ * panel is measured against.
+ *
+ * 0333 - items LIVE in port storage, so there is no player-wide balance to read any more and the
+ * global `player_inventory` table this used to select from is GONE. The ONE authority for "how much
+ * do I have HERE" is `get_my_docked_store`, the same read the hangar renders; this folds its items
+ * array into the flat map the panels already consume. Undocked (or storeless) resolves to an EMPTY
+ * map rather than null - you genuinely have nothing available where you are standing, and that is a
+ * fact, not a failure. Returns null only on a transport/DB error.
  */
-export async function fetchMyItemBalances(): Promise<Record<string, number> | null> {
-  const { data, error } = await supabase.from('player_inventory').select('item_id, quantity')
+export async function fetchPortItemBalances(
+  mainShipId: string | null,
+): Promise<Record<string, number> | null> {
+  const { data, error } = await supabase.rpc('get_my_docked_store', { p_main_ship_id: mainShipId ?? null })
   if (error) return null
+  const items = (data as { items?: unknown } | null)?.items
   const balances: Record<string, number> = {}
-  for (const row of (data ?? []) as { item_id: string; quantity: number }[]) {
-    balances[row.item_id] = row.quantity
+  if (Array.isArray(items)) {
+    for (const raw of items) {
+      const row = raw as { item_id?: unknown; quantity?: unknown }
+      if (typeof row?.item_id === 'string' && typeof row?.quantity === 'number') {
+        balances[row.item_id] = row.quantity
+      }
+    }
   }
   return balances
 }

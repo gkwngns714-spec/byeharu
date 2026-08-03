@@ -26,6 +26,12 @@ on:
     branches:
       - 'autopilot/**'
       - 'slice-multipirate-lifecycle**'
+      # 0314 gave this harness its zeroed-cooldown + telegraph-dark preconditions, which moved it
+      # PAST its post-0300 staging red — but its SECTION F control still models the pre-0300 world
+      # (on the current chain the blanket-constraint stall never occurs: the tick advanced with no
+      # engine warning, i.e. no unique_violation was raised) and repairing that world model is its
+      # own slice. Deliberately NOT gating the 0314 branch on it; dispatch by hand when the repair
+      # slice lands.
 
 permissions:
   contents: read

@@ -106,7 +106,7 @@ export function ExplorationPanel({
                 <span className="truncate text-ink">{d.site_name}</span>
                 <span
                   data-testid={`exploration-discovery-badge-${d.discovery_id}`}
-                  className={`rounded px-1.5 py-0.5 text-[9px] ${
+                  className={`rounded px-1.5 py-0.5 text-[10px] ${
                     d.secured_at ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'
                   }`}
                 >

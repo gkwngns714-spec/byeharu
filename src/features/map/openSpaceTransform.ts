@@ -119,13 +119,37 @@ export function viewBoxToScreen(v: ViewBoxCoord, cam: Camera, vp: Viewport): Scr
   return { x: r.offsetX + r.scale * cx, y: r.offsetY + r.scale * cy }
 }
 
-/** SCREEN → VIEWBOX. Exact inverse of `viewBoxToScreen` (undo letterbox, then undo camera). Divides by
- *  `cam.k` (see header — `k` is never 0 in GalaxyMap; not clamped here). Pure: no clamping. */
-export function screenToViewBox(s: ScreenCoord, cam: Camera, vp: Viewport): ViewBoxCoord {
+/** SCREEN → VIEWBOX **ignoring the camera** — the letterbox undo ALONE. `s` is CSS px relative to the
+ *  SVG element's top-left; the result is a point in the camera's OWN space, i.e. the space `tx`/`ty`
+ *  live in and the space a zoom ANCHOR must be expressed in (see `galaxyCamera.zoomCameraAbout`).
+ *  Composes `viewBoxDisplayRect` and adds no arithmetic of its own. Pure: no clamping. */
+export function screenToViewBoxRaw(s: ScreenCoord, vp: Viewport): ViewBoxCoord {
   const r = viewBoxDisplayRect(vp)
-  const cx = (s.x - r.offsetX) / r.scale
-  const cy = (s.y - r.offsetY) / r.scale
-  return { x: (cx - cam.tx) / cam.k, y: (cy - cam.ty) / cam.k }
+  return { x: (s.x - r.offsetX) / r.scale, y: (s.y - r.offsetY) / r.scale }
+}
+
+/** SCREEN → VIEWBOX. Exact inverse of `viewBoxToScreen`: `screenToViewBoxRaw` (undo letterbox), then
+ *  undo the camera. Divides by `cam.k` (see header — `k` is never 0 in GalaxyMap; not clamped here).
+ *  Pure: no clamping. */
+export function screenToViewBox(s: ScreenCoord, cam: Camera, vp: Viewport): ViewBoxCoord {
+  const c = screenToViewBoxRaw(s, vp)
+  return { x: (c.x - cam.tx) / cam.k, y: (c.y - cam.ty) / cam.k }
+}
+
+/** A SCREEN px DELTA → the VIEWBOX-unit delta that drags the content by exactly that many pixels —
+ *  the ONE authority for camera PAN scale.
+ *
+ *  It is `1 / viewBoxDisplayRect(vp).scale`, i.e. `VIEWBOX_SIZE / min(width, height)`, and it does NOT
+ *  involve the zoom `k`: the camera is `translate(tx ty) scale(k)`, so `tx` is applied AFTER the scale
+ *  and one viewBox unit of pan is always one `r.scale` of pixels.
+ *
+ *  This exists because both map surfaces hand-rolled `dxPx * VIEWBOX_SIZE / rect.width`, which is only
+ *  correct on a SQUARE element. Under `preserveAspectRatio="xMidYMid meet"` the true px-per-viewBox-unit
+ *  is set by the SMALLER axis, so on any landscape viewport that formula panned the map slower than the
+ *  pointer (0.5625× on 1600×900) and the grabbed point slid out from under the cursor. Pure: no clamping;
+ *  a zero-size viewport yields a non-finite result, exactly as every other conversion here does. */
+export function screenDeltaToViewBox(dPx: number, vp: Viewport): number {
+  return dPx / viewBoxDisplayRect(vp).scale
 }
 
 // ── Full compositions: WORLD ↔ SCREEN (S6C will use screenToWorld for taps; UNWIRED in S6B) ──────────

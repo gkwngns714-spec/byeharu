@@ -1,7 +1,8 @@
 // THE ONE reject-copy map for every fleet surface — pure and fail-closed (the tradeReasonMessage/
 // haulReasonMessage idiom verbatim). Maps the ACTUAL server reject vocabulary of the fleet RPCs —
-// the hunt send (0168), the roster writes (0161/0204/0216), the unified mover/brake/dock
-// (0207/0208/0209/0219/0292/0298), the route planner (0233), and the totals/preview reads (0165/0166) —
+// the hunt send (0168), the roster writes (0161/0204/0216), the auto-exit writer (0310), the
+// unified mover/brake/dock (0207/0208/0209/0219/0292/0298), the route planner (0233), and the
+// totals/preview reads (0165/0166) —
 // plus the teamApi transport fallback ('unavailable') to short player-facing text; any unmapped/
 // unknown reason degrades to a generic "Fleet order unavailable." so the UI never surfaces a raw
 // code and never throws. No React/DOM/state — unit-tested in tests/teamReasonMessage.spec.ts.
@@ -17,16 +18,23 @@ const REASON_MESSAGES: Record<string, string> = {
   team_command_disabled: 'Fleet commands are not available right now.',
   not_authenticated: 'Sign in to command fleets.',
   group_not_found: 'That fleet no longer exists.',
-  empty_group: 'That fleet has no ships yet — add ships in the Fleets panel.',
+  // "Fleet tab" — the nav destination's real name (navTabs.ts); the old "Fleets panel" named a
+  // surface that no longer exists as such.
+  empty_group: 'That fleet has no ships yet — add ships on the Fleet tab.',
+  // NO LIVING SHIPS (0312) — every ship in the group is wrecked, so the mover/dock refuse the
+  // order. DISTINCT from empty_group: that fleet has no ships at all; this one has ships and they
+  // are all disabled. The copy says what to actually do — the recovery path is per-ship (Fitting
+  // screen: Repair in port, Tow when adrift — shipRecovery.ts), never another fleet order.
+  no_living_ships: 'Every ship in this fleet is wrecked — repair them (or tow them to a port first) from the Ships screen, then give the order again.',
   // hunt send (0168)
   invalid_location: 'This destination can’t take a fleet right now.',
   // shared readiness reject: hunt (0168 — every ship home and battle-ready) and docked-team move
   // (0190 — every ship docked together at one port)
-  member_not_ready: 'Every ship in the fleet must be ready first — home for a hunt, docked together for a move.',
+  member_not_ready: 'Every ship in the fleet must be free first — idle for a hunt, docked together for a move.',
   fleet_limit_reached: 'Too many fleets are already deployed — wait for one to return.',
-  stats_invalid: 'The fleet’s stats couldn’t be verified — check each ship in the Fleets panel.',
+  stats_invalid: 'The fleet’s stats couldn’t be verified — check each ship on the Fleet tab.',
   power_below_required: 'The fleet’s combat power is below what this zone requires.',
-  no_home_base: 'The fleet has no home port to launch from.',
+  no_home_base: 'The fleet has no port to launch from.',
   // preview/totals reads (0165/0166)
   invalid_activity: 'That activity isn’t recognized for fleet orders.',
   // FLEET-CONTROL (0204): the fleet control-model rejects (movement RPCs + assign cap + command-ship setter)
@@ -41,13 +49,19 @@ const REASON_MESSAGES: Record<string, string> = {
   // 0292 narrowed this: a fleet IN COMBAT can now be ordered away and will retreat under fire. This
   // refusal survives only for a sortie with no encounter behind it, so the copy no longer claims that
   // combat blocks every order — it did, and saying so while the retreat path exists would be a lie.
-  group_on_sortie: 'This fleet is out on a sortie and can’t take a new course yet.',
+  // PLAIN-WORDS: "sortie" is military jargon — say what it means. (The reason KEY is the server's.)
+  group_on_sortie: 'This fleet is out on a mission and can’t take a new course yet.',
   // The combat-time OUTCOMES (`retreat_started`, `retreat_destination_updated`) are deliberately NOT
   // mapped here — this map is the REJECT vocabulary. Those two are successes whose copy must name the
   // destination, so their one authority is `fleetRetreatOutcomeMessage` in teamMove.ts, composed
   // where that name is in scope. THE RETREAT HAS NO REJECT: 0298 removed the port-only restriction,
   // so a coordinate order given mid-combat is accepted like any other and no reason code is emitted
   // for the shape of a destination (see the retirement pin in tests/teamReasonMessage.spec.ts).
+  // REPOSITION (0311): an in-zone order MOVES an open-space fleet and the fight continues — the
+  // 'repositioned' SUCCESS copy lives in fleetRetreatOutcomeMessage, per the rule above. There is
+  // deliberately NO reposition reject code: a fleet that cannot make the jump (fighting 'present'
+  // at a site) falls through server-side to the retreat arms, exactly as before 0311, so nothing
+  // new arrives here to map.
   fleet_ambiguous: 'This fleet’s position is unclear — try again in a moment.',
   group_scattered: 'The fleet’s ships are split across ports — dock them together once to gather the fleet.',
   no_origin: 'The fleet has nowhere to depart from yet.',
@@ -69,7 +83,11 @@ const REASON_MESSAGES: Record<string, string> = {
   invalid_group_index: 'You can have up to three fleets — that slot doesn’t exist.',
   invalid_name: 'Give the fleet a name between 1 and 40 characters.',
   // ROSTER WRITES — the command-ship setter (0204:104) and the assign/unassign guards (0216:214).
-  ship_not_found: 'That ship couldn’t be found — open the Fleets panel and pick it again.',
+  ship_not_found: 'That ship couldn’t be found — open the Fleet tab and pick it again.',
+  // HP AUTO-EXIT — set_group_auto_exit (0310). The server is the authority on the [5,95] bounds;
+  // the client control mirrors them, so these normally surface only for a stale/bypassed client.
+  invalid_auto_exit_pct: 'Auto-retreat needs a hull percent between 5 and 95.',
+  invalid_auto_exit_toggle: 'Choose whether auto-retreat is on or off.',
   // Joining a fleet: the ship is still on another one (0216:303-304).
   must_unassign_first: 'That ship is on another fleet — remove it from that fleet first.',
   // Joining a fleet in flight (0216:308) / hunting with one already in flight (0231:535).

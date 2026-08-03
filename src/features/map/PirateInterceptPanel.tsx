@@ -3,6 +3,7 @@ import type { WorldCoord } from './openSpaceTransform'
 import { commandShipGroupCancelRoute, commandShipGroupGoRoute } from './pirateApi'
 import { routeOrderOutcomeMessage } from '../command/fleetOrderOutcome'
 import { teamReasonMessage } from '../command/teamReasonMessage'
+import { routeCombatOutcomeMessage } from './fleetGoTarget'
 import { Badge, Button, OverlayPanel } from '../../components/ui'
 
 // PIRATE INTERCEPT — the player-facing ROUTE planner: plot 1-3 waypoints + a final open-space point to
@@ -50,13 +51,22 @@ export function PirateInterceptPanel({
     const result = await commandShipGroupGoRoute(groupId, { waypoints, targetX: last.x, targetY: last.y })
     setBusy(false)
     if (result.ok) {
-      // INTERCEPT DEFERRED ENTRY — the order response says what THIS CALL did, never whether an
-      // ambush is coming. It used to claim 'Route sent — ambushed on the first leg!' off
+      // COMBAT-TIME OUTCOMES FIRST (0311): leg 1 of a route COMPOSES command_ship_group_go, so a
+      // route order given while the fleet's fight is live comes back as one of the mover's combat
+      // outcomes — a retreat (0292/0298) or an in-zone reposition (0311) — with NO leg minted. The
+      // constant "Route sent — fleet underway." would describe a journey that never began, so the
+      // ONE combat-copy authority (fleetRetreatOutcomeMessage, the same one both FleetCommandPanel
+      // arms consult) speaks first. The place it names is the FIRST plotted point — leg 1's target,
+      // which is where the server aimed the retreat or the reposition — rendered as the canonical
+      // view (the same rounding the server applies; display only, the wire stays raw).
+      const combat = routeCombatOutcomeMessage(result.outcome, draftPoints[0])
+      // INTERCEPT DEFERRED ENTRY — otherwise the order response says what THIS CALL did, never
+      // whether an ambush is coming. It used to claim 'Route sent — ambushed on the first leg!' off
       // `intercepted`, a sentence that is permanently false once the ambush is deferred to the
       // movement processor. The outcome→copy decision has ONE authority (fleetOrderOutcome.ts), which
       // also owns the degradation to today's server. The ambush the player actually meets is rendered
       // from ENCOUNTER state on the map (ambushEncounterNotice.ts), not from here.
-      setMessage(routeOrderOutcomeMessage(result))
+      setMessage(combat ?? routeOrderOutcomeMessage(result))
       onClearDraft()
       onModeChange('off')
       onCommanded()
@@ -88,12 +98,14 @@ export function PirateInterceptPanel({
   return (
     <OverlayPanel className="pointer-events-auto flex w-64 max-w-[calc(100vw-1.5rem)] flex-col gap-2 text-sm">
       <div className="flex items-center justify-between">
-        <span className="font-semibold text-ink">Pirate Intercept</span>
+        {/* PLAIN-WORDS: "Pirate Intercept" named the server mechanic; the player is plotting a
+            route around danger zones, so the surface says that. */}
+        <span className="font-semibold text-ink">Plot a Route</span>
         {onClose && (
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close pirate intercept"
+            aria-label="Close route plotting"
             title="Close"
             className="-mr-1 flex h-6 w-6 items-center justify-center rounded text-base leading-none text-ink-muted hover:bg-edge/40 hover:text-ink"
           >
@@ -108,7 +120,8 @@ export function PirateInterceptPanel({
 
       {mode === 'route' && (
         <div className="flex flex-col gap-2">
-          {!groupId && <p className="text-ink-muted">No fleet yet — add a ship to a team first.</p>}
+          {/* PLAIN-WORDS: the UI's one word for a ship group is "fleet" — "team" was the old name. */}
+          {!groupId && <p className="text-ink-muted">No fleet yet — create a fleet on the Fleet tab first.</p>}
           <p className="text-ink-muted">Tap the map to plot up to 4 points — the last one is the destination.</p>
           <p className="text-ink">{draftPoints.length} plotted</p>
           <div className="flex gap-2">

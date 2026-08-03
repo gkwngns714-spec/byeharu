@@ -4,9 +4,12 @@ import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// Test-only Vite server that renders the real <DockServicesPanel> from src/ for the dock-services UI
-// proof (dock.html — the one remaining harness entry; 4A-POST deleted the PortNav + galaxy-coordinate
-// harnesses with the per-ship movement client).
+// Test-only Vite server that renders REAL components from src/ for the *.uispec.ts proofs. Entries:
+//   dock.html   — the real docked-port surface (useDockServices → <DockedPortCard>)
+//   camera.html — the real <GalaxyMap> + useWheelZoom, driven by a real pointer
+//   fold.html   — the real <ReportsSection> (the Collapsible primitive through its consumer)
+//   repair.html — the real <RepairPanel> (THE ONE repair surface) with an injected server API
+// (4A-POST deleted the PortNav + galaxy-coordinate harnesses with the per-ship movement client.)
 // Root is this harness dir; fs.allow is widened to the repo root so `../../src/...` imports resolve.
 // cacheDir is forced into the OS temp dir so Vite's dep-optimizer cache never lands on a OneDrive-synced
 // path (whose locked rmdir breaks the dev server locally — harmless in CI).

@@ -330,8 +330,10 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT the wave-1 threshold holds at rate 1"
   grep -qF "won bundle carries % shard elements" "$SQL" \
     || fail "harness does not ASSERT the won encounter's bundle carries the shard (end-to-end)"
-  grep -qF "carried shard not deposited to player_inventory" "$SQL" \
-    || fail "harness does not ASSERT the shard deposit into player_inventory (the recruit currency)"
+  # 0333: the global player_inventory pool is DROPPED — items live PER PORT in base_items — so the
+  # .sql assertion now names the base the settle deposited into, and this pin follows it there.
+  grep -qF "carried shard not deposited into the settling base" "$SQL" \
+    || fail "harness does not ASSERT the shard deposit into the settling base's item store (the recruit currency)"
 
   # ── CAPXP (0177) pins, in assert form (a gutted .sql that only mentions them in prose cannot
   #    false-green): the accrual fn is exercised; the committed flag/knob seeds are pinned; the dark
@@ -402,8 +404,10 @@ if [ "$MODE" = "selftest" ]; then
   #    survival +12 / mining_yield +8 adapter deltas; and BOTH minus-key isolation pins. Plus the
   #    sole-writer negatives: the harness never writes a Modules/Fitting/Inventory-owned table
   #    directly — ingredients ride reward_grant, modules ride craft_module/fit_module_to_ship. ────
-  grep -qF "public.craft_module(''mod2-shield-1'', ''shield_lattice'')" "$SQL" \
-    || fail "harness does not craft the shield via the real craft_module RPC"
+  # 0333: craft_module gained a trailing ship argument and DERIVES the port it spends from that
+  # ship's validated dock, so every craft call in the .sql now names its ship; the pins follow.
+  grep -qF "public.craft_module(''mod2-shield-1'', ''shield_lattice'', %L::uuid)" "$SQL" \
+    || fail "harness does not craft the shield via the real craft_module RPC (naming the docked ship)"
   grep -qF "public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod2-fit-1'')" "$SQL" \
     || fail "harness does not fit the shield via the real fit_module_to_ship RPC"
   # 0300 lit both module gates, so the dark arms SET their precondition instead of asserting the seed.
@@ -424,7 +428,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "the rig moved a non-mining key" "$SQL" \
     || fail "harness does not ASSERT the rig minus-key isolation pin"
   grep -viE '^[[:space:]]*--' "$SQL" \
-    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(module_instances|module_craft_receipts|ship_module_fittings|module_fitting_receipts|module_types|module_recipe_ingredients|player_inventory|inventory_ledger|reward_grants)\b' \
+    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(module_instances|module_craft_receipts|ship_module_fittings|module_fitting_receipts|module_types|module_recipe_ingredients|base_items|fleet_items|inventory_ledger|reward_grants)\b' \
     && fail "harness directly mutates a Modules/Fitting/Inventory/Reward-owned table (sole-writer law violation)" || true
 
   # ── MOD22 (0202 / MOD2-2) pins, in assert form (a gutted .sql that only mentions them in prose
@@ -432,10 +436,10 @@ if [ "$MODE" = "selftest" ]; then
   #    Mk-II crafted + fitted via the real RPCs; the exact survival +20 shield delta (else-0 arm) and
   #    the FULL weapon tradeoff arm — combat_power +18, pirate_attention +4, the biting speed penalty
   #    — plus both isolation pins. The sole-writer negative is the shared grep above (whole file). ──
-  grep -qF "public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'')" "$SQL" \
-    || fail "harness does not craft the Mk-II shield via the real craft_module RPC"
-  grep -qF "public.craft_module(''mod22-auto-1'', ''autocannon_battery_mk2'')" "$SQL" \
-    || fail "harness does not craft the Mk-II autocannon via the real craft_module RPC"
+  grep -qF "public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'', %L::uuid)" "$SQL" \
+    || fail "harness does not craft the Mk-II shield via the real craft_module RPC (naming the docked ship)"
+  grep -qF "public.craft_module(''mod22-auto-1'', ''autocannon_battery_mk2'', %L::uuid)" "$SQL" \
+    || fail "harness does not craft the Mk-II autocannon via the real craft_module RPC (naming the docked ship)"
   grep -qF "public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod22-fit-a'')" "$SQL" \
     || fail "harness does not fit the Mk-II autocannon via the real fit_module_to_ship RPC"
   grep -qF "% of 2 Mk-II module rows carry the exact 0202 seed shape" "$SQL" \
@@ -775,8 +779,16 @@ if [ "$MODE" = "selftest" ]; then
   #    RPCs by 0232 — send_ship_group_hunt carries the identical gate); the activation (designate →
   #    reject disappears + is_command_ship persistence); the exact 8th-OK / 9th-fleet_full boundary held
   #    at 8; and the designation guard (ungrouped → ship_not_in_fleet) + the stand-down round-trip. ──
-  grep -qF "FLEETCTRL FAIL: fleet_control_enabled is not committed false (dark)" "$SQL" \
-    || fail "FLEETCTRL: harness does not ASSERT the committed-dark flag"
+  # ★ REPOINTED 2026-08-03: the block no longer ASSERTS an ambient 'false' seed (0300:68 lit this gate)
+  #   — it CAPTURES the committed value, sets its own dark precondition in-txn, and restores what it
+  #   captured. The selftest pins that idiom instead; it is the stronger property, because it holds
+  #   whichever way the gate is seeded.
+  grep -qF "select value into v_seed_fc from public.game_config where key='fleet_control_enabled';" "$SQL" \
+    || fail "FLEETCTRL: harness does not CAPTURE the committed fleet_control_enabled value"
+  grep -qF "update public.game_config set value=v_seed_fc where key='fleet_control_enabled';" "$SQL" \
+    || fail "FLEETCTRL: harness does not RESTORE the captured fleet_control_enabled value"
+  grep -qF "FLEETCTRL FAIL: fleet_control_enabled is absent from game_config" "$SQL" \
+    || fail "FLEETCTRL: harness does not GUARD against a missing gate key (a dark arm on a missing key can only false-green)"
   grep -qF "a no-command fleet hit the command gate while dark (want no command requirement)" "$SQL" \
     || fail "FLEETCTRL: harness does not ASSERT the DARK no-command-requirement (hunt succeeds, no fleet_inactive reject)"
   grep -qF "want 9 — no 8-cap while dark" "$SQL" \
@@ -821,8 +833,13 @@ if [ "$MODE" = "selftest" ]; then
   #    to the baseline); the LIT fleet-wide buff-fold EXACTNESS (combat_power gains the buff attack exactly);
   #    the ZERO-command-fleet no-buff; and the group_id gate (an ungrouped ship folds nothing). The three
   #    mutation-gutting targets are the buff-fold-exactness / dark-parity / no-command-no-buff asserts. ────
-  grep -qF "CMDBUFF FAIL: command_buffs_enabled is not committed false (dark)" "$SQL" \
-    || fail "CMDBUFF: harness does not ASSERT the committed-dark flag"
+  # ★ REPOINTED 2026-08-03: same as FLEETCTRL — capture/own/restore instead of asserting the seed.
+  grep -qF "select value into v_seed_cb from public.game_config where key='command_buffs_enabled';" "$SQL" \
+    || fail "CMDBUFF: harness does not CAPTURE the committed command_buffs_enabled value"
+  grep -qF "update public.game_config set value=v_seed_cb where key='command_buffs_enabled';" "$SQL" \
+    || fail "CMDBUFF: harness does not RESTORE the captured command_buffs_enabled value"
+  grep -qF "CMDBUFF FAIL: command_buffs_enabled is absent from game_config" "$SQL" \
+    || fail "CMDBUFF: harness does not GUARD against a missing gate key"
   grep -qF "the stored buff is not the deterministic hash derivation" "$SQL" \
     || fail "CMDBUFF: harness does not ASSERT the commission-trigger roll = the deterministic hash derivation"
   grep -qF "a command ship''s buff folded while command_buffs_enabled DARK" "$SQL" \
@@ -881,67 +898,60 @@ if [ "$MODE" = "selftest" ]; then
 fi
 
 : "${DB_URL:?DB_URL (disposable stack) required}"
+
+# ── THE NO-LEAK CHECK — CAPTURE BEFORE, REQUIRE UNCHANGED AFTER (repointed 2026-08-03) ────────────
+# This was a wall of per-key checks hard-coding the expected committed value: `= false` for every
+# gate, `= 0` / `= 10` for every knob. 0300 (LIGHTS ON) lit ELEVEN of the twelve gates below, so from
+# that migration onward this post-check asserted a WORLD THE GAME HAD ALREADY LEFT — it would have
+# failed on a perfectly clean run. It never actually fired only because the SQL aborted at SHIELD1
+# first, which is exactly why a permanently red proof is worse than no proof: the failure hid a
+# second failure behind it for weeks.
+#
+# The property this check OWNS is "the proof leaked nothing" — and that property is capture-then-
+# compare, never a literal. Snapshot every key the harness touches in-txn BEFORE the run, require the
+# snapshot byte-identical AFTER. That is correct through any future flip in EITHER direction, it needs
+# no knowledge of the seed, and it is strictly stronger than the old form: a row appearing or
+# disappearing (a key created or deleted by the proof) now fails too, which the per-key coalesce()
+# reads silently tolerated.
+#
+# Covered: the 12 boolean gates the harness raises in-txn (incl. shipyard_enabled, which it must never
+# touch at all), the 6 numeric knobs it raises (shard drop, captain XP, blueprint drop, station
+# affinity, both shield-regen knobs), the 3 combat knobs the SHIELD1/wipe_tick path moves
+# (enemy_attack_base, combat_damage_variance_pct, combat_tick_logging — enemy_attack_base was NEVER
+# leak-checked before this), and the sanctioned starter_frigate base_shield hull fixture.
+LEAK_KEYS="team_command_enabled mainship_additional_commission_enabled mainship_send_enabled
+captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled
+ship_traits_enabled launch_from_dock_enabled fleet_control_enabled command_buffs_enabled
+shipyard_enabled captain_shard_drop_rate captain_xp_per_combat_grant blueprint_fragment_drop_rate
+station_affinity_bonus shield_regen_combat_pct shield_regen_idle_pct enemy_attack_base
+combat_damage_variance_pct combat_tick_logging"
+
+tp_guarded_snapshot() {
+  local k list=""
+  for k in $LEAK_KEYS; do list="$list,'$k'"; done
+  list="${list#,}"
+  psql "$DB_URL" -X -t -A -c "
+    select key || ' = ' || coalesce(value::text, '<null>')
+      from public.game_config where key in ($list)
+    union all
+    select 'starter_frigate.base_shield = ' ||
+           coalesce((select base_shield::text from public.main_ship_hull_types
+                      where hull_type_id = 'starter_frigate'), '<missing>')
+    order by 1"
+}
+
+leak_before="$(tp_guarded_snapshot)" || fail "could not snapshot the guarded committed values BEFORE the run"
+[ -n "$leak_before" ] || fail "the guarded-value snapshot is EMPTY — the no-leak check would be vacuous"
+
 tp_run_local "TEAM-COMMAND B-VERIFY" "$SQL" "$PASS_LINE" "$MARKERS"
 
-# post-run honesty check: EVERY committed flag the proof flips must still be false (the flips were rolled
-# back). Check all eight the harness toggles in-txn, not just the team gate.
-for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled ship_traits_enabled launch_from_dock_enabled fleet_control_enabled command_buffs_enabled; do
-  committed="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = '$flag'), 'false')")" \
-    || fail "could not read the committed '$flag' value"
-  [ "$committed" = "false" ] || fail "committed $flag is '$committed' — the proof leaked a flag flip (must stay false)"
-done
+leak_after="$(tp_guarded_snapshot)" || fail "could not snapshot the guarded committed values AFTER the run"
+if [ "$leak_before" != "$leak_after" ]; then
+  echo "── committed values BEFORE the run ──" >&2; printf '%s\n' "$leak_before" >&2
+  echo "── committed values AFTER the run ───" >&2; printf '%s\n' "$leak_after"  >&2
+  echo "── the difference ───────────────────" >&2
+  diff <(printf '%s\n' "$leak_before") <(printf '%s\n' "$leak_after") >&2 || true
+  fail "the proof LEAKED a committed value — every guarded key must be byte-identical after the ROLLBACK"
+fi
 
-# same honesty check for the shard-drop KNOB: the proof sets it to 1 in-txn (SHARDDROP/TEAMSETTLE);
-# the committed value must still be the 0171 seed '0' — a leak here would silently start dropping
-# shards in a dark game.
-committed_rate="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = 'captain_shard_drop_rate'), '0')")" \
-  || fail "could not read the committed 'captain_shard_drop_rate' value"
-[ "$committed_rate" = "0" ] || fail "committed captain_shard_drop_rate is '$committed_rate' — the proof leaked the knob (must stay 0)"
-
-# same honesty check for the 0177 XP KNOB: the proof raises it to 100 in-txn (the CAPXP boundary
-# test); the committed value must still be the 0177 seed '10' — a leak would silently 10× captain
-# XP the moment the owner lights captain_growth_enabled.
-committed_xp="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant'), '10')")" \
-  || fail "could not read the committed 'captain_xp_per_combat_grant' value"
-[ "$committed_xp" = "10" ] || fail "committed captain_xp_per_combat_grant is '$committed_xp' — the proof leaked the knob (must stay 10)"
-
-# same honesty check for the 0185 BLUEPRINT KNOB: the SHIPYARD0 block raises it to 1 in-txn; the
-# committed value must still be the 0185 seed '0' — a leak here would silently start dropping
-# blueprint fragments in a dark game. The shipyard FLAG needs no leak check beyond the loop above's
-# pattern: the proof never writes it at all (asserted by the selftest negative grep).
-committed_bp="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = 'blueprint_fragment_drop_rate'), '0')")" \
-  || fail "could not read the committed 'blueprint_fragment_drop_rate' value"
-[ "$committed_bp" = "0" ] || fail "committed blueprint_fragment_drop_rate is '$committed_bp' — the proof leaked the knob (must stay 0)"
-committed_sy="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = 'shipyard_enabled'), 'false')")" \
-  || fail "could not read the committed 'shipyard_enabled' value"
-[ "$committed_sy" = "false" ] || fail "committed shipyard_enabled is '$committed_sy' — must stay false (the proof never touches it)"
-
-# same honesty check for the 0196 AFFINITY KNOB: the DECKS3 block raises it to 0.15 in-txn; the
-# committed value must still be the 0196 seed '0' — a leak here would silently start paying
-# station-affinity bonuses in a game whose owner never flipped ACT-DECKS3.
-committed_aff="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = 'station_affinity_bonus'), '0')")" \
-  || fail "could not read the committed 'station_affinity_bonus' value"
-[ "$committed_aff" = "0" ] || fail "committed station_affinity_bonus is '$committed_aff' — the proof leaked the knob (must stay 0)"
-
-# same honesty check for the 0191 SHIELD REGEN KNOBS: the SHIELD1 block raises the COMBAT knob to
-# '1' in-txn (SHIELD-1 wired its consumer) and the SHIELD2 block raises the IDLE knob to
-# 0.03/0.25 in-txn (SHIELD-2 wired its consumer — the regen home); both are restored in-txn and
-# rolled back regardless. The committed values must still be the 0191 seeds '0' — a leak would
-# silently regenerate live shields the moment pools go nonzero.
-for knob in shield_regen_combat_pct shield_regen_idle_pct; do
-  committed_sr="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = '$knob'), '0')")" \
-    || fail "could not read the committed '$knob' value"
-  [ "$committed_sr" = "0" ] || fail "committed $knob is '$committed_sr' — the proof leaked the knob (must stay 0)"
-done
-
-# SHIELD-2 honesty check for the sanctioned base_shield fixture: the in-txn surgery (25, restored
-# 0, rolled back regardless) must never leak — a committed nonzero base_shield would silently arm
-# the commission copy in a dark game.
-committed_bs="$(psql "$DB_URL" -X -t -A -c "select coalesce((select base_shield::text from public.main_ship_hull_types where hull_type_id = 'starter_frigate'), '0')")" \
-  || fail "could not read the committed starter_frigate base_shield"
-[ "$committed_bs" = "0" ] || fail "committed starter_frigate base_shield is '$committed_bs' — the proof leaked the hull fixture (must stay 0 until ACT-SHIELD)"
-
-# (the 0199 NO-HOME flag launch_from_dock_enabled is covered by the committed-false flag loop above —
-#  the NOHOME block flips it 'true' in-txn to prove the lit launch/dock-at-return and it must roll back.)
-
-echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled/shipyard_enabled/ship_traits_enabled/launch_from_dock_enabled/fleet_control_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10; blueprint_fragment_drop_rate still 0; shield_regen_combat_pct/shield_regen_idle_pct still 0; station_affinity_bonus still 0; starter_frigate base_shield still 0)"
+echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (every guarded committed value is byte-identical before and after the run — 12 boolean gates incl. shipyard_enabled, 6 knobs (shard drop / captain XP / blueprint drop / station affinity / both shield-regen), the 3 combat knobs enemy_attack_base / combat_damage_variance_pct / combat_tick_logging, and the starter_frigate base_shield hull fixture; compared against the CAPTURED pre-run values, never a hard-coded seed)"

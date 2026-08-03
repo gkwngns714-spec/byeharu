@@ -144,8 +144,9 @@ export function FleetCommandPanel({
     switch (s.kind) {
       case 'guidance':
         // MAP-INTEGRATION M2 — the groupless-player guidance (model-decided: ships + a live target +
-        // zero fleets). Read-only pointer to Command (charter §2a: composition is Command's — this
-        // panel gains NO create/assign controls); the link is the only affordance.
+        // zero fleets). Read-only pointer to the Fleet tab (charter §2a: composition is the Fleet
+        // tab's since FLEET-TAB — this panel gains NO create/assign controls); the link is the only
+        // affordance.
         return (
           <div key="guidance" data-testid="fleet-command-guidance">
             <SectionLabel>No fleet yet</SectionLabel>
@@ -153,11 +154,11 @@ export function FleetCommandPanel({
               Ships travel as fleets — yours wait at port until they join one.
             </p>
             <p className="mt-1 text-sm text-ink-muted">
-              Create a fleet in <span className="text-ink">Command</span> and add your ships, then pick a
-              destination here to send it.
+              Create a fleet on the <span className="text-ink">Fleet</span> tab and add your ships, then
+              pick a destination here to send it.
             </p>
-            <Link to="/command" className={`${buttonClasses('secondary', 'sm')} mt-2 w-full`}>
-              Create a fleet in Command
+            <Link to="/fleet" className={`${buttonClasses('secondary', 'sm')} mt-2 w-full`}>
+              Create a fleet
             </Link>
           </div>
         )
@@ -294,14 +295,9 @@ export function FleetCommandPanel({
                           // fleet's combat is live mints no leg at all — it arms (or re-points) a
                           // retreat toward whatever was ordered. Checked for BOTH destination kinds:
                           // a coordinate order used to come back refused, and 0298 accepts it, so
-                          // "Sent … to (x, y)" would now be a lie on the point arm too. The envelope's
-                          // `carried_rewards` rides along so the copy can say what the order costs.
-                          const retreat = fleetRetreatOutcomeMessage(
-                            res.outcome,
-                            r.name,
-                            destinationLabel,
-                            res.carried_rewards,
-                          )
+                          // "Sent … to (x, y)" would now be a lie on the point arm too. LOOT (0307):
+                          // the carried bundle deposits on arrival, so the copy no longer warns.
+                          const retreat = fleetRetreatOutcomeMessage(res.outcome, r.name, destinationLabel)
                           if (retreat) return retreat
                           // INTERCEPT DEFERRED ENTRY — `order_outcome` is the mover's word on what
                           // THIS call did. 'combat_started' (reachable only while deferred entry is
@@ -371,12 +367,7 @@ export function FleetCommandPanel({
                           // command_ship_group_go arms a RETREAT (0298:466-487) — a constant
                           // "Sent … to dock at Haven." would be reporting a docking that is not
                           // happening. The retreat copy has ONE authority; both call sites consult it.
-                          const retreat = fleetRetreatOutcomeMessage(
-                            res.outcome,
-                            r.name,
-                            r.portName,
-                            res.carried_rewards,
-                          )
+                          const retreat = fleetRetreatOutcomeMessage(res.outcome, r.name, r.portName)
                           if (retreat) return retreat
                           return timedDockingEnabled
                             ? `${r.name} is docking at ${r.portName}.`
@@ -425,7 +416,7 @@ export function FleetCommandPanel({
                     {/* FLEET-CONTROL (0204): dark → cmdActive is always true and this never renders. */}
                     {r.memberCount > 0 && !r.cmdActive && (
                       <p className="mt-1 text-xs text-warning/90" data-testid={`team-inactive-${r.groupId}`}>
-                        This fleet has no command ship — set one in the Fleets panel to move, send, or hunt.
+                        This fleet has no command ship — set one on the Fleet tab to move, send, or hunt.
                       </p>
                     )}
                     {r.readyHint && <p className="mt-1 text-xs text-ink-faint">{r.readyHint}</p>}

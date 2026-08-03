@@ -41,9 +41,10 @@ const DATA: WorldEditorData = {
   miningFields: [{ name: 'Sparse Ore Belt', space_x: 300, space_y: 150 }],
   explorationSites: [{ name: 'Signal 7', space_x: -400, space_y: 620 }],
   zones: [
-    { id: 'z-drawn', name: 'Crimson Reach', source: 'drawn', location_id: 'loc-2', ring: [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]] },
-    { id: 'z-circle', name: 'Seeded Ring', source: 'circle', location_id: null, ring: [[5, 5], [6, 5], [6, 6], [5, 5]] },
-    { id: 'z-bad', name: 'Too Few', source: 'drawn', location_id: null, ring: [[1, 1], [2, 2]] }, // < 3 → skipped
+    // `revision` (0275) is the server-issued staleness token — always carried on a live row.
+    { id: 'z-drawn', name: 'Crimson Reach', source: 'drawn', location_id: 'loc-2', ring: [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]], revision: 1 },
+    { id: 'z-circle', name: 'Seeded Ring', source: 'circle', location_id: null, ring: [[5, 5], [6, 5], [6, 6], [5, 5]], revision: 1 },
+    { id: 'z-bad', name: 'Too Few', source: 'drawn', location_id: null, ring: [[1, 1], [2, 2]], revision: 1 }, // < 3 → skipped
   ],
   miningExtractRadius: null,
   explorationScanRadius: null,

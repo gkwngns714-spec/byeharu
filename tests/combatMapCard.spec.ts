@@ -16,10 +16,11 @@ test('the card is mounted on the MAP, over the shell state that is already polle
   expect(mapScreen).toContain('<CombatMapCard encounters={combat.encounters} units={combat.units} />')
 })
 
-test('the Command-side panel is NOT replaced — the map card is a second VIEW, not a move', () => {
-  // ActiveCombatPanel remains CommandScreen's; removing it would trade one gap for another.
-  const commandScreen = src('features/command/CommandScreen.tsx')
-  expect(commandScreen).toContain('<ActiveCombatPanel')
+test('the ops-side panel is NOT replaced — the map card is a second VIEW, not a move', () => {
+  // ActiveCombatPanel remains the ops destination's (MissionScreen — renamed from CommandScreen
+  // in the MISSION-TAB slice); removing it would trade one gap for another.
+  const missionScreen = src('features/command/MissionScreen.tsx')
+  expect(missionScreen).toContain('<ActiveCombatPanel')
 })
 
 test('NO combat math lives in the client', () => {

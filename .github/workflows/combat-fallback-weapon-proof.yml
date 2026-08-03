@@ -16,10 +16,28 @@ name: COMBAT-FALLBACK — 0262 player-fallback-weapon disposable proof (no produ
 
 on:
   workflow_dispatch:
+  # main + pull_request are NOT decoration — they are what stops this gate going dark (added 0313).
+  # The trigger list used to be slice-branch-only, so between 2026-07-22 and 2026-08-02 this proof
+  # ran on ZERO pushes, and migration 0300 (lights-on) broke it silently for that whole window; it
+  # surfaced only because a later slice happened to name itself into the list. A proof that fires
+  # only on the branch that edits it gates nothing. Every PR and every merge to main runs it now.
+  pull_request:
   push:
     branches:
+      - main
       - 'autopilot/**'
       - 'fix/spatial-combat-empty-weapons'
+      # 0313 cuts combat_player_fallback_weapon_range (150->25) and the catalog gun — this proof's
+      # expected values were repointed to knob/catalog derivation in the same slice, so range
+      # branches must run it.
+      - 'slice-weapon-ranges**'
+      # 0316 divides combat_player_fallback_weapon_range (25 -> 5) and its projectile speed
+      # (300 -> 60); this proof derives every expected value from those knobs, so it is the gate that
+      # proves the derivation still holds at the new scale.
+      - 'slice-combat-five-times**'
+      # 0317 rewrites BOTH calculate_expedition_stats and combat_create_group_encounter and repoints
+      # this proof's weapon-power assertions, so it must run on the branch that does it.
+      - 'slice-one-authority**'
 
 permissions:
   contents: read

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isServerLit, runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
-import { craftModule, fetchModuleCatalog, fetchMyItemBalances, getMyModuleInstances } from './modulesApi'
+import { craftModule, fetchModuleCatalog, fetchPortItemBalances, getMyModuleInstances } from './modulesApi'
 import {
   craftModuleErrorMessage,
   type GetMyModuleInstancesResult,
   type ModuleCatalogEntry,
 } from './modulesTypes'
-import { Button, Card, CardHeader, SectionLabel } from '../../components/ui'
+import { Button, Card, CardHeader } from '../../components/ui'
 import { ItemChip, ItemGlyph, itemLabel } from '../../components/items'
 
 // MODULES-P13 — the module-CRAFTING surface: the craftable catalog (recipes + the player's
@@ -14,10 +14,13 @@ import { ItemChip, ItemGlyph, itemLabel } from '../../components/items'
 // the panel reads get_my_module_instances on mount / lifecycle change and renders NOTHING unless
 // the server affirmatively lit the feature ({ok:true}); the module_crafting_disabled dark
 // envelope — and any other failure — fails closed to null (the Exploration/Mining twins' posture).
-// The server also rejects craft_module while dark; the UI is never the control. Crafting is
-// NON-SPATIAL (player-scoped, 0109) — no ship/settled precondition, so unlike the twins this panel
-// takes no ship props. Shortfall disabling is a client preview only; the server re-checks balances
-// authoritatively (insufficient_items).
+// The server also rejects craft_module while dark; the UI is never the control. Shortfall disabling
+// is a client preview only; the server re-checks balances authoritatively (insufficient_items).
+//
+// 0333 — CRAFTING IS SPATIAL NOW. Items live in PORT storage, so a craft consumes the stock of the
+// port the ship is DOCKED at, and this panel takes the ship exactly as its port siblings do. The
+// "have" numbers below are THIS PORT'S stock (fetchPortItemBalances → get_my_docked_store, the one
+// authority), not a player-wide pool — there is no such pool any more.
 //
 // S6 (FITTING TAB): the fit/unfit EDIT surface that briefly lived here (FITTING-P14 slice F) moved
 // to the Fitting tab's per-ship detail (features/ship/FittingDetail — the ONE fitting-edit surface;
@@ -26,10 +29,14 @@ import { ItemChip, ItemGlyph, itemLabel } from '../../components/items'
 // state is deliberately not read here — one fact, one surface.
 
 export function ModulesPanel({
+  mainShipId,
   lifecycleKey,
   onChanged,
   sectionLabel,
 }: {
+  // 0333: the ship whose dock names the port this craft draws from. Null falls back to the
+  // server's sole-ship shim; the port is DERIVED server-side and is never a parameter.
+  mainShipId: string | null
   // Re-reads instances/balances whenever the main-ship lifecycle changes (DockServicesPanel
   // idiom) — securing deposits land items on exactly those transitions.
   lifecycleKey: string
@@ -59,12 +66,12 @@ export function ModulesPanel({
     // Catalog + balances only matter once the server lit the surface (while dark the panel is
     // null anyway); both are direct reads of already-granted tables (0107 public / 0039 own-row).
     if (res.ok) {
-      const [cat, bal] = await Promise.all([fetchModuleCatalog(), fetchMyItemBalances()])
+      const [cat, bal] = await Promise.all([fetchModuleCatalog(), fetchPortItemBalances(mainShipId)])
       if (!activeRef.current) return
       setCatalog(cat)
       setBalances(bal)
     }
-  }, [activeRef]) // ref identity is stable — dep satisfies the lint rule without changing refresh's identity
+  }, [activeRef, mainShipId]) // ref identity is stable; mainShipId is a real dep — the port decides the stock
 
   // lifecycleKey is a deliberate re-fetch trigger (the useDockServices dep idiom).
   useEffect(() => {
@@ -88,7 +95,7 @@ export function ModulesPanel({
       guards,
       setPending: (on) => setPending((p) => ({ ...p, [entry.id]: on })),
       setNote: (note) => setRowNote((n) => ({ ...n, [entry.id]: note })),
-      exec: () => craftModule(crypto.randomUUID(), entry.id),
+      exec: () => craftModule(crypto.randomUUID(), entry.id, mainShipId),
       successNote: () => `Crafted ${entry.name}.`,
       errorNote: (res) => {
         const base = res.message ?? craftModuleErrorMessage(res.code)
@@ -108,8 +115,11 @@ export function ModulesPanel({
 
   const panel = (
     // UI R2: the Card primitive owns the chrome (accent tone = the modules identity).
+    // ONE NAME: when the mount passes a sectionLabel ("Workshop" on the Port screen) it IS the
+    // card's title — the old rendering stacked a "Workshop" micro-label 8px above a card titled
+    // "Modules": two names for one panel. The subtitle says what it does in plain words.
     <Card tone="accent" data-testid="modules-panel">
-      <CardHeader title="Modules" />
+      <CardHeader title={sectionLabel ?? 'Modules'} subtitle="Craft modules from materials." />
       {catalog === null ? (
         <p data-testid="modules-catalog-unavailable" className="mt-1 text-[10px] text-ink-muted">
           Catalog unavailable right now.
@@ -131,7 +141,7 @@ export function ModulesPanel({
                     <ItemGlyph id={entry.id} kind="module" size={14} className="shrink-0 text-accent" />
                     <span className="truncate text-ink">{entry.name}</span>
                   </span>
-                  <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">
+                  <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">
                     {entry.slot_type}
                   </span>
                 </div>
@@ -189,7 +199,7 @@ export function ModulesPanel({
                   <ItemGlyph id={m.module_type_id} kind="module" size={14} className="shrink-0 text-accent" />
                   <span className="truncate text-ink">{m.name}</span>
                 </span>
-                <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">{m.slot_type}</span>
+                <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">{m.slot_type}</span>
               </div>
               <p className="font-mono text-ink-faint">{new Date(m.created_at).toLocaleString()}</p>
               {/* S6: fit/unfit moved to the Fitting tab's per-ship detail — this list is the
@@ -205,12 +215,6 @@ export function ModulesPanel({
     </Card>
   )
 
-  // WORKSHOP: label + panel as ONE rail child. No label prop → the bare Card.
-  if (sectionLabel == null) return panel
-  return (
-    <div>
-      <SectionLabel>{sectionLabel}</SectionLabel>
-      {panel}
-    </div>
-  )
+  // WORKSHOP: the sectionLabel became the CardHeader title above — one name, one chrome.
+  return panel
 }

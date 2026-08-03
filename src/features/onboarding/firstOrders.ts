@@ -61,7 +61,8 @@ export function deriveFirstOrders(input: FirstOrdersInput): FirstOrderStep[] {
     {
       // First-ship commissioning is always lit (the PORT-ENTRY claim path owns the action).
       id: 'claim-ship',
-      label: 'Commission your first ship',
+      // PLAIN-WORDS: "commission" was navy jargon; the button this points at says "Claim".
+      label: 'Claim your first ship',
       done: input.shipCount >= 1,
       hint: 'Claim your ship below — it docks at Haven, ready for orders.',
     },
@@ -81,18 +82,25 @@ export function deriveFirstOrders(input: FirstOrdersInput): FirstOrderStep[] {
     })
     steps.push({
       id: 'first-hunt',
-      label: 'Win your first hunt',
+      // 0307 copy sweep — this step broke BOTH standing design laws in eleven words. "Win your
+      // first hunt" taught the goal the game does not have (combat is never about winning; the
+      // skill is knowing when to leave), and "come home" named a base that does not exist — ports
+      // are the only base. The id and the `done` rule are UNCHANGED, so every spec pinning them
+      // (tests/firstOrders.spec.ts:35,43,82-83) still holds; only the words a player reads moved.
+      label: 'Survive your first fight',
       done: input.wonBattle,
-      hint: 'Send your ship to hunt pirates at the Snare (Wreck Belt) and come home in one piece.',
+      hint: 'Send your ship to hunt pirates at the Snare (Wreck Belt), then pull out while it still has hull.',
     })
   }
 
   if (input.additionalShipsLit) {
     steps.push({
       id: 'second-ship',
-      label: 'Commission a second ship',
+      label: 'Buy a second ship',
       done: input.shipCount >= 2,
-      hint: 'Buy a second hull on the Ship screen and start building a fleet.',
+      // PLAIN-WORDS + copy fix: the "Buy ship" panel lives on the FLEET tab (FLEET-TAB moved
+      // acquisition there with fleet composition — the S6 principle: buy a ship where you crew it).
+      hint: 'Buy a second ship on the Fleet tab and start building a fleet.',
     })
   }
 

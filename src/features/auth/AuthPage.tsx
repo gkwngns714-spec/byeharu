@@ -47,10 +47,11 @@ export function AuthPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-app px-4 text-ink">
       <Card tone="accent" className="w-full max-w-sm">
+        {/* PLAIN-WORDS: the game has no colonies — signup gives you a ship at a port. Don't promise one. */}
         <CardHeader
           eyebrow="Mission Control · Access"
           title="Byeharu"
-          subtitle={mode === 'signin' ? 'Welcome back, commander.' : 'Claim your first colony.'}
+          subtitle={mode === 'signin' ? 'Welcome back, commander.' : 'Sign up and claim your first ship.'}
         />
 
         <form onSubmit={handleSubmit} className="space-y-4">

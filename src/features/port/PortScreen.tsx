@@ -1,10 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useShellState } from '../../app/shellState'
 import { DockedPortCard } from './DockedPortCard'
 import { HaulBoardPanel } from './HaulBoardPanel'
 import { PortPickerPanel } from './PortPickerPanel'
 import { SalvageMarketPanel } from './SalvageMarketPanel'
-import { RepairPanel } from './RepairPanel'
 import { ShopPanel } from './ShopPanel'
 import { ShipyardPanel } from './ShipyardPanel'
 import { StationHangar } from './StationHangar'
@@ -46,19 +45,39 @@ export function PortScreen() {
     [map.fleetPositions, portNames],
   )
 
-  // The player's explicit pick (null = follow the default). Effective acting ship = the pick if it is
-  // still docked, else the shared selected ship if docked, else the FIRST docked ship (one docked ship →
-  // auto-selected, no forced picking). Null when nothing is docked (→ the sole-ship shim / empty state).
-  const [pickedShipId, setPickedShipId] = useState<string | null>(null)
-  const preferredShipId = pickedShipId ?? shipSelection.selectedShipId ?? map.mainShip?.main_ship_id ?? null
+  // ONE SELECTION AUTHORITY (repair-where-you-are): a pick here IS the shell selection
+  // (selection.selectShip — the same model the Fitting tab reads), so both tabs always agree on
+  // which ship is being commanded; the old Port-local pickedShipId (a second selection model that
+  // never told the shell) is DELETED. Effective acting ship = the shared selected ship if it is at
+  // a port, else the FIRST docked ship (resolveChosenShipId stays the one validator of a
+  // preference against the at-port set). Null when nothing is docked (→ the empty state).
+  const preferredShipId = shipSelection.selectedShipId ?? map.mainShip?.main_ship_id ?? null
   const chosenShipId = resolveChosenShipId(ports, preferredShipId)
+  // TRADE-MOUNT — the acting ship as a SelectableShip row (name + cargo_capacity_m3), taken from the
+  // shell's ONE ship list. MarketPanel used to be handed `shipSelection.selectedShip` directly while
+  // every other panel on this screen acted on `chosenShipId` — two acting ships on one screen. That
+  // diverges the moment the shared selection points at a ship that is NOT at a port (a pick made on
+  // the Fitting tab): resolveChosenShipId falls back to a docked ship for the dock read, the shop,
+  // salvage, the shipyard and the contract board, while the market alone addressed the undocked one
+  // and answered `not_docked` — a market that says "not available here" on a screen whose every other
+  // panel is working. One acting ship per screen, and it is the one the picker resolved.
+  const chosenShip = shipSelection.ships.find((s) => s.main_ship_id === chosenShipId) ?? null
 
   // The lifecycle refetch key now leads with the CHOSEN ship: switching the picked port/ship re-reads the
   // dock context (useDockServices also refetches on its mainShipId dep) and every lifecycleKey-keyed panel
   // (store, Workshop, salvage, shipyard, invest, haul). The main-ship lifecycle fields ride along so a
   // status/movement transition still ticks a refetch as before.
   // (4C-CLIENT: the legacy spatial_state / space-movement fields left the key with the schema they read.)
-  const lifecycleKey = `${chosenShipId ?? 'none'}|${map.mainShip?.status ?? 'n'}|${map.mainShipPresence?.location_id ?? 'none'}`
+  // TRADE-MOUNT — a completed market trade is a lifecycle event for this screen, not just for the
+  // market. The contract board reads the SAME ship's cargo lots to render "hold 3/29" and to enable
+  // Deliver; buying the haul at the origin used to leave that line reading the pre-purchase hold
+  // until the screen remounted, i.e. the surface that tells you whether you can fulfil a contract
+  // lied immediately after the one action that changes the answer. Rather than add a second refresh
+  // path between two sibling panels, the trade bumps the ONE refetch trigger every panel here
+  // already keys off (the lifecycleKey idiom) — compose the existing primitive, no new wiring.
+  const [cargoEpoch, setCargoEpoch] = useState(0)
+  const onCargoChanged = useCallback(() => setCargoEpoch((n) => n + 1), [])
+  const lifecycleKey = `${chosenShipId ?? 'none'}|${map.mainShip?.status ?? 'n'}|${map.mainShipPresence?.location_id ?? 'none'}|c${cargoEpoch}`
   const dock = useDockServices(lifecycleKey, { mainShipId: chosenShipId })
   // MAP-INTEGRATION M3 — the chosen ship's BERTHED read (from the same fleet-positions row the port
   // list derives from). A berthed ship is AT its port (so it lists above, consistent with the
@@ -68,13 +87,19 @@ export function PortScreen() {
   const chosenPos = map.fleetPositions.find((p) => p.main_ship_id === chosenShipId)
   const chosenBerthPort = chosenPos?.place === 'berthed' ? portOfShip(ports, chosenShipId) : null
   const chosenBerthShipName = chosenBerthPort?.ships.find((s) => s.mainShipId === chosenShipId)?.name ?? 'This ship'
-  // STATION-STORAGE — the docked port's own hangar (dark by default; server returns empty while the flag is off).
-  const store = useDockStore(lifecycleKey)
-  // TRADE-UI-1 — selected-ship model for the DARK MarketPanel, now the ONE shell instance (A0 lifted it; Ship
-  // reads the SAME selection). Compile-gated false + server-rejected today.
-
+  // STATION-STORAGE — the docked port's own hangar.
+  // ITEMS-HAVE-A-PLACE (0333): the read now carries the CHOSEN ship, the same way the dock-services
+  // read above always has. Without it the server's sole-ship shim resolved to NULL for anyone with
+  // two or more ships and this card never rendered at all. `storageRevision` re-reads THIS port's
+  // storage after a move; it is deliberately NOT folded into `lifecycleKey`, so moving an item does
+  // not make every other panel on the screen refetch — but it BUILDS ON lifecycleKey, so TRADE-MOUNT's
+  // cargoEpoch (and every other lifecycle trigger) still reaches the storage read unchanged.
+  const [storageRevision, setStorageRevision] = useState(0)
+  const storageKey = `${lifecycleKey}|s${storageRevision}`
+  const store = useDockStore(storageKey, { mainShipId: chosenShipId })
+  const onStorageChanged = useCallback(() => setStorageRevision((r) => r + 1), [])
   // UI R3 (composition): desktop ops split — main rail = the port's identity/services card + the
-  // Workshop (WORKSHOP: module craft & fit — port-docked work, see below) + the dark market (the
+  // Workshop (WORKSHOP: module craft & fit — port-docked work, see below) + the market (the
   // trade surface belongs beside the port, not under the hangar); aside rail =
   // the storage/economy surfaces (Hangar, Investment — both dark today). With every aside child
   // null, the rail self-collapses (`empty:hidden`) and the docked-port card takes the full row —
@@ -82,11 +107,11 @@ export function PortScreen() {
   // there is deliberately nothing else on that screen state).
   return (
     <Screen wide>
-      <PageHeader eyebrow="Ops · Dock" title="Port" subtitle="Dock services & trade" />
+      <PageHeader eyebrow="Ops · Port" title="Port" subtitle="Port services & trade" />
       {/* PORT-HUB — the port picker: pick which of your docked ports to act at. Renders only when you
           have at least one docked ship; one ship → its port shows here (highlighted), no forced pick.
           The chosen (port, ship) drives the dock context + every action panel below. */}
-      <PortPickerPanel ports={ports} chosenShipId={chosenShipId} onPick={setPickedShipId} />
+      <PortPickerPanel ports={ports} chosenShipId={chosenShipId} onPick={shipSelection.selectShip} />
       {!isDocked(dock) ? (
         chosenBerthPort ? (
           // M3 — the chosen ship is BERTHED here (listed above, consistent with the Fitting tab),
@@ -97,17 +122,19 @@ export function PortScreen() {
             data-testid="port-berthed-ship"
             className="mx-auto w-full max-w-3xl"
             icon={<Icon name="anchor" size={28} />}
-            title={`Berthed at ${chosenBerthPort.locationName}`}
+            title={`Docked at ${chosenBerthPort.locationName}`}
             body={
               <>
+                {/* PLAIN-WORDS: "berthed"/"moored" was dockside jargon — say docked, and keep the
+                    honest limit (a solo ship can't use paid port services until it joins a fleet). */}
                 <p>
-                  {chosenBerthShipName} is berthed at {chosenBerthPort.locationName} — moored on its own,
-                  not docked with a fleet.
+                  {chosenBerthShipName} is docked at {chosenBerthPort.locationName} on its own — it
+                  isn&apos;t part of a fleet.
                 </p>
                 <p className="mt-2 text-xs text-ink-faint">
-                  Berthed ships can't use paid dock services yet. Assign the ship to a fleet in{' '}
-                  <span className="text-ink">Command</span>, or dock a fleet at this port, to put its
-                  services to work.
+                  Ships docked on their own can't use paid port services yet. Add the ship to a fleet
+                  on the <span className="text-ink">Fleet</span> tab, or dock a fleet at this port, to
+                  use them.
                 </p>
               </>
             }
@@ -127,9 +154,9 @@ export function PortScreen() {
                 <p>None of your ships are docked at a port right now.</p>
                 <p className="mt-2 text-xs text-ink-faint">
                   Ships travel as fleets: send a fleet to a port from the{' '}
-                  <span className="text-ink">Map</span> and this screen opens up with its trade, build,
-                  and other services. No fleet yet? Create one in{' '}
-                  <span className="text-ink">Command</span> and add your ships to it first.
+                  <span className="text-ink">Map</span> and this screen opens up with its port services.
+                  No fleet yet? Create one on the <span className="text-ink">Fleet</span> tab and add
+                  your ships to it first.
                 </p>
               </>
             }
@@ -140,8 +167,10 @@ export function PortScreen() {
           <div className={screenRailClass('main')}>
             {/* The docked-port surface (identity → right now → service details). */}
             <DockedPortCard dock={dock} />
-            {/* WORKSHOP — module CRAFTING (non-spatial, 0109: player-scoped, no settled
-                precondition — reachable wherever the ship is docked). S6: the fit/unfit EDIT
+            {/* WORKSHOP — module CRAFTING. 0333: crafting is SPATIAL now — it consumes the stock
+                of the port this ship is DOCKED at, because that is where items live. The panel
+                addresses `chosenShipId`, the SAME acting ship as every other panel on this screen.
+                S6: the fit/unfit EDIT
                 surface moved to the Fitting tab's per-ship detail (FittingDetail — the ONE
                 fitting-edit surface; its enable derives from the ship's own fleet-positions row
                 and the server's 0114 settled-safe rule stays the enforcer), so this panel is
@@ -149,10 +178,19 @@ export function PortScreen() {
                 branch so a dark read never leaves a label over a void. No onChanged wiring: no
                 sibling on this screen reads the player inventory, and the Fitting tab's readers
                 refetch on route remount — screens unmount on navigation. */}
-            <ModulesPanel lifecycleKey={lifecycleKey} sectionLabel="Workshop" />
-            {/* TRADE-MARKET-1 (dark, compile-gated false + server-rejected): buy/sell at the docked port. */}
+            <ModulesPanel
+              lifecycleKey={lifecycleKey}
+              mainShipId={chosenShipId}
+              sectionLabel="Workshop"
+            />
+            {/* TRADE-MARKET-1 (LIVE since 2026-08-03; server flag `trade_market_enabled` is lit and
+                re-checked on every RPC): buy/sell the port's cargo goods. This is the ONLY player-
+                reachable producer of ship_cargo_lots — the haul contract board below consumes them,
+                so a trade here bumps the shared lifecycleKey and the board re-reads the hold. The
+                panel addresses `chosenShip`, the SAME acting ship as every other panel on this
+                screen (see the derivation above) — never the raw shell selection. */}
             {TRADE_MARKET_ENABLED && (
-              <MarketPanel key={shipSelection.selectedShipId ?? 'none'} selectedShip={shipSelection.selectedShip} />
+              <MarketPanel key={chosenShipId ?? 'none'} selectedShip={chosenShip} onCargoChanged={onCargoChanged} />
             )}
             {/* SALVAGE-2 (dark, flag-gated): the port's item buy-desk — the SECOND market surface
                 (items→credits beside MarketPanel's cargo goods), so it rides the main rail with the
@@ -180,18 +218,10 @@ export function PortScreen() {
               locationId={dock.locationId}
               mainShipId={chosenShipId}
             />
-            {/* REPAIR-ECON (dark, flag-gated): the paid hull-repair desk — a ship-recovery SERVICE on
-                the main rail. No read RPC exists for repair (0201), so the panel gates itself on the
-                server's own repair_economy_enabled flag read honestly from PUBLIC-READ game_config (the
-                SalvageMarketPanel posture) — flag false (production today) → renders null, so production
-                is byte-unchanged. THE SEAM: a destroyed ship shows the free-recovery note here, never a
-                paid Repair button (the free repair_main_ship safelock handles destroyed ships).
-                locationId is the SERVER dock projection (this docked branch). */}
-            <RepairPanel
-              lifecycleKey={lifecycleKey}
-              locationId={dock.locationId}
-              mainShipId={chosenShipId}
-            />
+            {/* REPAIR-WHERE-YOU-ARE — the paid hull-repair desk MOVED to the Fitting detail's
+                condition block (its ONE mount: the surface that shows per-ship hull damage is the
+                surface that mends it; the RPC never needed this screen's dock projection — it
+                resolves the dock server-side). The DockedPortCard service row above says where. */}
             {/* PORT-SHOP (dark, flag-gated): the port outfitter — buy entry-level fitting modules +
                 ammo for credits. A port SERVICE on the main rail beside repair/salvage. Unlike those,
                 the shop has its OWN gated read RPC (get_port_shop, 0235) which rejects
@@ -206,9 +236,16 @@ export function PortScreen() {
             />
           </div>
           <div className={screenRailClass('aside')}>
-            {/* STATION-STORAGE — this port's own hangar (per-port, per-player storage). Dark by default:
-                get_my_docked_store returns empty while station_storage_enabled is off → renders null. */}
-            <StationHangar store={store} />
+            {/* STATION-STORAGE + ITEMS-HAVE-A-PLACE (0333) — this port's own storage AND the one
+                surface that moves items between it and the ship's hold. Both halves live in one
+                card because the verb is a move BETWEEN them. Renders null unless the ship is
+                docked at a storable port (get_my_docked_store returns empty otherwise). */}
+            <StationHangar
+              store={store}
+              mainShipId={chosenShipId}
+              refreshKey={storageKey}
+              onChanged={onStorageChanged}
+            />
             {/* LOCATION-INVEST-P18 (dark, server-lit only): docked-port investment. Renders null
                 unless the server lit get_location_development, so production is byte-unchanged. */}
             <InvestmentPanel

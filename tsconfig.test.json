@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    /* IDENTICAL to tsconfig.app.json's `types`, deliberately. An earlier draft carried "node" as
+       well, on the belief it was load-bearing; it is not — removing it yields ZERO errors. Its only
+       effect was to put process/Buffer/__dirname in ambient scope for every spec, holding tests to a
+       LOOSER bar than src on exactly the axis the "same rules as the source it imports" argument
+       exists to rule out. If a future config file here genuinely needs Node globals, give them to
+       THAT file — never re-widen the whole test surface for one of them. */
+    "types": ["vite/client"],
+    "module": "esnext",
+    "skipLibCheck": true,
+
+    /* Bundler mode — identical to tsconfig.app.json so a spec is held to the
+       exact same rules as the source it imports. verbatimModuleSyntax is what
+       keeps `import type` type-only, so typechecking a spec can never turn a
+       pure Node proof into something that pulls a supabase client at runtime. */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  /* BOTH playwright configs, not just the default one. playwright.osnui.config.ts is a live CI
+     entrypoint (the `rendered-ui` job in .github/workflows/frontend-tests.yml) and is the config that
+     RUNS the *.uispec.ts proofs — the very files this gate exists to start covering. Leaving it out
+     would have made the gate cover the test but not the thing that runs it. If another
+     playwright.*.config.ts is ever added, it belongs here on the same day. */
+  "include": ["tests", "playwright.config.ts", "playwright.osnui.config.ts"]
+}

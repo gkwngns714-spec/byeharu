@@ -18,10 +18,26 @@ name: COMBAT-SPATIAL — 0234 spatial-combat disposable proof (no production)
 
 on:
   workflow_dispatch:
+  # main + pull_request are NOT decoration — they are what stops this gate going dark (added 0313).
+  # The trigger list used to be slice-branch-only, so between 2026-07-18 and 2026-08-02 this proof
+  # ran on ZERO pushes, and migration 0300 (lights-on) broke it silently for that whole window; it
+  # surfaced only because a later slice happened to name itself into the list. A proof that fires
+  # only on the branch that edits it gates nothing. Every PR and every merge to main runs it now.
+  pull_request:
   push:
     branches:
+      - main
       - 'autopilot/**'
       - 'slice-combat-s3**'
+      # 0313 cuts the seeded ranges this proof's geometry sits on (catalog gun 150->25) — its
+      # asserts were repointed in the same slice, so range branches must run it.
+      - 'slice-weapon-ranges**'
+      # 0316 divides the catalog gun again (25 -> 5) and this proof's engineered ring/pirate
+      # geometry was re-sized against it in the same slice — tighter-combat branches must run it.
+      - 'slice-combat-five-times**'
+      # 0317 rewrites BOTH calculate_expedition_stats and combat_create_group_encounter and repoints
+      # this proof's weapon-power assertions, so it must run on the branch that does it.
+      - 'slice-one-authority**'
 
 permissions:
   contents: read

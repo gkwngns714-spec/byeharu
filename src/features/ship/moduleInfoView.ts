@@ -9,7 +9,7 @@ import type { ModuleTypeRow } from '../modules/modulesTypes'
 //                  speed_mult_bonus → signed +N/-N labels). Modules carry NO hp_mult, so we pass
 //                  1 (the "no hull birthmark" value traitEffects skips) — never a hull line.
 //   · attributes — the COMBAT-S0 (0229) spatial/combat attributes as plain labeled rows
-//                  (Range/Power/Projectile speed/Cooldown/Ammo), each shown ONLY when present and
+//                  (Range/Volley share/Projectile speed/Cooldown/Ammo), each shown ONLY when present and
 //                  meaningful (NULL / 0 = the module has none of that reach → skipped, never a
 //                  "Range 0" line). numeric columns arrive as strings over PostgREST — coerced here.
 // Display only: every number is the catalog's stored truth; this module invents nothing.
@@ -52,8 +52,18 @@ export function moduleInfoView(row: ModuleTypeRow): ModuleInfoView {
   const range = toNum(row.range)
   if (range != null && range > 0) attributes.push({ label: 'Range', value: String(range) })
 
+  // 0317 — module_types.power is a unitless SHARE WEIGHT for a firing weapon: the fraction of its
+  // ship's folded combat_power that THIS gun delivers, not an amount of damage. A module's damage
+  // contribution is its stats_json.attack, which the `effects` list above already renders as a
+  // signed "+N Attack" line. Labelling the weight "Power" told the player that fitting this module
+  // made the ship hit for that number — the second damage authority the server stopped believing.
+  // Only weapons show it (as a share the player can compare between their own guns); no other
+  // archetype does, because nothing in the game reads this column for them — mining_extract sizes
+  // its radius from .range and never touches .power.
   const power = toNum(row.power)
-  if (power != null && power > 0) attributes.push({ label: 'Power', value: String(power) })
+  if (row.slot_type === 'weapon' && power != null && power > 0) {
+    attributes.push({ label: 'Volley share', value: String(power) })
+  }
 
   const speed = toNum(row.projectile_speed)
   if (speed != null && speed > 0) attributes.push({ label: 'Projectile speed', value: String(speed) })

@@ -72,6 +72,42 @@ begin
   perform public.process_combat_telegraphs();
 end $$;
 
+-- ★ EARN_WAVE (0307, LOOT-SECURES) — drive the REAL tick to a CLEARED wave so the encounter earns
+-- a bundle through the real accrual hunk (0299:1006-1009), and return the metal it earned.
+-- now() is txn-constant, so every tick needs a cadence rewind (last_resolved_at) instead of a real
+-- wait. Tick 1 spawns wave 1 when creation did not (the wave lifecycle lives in the tick); then the
+-- ONLY surgery is ENEMY-side — reduce the wave to a single 1-hp unit — so the player's own fire
+-- clears it on tick 2 and the accrual writes total_rewards_json. The earn is asserted non-vacuous
+-- (metal > 0, encounter still active): a proof that passes when the collector no-ops is worthless.
+-- A helper, not a per-phase copy-paste: the LOOT-SECURES block earns three times.
+create or replace function pg_temp.earn_wave(p_enc uuid) returns numeric language plpgsql as $$
+declare n int; v_metal numeric;
+begin
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute'
+   where id = p_enc;
+  perform public.process_combat_ticks();
+  select count(*) into n from public.combat_units where encounter_id = p_enc and side = 'enemy';
+  if n = 0 then
+    raise exception 'earn_wave: no enemy wave exists after the spawn tick — the earn phase cannot be staged'; end if;
+  -- ENEMY-side surgery only (an owned precondition): one unit, one hit point, no shield pool.
+  delete from public.combat_units
+   where encounter_id = p_enc and side = 'enemy'
+     and id <> (select id from public.combat_units
+                 where encounter_id = p_enc and side = 'enemy' order by id limit 1);
+  update public.combat_units
+     set hp_current = 1, alive_count = 1,
+         shield_current = case when shield_max is not null then 0 else shield_current end
+   where encounter_id = p_enc and side = 'enemy';
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute'
+   where id = p_enc;
+  perform public.process_combat_ticks();
+  select coalesce((total_rewards_json->>'metal')::numeric, 0) into v_metal
+    from public.combat_encounters where id = p_enc and status = 'active';
+  if v_metal is null or v_metal <= 0 then
+    raise exception 'earn_wave: the cleared wave accrued no metal — the earn phase is vacuous'; end if;
+  return v_metal;
+end $$;
+
 create or replace function pg_temp.arm_group(p_uid uuid, p_group uuid) returns void language plpgsql as $$
 declare r jsonb; v_ship uuid;
 begin
@@ -186,11 +222,13 @@ end $$;
 -- space settles, isolated so no earlier world's manifests or fleets can poison the leaf pins),
 -- uT (the S4 timed-docking 0219 world — dark instant-dock parity, translate-park, the dock leg,
 -- its settle, and the parked/territory guards), uU (the S4 sortie-guard world — it launches a
--- REAL hunt driven to mid-combat, so it must not share fixtures, the uE..uI reasoning).
+-- REAL hunt driven to mid-combat, so it must not share fixtures, the uE..uI reasoning),
+-- uL (the 0307 LOOT-SECURES world — three REAL hunts driven through earn → retreat → arrival, so
+-- it must not share fixtures, the uE..uI reasoning).
 do $$
 declare u uuid; k text;
 begin
-  foreach k in array array['uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK','uS','uT','uU','uR'] loop
+  foreach k in array array['uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK','uS','uT','uU','uR','uL'] loop
     insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
       values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
               'fg.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -240,13 +278,25 @@ update public.game_config set value='true'::jsonb where key='launch_from_dock_en
 -- a fresh chain — 0050).
 update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
 
+-- 0314: the tick arms REAL weapon cooldowns (next_ready_at = now() + cooldown_seconds), and now()
+-- is txn-frozen — a positive cooldown means a weapon fires at most ONCE per proof run, which would
+-- stall earn_wave's second-tick clear (the player's own fire finishes the 1-hp wave). This harness
+-- asserts the fire-every-tick world, so it OWNS that precondition in-txn, zeroed BEFORE anything
+-- snapshots a cooldown into weapons_json. The cooldown property itself is proven where it is
+-- owned: danger-combat-proof's RSFEEL block.
+do $$
+begin
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+end $$;
+
 -- Fund the fixture wallets BEFORE any additional commission. commission_first_main_ship is free, but
 -- every ADDITIONAL commission DEBITS a price from player_wallet (0091) and fresh fixtures have zero
 -- balance. Kept AFTER the DARK block (which must stay unfunded/unprovisioned) and inside the txn.
 -- player_wallet is lazy, so on_conflict covers a row a signup/ensure path may already have created.
 -- (The trade-market-1 / team-command proofs use this same direct-owner insert.)
 insert into public.player_wallet (player_id, balance)
-select v, 1000000 from fg where k in ('uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK','uS','uT','uU','uR')
+select v, 1000000 from fg where k in ('uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK','uS','uT','uU','uR','uL')
 on conflict (player_id) do update set balance = excluded.balance;
 
 -- ════════ PROVISION via the REAL commission RPCs ════════
@@ -3693,9 +3743,12 @@ begin
 end $$;
 
 -- ════════ BLOCK TERRITORY_PASS_MAPREAD (0217): get_world_map carries territory_radius, ADDITIVELY ═
--- Three pins: (1) STRUCTURAL — the DEPLOYED body still filters all three levels on status='active';
--- the 0175 hidden-port pin ran BEFORE the 0217 re-create on this chain, so it cannot vouch for the
--- new body — re-pin it here. (2) VALUE — slag's JSON element carries territory_radius = 10 (0289's
+-- Three pins: (1) STRUCTURAL — the DEPLOYED body still filters all three levels on the visibility
+-- authority (0318 repoint: it composes world_{sector,zone,location}_is_visible instead of carrying
+-- its own status='active' literals, and 1b refuses a re-inlined literal while 1c proves a hidden
+-- location is behaviourally absent); the 0175 hidden-port pin ran BEFORE the 0217 re-create on this
+-- chain, so it cannot vouch for the new body — re-pin it here. (2) VALUE — slag's JSON element
+-- carries territory_radius = 10 (0289's
 -- retune of 10, tripled by the 0227 world-geometry rebalance — the map read must serve the
 -- REBALANCED value, not 0217's 25 or 0220's un-rebalanced 10).
 -- (3) NULL-KEY — a NULL-territory ACTIVE location still returns the KEY (json null), never a
@@ -3707,14 +3760,47 @@ declare n int; v_map jsonb; v_src text;
   slag uuid := (select v from fg where k='slag');
   v_fix uuid := gen_random_uuid();
 begin
-  -- (1) structural: the three status='active' filters survive in the DEPLOYED 0217 body.
+  -- (1) structural: the deployed body still filters all three levels on the VISIBILITY AUTHORITY.
+  --     0318 REPOINT — the property is unchanged; the place it is written down moved. Those three
+  --     status='active' literals WERE the second copy of the visibility rule: this function said
+  --     active-only while the RLS policy said USING (true), and the permissive one is the one
+  --     PostgREST enforces — so `GET /rest/v1/locations?status=eq.hidden` returned the unreleased
+  --     Ember rows, by name and coordinate, to an anonymous caller. 0318 makes
+  --     world_{sector,zone,location}_is_visible THE definition and has the policy AND this function
+  --     compose it. The pin follows the rule to where it now lives, and is STRENGTHENED below.
   select prosrc into v_src from pg_proc where oid = to_regprocedure('public.get_world_map()')::oid;
   if v_src is null then raise exception 'TERRITORY_MAPREAD FAIL: public.get_world_map() does not exist'; end if;
-  if position('l.zone_id = z.id and l.status = ''active''' in v_src) = 0
-     or position('z.sector_id = se.id and z.status = ''active''' in v_src) = 0
-     or position('se.status = ''active''' in v_src) = 0 then
-    raise exception 'TERRITORY_MAPREAD FAIL: the deployed get_world_map lost a status=''active'' filter — hidden ports would leak';
+  if position('public.world_location_is_visible(l.status, l.zone_id)' in v_src) = 0
+     or position('public.world_zone_is_visible(z.status, z.sector_id)' in v_src) = 0
+     or position('public.world_sector_is_visible(se.status)' in v_src) = 0 then
+    raise exception 'TERRITORY_MAPREAD FAIL: the deployed get_world_map no longer composes the visibility authority at all three levels — hidden ports would leak';
   end if;
+  -- (1b) and it must hold NO copy of its own. `a.status = ''active''` is the space_anchors join and
+  --      correctly stays; the three ALIASED ones below are the visibility rule, and a status literal
+  --      reappearing here IS the two-authority defect coming back.
+  if position('l.status = ''active''' in v_src) > 0
+     or position('z.status = ''active''' in v_src) > 0
+     or position('se.status = ''active''' in v_src) > 0 then
+    raise exception 'TERRITORY_MAPREAD FAIL: get_world_map carries its OWN copy of the visibility rule again — a policy plus a filter that must agree is the defect 0318 removed';
+  end if;
+  -- (1c) BEHAVIOURAL, which the text pins above can only gesture at: a HIDDEN location is actually
+  --      absent from the map read. Owns its precondition — the fixture is inserted here, never
+  --      assumed from the chain seed — and is removed again so the later map-wide probes are
+  --      unaffected.
+  insert into public.locations (id, zone_id, name, location_type, x, y, activity_type, status)
+  values ('facade00-0318-4a00-8a00-00000000fade',
+          (select zone_id from public.locations where id = slag),
+          'Territory Hidden Probe', 'pirate_den', 73, -13, 'hunt_pirates', 'hidden');
+  insert into public.space_anchors (kind, location_id, space_x, space_y, status)
+    values ('location', 'facade00-0318-4a00-8a00-00000000fade', 73, -13, 'active');
+  select count(*) into n
+    from jsonb_array_elements(public.get_world_map()->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where lc->>'id' = 'facade00-0318-4a00-8a00-00000000fade';
+  if n <> 0 then raise exception 'TERRITORY_MAPREAD FAIL: a HIDDEN location appears in get_world_map output'; end if;
+  delete from public.space_anchors where location_id = 'facade00-0318-4a00-8a00-00000000fade';
+  delete from public.locations      where id          = 'facade00-0318-4a00-8a00-00000000fade';
 
   -- (2) value: slag's location JSON carries the rebalanced 30. Vacuity: slag must be IN the read at all.
   v_map := public.get_world_map();
@@ -3762,7 +3848,7 @@ begin
    where not (lc ? 'territory_radius');
   if n <> 0 then raise exception 'TERRITORY_MAPREAD FAIL: % map location(s) MISSING the territory_radius key — additive means every element', n; end if;
 
-  raise notice 'TERRITORY_PASS_MAPREAD: three-level active filter re-pinned on the 0217 body; slag carries the rebalanced territory_radius=10; a NULL-territory location returns the key as json null; every map element carries the key';
+  raise notice 'TERRITORY_PASS_MAPREAD: all three levels compose the 0318 visibility authority with NO second copy of the rule left in the body, and a hidden location is behaviourally absent from the read; slag carries the rebalanced territory_radius=10; a NULL-territory location returns the key as json null; every map element carries the key';
 end $$;
 
 -- ════════ BLOCK S3 POSLEAF (0218): the position leaves — MIDPOINT / AGREEMENT / PARKED / DOCKED ═══
@@ -4442,6 +4528,255 @@ begin
   raise notice 'REPOINT_PASS_LEGACYHOME_IDENTICAL: the placeless transition shape stays legacy_home / settled-unsafe / hidden, identically pre-vs-post';
 
   update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+end $$;
+
+-- ════════ BLOCK LOOT-SECURES (0307): A SURVIVOR'S LOOT DEPOSITS WHERE IT ARRIVES ════════
+-- THE DEFECT THIS PINS: the tick's retreat-completion branch mints a 'space' leg for EVERY chosen
+-- destination (a port resolves to its own coordinate, 0299:608-614) and attaches the earned bundle
+-- (0299:625-627) — but movement_settle_arrival's 'space' arm deposited NOTHING (0208:163-166; only
+-- the no-destination 'base' fallback paid). 0307 makes the space arrival deposit through the SAME
+-- sole depositor: the player's store AT the arrival port when the coordinate is a dockable port's
+-- own, else the oldest active store (the 0221 securing idiom). Three phases, each the REAL player
+-- action end-to-end (hunt → arrive → telegraph → fight → earned wave → retreat → arrival):
+--   1. CHOSEN PORT — mid-combat `go` to Slagworks records the destination; the arrival mints the
+--      player's Slagworks store (asserted absent beforehand) and banks the exact earnings there;
+--      a REPLAYED settle answers not_settleable and credits nothing twice.
+--   2. OPEN SPACE — mid-combat coordinate order; the arrival banks into the OLDEST active store
+--      (asserted distinct from the phase-1 store, so the fallback is provably the fallback).
+--   3. NO DESTINATION — the plain Retreat button (request_retreat); the leg falls back to 'base'
+--      and the UNTOUCHED base arm pays exactly as before (the parity half).
+-- FIXTURE SURGERY, all owned preconditions: clock rewinds (now() is txn-constant — cadence,
+-- retreat window, leg backdating) and ENEMY-side weakening so one real tick clears the wave and
+-- the REAL accrual hunk earns the bundle (pg_temp.earn_wave asserts the earn is non-vacuous).
+-- GLOBAL-TICK NOTE (the STOP-LIVESCOPE rule): process_combat_ticks sweeps every live row, but
+-- within this txn now() is frozen, so every other world's encounter was cadence-gated after its
+-- first processed step — these extra ticks advance nothing outside uL's own encounters. This block
+-- is LAST; nothing downstream reads any encounter state.
+-- MUTATION (traced): revert the 0307 space-arm deposit → phase 1 reds at "minted no store".
+-- Point the deposit at the oldest store unconditionally → phase 1 reds at the grant-row probe.
+-- Drop the port match and always mint a store → phase 2 reds at the oldest-store probe.
+-- Let a replayed settle re-claim → the not_settleable probe reds. Touch the base arm → phase 3.
+do $$
+declare r jsonb; n int; v_flag jsonb;
+  uL uuid := (select v from fg where k='uL');
+  slag uuid := (select v from fg where k='slag');
+  l1 uuid; gL uuid; v_hunt uuid; v_fleet uuid; v_mv uuid; v_pres uuid; v_enc uuid; v_rmv uuid;
+  v_metal numeric; v_metal2 numeric; v_metal3 numeric;
+  v_store uuid; v_oldest uuid; v_target_base uuid; v_before numeric;
+  v_slag_x double precision; v_slag_y double precision;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- fixture guards: the chosen port must be dockable (else phase 1 would silently test the
+  -- fallback twice), and its coordinate is read from the same authority the tick resolves.
+  if not public.is_home_port_eligible(slag) then
+    raise exception 'LOOT-SECURES FAIL: fixture — Slagworks is not a dockable port on this chain; the chosen-port phase cannot be staged'; end if;
+  select x, y into v_slag_x, v_slag_y from public.locations where id = slag;
+
+  -- live-RPC provisioning (the uI recipe verbatim: commission → group → DARK assign → arm).
+  r := pg_temp.call_as(uL, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'LOOT-SECURES FAIL: commission: %', r; end if;
+  select main_ship_id into l1 from public.main_ship_instances where player_id = uL;
+  r := pg_temp.call_as(uL, 'public.upsert_ship_group(1, ''Prospectors'')');
+  if (r->>'ok')::boolean is not true then raise exception 'LOOT-SECURES FAIL: group: %', r; end if;
+  gL := (r->>'group_id')::uuid;
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+  r := pg_temp.call_as(uL, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', l1, gL));
+  if (r->>'ok')::boolean is not true then raise exception 'LOOT-SECURES FAIL: assign: %', r; end if;
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  select id into v_hunt from public.locations
+   where status = 'active' and activity_type = 'hunt_pirates'
+   order by coalesce(min_power_required, 0) asc limit 1;
+  if v_hunt is null then raise exception 'LOOT-SECURES FAIL: no active hunt site — the fixture cannot be built'; end if;
+
+  -- ══ PHASE 1: the exact player action the defect stole — earn, retreat to a CHOSEN port, arrive.
+  perform pg_temp.arm_group(uL, gL);
+  r := pg_temp.call_as(uL, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gL, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'LOOT-SECURES FAIL: hunt 1: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  perform public.movement_settle_arrival(v_mv);
+  perform pg_temp.open_telegraphed(v_fleet);
+  select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status='active';
+  select id into v_pres from public.location_presence where fleet_id = v_fleet and status='active';
+  if v_enc is null or v_pres is null then
+    raise exception 'LOOT-SECURES FAIL: no live encounter+presence after the telegraph (phase 1)'; end if;
+  v_metal := pg_temp.earn_wave(v_enc);
+
+  -- THE PLAYER ORDER: a mid-combat `go` to a PORT — the mover's arm (a) records the destination
+  -- and arms the one retreat authority.
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, %L::uuid)', gL, slag));
+  if (r->>'outcome') is distinct from 'retreat_started' then
+    raise exception 'LOOT-SECURES FAIL: the mid-combat port order answered % — retreat_started expected', r; end if;
+  select count(*) into n from public.combat_encounters
+   where id = v_enc and status='retreating' and retreat_started_at is not null;
+  if n <> 1 then raise exception 'LOOT-SECURES FAIL: the order did not arm the retreat'; end if;
+  -- the window elapses (clock rewind — the COMBATPARITY idiom) and the tick completes the retreat.
+  update public.combat_encounters
+     set retreat_started_at = retreat_started_at - interval '1 minute',
+         last_resolved_at   = last_resolved_at   - interval '1 minute'
+   where id = v_enc;
+  perform public.process_combat_ticks();
+  select count(*) into n from public.combat_encounters where id = v_enc and status='escaped';
+  if n <> 1 then raise exception 'LOOT-SECURES FAIL: the retreat did not settle escaped (phase 1)'; end if;
+  select id into v_rmv from public.fleet_movements
+   where fleet_id = v_fleet and mission_type='return_home' and status='moving';
+  if v_rmv is null then raise exception 'LOOT-SECURES FAIL: the escape minted no return leg (phase 1)'; end if;
+  -- the leg is the CHOSEN-PORT shape and really carries the bundle — vacuity for everything below.
+  select count(*) into n from public.fleet_movements
+   where id = v_rmv and target_type='space' and target_x = v_slag_x and target_y = v_slag_y
+     and reward_grant_source = v_enc and reward_payload_json <> '{}'::jsonb;
+  if n <> 1 then
+    raise exception 'LOOT-SECURES FAIL: the retreat leg is not a cargo-carrying space leg at the chosen port''s coordinate'; end if;
+  -- the store this arrival must MINT does not exist yet, and no grant exists for this fight.
+  select count(*) into n from public.bases where player_id = uL and location_id = slag;
+  if n <> 0 then raise exception 'LOOT-SECURES FAIL: a Slagworks store pre-exists — the mint-on-arrival probe would be vacuous'; end if;
+  select count(*) into n from public.reward_grants where source_type='combat' and source_id = v_enc;
+  if n <> 0 then raise exception 'LOOT-SECURES FAIL: a grant pre-exists for this fight (phase 1)'; end if;
+
+  -- ★ ARRIVAL ★ — the 0307 property: the settle deposits into the player's store AT the chosen port.
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_rmv;
+  r := public.movement_settle_arrival(v_rmv);
+  if (r->>'outcome') is distinct from 'in_space' then
+    raise exception 'LOOT-SECURES FAIL: the space settle answered %', r; end if;
+  -- parking parity (0208): the fleet still holds in orbit at the port's coordinate.
+  select count(*) into n from public.fleets
+   where id = v_fleet and status='idle' and location_mode='space'
+     and space_x = v_slag_x and space_y = v_slag_y;
+  if n <> 1 then
+    raise exception 'LOOT-SECURES FAIL: the fleet is not parked at the chosen port''s coordinate — the 0208 parking behaviour drifted'; end if;
+  select id into v_store from public.bases where player_id = uL and location_id = slag and status='active';
+  if v_store is null then
+    raise exception 'LOOT-SECURES FAIL: THE DEFECT — arrival at a chosen port minted no store (the deposit did not happen)'; end if;
+  select count(*) into n from public.reward_grants
+   where source_type='combat' and source_id = v_enc and player_id = uL and base_id = v_store;
+  if n <> 1 then
+    raise exception 'LOOT-SECURES FAIL: THE DEFECT — the survivor''s bundle was not granted into the chosen port''s store'; end if;
+  select coalesce((select amount from public.base_resources where base_id = v_store and resource_code='metal'), 0)::numeric
+    into v_before;
+  if v_before is distinct from v_metal then
+    raise exception 'LOOT-SECURES FAIL: the chosen port''s store holds % metal, the fight earned %', v_before, v_metal; end if;
+
+  -- ★ REPLAY ★ — a replayed settle claims nothing (status guard) and credits nothing twice.
+  r := public.movement_settle_arrival(v_rmv);
+  if (r->>'settled')::boolean is not false or (r->>'reason') is distinct from 'not_settleable' then
+    raise exception 'LOOT-SECURES FAIL: a replayed settle answered %', r; end if;
+  select count(*) into n from public.reward_grants where source_type='combat' and source_id = v_enc;
+  if n <> 1 then raise exception 'LOOT-SECURES FAIL: the replay minted a second grant'; end if;
+  select coalesce((select amount from public.base_resources where base_id = v_store and resource_code='metal'), 0)::numeric
+    into v_before;
+  if v_before is distinct from v_metal then
+    raise exception 'LOOT-SECURES FAIL: the replay changed the store''s metal'; end if;
+
+  -- ══ PHASE 2: an OPEN-SPACE destination falls back to the OLDEST active store. ══
+  perform public.process_mainship_expeditions();
+  perform pg_temp.arm_group(uL, gL);
+  r := pg_temp.call_as(uL, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gL, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'LOOT-SECURES FAIL: hunt 2 (from space): %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  perform public.movement_settle_arrival(v_mv);
+  perform pg_temp.open_telegraphed(v_fleet);
+  select id into v_enc from public.combat_encounters
+   where fleet_id = v_fleet and status='active' order by created_at desc limit 1;
+  if v_enc is null then raise exception 'LOOT-SECURES FAIL: no live encounter (phase 2)'; end if;
+  v_metal2 := pg_temp.earn_wave(v_enc);
+  -- an open-space point NO active location sits on — asserted, never assumed.
+  select count(*) into n from public.locations where status='active' and x = 4443 and y = -4443;
+  if n <> 0 then raise exception 'LOOT-SECURES FAIL: fixture — (4443,-4443) is a real location; pick another point'; end if;
+  r := pg_temp.call_as(uL, format(
+    'public.command_ship_group_go(%L::uuid, null::uuid, 4443::double precision, -4443::double precision)', gL));
+  if (r->>'outcome') is distinct from 'retreat_started' then
+    raise exception 'LOOT-SECURES FAIL: the mid-combat coordinate order answered %', r; end if;
+  update public.combat_encounters
+     set retreat_started_at = retreat_started_at - interval '1 minute',
+         last_resolved_at   = last_resolved_at   - interval '1 minute'
+   where id = v_enc;
+  perform public.process_combat_ticks();
+  select id into v_rmv from public.fleet_movements
+   where fleet_id = v_fleet and mission_type='return_home' and status='moving';
+  if v_rmv is null then raise exception 'LOOT-SECURES FAIL: phase 2 minted no return leg'; end if;
+  select count(*) into n from public.fleet_movements
+   where id = v_rmv and target_type='space' and target_x = 4443 and target_y = -4443
+     and reward_grant_source = v_enc and reward_payload_json <> '{}'::jsonb;
+  if n <> 1 then raise exception 'LOOT-SECURES FAIL: the phase-2 leg is not a cargo-carrying leg at the bare point'; end if;
+  select id into v_oldest from public.bases
+   where player_id = uL and status='active' order by created_at limit 1;
+  if v_oldest is null or v_oldest = v_store then
+    raise exception 'LOOT-SECURES FAIL: fixture — the oldest store must exist and differ from the Slagworks store, or the fallback probe is ambiguous'; end if;
+  select coalesce((select amount from public.base_resources where base_id = v_oldest and resource_code='metal'), 0)::numeric
+    into v_before;
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_rmv;
+  r := public.movement_settle_arrival(v_rmv);
+  if (r->>'outcome') is distinct from 'in_space' then
+    raise exception 'LOOT-SECURES FAIL: the phase-2 settle answered %', r; end if;
+  select count(*) into n from public.reward_grants
+   where source_type='combat' and source_id = v_enc and player_id = uL and base_id = v_oldest;
+  if n <> 1 then
+    raise exception 'LOOT-SECURES FAIL: an open-space arrival did not bank into the oldest active store'; end if;
+  if (select coalesce((select amount from public.base_resources where base_id = v_oldest and resource_code='metal'), 0)::numeric)
+     is distinct from v_before + v_metal2 then
+    raise exception 'LOOT-SECURES FAIL: the oldest store''s metal did not grow by exactly the phase-2 earnings'; end if;
+
+  -- ══ PHASE 3: a NO-DESTINATION retreat still lands through the UNTOUCHED base arm. ══
+  perform public.process_mainship_expeditions();
+  perform pg_temp.arm_group(uL, gL);
+  r := pg_temp.call_as(uL, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gL, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'LOOT-SECURES FAIL: hunt 3: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  perform public.movement_settle_arrival(v_mv);
+  perform pg_temp.open_telegraphed(v_fleet);
+  select ce.id, ce.presence_id into v_enc, v_pres from public.combat_encounters ce
+   where ce.fleet_id = v_fleet and ce.status='active' order by ce.created_at desc limit 1;
+  if v_enc is null then raise exception 'LOOT-SECURES FAIL: no live encounter (phase 3)'; end if;
+  v_metal3 := pg_temp.earn_wave(v_enc);
+  -- the PLAIN Retreat button: request_retreat, no destination recorded. Its combat branch answers
+  -- the BARE envelope {"return_movement_id": null} — the RPC-shape lesson from STOP-LIVESCOPE.
+  r := pg_temp.call_as(uL, format('public.request_retreat(%L::uuid)', v_pres));
+  if (r ? 'return_movement_id') is not true or (r->'return_movement_id') is distinct from 'null'::jsonb then
+    raise exception 'LOOT-SECURES FAIL: request_retreat answered % (bare envelope with null id expected)', r; end if;
+  update public.combat_encounters
+     set retreat_started_at = retreat_started_at - interval '1 minute',
+         last_resolved_at   = last_resolved_at   - interval '1 minute'
+   where id = v_enc;
+  perform public.process_combat_ticks();
+  select id into v_rmv from public.fleet_movements
+   where fleet_id = v_fleet and mission_type='return_home' and status='moving';
+  if v_rmv is null then raise exception 'LOOT-SECURES FAIL: phase 3 minted no return leg'; end if;
+  select count(*) into n from public.fleet_movements
+   where id = v_rmv and target_type='base' and reward_grant_source = v_enc and reward_payload_json <> '{}'::jsonb;
+  if n <> 1 then
+    raise exception 'LOOT-SECURES FAIL: the no-destination retreat did not fall back to a cargo-carrying base leg'; end if;
+  select target_base_id into v_target_base from public.fleet_movements where id = v_rmv;
+  select coalesce((select amount from public.base_resources where base_id = v_target_base and resource_code='metal'), 0)::numeric
+    into v_before;
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_rmv;
+  r := public.movement_settle_arrival(v_rmv);
+  if (r->>'outcome') is distinct from 'completed' then
+    raise exception 'LOOT-SECURES FAIL: the base-arm settle answered % — the untouched arm drifted', r; end if;
+  select count(*) into n from public.reward_grants
+   where source_type='combat' and source_id = v_enc and player_id = uL and base_id = v_target_base;
+  if n <> 1 then raise exception 'LOOT-SECURES FAIL: the base arm did not grant exactly as before'; end if;
+  if (select coalesce((select amount from public.base_resources where base_id = v_target_base and resource_code='metal'), 0)::numeric)
+     is distinct from v_before + v_metal3 then
+    raise exception 'LOOT-SECURES FAIL: the base arm''s deposit amount drifted'; end if;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_LOOT_SECURES: a survivor''s earned bundle deposits WHERE IT ARRIVES — chosen port -> that port''s store (minted on arrival, exact amount), open space -> the oldest active store, no destination -> the untouched base arm; a replayed settle claims nothing and credits nothing twice';
 end $$;
 
 select 'FLEET-GO PROOF PASSED' as result;

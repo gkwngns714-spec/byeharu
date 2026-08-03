@@ -24,10 +24,13 @@ const SERVICE_LABELS: Record<string, string> = {
 }
 
 // Plain player language for what each active service means at this port today.
+// REPAIR-WHERE-YOU-ARE: the repair row still lists the port's service honestly (the list renders
+// the server's own active-services projection), but the mend BUTTON lives with the ship — the
+// Fitting tab's condition block — so the row says where instead of implying a desk on this screen.
 const SERVICE_NOTES: Record<string, string> = {
   docking: 'Docked',
   market: 'Buy & sell goods',
-  repair: 'Hull repairs',
+  repair: 'Hull repairs — in the Ships tab',
   refit: 'Refit your ship',
   recruitment: 'Hire captains',
 }

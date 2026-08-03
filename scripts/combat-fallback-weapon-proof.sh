@@ -68,6 +68,8 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "spatial_formation_ring_radius', '500'" "$SQL" || fail "harness lost the escort-out-of-range ring radius (damage attribution depends on it)"
   grep -q "enemy_synthetic_range_base', '10'" "$SQL"     || fail "harness lost the tuned-low pirate range (the pirate must not fire tick 1)"
   grep -q "combat_damage_variance_pct', '0'" "$SQL"      || fail "harness lost the determinism knob (0 variance)"
+  grep -q "set value='false'::jsonb where key='combat_telegraph_enabled'" "$SQL" \
+    || fail "harness does not keep combat_telegraph_enabled dark (0300 lit it; a lit telegraph queues the encounter instead of opening it inline at the settle)"
   grep -q "'autocannon_battery'" "$SQL"                  || fail "harness does not use the real S0 weapon catalog entry for the armed witness"
 
   # every property is asserted in assert-form (gutting any one block fails here).
@@ -77,13 +79,15 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "ARMED FAIL: s_arm weapon is" "$SQL" || fail "harness lacks the armed-ship-unchanged assert"
   grep -q "DAMAGE FAIL: pirate hp_current" "$SQL" || fail "harness lacks the pirate-hp-fell (nonzero damage) assert"
   grep -q "DAMAGE FAIL attribution" "$SQL" || fail "harness lacks the damage-attribution asserts"
+  # 0313 repoint: the expected weapon values must stay DERIVED (knobs/catalog), never re-hard-coded seeds.
+  grep -q "derived at assert time" "$SQL" || fail "harness's expected weapon values are no longer derived at assert time (a hard-coded seed would break on every future retune)"
 
   # determinism (0041): no random() anywhere. gen_random_uuid( has "_uuid" between "random" and "(".
   grep -qE 'random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "COMBAT-FALLBACK SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/captain_assignment/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. mint/assign captain + craft/fit; exactly 1 tick invocation; engineered geometry (ring 500 / pirate range 10 / variance 0) present; every property — pre-fix empty fitted join, synthesized power=attack_snapshot @ basic_player_weapon 150/300/2, armed ship unchanged, pirate hp fell with clean attribution — asserted in assert-form; no random())"
+  echo "COMBAT-FALLBACK SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/captain_assignment/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. mint/assign captain + craft/fit; exactly 1 tick invocation; engineered geometry (ring 500 / pirate range 10 / variance 0) present; every property — pre-fix empty fitted join, synthesized power=attack_snapshot @ basic_player_weapon with knob-derived range/projectile/cooldown (0313 repoint: never the hard-coded seeds), armed ship unchanged at its catalog row, pirate hp fell with clean attribution — asserted in assert-form; no random())"
   exit 0
 fi
 

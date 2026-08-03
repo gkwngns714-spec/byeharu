@@ -78,7 +78,7 @@
 --            NULL, member-keyed report, damage persisted); the return settle deposits the carried
 --            bundle (reward_grants + base metal) and the reconciler then re-homes the members in
 --            the head's exact write shape with the manifest RETAINED; a boosted-enemy defeat
---            destroys real alive members (D1 loop) and repair_main_ship revives one; the M1 guard
+--            destroys real alive members (D1 loop) and repair_ship_hull revives one; the M1 guard
 --            pin (a 'hunting' ship rejects the live single send with its own not-available raise —
 --            never a lost update — and a legal single send still works); and the reconciler
 --            self-heals manufactured 'returning'/'hunting' orphans home.
@@ -88,7 +88,8 @@
 --            bundle gains EXACTLY one appended shard qty 1 (additive-only) while wave 1 stays
 --            deterministic scrap-only at ANY rate; the rate is left 1 in-txn so TEAMSETTLE's won
 --            encounter carries a shard end-to-end (drop → bundle → return → reward_grant →
---            player_inventory — the recruit currency really arrives).
+--            the settling base's base_items store, 0333 — the recruit currency really arrives, and
+--            it arrives somewhere: items live PER PORT now, the global pool is gone).
 --   CAPXP (CAPXP-0/1, 0177) — the captain-XP foundation, consuming the TEAMSETTLE fixture AS the
 --            captained team sortie: committed seeds dark (captain_growth_enabled 'false', combat
 --            knob '10'); every instance at the additive defaults (xp 0 / level 1);
@@ -341,6 +342,56 @@ begin
   update public.pending_encounters set trigger_at = now() - interval '1 second'
    where fleet_id = p_fleet and status = 'telegraphed';
   perform public.process_combat_telegraphs();
+end $$;
+
+-- ★ THE THIRD LIGHTS-ON FIXTURE HELPER (added 2026-08-03) ────────────────────────────────────────
+-- wipe_tick — spatial_combat_enabled (0234, lit by 0300:78).
+--
+-- UNDER THE SPATIAL ENGINE, `enemy_attack_base` IS HONOURED AT WAVE SPAWN AND ONLY THERE. The
+-- aggregate arm recomputes `v_enemy_attack` from the live knob on EVERY tick (0299:1037). The spatial
+-- arm computes it ONCE, when the wave spawns, and freezes it into each enemy unit's
+-- `combat_units.weapons_json -> 'power'` (0299:748-777 synthetic, :707-720 resolved); the fire loop
+-- then reads that frozen value (0299:867). 0300:78 lit `spatial_combat_enabled`, so every encounter
+-- this file creates takes the spatial arm.
+--
+-- THAT SPLIT THE FILE'S "one-step wipe" IDIOM IN TWO, AND NOTHING SAID SO:
+--   * raised BEFORE the encounter's first tick (TEAMSETTLE's loss fixture) the very next tick spawns
+--     wave 1 at the boosted knob — still lethal, still correct, which is why that block stayed green;
+--   * raised MID-WAVE (SHIELD1's tick 4, after three ticks had already spawned and frozen wave 1) it
+--     is completely INERT. The tick delivered the same ordinary damage, the regenerated 40 pool
+--     absorbed all of it, the hull never reached 0, and `SHIELD1 FAIL defeat` has aborted this file on
+--     every branch since — taking the 7 blocks behind it (~23% of the file) with it.
+--
+-- THE REPOINT (the "follow the game" arm of proofs-never-assert-ambient-defaults): a mid-fight raise
+-- only bites on a wave the engine actually SPAWNS, so spend the live wave and let the next tick roll a
+-- fresh one at the CURRENT knob. That is the game's own escalation path (0299:659 spatial / :1043
+-- aggregate — the same `enemy side is wiped -> spawn` branch in both arms), not a shortcut around it.
+-- Using it at BOTH wipe sites also leaves ONE authority for "make the next tick lethal" instead of two
+-- spellings whose difference nobody could see.
+--
+-- MODE-AGNOSTIC BY CONSTRUCTION — it spends the wave in BOTH representations (the spatial arm's
+-- side='enemy' rows and the aggregate arm's `enemy_integrity_current` scalar), so this helper is
+-- correct whether or not `spatial_combat_enabled` is lit, and never re-acquires the ambient
+-- dependency it exists to remove. `next_wave_at` is cleared because now() is FROZEN inside the
+-- proof's single transaction: a wave-transition pause set to now()+N could never elapse and would
+-- park every later tick on the `next_wave_incoming` branch.
+--
+-- The knob is CAPTURED and RESTORED, never restored to a hard-coded literal — the committed seed is
+-- the chain's to own, not this file's.
+create or replace function pg_temp.wipe_tick(p_enc uuid) returns void language plpgsql as $$
+declare v_prev jsonb;
+begin
+  select value into v_prev from public.game_config where key = 'enemy_attack_base';
+  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);
+  -- spend the live wave in both arms, then make the tick due
+  delete from public.combat_units where encounter_id = p_enc and side = 'enemy';
+  update public.combat_encounters
+     set enemy_integrity_current = 0,
+         next_wave_at            = null,
+         last_resolved_at        = last_resolved_at - interval '1 minute'
+   where id = p_enc;
+  perform public.process_combat_ticks();
+  perform public.set_game_config('enemy_attack_base', coalesce(v_prev, '1'::jsonb));
 end $$;
 
 -- three fresh players: uA (3-ship team ops), uB (foreign-owner gap probe), uC (all-or-nothing pair).
@@ -1016,9 +1067,54 @@ declare r jsonb; n int; t record;
   v_hp_after double precision; v_expected_enemy double precision; v_bd double precision;
   v_defbase double precision; v_danger integer; v_waves integer; v_started timestamptz;
   v_keys text[]; v_expected_keys text[]; v_speed double precision; v_bad int := 0;
+  v_ring_before jsonb;
 begin
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  -- 0320 pins the SECOND spread knob too. The per-hit roll 0314 added reads
+  --   coalesce(cfg_num('combat_hit_variance_pct'), v_var_pct)
+  -- so it INHERITED the damage-variance pin above only while that key did not exist. 0320 seeds it
+  -- (production runs it at 0.5), and the moment it exists the inheritance stops and every exact
+  -- damage equality below becomes a +/-50% roll. A proof must state the precondition it owns
+  -- rather than rely on a row's ABSENCE.
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);
+  -- UNION at the 0313/0314 merge. BOTH preconditions below are load-bearing and neither replaces the
+  -- other: 0314 zeroes the weapon cooldowns (a TIME precondition — without it every multi-tick fire
+  -- sequence stalls) and 0313 borrows the formation ring (a GEOMETRY precondition — without it the
+  -- members sit outside their own cut ranges and never fire at all). Taking either side whole leaves
+  -- this block asserting against an ambient default it does not own, which is the exact failure the
+  -- proofs-never-assert-ambient-defaults law exists for. Cooldowns are zeroed FIRST because they must
+  -- land before anything snapshots weapons_json; the ring borrow is order-independent.
+  --
+  -- 0314: the tick arms REAL weapon cooldowns (next_ready_at = now() + cooldown_seconds), and now()
+  -- is frozen for this whole txn — any positive cooldown means a weapon fires at most ONCE per
+  -- proof run, which would stall every multi-tick fire sequence below (TEAMHUNT's second exchange,
+  -- TEAMSETTLE's two-wave clear, the lethal-focus loop). This harness asserts the fire-every-tick
+  -- world, so it OWNS that precondition in-txn, zeroed BEFORE anything snapshots a cooldown into
+  -- weapons_json (wave spawn / encounter creation). Set once here — game_config persists for the
+  -- whole txn. The cooldown property itself is proven where it is owned: danger-combat-proof's
+  -- RSFEEL block. (The per-hit damage roll is pinned to 0 EXPLICITLY above, so every exact damage
+  -- number in this file is unchanged. It used to INHERIT the damage-variance pin, which only
+  -- worked while combat_hit_variance_pct did not exist; 0320 seeds that key — production runs it
+  -- at 0.5 — and this block is where that inheritance broke first.)
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+  update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
+
+  -- ring 0 — OWNED (0313 repoint): every member spawns ON the engagement anchor, distance 0 from
+  -- the wave, so every weapon fires on tick 1 at ANY positive range. The exact-damage pins below
+  -- assert AGGREGATION (all members' attack flows into player_damage), and they held before 0313
+  -- only because the seeded ranges (120-180) happened to cover the seeded 30-unit ring — an
+  -- ambient geometry this proof never owned. 0313 cut the ranges below the ring; the property is
+  -- unchanged, the precondition is now stated.
+  -- OWNED means BORROWED, not taken: the seeded value is captured here and RESTORED at the end of
+  -- this block. Leaving the ring at 0 would silently co-locate every unit in every later block of
+  -- this 4300-line proof — a global geometry change smuggled in by one block's precondition.
+  select value into v_ring_before from public.game_config where key = 'spatial_formation_ring_radius';
+  if v_ring_before is null then
+    raise exception 'COMBATPARITY FAIL: game_config.spatial_formation_ring_radius is absent — this block cannot borrow-and-restore a knob that does not exist, and every later block would inherit the ring-0 override';
+  end if;
+  perform public.set_game_config('spatial_formation_ring_radius', '0'::jsonb);
 
   -- a real legacy unit fleet to a real hunt_pirates location (lowest entry gate first).
   select id into v_base from public.bases where player_id = uA and status = 'active' limit 1;
@@ -1200,6 +1296,9 @@ begin
     where jobname like '%combat%' and jobname not in ('process-combat-ticks', 'process-combat-telegraphs');
   if n <> 0 then raise exception 'COMBATPARITY FAIL: % unexpected combat-named cron job(s) beyond the tick engine + telegraph resolver', n; end if;
 
+  -- give the borrowed geometry back (derived from the capture above, never a hard-coded 30).
+  perform public.set_game_config('spatial_formation_ring_radius', v_ring_before);
+
   raise notice 'TEAMCMD_PASS_COMBATPARITY ok: legacy hunt via real chain under team flag ON; tick damage = independent Σ(attack×alive); enemy damage = independent defense-curve value; legacy jsonb keys; hp+fleet sync exact; escaped report legacy-keyed; return speed = fleet_speed; identity CHECK raises both ways; leaf smoke (NULL return speed, hp-only sync, 0059 terminal); exactly 1 combat-TICK engine cron (process-combat-ticks) + the COMBAT-S2 telegraph resolver which never runs the tick engine, and no third combat-named cron';
 end $$;
 
@@ -1237,11 +1336,23 @@ declare r jsonb; t jsonb; s1 jsonb; s2 jsonb; n int;
   v_fleet2 uuid; v_mv2 uuid; v_enc2 uuid;
   v_hp1 double precision; v_hp2 double precision; v_hp1b double precision; v_hp2b double precision;
   v_err text;
+  v_ring_before jsonb;
 begin
   -- config surgery must be in effect for the exact-damage pins: re-apply the COMBATPARITY in-txn
-  -- surgery (idempotent; the real set_game_config; all reverted by ROLLBACK).
+  -- surgery (idempotent; the real set_game_config; all reverted by ROLLBACK), including the OWNED
+  -- ring-0 geometry (see COMBATPARITY's knob block — 0313 cut ranges below the seeded ring; every
+  -- member must sit on the anchor for the tick-damage aggregation pin to measure aggregation).
+  -- Borrowed and restored at the end of this block, exactly as COMBATPARITY does: the capture is
+  -- taken here rather than inherited, so this block is correct whether it runs after COMBATPARITY
+  -- or alone.
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);
+  select value into v_ring_before from public.game_config where key = 'spatial_formation_ring_radius';
+  if v_ring_before is null then
+    raise exception 'TEAMHUNT FAIL: game_config.spatial_formation_ring_radius is absent — this block cannot borrow-and-restore a knob that does not exist, and every later block would inherit the ring-0 override';
+  end if;
+  perform public.set_game_config('spatial_formation_ring_radius', '0'::jsonb);
 
   -- the same seeded hunt destination COMBATPARITY used (lowest entry gate first).
   select id into v_hunt from public.locations
@@ -1430,10 +1541,24 @@ begin
   select count(*) into n from public.combat_units cu
     join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
     where cu.encounter_id = v_enc
+  -- ★ hp_max REPOINTED BY 0317, AND THE ASSERT GOT STRONGER, NOT WEAKER. It pinned hp_max to msi.hp
+  -- ★ too — i.e. it asserted that a fleet's integrity BAR starts full however battered the fleet is,
+  -- ★ which is exactly the defect 0317 removes: player_integrity_max is the sum of this column while
+  -- ★ 0310's auto-exit divides by sum(msi.max_hp), so the two fleet-level "how much hull" numbers
+  -- ★ could never agree (measured on the owner's own fleet: 583/583 shown, auto-exit on tick 1 at a
+  -- ★ 30% threshold). hp_max is CAPACITY now; hp_current is the live hull; ship_hp is UNTOUCHED (it
+  -- ★ is the per-stack divisor the tick uses for alive_count, where "the hp it entered with" is the
+  -- ★ right number). The repoint is non-vacuous BY CONSTRUCTION — c2 was dented to 350 before the
+  -- ★ send, so msi.hp <> msi.max_hp and the old and new expectations genuinely differ. Pinned below,
+  -- ★ so a fixture that stopped denting c2 could never make this pass for the wrong reason.
       and cu.hp_current is not distinct from msi.hp::double precision
-      and cu.hp_max     is not distinct from msi.hp::double precision
+      and cu.hp_max     is not distinct from msi.max_hp::double precision
       and cu.ship_hp    is not distinct from msi.hp::double precision;
-  if n <> 2 then raise exception 'TEAMHUNT FAIL: member hp columns diverge from the ships'' real hp'; end if;
+  if n <> 2 then raise exception 'TEAMHUNT FAIL: member hp columns diverge from the ships'' real hp/capacity (0317: hp_max is main_ship_instances.max_hp, hp_current and ship_hp are the live hull)'; end if;
+  select count(*) into n from public.combat_units cu
+    join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
+   where cu.encounter_id = v_enc and msi.hp < msi.max_hp;
+  if n < 1 then raise exception 'TEAMHUNT FAIL: no member entered this fight damaged — hp and max_hp would be the same number and the assert above could not tell the 0317 rule apart from the defect it replaced'; end if;
   select count(*) into n from public.combat_units
     where encounter_id = v_enc and main_ship_id = c2 and hp_current = 350;
   if n <> 1 then raise exception 'TEAMHUNT FAIL: c2 pre-existing damage did not carry in (want hp_current 350)'; end if;
@@ -1444,10 +1569,27 @@ begin
       and player_power_start is not distinct from (t->'totals'->>'combat_power')::double precision
       and player_power_start is not distinct from ((s1->>'combat_power')::double precision + (s2->>'combat_power')::double precision);
   if n <> 1 then raise exception 'TEAMHUNT FAIL: player_power_start is distinct from (t->''totals''->>''combat_power'') (independent D0 totals)'; end if;
+  -- ★ 0317: MAX and CURRENT are two different sums now, because they are two different questions.
+  -- ★ This asserted player_integrity_max == sum(hp_current), which was self-consistent only while
+  -- ★ hp_max meant "hp at entry". MAX is capacity (and therefore equals 0310's live auto-exit
+  -- ★ denominator, sum(main_ship_instances.max_hp) — asserted here, because that identity is the
+  -- ★ whole point of the change); CURRENT is the live hull the tick keeps writing from tick 1 on.
+  select count(*) into n from public.combat_encounters ce
+    where ce.id = v_enc
+      and ce.player_integrity_max is not distinct from
+          (select sum(hp_max) from public.combat_units where encounter_id = v_enc)
+      and ce.player_integrity_current is not distinct from
+          (select sum(hp_current) from public.combat_units where encounter_id = v_enc);
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: the encounter''s integrity columns are not (max = summed capacity, current = summed live hull)'; end if;
   select count(*) into n from public.combat_encounters ce
     where ce.id = v_enc and ce.player_integrity_max is not distinct from
-      (select sum(hp_current) from public.combat_units where encounter_id = v_enc);
-  if n <> 1 then raise exception 'TEAMHUNT FAIL: player_integrity_max <> summed member hp'; end if;
+      (select sum(msi.max_hp)::double precision from public.combat_units u
+         join public.main_ship_instances msi on msi.main_ship_id = u.main_ship_id
+        where u.encounter_id = ce.id and u.side = 'player' and u.main_ship_id is not null);
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: player_integrity_max <> 0310''s auto-exit denominator — the bar and the safety line still measure different things'; end if;
+  select count(*) into n from public.combat_encounters ce
+    where ce.id = v_enc and ce.player_integrity_current < ce.player_integrity_max;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: a fleet with a damaged member opened its fight on a FULL bar — the pre-0317 defect'; end if;
 
   -- ── TICK 1: the member path's first live execution ────────────────────────────────────────────────
   select hp_current into v_hp1 from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
@@ -1582,6 +1724,9 @@ begin
   select count(*) into n from public.fleets where id = v_fleet2 and status = 'destroyed';
   if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: sortie fleet not destroyed on defeat'; end if;
 
+  -- give the borrowed geometry back (derived from the capture above, never a hard-coded 30).
+  perform public.set_game_config('spatial_formation_ring_radius', v_ring_before);
+
   raise notice 'TEAMCMD_PASS_TEAMHUNT ok: rejects (group_not_found×2/empty_group/invalid_location-before-readiness/member_not_ready incl. zero-hp), ONE fleet + 2-row manifest + hunting ships, speed_used = independent D0 totals.speed, races reject (single send + double team send), member encounter (attack_snapshot = per-member adapter, hp carries pre-existing damage, power_start = totals.combat_power), tick damage = sum(attack_snapshot) with ship-hp sync, manifest wins over a mid-flight unassign, and the H1 cron-safety degrade: settle succeeds despite an adapter-refused member, whose row lands alive_count=0/zero-snapshot and defeats cleanly';
 end $$;
 
@@ -1667,7 +1812,8 @@ end $$;
 --   RETURN SETTLE      — movement_settle_arrival's base branch completes the fleet and deposits the
 --                        carried bundle (reward_grants row keyed by the encounter; base_resources
 --                        metal grows by exactly the carried metal; the 0171 wave-2 shard lands in
---                        player_inventory — the SHARDDROP end-to-end carry), touching NO member ship;
+--                        THAT SAME base's base_items item store, 0333 — the SHARDDROP end-to-end
+--                        carry, now measured at the port it landed at), touching NO member ship;
 --   RECONCILE          — the next reconciler run re-homes both members in the head branch's exact
 --                        write shape (status='home', spatial_state stays NULL — the clean
 --                        legacy_home) with damage persisted; the manifest rows are RETAINED (the D3
@@ -1676,7 +1822,7 @@ end $$;
 --   LOSS + RECOVERY    — a fresh sortie under a one-step-wipe enemy (enemy_attack_base surgery,
 --                        restored after) defeats with REAL alive members (TEAMHUNT's defeat covered
 --                        only the degraded shape): fleet destroyed, members 'destroyed' hp=0 by the
---                        D1 loop, defeat report; then the 0081 ship-addressed repair_main_ship
+--                        D1 loop, defeat report; then the 0081 ship-addressed repair_ship_hull
 --                        revives a member to home @ max_hp;
 --   M1 GUARD           — a true interleaving is untestable in one session, so pin the guard's
 --                        contract: a 'hunting' ship rejects through the single send's own
@@ -1701,6 +1847,7 @@ begin
   -- config surgery re-applied (idempotent; the real set_game_config; all reverted by ROLLBACK).
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);
 
   select id into v_hunt from public.locations
     where activity_type = 'hunt_pirates' and status = 'active'
@@ -1818,7 +1965,9 @@ begin
   select id into v_cbase from public.bases where player_id = uC and status = 'active' order by created_at limit 1;
   select coalesce((select amount from public.base_resources where base_id = v_cbase and resource_code = 'metal'), 0)
     into v_metal_before;
-  v_shard_before := public.inventory_get_balance(uC, 'captain_memory_shard');
+  -- 0333: a balance is always AT a port. The shard lands in whatever base the settle hands
+  -- reward_grant — the SAME v_cbase the metal assertion below pins — so measure it THERE.
+  v_shard_before := public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard');
   update public.fleet_movements
      set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
    where id = v_rmv;
@@ -1835,11 +1984,14 @@ begin
     where base_id = v_cbase and resource_code = 'metal'
       and amount is not distinct from v_metal_before + (v_rw->>'metal')::double precision;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: base metal did not grow by the carried reward metal'; end if;
-  -- THE 0171 SHARD DEPOSIT: the carried shard landed in player_inventory (reward_grant's item
-  -- path) — the recruit currency (0125: every recipe costs exactly 1 shard) really arrives.
-  if public.inventory_get_balance(uC, 'captain_memory_shard') is distinct from v_shard_before + 1 then
-    raise exception 'TEAMSETTLE FAIL: carried shard not deposited to player_inventory (have %, want % — the recruit currency)',
-      public.inventory_get_balance(uC, 'captain_memory_shard'), v_shard_before + 1; end if;
+  -- THE 0171 SHARD DEPOSIT: the carried shard landed in THIS BASE's item store (0333 base_items —
+  -- reward_grant's item arm now deposits into the very base it is handed, the same one the metal
+  -- above landed in) — the recruit currency (0125: every recipe costs exactly 1 shard) really
+  -- arrives, and it arrives somewhere. Asserting it AT v_cbase is the stronger statement: a deposit
+  -- that landed in some other port of uC's would now fail here instead of passing invisibly.
+  if public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard') is distinct from v_shard_before + 1 then
+    raise exception 'TEAMSETTLE FAIL: carried shard not deposited into the settling base''s item store (have %, want % — the recruit currency)',
+      public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard'), v_shard_before + 1; end if;
   -- the base settle itself never touches member ships (untagged fleet): still 'returning'.
   select count(*) into n from public.main_ship_instances
     where main_ship_id in (c1, c2) and status = 'returning';
@@ -1905,37 +2057,35 @@ begin
   select count(*) into n from public.combat_reports where encounter_id = v_enc3 and result = 'defeat';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL loss: no defeat report'; end if;
   -- RECOVERY PIN: the 0081 ship-addressed repair revives a combat-destroyed member.
-  -- ── ★ 0297 UPDATE — THE SEAM, not just the half. Repair is now POSITION-GATED: a combat-destroyed
-  --    member is grouped (berth NULL under the 0216 XOR) inside a DESTROYED fleet, so it is at NO
-  --    port and repair_main_ship correctly raises ship_not_at_port. The recovery route that 0297
-  --    ships in the SAME migration is the free tow, so this pin now proves BOTH halves in order:
+  -- ── ★ 0297 UPDATE, REPOINTED BY 0335 — THE SEAM, not just the half. Repair is POSITION-GATED: a
+  --    combat-destroyed member is grouped (berth NULL under the 0216 XOR) inside a DESTROYED fleet,
+  --    so it is at NO port and the repair verb correctly rejects not_at_port. The recovery route
+  --    0297 shipped in the SAME migration is the free tow, so this pin proves BOTH halves in order:
   --    (1) the gate actually bites on exactly the shape the owner complained about, and
-  --    (2) the tow un-strands it, after which the free repair still revives it to home @ max_hp.
-  --    If either half were missing this pin would fail — which is the point. ★
-  declare
-    v_gated boolean := false;
-  begin
-    begin
-      r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c1));
-    exception when others then
-      -- the handler must never catch its own raise, so it only classifies and sets the flag.
-      if position('ship_not_at_port' in sqlerrm) = 0 then
-        raise exception 'TEAMSETTLE FAIL: repair rejected a portless wreck for the WRONG reason: %', sqlerrm;
-      end if;
-      v_gated := true;
-    end;
-    if not v_gated then
-      raise exception 'TEAMSETTLE FAIL: repair_main_ship healed a wreck that is at NO port (the 0297 gate did not bite)';
-    end if;
-  end;
+  --    (2) the tow un-strands it, after which the free recovery still revives it to home @ max_hp.
+  --    If either half were missing this pin would fail — which is the point.
+  --    0335: the verb is repair_ship_hull and it RETURNS an envelope instead of raising, so the
+  --    exception-classifying block this needed is gone — a reject is now just a value to read. ★
+  r := pg_temp.call_as(uC, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', c1, gen_random_uuid()));
+  if (r->>'ok')::boolean is not false then
+    raise exception 'TEAMSETTLE FAIL: repair healed a wreck that is at NO port (the position gate did not bite): %', r;
+  end if;
+  if (r->>'reason') is distinct from 'not_at_port' then
+    raise exception 'TEAMSETTLE FAIL: repair rejected a portless wreck for the WRONG reason: %', r;
+  end if;
   -- the free, always-available tow berths the wreck at a real port (0297 §3).
   r := pg_temp.call_as(uC, format('public.mainship_emergency_tow(%L::uuid)', c1));
   if (r->>'ok')::boolean is not true then raise exception 'TEAMSETTLE FAIL: the emergency tow refused a stranded wreck: %', r; end if;
   select count(*) into n from public.main_ship_instances
     where main_ship_id = c1 and berth_location_id is not null and group_id is null;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: the tow did not berth the wreck (0216 XOR columns)'; end if;
-  -- ── ★ END 0297 UPDATE — the original pin continues verbatim from here ★ ──────────────────────
-  r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c1));
+  -- ── ★ END 0297/0335 UPDATE — the original pin continues from here ★ ──────────────────────────
+  r := pg_temp.call_as(uC, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', c1, gen_random_uuid()));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMSETTLE FAIL: the free recovery refused a berthed wreck: %', r; end if;
+  -- 0335: a wreck recovers FREE whatever the price knob says, and says so in its own envelope.
+  if (r->>'total_price')::numeric <> 0 or (r->>'recovered')::boolean is not true then
+    raise exception 'TEAMSETTLE FAIL: wreck recovery was not free / not recorded as a recovery: %', r;
+  end if;
   select count(*) into n from public.main_ship_instances
     where main_ship_id = c1 and status = 'home' and hp = max_hp;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: repair did not revive the destroyed member (want home @ max_hp)'; end if;
@@ -1950,7 +2100,8 @@ begin
   -- the same two-step recovery the player performs. This is setup for the self-heal pin, not the pin.
   r := pg_temp.call_as(uC, format('public.mainship_emergency_tow(%L::uuid)', c2));
   if (r->>'ok')::boolean is not true then raise exception 'TEAMSETTLE FAIL: the emergency tow refused the second wreck: %', r; end if;
-  r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c2));
+  r := pg_temp.call_as(uC, format('public.repair_ship_hull(%L::uuid, null, %L::uuid)', c2, gen_random_uuid()));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMSETTLE FAIL: the free recovery refused the second berthed wreck: %', r; end if;
   update public.main_ship_instances
      set status = 'returning', updated_at = now()
    where main_ship_id = c2;
@@ -1966,7 +2117,7 @@ begin
     where main_ship_id = c2 and status = 'home';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: self-heal did not re-home the orphaned hunting member'; end if;
 
-  raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into player_inventory), reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, and both self-heal re-homes';
+  raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into that base''s base_items store), reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, and both self-heal re-homes';
 end $$;
 
 -- ════════ BLOCK CAPXP (CAPXP-0/1, 0177): captain-XP foundation — dark no-op, exact accrual, ledger ════════
@@ -2252,6 +2403,11 @@ update public.game_config set value='true'::jsonb where key='module_fitting_enab
 do $$
 declare r jsonb; s0 jsonb; s1 jsonb; s2 jsonb; n int;
   uD uuid; d1 uuid; v_shield uuid; v_rig uuid; v_hulldef numeric; ing record;
+  -- 0333: items live PER PORT (`base_items`) and craft_module spends from the port the crafting
+  -- ship is DOCKED at. uD's ship is commissioned canonically docked at Haven Reach, so this is the
+  -- store every balance below names — and the store a NULL-base reward_grant lands in, uD's oldest
+  -- active base being its Home Base, whose location_id IS Haven.
+  v_store uuid;
 begin
   -- fresh fixture user (the signup idiom above) + the FREE first commission → canonically docked.
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -2262,6 +2418,7 @@ begin
   r := pg_temp.call_as(uD, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'MOD2 FAIL provision: %', r; end if;
   select main_ship_id into d1 from public.main_ship_instances where player_id = uD;
+  v_store := public.get_or_create_store(uD, 'b1a00001-0066-4a00-8a00-000000000001'::uuid);  -- Haven Reach
 
   -- the 0183 catalog seeds, pinned verbatim (shape + stats + slot_cost + full recipes).
   select count(*) into n from public.module_types
@@ -2279,9 +2436,9 @@ begin
   perform public.reward_grant('combat', gen_random_uuid(), uD, null,
     '{"items": [{"item_id": "repair_parts", "quantity": 4}, {"item_id": "pirate_alloy", "quantity": 3}, {"item_id": "scrap", "quantity": 8}]}'::jsonb);
   for ing in select item_id, qty from public.module_recipe_ingredients where module_type_id = 'shield_lattice' loop
-    if public.inventory_get_balance(uD, ing.item_id) <> ing.qty then
-      raise exception 'MOD2 FAIL: pre-craft balance of % is % (want exactly the recipe qty %)',
-        ing.item_id, public.inventory_get_balance(uD, ing.item_id), ing.qty; end if;
+    if public.inventory_get_balance(uD, v_store, ing.item_id) <> ing.qty then
+      raise exception 'MOD2 FAIL: pre-craft Haven balance of % is % (want exactly the recipe qty %)',
+        ing.item_id, public.inventory_get_balance(uD, v_store, ing.item_id), ing.qty; end if;
   end loop;
 
   -- the survival BASELINE decomposes to the hull defense seed exactly (uD is captain/module/loadout-free).
@@ -2294,22 +2451,22 @@ begin
       s0->>'survival', v_hulldef; end if;
 
   -- CRAFT via the real RPC: exact spend to ZERO, one instance + one receipt, verbatim replay.
-  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-shield-1'', ''shield_lattice'')');
+  r := pg_temp.call_as(uD, format('public.craft_module(''mod2-shield-1'', ''shield_lattice'', %L::uuid)', d1));
   if (r->>'ok')::boolean is not true or coalesce((r->>'idempotent_replay')::boolean, false) then
     raise exception 'MOD2 FAIL craft: %', r; end if;
   v_shield := (r->>'instance_id')::uuid;
   for ing in select item_id from public.module_recipe_ingredients where module_type_id = 'shield_lattice' loop
-    if public.inventory_get_balance(uD, ing.item_id) <> 0 then
-      raise exception 'MOD2 FAIL: post-craft balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
-        ing.item_id, public.inventory_get_balance(uD, ing.item_id); end if;
+    if public.inventory_get_balance(uD, v_store, ing.item_id) <> 0 then
+      raise exception 'MOD2 FAIL: post-craft Haven balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
+        ing.item_id, public.inventory_get_balance(uD, v_store, ing.item_id); end if;
   end loop;
-  -- the insufficient boundary: with the price fully spent, a SECOND craft must answer
+  -- the insufficient boundary: with the price fully spent AT THIS PORT, a SECOND craft must answer
   -- insufficient_items (the 0109 envelope) and mint nothing.
-  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-shield-2'', ''shield_lattice'')');
+  r := pg_temp.call_as(uD, format('public.craft_module(''mod2-shield-2'', ''shield_lattice'', %L::uuid)', d1));
   if (r->>'code') is distinct from 'insufficient_items' then
     raise exception 'MOD2 FAIL: second craft answered % (want insufficient_items — the exact-price boundary)', r; end if;
   -- verbatim replay of the FIRST craft: no double spend, no double mint.
-  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-shield-1'', ''shield_lattice'')');
+  r := pg_temp.call_as(uD, format('public.craft_module(''mod2-shield-1'', ''shield_lattice'', %L::uuid)', d1));
   if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is not true
      or (r->>'instance_id')::uuid is distinct from v_shield then
     raise exception 'MOD2 FAIL replay: %', r; end if;
@@ -2333,7 +2490,7 @@ begin
   -- mining_yield = +8 EXACTLY, slots 1 → 2, same isolation pin.
   perform public.reward_grant('combat', gen_random_uuid(), uD, null,
     '{"items": [{"item_id": "crystal", "quantity": 2}, {"item_id": "ore", "quantity": 6}, {"item_id": "scrap", "quantity": 4}]}'::jsonb);
-  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-rig-1'', ''mining_rig_extension'')');
+  r := pg_temp.call_as(uD, format('public.craft_module(''mod2-rig-1'', ''mining_rig_extension'', %L::uuid)', d1));
   if (r->>'ok')::boolean is not true then raise exception 'MOD2 FAIL craft rig: %', r; end if;
   v_rig := (r->>'instance_id')::uuid;
   r := pg_temp.call_as(uD, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod2-fit-2'')', v_rig, d1));
@@ -2366,6 +2523,11 @@ do $$
 declare r jsonb; s0 jsonb; s1 jsonb; n int;
   uE uuid; uF uuid; dE uuid; dF uuid; v_mk2s uuid; v_mk2a uuid; ing record;
   v_base_speed numeric; v_exp_speed numeric;
+  -- 0333: items live PER PORT (`base_items`) and craft_module spends from the port the crafting
+  -- ship is DOCKED at. Both fixture ships are commissioned canonically docked at Haven Reach, and
+  -- a NULL-base reward_grant lands in each player's oldest active base — the Home Base, whose
+  -- location_id IS Haven — so these two stores are exactly where the grants and the spends meet.
+  v_storeE uuid; v_storeF uuid;
 begin
   -- the gates are LIT in-txn by the MOD2 block above (module_crafting/fitting_enabled → true);
   -- this block depends on that lit state (the craft/fit RPCs run the lit path). Asserted, not
@@ -2395,32 +2557,33 @@ begin
   r := pg_temp.call_as(uE, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'MOD22 FAIL provision uE: %', r; end if;
   select main_ship_id into dE from public.main_ship_instances where player_id = uE;
+  v_storeE := public.get_or_create_store(uE, 'b1a00001-0066-4a00-8a00-000000000001'::uuid);  -- Haven Reach
 
-  -- grant EXACTLY the shield-Mk-II recipe via the real Reward sole writer; verify it landed.
+  -- grant EXACTLY the shield-Mk-II recipe via the real Reward sole writer; verify it landed AT HAVEN.
   perform public.reward_grant('combat', gen_random_uuid(), uE, null,
     '{"items": [{"item_id": "blueprint_fragment", "quantity": 2}, {"item_id": "artifact_core", "quantity": 1}, {"item_id": "repair_parts", "quantity": 6}]}'::jsonb);
   for ing in select item_id, qty from public.module_recipe_ingredients where module_type_id = 'shield_lattice_mk2' loop
-    if public.inventory_get_balance(uE, ing.item_id) <> ing.qty then
-      raise exception 'MOD22 FAIL: pre-craft balance of % is % (want exactly the recipe qty %)',
-        ing.item_id, public.inventory_get_balance(uE, ing.item_id), ing.qty; end if;
+    if public.inventory_get_balance(uE, v_storeE, ing.item_id) <> ing.qty then
+      raise exception 'MOD22 FAIL: pre-craft Haven balance of % is % (want exactly the recipe qty %)',
+        ing.item_id, public.inventory_get_balance(uE, v_storeE, ing.item_id), ing.qty; end if;
   end loop;
 
   s0 := public.calculate_expedition_stats(uE, dE, '[]'::jsonb, 'none');
 
   -- CRAFT via the real RPC: exact spend to ZERO, insufficient_items boundary, verbatim replay, 1 mint.
-  r := pg_temp.call_as(uE, 'public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'')');
+  r := pg_temp.call_as(uE, format('public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'', %L::uuid)', dE));
   if (r->>'ok')::boolean is not true or coalesce((r->>'idempotent_replay')::boolean, false) then
     raise exception 'MOD22 FAIL craft shield: %', r; end if;
   v_mk2s := (r->>'instance_id')::uuid;
   for ing in select item_id from public.module_recipe_ingredients where module_type_id = 'shield_lattice_mk2' loop
-    if public.inventory_get_balance(uE, ing.item_id) <> 0 then
-      raise exception 'MOD22 FAIL: post-craft balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
-        ing.item_id, public.inventory_get_balance(uE, ing.item_id); end if;
+    if public.inventory_get_balance(uE, v_storeE, ing.item_id) <> 0 then
+      raise exception 'MOD22 FAIL: post-craft Haven balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
+        ing.item_id, public.inventory_get_balance(uE, v_storeE, ing.item_id); end if;
   end loop;
-  r := pg_temp.call_as(uE, 'public.craft_module(''mod22-shield-2'', ''shield_lattice_mk2'')');
+  r := pg_temp.call_as(uE, format('public.craft_module(''mod22-shield-2'', ''shield_lattice_mk2'', %L::uuid)', dE));
   if (r->>'code') is distinct from 'insufficient_items' then
     raise exception 'MOD22 FAIL: second shield craft answered % (want insufficient_items — the exact-price boundary)', r; end if;
-  r := pg_temp.call_as(uE, 'public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'')');
+  r := pg_temp.call_as(uE, format('public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'', %L::uuid)', dE));
   if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is not true
      or (r->>'instance_id')::uuid is distinct from v_mk2s then
     raise exception 'MOD22 FAIL replay shield: %', r; end if;
@@ -2449,6 +2612,7 @@ begin
   r := pg_temp.call_as(uF, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'MOD22 FAIL provision uF: %', r; end if;
   select main_ship_id into dF from public.main_ship_instances where player_id = uF;
+  v_storeF := public.get_or_create_store(uF, 'b1a00001-0066-4a00-8a00-000000000001'::uuid);  -- Haven Reach
   select h.base_speed into v_base_speed
     from public.main_ship_instances i join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
     where i.main_ship_id = dF;
@@ -2456,9 +2620,9 @@ begin
   perform public.reward_grant('combat', gen_random_uuid(), uF, null,
     '{"items": [{"item_id": "blueprint_fragment", "quantity": 2}, {"item_id": "artifact_core", "quantity": 1}, {"item_id": "weapon_parts", "quantity": 6}]}'::jsonb);
   for ing in select item_id, qty from public.module_recipe_ingredients where module_type_id = 'autocannon_battery_mk2' loop
-    if public.inventory_get_balance(uF, ing.item_id) <> ing.qty then
-      raise exception 'MOD22 FAIL: pre-craft balance of % is % (want exactly the recipe qty %)',
-        ing.item_id, public.inventory_get_balance(uF, ing.item_id), ing.qty; end if;
+    if public.inventory_get_balance(uF, v_storeF, ing.item_id) <> ing.qty then
+      raise exception 'MOD22 FAIL: pre-craft Haven balance of % is % (want exactly the recipe qty %)',
+        ing.item_id, public.inventory_get_balance(uF, v_storeF, ing.item_id), ing.qty; end if;
   end loop;
 
   s0 := public.calculate_expedition_stats(uF, dF, '[]'::jsonb, 'none');
@@ -2466,16 +2630,16 @@ begin
   if (s0->>'speed')::numeric is distinct from round(greatest(0.2, v_base_speed), 3) then
     raise exception 'MOD22 FAIL: bare-ship speed % (want the un-penalized hull base_speed % exactly)', s0->>'speed', round(greatest(0.2, v_base_speed), 3); end if;
 
-  r := pg_temp.call_as(uF, 'public.craft_module(''mod22-auto-1'', ''autocannon_battery_mk2'')');
+  r := pg_temp.call_as(uF, format('public.craft_module(''mod22-auto-1'', ''autocannon_battery_mk2'', %L::uuid)', dF));
   if (r->>'ok')::boolean is not true or coalesce((r->>'idempotent_replay')::boolean, false) then
     raise exception 'MOD22 FAIL craft autocannon: %', r; end if;
   v_mk2a := (r->>'instance_id')::uuid;
   for ing in select item_id from public.module_recipe_ingredients where module_type_id = 'autocannon_battery_mk2' loop
-    if public.inventory_get_balance(uF, ing.item_id) <> 0 then
-      raise exception 'MOD22 FAIL: post-craft balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
-        ing.item_id, public.inventory_get_balance(uF, ing.item_id); end if;
+    if public.inventory_get_balance(uF, v_storeF, ing.item_id) <> 0 then
+      raise exception 'MOD22 FAIL: post-craft Haven balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
+        ing.item_id, public.inventory_get_balance(uF, v_storeF, ing.item_id); end if;
   end loop;
-  r := pg_temp.call_as(uF, 'public.craft_module(''mod22-auto-2'', ''autocannon_battery_mk2'')');
+  r := pg_temp.call_as(uF, format('public.craft_module(''mod22-auto-2'', ''autocannon_battery_mk2'', %L::uuid)', dF));
   if (r->>'code') is distinct from 'insufficient_items' then
     raise exception 'MOD22 FAIL: second autocannon craft answered % (want insufficient_items — the exact-price boundary)', r; end if;
 
@@ -3165,10 +3329,13 @@ end $$;
 --          is guarded); the leaf mirrors round(pool) to the ship row after every tick with hp
 --          byte-consistent and the ship still hunting; combat_ticks integrity stays HULL-only
 --          while the pool is nonzero (the accounting-unchanged pin);
---          tick 4 (enemy_attack_base 1000000 — the TEAMSETTLE one-step-wipe idiom): a ship whose
+--          tick 4 (pg_temp.wipe_tick — enemy_attack_base 1000000 delivered through a wave the
+--          engine SPAWNS at that knob, because the spatial arm freezes wave firepower into
+--          weapons_json at spawn and never re-reads the knob mid-wave; see the helper): a ship whose
 --          pool regenerated to FULL still dies the moment its hull reaches 0 — defeat detection
 --          is HULL-only, integrity lands 0, the D1 destroyed terminal fires on the ship row.
---          Knob and enemy_attack_base restored in-txn after (leak checks stay meaningful).
+--          Knob restored in-txn after; enemy_attack_base is captured/restored by the helper
+--          (leak checks stay meaningful).
 do $$
 declare r jsonb; n int; uV uuid; sV uuid; gV uuid;
   v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
@@ -3202,6 +3369,7 @@ begin
   -- ── LIT-ARM fixture: fresh user + REAL commission + the ONE sanctioned home normalization ─────
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
             'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -3342,9 +3510,15 @@ begin
   -- ── TICK 4: DEFEAT IS HULL-ONLY — a shielded ship at hull 0 is dead ───────────────────────────
   v_pre := v_sh;   -- the pool entering the defeat tick (> 0 by the guard; regen even tops it to 40)
   if v_pre <= 0 then raise exception 'SHIELD1 FAIL guard: the defeat-arm pool is not positive (the pin would be vacuous)'; end if;
-  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);   -- one-step hull wipe (the TEAMSETTLE idiom)
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
+  -- ★ REPOINTED 2026-08-03. This raised enemy_attack_base and ticked once. Under the SPATIAL engine
+  -- ★ (0234, lit by 0300:78 — the arm every encounter this file creates now takes) that knob is read
+  -- ★ ONLY at wave spawn and frozen into the enemy's weapons_json, so the raise was INERT: the tick
+  -- ★ delivered the same ordinary damage, the full 40 pool absorbed all of it, the hull never reached
+  -- ★ 0 and this assert has been red on every branch since. pg_temp.wipe_tick SPENDS the wave first,
+  -- ★ so the engine spawns a replacement AT the boosted knob and the hit is genuinely lethal. The
+  -- ★ property asserted below is UNCHANGED and now actually exercised: a pool regenerated to FULL 40
+  -- ★ does not save a ship whose HULL reaches 0 — defeat and integrity are hull-only.
+  perform pg_temp.wipe_tick(v_enc);
   select count(*) into n from public.combat_encounters
     where id = v_enc and status = 'defeat' and ended_at is not null and player_integrity_current = 0;
   if n <> 1 then
@@ -3352,7 +3526,8 @@ begin
   select count(*) into n from public.main_ship_instances
     where main_ship_id = sV and status = 'destroyed' and hp = 0;
   if n <> 1 then raise exception 'SHIELD1 FAIL defeat: the D1 destroyed terminal did not fire on the shielded member'; end if;
-  perform public.set_game_config('enemy_attack_base', '1'::jsonb);          -- restore the engine default
+  -- enemy_attack_base is captured and restored inside pg_temp.wipe_tick (the committed seed is the
+  -- chain's to own — a hard-coded restore is the same ambient-default disease in reverse).
   perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);    -- restore the dark seed in-txn
 
   raise notice 'TEAMCMD_PASS_SHIELD1 ok: zero state pinned (member rows exist, none carries a snapshot, no fought ship''s instance shield ever moved — COMBATPARITY/TEAMHUNT/TEAMSETTLE ran their exact pins against THIS tick as the parity proof); lit arm exact vs the independent damage derivation — snapshot 40/3 carries the CURRENT pool, knob-0 tick fully drains min(pool,damage) with the hull taking only the overflow, knob-1 regen climbs 0→40 then CAPS at max, the leaf mirrors round(pool) each tick with hp consistent, integrity stays hull-only at a nonzero pool, and the fully-shielded ship still dies at hull 0 (defeat hull-only, D1 terminal); knob + enemy_attack_base restored in-txn';
@@ -3564,8 +3739,8 @@ end $$;
 --          home-normalize → surgery 40/3 → send_ship_group_hunt → movement_settle_arrival →
 --          ACTIVE encounter): the lit reconciler must NOT move its instance shield (want 3 —
 --          non-vacuous: the same predicate minus the live encounter matched fixture A above).
---          Then the one-step-wipe defeat (enemy_attack_base 1000000, the TEAMSETTLE idiom,
---          restored) destroys the ship; re-armed to 3/40 by surgery, the lit reconciler must
+--          Then the one-step-wipe defeat (pg_temp.wipe_tick — enemy_attack_base 1000000 delivered
+--          through a freshly SPAWNED wave, captured/restored) destroys the ship; re-armed to 3/40 by surgery, the lit reconciler must
 --          leave the DESTROYED hull at 3 (dead ships do not regenerate — repair is the revival
 --          path).
 --   COMMISSION COPY — SANCTIONED HULL SURGERY (commented, negative-grep-tightened in the .sh to
@@ -3681,11 +3856,15 @@ begin
   if v_sh is distinct from 3 then
     raise exception 'SHIELD2 FAIL exclusion: the lit reconciler moved an in-encounter shield to % (want 3 — while an encounter is active/retreating the tick is the SOLE shield writer)', v_sh; end if;
 
-  -- one-step-wipe defeat (the TEAMSETTLE idiom; restored) → the DESTROYED exclusion.
-  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
-  perform public.set_game_config('enemy_attack_base', '1'::jsonb);
+  -- one-step-wipe defeat → the DESTROYED exclusion. Routed through pg_temp.wipe_tick (2026-08-03) so
+  -- there is ONE spelling of "make the next tick lethal" in this file. This site is the SAFE half of
+  -- the split described on the helper — no combat tick has run on v_enc yet, so the boosted knob would
+  -- have been picked up by wave 1 anyway; wipe_tick is behaviour-identical here (nothing to delete,
+  -- the scalar is already 0, next_wave_at already null) and immune to the mid-wave trap if a future
+  -- edit ever ticks this encounter first. NOTE: this block has never executed — SHIELD1's defeat
+  -- assert aborted the file ahead of it on every branch since 0300 — so everything below is newly
+  -- reachable.
+  perform pg_temp.wipe_tick(v_enc);
   select count(*) into n from public.main_ship_instances where main_ship_id = sB and status = 'destroyed';
   if n <> 1 then raise exception 'SHIELD2 FAIL: the wipe tick did not destroy the exclusion fixture (fixture drift)'; end if;
   update public.main_ship_instances set shield = 3 where main_ship_id = sB;   -- re-arm the dead hull (sanctioned surgery)
@@ -3810,10 +3989,20 @@ declare
   slag  uuid := (select v from tcmd where k='slag');
   drift uuid := (select v from tcmd where k='drift');
   v_hunt uuid;
+  v_seed_fc jsonb;
 begin
-  -- ── (0) structural: fleet_control_enabled committed DARK; the surface deployed ──────────────────────
-  if coalesce((select value #>> '{}' from public.game_config where key='fleet_control_enabled'),'false') <> 'false' then
-    raise exception 'FLEETCTRL FAIL: fleet_control_enabled is not committed false (dark)'; end if;
+  -- ── (0) structural: this block OWNS its dark precondition; the surface deployed ─────────────────────
+  -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults). This asserted the COMMITTED seed was
+  -- ★ 'false'. 0300:68 lit fleet_control_enabled, so the assert was testing the WORLD, not the gate —
+  -- ★ and it never fired, because SHIELD1's defeat assert aborted the file ahead of it on every branch.
+  -- ★ The block now CAPTURES the committed value, SETS its own dark precondition in-txn, and restores
+  -- ★ exactly what it captured. Strictly stronger than the old form: the dark arm below is now
+  -- ★ genuinely dark instead of merely hoping the seed was, and the restore is correct through any
+  -- ★ future flip in EITHER direction rather than silently rewriting the seed to 'false'.
+  select value into v_seed_fc from public.game_config where key='fleet_control_enabled';
+  if v_seed_fc is null then
+    raise exception 'FLEETCTRL FAIL: fleet_control_enabled is absent from game_config (the 0204 gate was never seeded — a dark arm against a missing key can only false-green)'; end if;
+  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
   if to_regprocedure('public.set_fleet_command_ship(uuid, boolean)') is null then
     raise exception 'FLEETCTRL FAIL: set_fleet_command_ship(uuid,boolean) not deployed'; end if;
   if not exists (select 1 from information_schema.columns
@@ -3931,10 +4120,11 @@ begin
   r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gCap, v_hunt));
   if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL: standing down the last command ship did not re-inactivate the fleet: %', r; end if;
 
-  -- restore the flag to the committed dark seed (rolled back regardless — the honesty loop checks it).
-  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
+  -- restore the CAPTURED committed value (rolled back regardless — the honesty loop checks it stayed
+  -- unchanged, in either direction; a literal 'false' here would be the same ambient assumption again).
+  update public.game_config set value=v_seed_fc where key='fleet_control_enabled';
 
-  raise notice 'TEAMCMD_PASS_FLEETCTRL ok: flag committed dark; DARK a zero-command fleet HUNTS (no command requirement) and a 9th assign SUCCEEDS (no 8-cap) — byte-identical to today; LIT a zero-command fleet REJECTS fleet_inactive_no_command on the group hunt (the gate fires before the destination read), designating a command ship (owner-scoped, un-flag-gated, PERSISTED) ACTIVATES it, the 8th assign is OK while the 9th rejects fleet_full (held at 8), the per-fleet command role is CLEARED when a ship changes fleets, an ungrouped ship cannot be a command ship (ship_not_in_fleet), and standing down the last command ship RE-inactivates the fleet; flag restored in-txn';
+  raise notice 'TEAMCMD_PASS_FLEETCTRL ok: the block set its OWN dark precondition (committed value captured + restored); DARK a zero-command fleet HUNTS (no command requirement) and a 9th assign SUCCEEDS (no 8-cap) — byte-identical to today; LIT a zero-command fleet REJECTS fleet_inactive_no_command on the group hunt (the gate fires before the destination read), designating a command ship (owner-scoped, un-flag-gated, PERSISTED) ACTIVATES it, the 8th assign is OK while the 9th rejects fleet_full (held at 8), the per-fleet command role is CLEARED when a ship changes fleets, an ungrouped ship cannot be a command ship (ship_not_in_fleet), and standing down the last command ship RE-inactivates the fleet; flag restored in-txn';
 end $$;
 
 -- ════════ BLOCK NOHOME (NO-HOME, 0199): TEAM launch-from-dock + reconciler dock-at-return ════════
@@ -3952,10 +4142,16 @@ declare
   uNT uuid; sNT uuid; gNT uuid; v_team_fleet uuid; v_team_mv uuid;
   slag  uuid := (select v from tcmd where k='slag');
   v_hunt uuid;
+  v_seed_lfd jsonb;
 begin
-  -- ── (0) structural: the 0199 surface is deployed and the flag is committed DARK ──────────────────
-  if coalesce((select value #>> '{}' from public.game_config where key='launch_from_dock_enabled'),'false') <> 'false' then
-    raise exception 'NOHOME FAIL: launch_from_dock_enabled is not committed false (dark)'; end if;
+  -- ── (0) structural: the 0199 surface is deployed and this block OWNS its dark precondition ───────
+  -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults) — same shape as FLEETCTRL above.
+  -- ★ 0300:73 lit launch_from_dock_enabled, so asserting the committed seed was 'false' asserted a
+  -- ★ world, not the gate. Capture, set the dark precondition in-txn, restore what was captured.
+  select value into v_seed_lfd from public.game_config where key='launch_from_dock_enabled';
+  if v_seed_lfd is null then
+    raise exception 'NOHOME FAIL: launch_from_dock_enabled is absent from game_config (the 0199 gate was never seeded)'; end if;
+  update public.game_config set value='false'::jsonb where key='launch_from_dock_enabled';
   if to_regprocedure('public.send_ship_group_hunt(uuid, uuid, uuid)') is null
      or to_regprocedure('public.nohome_dock_returning_ship(uuid)') is null then
     raise exception 'NOHOME FAIL: the 0199 widened hunt or dock-at-return leaf is missing'; end if;
@@ -3978,25 +4174,49 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL provision team: %', r; end if;
   select main_ship_id into sNT from public.main_ship_instances where player_id = uNT;
 
-  -- FIXTURE SURGERY (replaces the dropped the legacy single-ship send (retired 0232) relocation): place sNT's commission
-  -- present fleet at Slagworks so it is DOCKED at the launch-from-dock port. "Docked" = status='home'
-  -- (the lifecycle signal only, 0221) PLUS a real 'present' fleet at the port (fleet truth).
-  update public.main_ship_instances set status='home', updated_at=now() where main_ship_id=sNT;
-  update public.fleets
-     set current_location_id=slag, location_mode='location', current_base_id=null,
-         active_movement_id=null, updated_at=now()
-   where main_ship_id=sNT and status='present';
-  update public.location_presence set location_id=slag, status='active', updated_at=now()
-   where fleet_id in (select id from public.fleets where main_ship_id=sNT and status='present');
-  select count(*) into n from public.main_ship_instances s
-    where s.main_ship_id=sNT and s.status='home'
-      and exists (select 1 from public.fleets f where f.main_ship_id=s.main_ship_id and f.status='present' and f.current_location_id=slag);
-  if n <> 1 then raise exception 'NOHOME FAIL: docked fixture not placed at Slagworks'; end if;
-
   r := pg_temp.call_as(uNT, 'public.upsert_ship_group(1, ''DockWing'')');
   gNT := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uNT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sNT, gNT));
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: assign team member: %', r; end if;
+  -- ★ ADDED 2026-08-03. 0300:68 lit fleet_control_enabled, and send_ship_group_hunt then rejects a
+  -- ★ group with no designated command ship BEFORE any destination/readiness read (0231:483-490 —
+  -- ★ the gate is GROUP-scoped, so one arming covers both sends below). The five other sortie
+  -- ★ fixtures in this file were armed on 2026-07-27; NOHOME was missed because SHIELD1 had already
+  -- ★ made it unreachable, so nothing ever surfaced it.
+  perform pg_temp.arm_group(uNT, gNT);
+
+  -- FIXTURE SURGERY (replaces the dropped the legacy single-ship send (retired 0232) relocation): place
+  -- the team at Slagworks so it is DOCKED at the launch-from-dock port. "Docked" = status='home'
+  -- (the lifecycle signal only, 0221) PLUS a real 'present' fleet at the port (fleet truth).
+  --
+  -- ★ REPOINTED 2026-08-03. This ran BEFORE the group existed and scoped both updates to
+  -- ★ `main_ship_id = sNT`. 0300:69 lit fleet_movement_unified_enabled, so the hunt now takes 0214's
+  -- ★ CONSUME arm (0231:519-560): it resolves the group's OWN fleet via ship_group_resolve_fleet and
+  -- ★ reads the launch origin off THAT fleet (0231:626-634), not off a per-ship dock join. A team
+  -- ★ fleet carries main_ship_id NULL, so the old surgery could never touch it — the group fleet sat
+  -- ★ at the commission port and the leg departed from there. Measured, not guessed: the leg landed
+  -- ★ origin_type=location origin_location_id=b1a00001-…0001 (the commission port) with the team
+  -- ★ fleet carrying a group_id, which is the unified arm's signature.
+  -- ★ THE FIX FOLLOWS THE GAME: dock EVERY live fleet the player owns, after the group exists, so the
+  -- ★ fixture places whichever fleet the resolver actually reads. Mode-agnostic — it is equally
+  -- ★ correct for the 0199 head branch, which joins the per-ship fleet.
+  update public.main_ship_instances set status='home', updated_at=now() where main_ship_id=sNT;
+  update public.fleets
+     set current_location_id=slag, location_mode='location', current_base_id=null,
+         active_movement_id=null, updated_at=now()
+   where player_id=uNT and status='present';
+  update public.location_presence set location_id=slag, status='active', updated_at=now()
+   where fleet_id in (select id from public.fleets where player_id=uNT and status='present');
+  select count(*) into n from public.main_ship_instances s
+    where s.main_ship_id=sNT and s.status='home'
+      and exists (select 1 from public.fleets f where f.main_ship_id=s.main_ship_id and f.status='present' and f.current_location_id=slag);
+  if n <> 1 then raise exception 'NOHOME FAIL: docked fixture not placed at Slagworks'; end if;
+  -- and NO live fleet of this player is anywhere else — the placement is total, so whichever fleet the
+  -- send resolves, it departs from Slagworks. (Without this the old fixture false-passed its own
+  -- placement check while the fleet that actually mattered sat at another port.)
+  select count(*) into n from public.fleets
+    where player_id=uNT and status='present' and current_location_id is distinct from slag;
+  if n <> 0 then raise exception 'NOHOME FAIL: % live fleet(s) are docked somewhere other than Slagworks (the fixture must place every fleet the send could resolve)', n; end if;
 
   -- ── (2) LIT: flip launch_from_dock_enabled (raw update — the gate convention); the docked TEAM hunt
   --         launches ONE fleet FROM the port ─────────────────────────────────────────────────────────
@@ -4009,7 +4229,23 @@ begin
     raise exception 'NOHOME FAIL: team hunt return port not recorded (want Slagworks)'; end if;
   -- launched FROM the docked port (origin_type='location'=Slagworks), not the (0,0) base:
   select count(*) into n from public.fleet_movements where id=v_team_mv and origin_type='location' and origin_location_id=slag;
-  if n <> 1 then raise exception 'NOHOME FAIL: team hunt did not depart from the docked port'; end if;
+  if n <> 1 then
+    -- SELF-DIAGNOSING (2026-08-03, the REAMBUSH idiom): this block has been unreachable since 0300,
+    -- so a first failure here has no history to read it against. Say WHAT the leg actually recorded
+    -- and WHICH arm minted it (a group-tagged fleet means the 0214 unified consume ran; NULL means
+    -- the 0199 head's launch-from-dock branch did).
+    raise exception 'NOHOME FAIL: team hunt did not depart from the docked port — leg origin_type=% origin_location_id=% origin_base_id=% origin=(%,%); want location/% ; team fleet group_id=% origin_base_id=% ; the member''s pre-send present fleets: %',
+      (select origin_type from public.fleet_movements where id=v_team_mv),
+      (select origin_location_id from public.fleet_movements where id=v_team_mv),
+      (select origin_base_id from public.fleet_movements where id=v_team_mv),
+      (select origin_x from public.fleet_movements where id=v_team_mv),
+      (select origin_y from public.fleet_movements where id=v_team_mv),
+      slag,
+      (select group_id from public.fleets where id=v_team_fleet),
+      (select origin_base_id from public.fleets where id=v_team_fleet),
+      coalesce((select string_agg(format('%s status=%s mode=%s loc=%s grp=%s mv=%s', f.id, f.status, f.location_mode, f.current_location_id, f.group_id, f.active_movement_id), ' | ')
+                  from public.fleets f where f.player_id=uNT), '<none>');
+  end if;
   select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='hunting';
   if n <> 1 then raise exception 'NOHOME FAIL: team member not hunting after the docked launch'; end if;
   -- the member's OWN docked present fleet was dissolved (it flies with the team now):
@@ -4035,8 +4271,9 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: a returned docked team could not launch again (H1 second-launch wedge): %', r; end if;
   if (r->>'fleet_id')::uuid = v_team_fleet then raise exception 'NOHOME FAIL: the second hunt reused the OLD team fleet (want a fresh sortie)'; end if;
 
-  -- restore the flipped gates in-txn (ROLLBACK reverts regardless — the .sh honesty check re-confirms).
-  update public.game_config set value='false'::jsonb where key='launch_from_dock_enabled';
+  -- restore the CAPTURED committed value in-txn (ROLLBACK reverts regardless — the .sh honesty check
+  -- re-confirms it is UNCHANGED, in either direction).
+  update public.game_config set value=v_seed_lfd where key='launch_from_dock_enabled';
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
 
   raise notice 'TEAMCMD_PASS_NOHOME ok: the SINGLE-ship launch-from-dock arm is retired with the legacy single-ship send (retired 0232) (0232); the surviving TEAM path holds — a docked team hunt launches ONE fleet FROM the port (origin_type=location=Slagworks, member hunting, docked present fleet dissolved, return port recorded), the reconciler DOCKS the returning member at the recorded return port (never re-homed) splitting the shared fleet back into the member''s OWN present fleet (H1), and the returned team LAUNCHES AGAIN with a fresh sortie; flags restored in-txn';
@@ -4063,10 +4300,17 @@ declare
   v_buff_a text; v_buff_b text; v_expect text;
   abuff jsonb; bbuff jsonb;   -- A's / B's rolled buff stats_json (independent, from the catalog)
   base_a jsonb; base_b jsonb; lit jsonb;
+  v_seed_cb jsonb; v_seed_fc jsonb;
 begin
-  -- ── (0) structural: command_buffs_enabled committed DARK; the catalog/column/tier deployed ────────
-  if coalesce((select value #>> '{}' from public.game_config where key='command_buffs_enabled'),'false') <> 'false' then
-    raise exception 'CMDBUFF FAIL: command_buffs_enabled is not committed false (dark)'; end if;
+  -- ── (0) structural: this block OWNS its dark precondition; the catalog/column/tier deployed ───────
+  -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults) — same shape as FLEETCTRL/NOHOME.
+  -- ★ 0300:60 lit command_buffs_enabled. Capture both gates this block moves, set the dark
+  -- ★ precondition the INERT arm at (4) actually needs, and restore exactly what was captured.
+  select value into v_seed_cb from public.game_config where key='command_buffs_enabled';
+  select value into v_seed_fc from public.game_config where key='fleet_control_enabled';
+  if v_seed_cb is null then
+    raise exception 'CMDBUFF FAIL: command_buffs_enabled is absent from game_config (the 0205 gate was never seeded)'; end if;
+  update public.game_config set value='false'::jsonb where key='command_buffs_enabled';
   if to_regprocedure('public.command_buff_roll_for_ship(uuid)') is null then
     raise exception 'CMDBUFF FAIL: command_buff_roll_for_ship not deployed'; end if;
   if not exists (select 1 from information_schema.columns
@@ -4194,13 +4438,13 @@ begin
   if lit is distinct from base_b then
     raise exception 'CMDBUFF FAIL: an ungrouped ship folded a fleet buff (the group_id gate breach)'; end if;
 
-  -- restore the flipped gates in-txn via the raw update (ROLLBACK reverts regardless — the .sh honesty
-  -- check re-confirms each committed flag is still false post-run).
-  update public.game_config set value='false'::jsonb where key='command_buffs_enabled';
-  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
+  -- restore the CAPTURED committed values in-txn via the raw update (ROLLBACK reverts regardless — the
+  -- .sh honesty check re-confirms each committed flag is UNCHANGED post-run, in either direction).
+  update public.game_config set value=v_seed_cb where key='command_buffs_enabled';
+  update public.game_config set value=v_seed_fc where key='fleet_control_enabled';
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
 
-  raise notice 'TEAMCMD_PASS_CMDBUFF ok: command_buffs_enabled committed dark; the AFTER-INSERT commission trigger rolled BOTH new ships a T0 buff = the deterministic hash derivation (immutable); DARK a designated command ship''s buff is INERT (adapter byte-identical to the baseline); LIT the command ship A''s buff folds FLEET-WIDE into every member EXACTLY per key (independent catalog derivation — combat_power/survival/repair/cargo/scouting/mining/retreat_safety + the multiplicative speed, every non-buff key byte-identical) with B''s OWN buff DORMANT, the command ship itself receives its buff, two command ships SUM both buffs (backups), a zero-command fleet folds NO buff, and an ungrouped ship folds NO buff (the group_id gate); flags restored in-txn';
+  raise notice 'TEAMCMD_PASS_CMDBUFF ok: the block set its OWN dark precondition for command_buffs_enabled (committed value captured + restored); the AFTER-INSERT commission trigger rolled BOTH new ships a T0 buff = the deterministic hash derivation (immutable); DARK a designated command ship''s buff is INERT (adapter byte-identical to the baseline); LIT the command ship A''s buff folds FLEET-WIDE into every member EXACTLY per key (independent catalog derivation — combat_power/survival/repair/cargo/scouting/mining/retreat_safety + the multiplicative speed, every non-buff key byte-identical) with B''s OWN buff DORMANT, the command ship itself receives its buff, two command ships SUM both buffs (backups), a zero-command fleet folds NO buff, and an ungrouped ship folds NO buff (the group_id gate); flags restored in-txn';
 end $$;
 
 -- ════════ BLOCK CRONGUARD (CRON-GUARD, 0206): per-row exception isolation for the two hottest ═════
@@ -4295,6 +4539,7 @@ begin
 
   -- ══════════════ ARM B — process_combat_ticks (3s): a poisoned encounter must not wedge ═════════
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);  -- deterministic tick (knob; rolled back)
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);  -- deterministic tick (knob; rolled back)
 
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
@@ -4328,6 +4573,13 @@ begin
     where id in (v_mvhc, v_mvpc);
   if (public.movement_settle_arrival(v_mvhc)->>'settled')::boolean is not true then raise exception 'CRONGUARD FAIL settle healthy encounter'; end if;
   if (public.movement_settle_arrival(v_mvpc)->>'settled')::boolean is not true then raise exception 'CRONGUARD FAIL settle poison encounter'; end if;
+  -- ★ ADDED 2026-08-03. 0300 lit combat_telegraph_enabled (0230), so arrival QUEUES an 8s telegraph
+  -- ★ instead of opening the encounter inline — a settle no longer leaves an active encounter behind.
+  -- ★ COMBATPARITY/TEAMHUNT/TEAMSETTLE/SHIELD1/SHIELD2 all drive the telegraph cron for exactly this
+  -- ★ reason; CRONGUARD was missed because SHIELD1's defeat assert made it unreachable, so its
+  -- ★ "expected two active encounters" guard was never given the chance to fail.
+  perform pg_temp.open_telegraphed(v_fhc);
+  perform pg_temp.open_telegraphed(v_fpc);
   select id into v_ench from public.combat_encounters where fleet_id=v_fhc and status='active';
   select id into v_encp from public.combat_encounters where fleet_id=v_fpc and status='active';
   if v_ench is null or v_encp is null then raise exception 'CRONGUARD FAIL: expected two active encounters'; end if;

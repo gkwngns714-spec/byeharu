@@ -358,7 +358,7 @@ test('shipyardSuccessNote: an empty receipted bill shows credits only (defensive
 // ── shipyardRejectNote — mapped copy + the SERVER's reject context (0188's truthfulness channel) ─
 test('shipyardRejectNote: each context-carrying code appends the SERVER envelope\'s own numbers/ids', () => {
   expect(shipyardRejectNote({ code: 'insufficient_items', item_id: 'blueprint_fragment', have: 1, need: 2 })).toBe(
-    'Not enough materials to start this build. (Blueprint Fragment: have 1, need 2)',
+    'Not enough materials stored at this port. (Blueprint Fragment: have 1, need 2)',
   )
   expect(shipyardRejectNote({ code: 'insufficient_credits', need: 400 })).toBe(
     'Not enough credits to start this build. (need 400)',
@@ -373,9 +373,9 @@ test('shipyardRejectNote: each context-carrying code appends the SERVER envelope
       { code: 'hull_prerequisite_not_met', required_hull_type_id: 'bulk_hauler' },
       { bulk_hauler: 'Mule-class Hauler' },
     ),
-  ).toBe('You must own the prerequisite hull first. (requires Mule-class Hauler)')
+  ).toBe('You must own the required ship first. (requires Mule-class Hauler)')
   expect(shipyardRejectNote({ code: 'hull_prerequisite_not_met', required_hull_type_id: 'bulk_hauler' })).toBe(
-    'You must own the prerequisite hull first. (requires Bulk Hauler)',
+    'You must own the required ship first. (requires Bulk Hauler)',
   )
   expect(shipyardRejectNote({ code: 'captain_level_too_low', required_captain_level: 3 })).toBe(
     'A higher-level captain is required. (requires captain level 3)',
@@ -383,14 +383,14 @@ test('shipyardRejectNote: each context-carrying code appends the SERVER envelope
 })
 
 test('shipyardRejectNote: ABSENT context leaves the mapped base copy unchanged (additive-only; partial envelopes degrade)', () => {
-  expect(shipyardRejectNote({ code: 'insufficient_items' })).toBe('Not enough materials to start this build.')
+  expect(shipyardRejectNote({ code: 'insufficient_items' })).toBe('Not enough materials stored at this port.')
   expect(shipyardRejectNote({ code: 'insufficient_items', item_id: 'ore', have: 1 })).toBe(
-    'Not enough materials to start this build.', // need missing → no partial parenthetical
+    'Not enough materials stored at this port.', // need missing → no partial parenthetical
   )
   expect(shipyardRejectNote({ code: 'insufficient_credits' })).toBe('Not enough credits to start this build.')
   expect(shipyardRejectNote({ code: 'queue_full' })).toBe('Your build queue is full.')
   expect(shipyardRejectNote({ code: 'hull_prerequisite_not_met' })).toBe(
-    'You must own the prerequisite hull first.',
+    'You must own the required ship first.',
   )
   expect(shipyardRejectNote({ code: 'captain_level_too_low' })).toBe('A higher-level captain is required.')
 })

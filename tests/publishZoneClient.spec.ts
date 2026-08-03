@@ -516,6 +516,10 @@ const ACTIVE_DRAWN_ZONE: DangerZoneLite = {
     [0, 300],
     [0, 0],
   ],
+  // A live row DOES carry the 0275 revision. It is deliberately absent from the status commands'
+  // `expected` (0287:43 leaves zone_unpublish/zone_set_active on {name, source, location_id}) — so a
+  // non-null value here makes the payload spec below prove that exclusion instead of assuming it.
+  revision: 7,
 }
 
 test('zoneLifecycleAction: an ACTIVE zone shows Unpublish and routes to zone_unpublish', () => {

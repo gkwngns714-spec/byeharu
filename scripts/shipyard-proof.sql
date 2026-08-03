@@ -25,8 +25,24 @@
 -- shapes an in-txn T2 catalog fixture (a synthetic hull + gated recipe — the ONLY way to exercise
 -- the gate arms while the T1 seeds honestly carry NULL gates); all reverted by ROLLBACK. Items are
 -- granted via the REAL secured-deposit pipeline leaf public.reward_grant (0040) — the harness NEVER
--- inserts into player_inventory; captains are minted via the REAL Captain leaf
+-- inserts into base_items; captains are minted via the REAL Captain leaf
 -- public.captains_mint_instance (0118) — never a direct captain_instances insert.
+--
+-- ── WHERE THE MATERIALS ARE (0333) ────────────────────────────────────────────────────────────────
+-- `player_inventory` (the single global pool) is DROPPED. Items live PER PORT in `base_items`, keyed
+-- to the player's `bases` row for that port, so a balance is always AT a place. That changes three
+-- things this proof asserts, and each is repointed at the NEW correct property rather than relaxed:
+--   1. `start_hull_build` gained `p_main_ship_id` and DERIVES the port from that ship's validated
+--      dock — you order a hull from the port you are STANDING IN. uB delivers ships during P9/P9G,
+--      so from then on uB owns MORE THAN ONE ship and the sole-ship shim cannot resolve; every call
+--      below therefore names uB's starter frigate EXPLICITLY (stashed as sy1 'ship'). That frigate
+--      never leaves Haven in this proof, so the derived port is HAVEN throughout.
+--   2. Every balance names that port: `inventory_get_balance(uB, <Haven store>, item)`. That store
+--      is also the row a NULL-base `reward_grant` lands in (the oldest active base is uB's Home
+--      Base, whose location_id IS Haven), which is why the grants and the spends meet.
+--   3. A hull order now REQUIRES `base_id` (`build_orders_kind_coherent` flipped) and records the
+--      ordering port, so `cancel_build_order`'s ITEM refund has a port to return to. P1's old
+--      `base_id is null` assertion is inverted to pin the store the order was actually placed from.
 
 \set ON_ERROR_STOP on
 
@@ -67,24 +83,51 @@ begin
   insert into public.game_config(key,value,description)
     values('mainship_space_movement_enabled','true'::jsonb,'sy1 transient (rolled back)')
     on conflict (key) do update set value='true'::jsonb;
+  -- ⚠ 2026-08-03 — THE DELIVERY BLOCK PINS EXACT CATALOG HULL STATS, so it must OWN the one
+  -- precondition that makes them exact. `soul_roll_traits_for_ship` (0186) applies a trait
+  -- multiplier to max_hp ONCE at roll time and the commission core has carried that hook since
+  -- 0193, so a delivered hull's hp is deterministic only while `ship_traits_enabled` is dark. CI
+  -- returned a Mule at hp/max_hp = 702 against the catalog's 650 — one particular roll. Asserting
+  -- 702 would be asserting THAT roll; loosening the pin to `>=` would throw the property away. So
+  -- the proof states the precondition it needs, in-txn, reverted by the ROLLBACK.
+  insert into public.game_config(key,value,description)
+    values('ship_traits_enabled','false'::jsonb,'sy1 transient (rolled back)')
+    on conflict (key) do update set value='false'::jsonb;
   r := pg_temp.call_as(uB, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'SETUP FAIL first-ship: %', r; end if;
   insert into public.player_wallet (player_id, balance) values (uB, 500)
     on conflict (player_id) do update set balance = excluded.balance;
+  -- 0333: the ORDERING SHIP and the ORDERING PORT. uB's starter frigate is commissioned docked at
+  -- Haven and never moves in this proof, so it is the ship every start_hull_build below names and
+  -- Haven is the port each one derives. Stash both once — later blocks deliver more ships, and the
+  -- sole-ship shim stops resolving the moment uB owns two.
+  insert into sy1 values ('ship',  (select main_ship_id from public.main_ship_instances where player_id=uB));
+  insert into sy1 values ('store', public.get_or_create_store(uB, 'b1a00001-0066-4a00-8a00-000000000001'::uuid));
 end $$;
 
+-- ⚠ THE PRECONDITION IS STATED, NOT ASSUMED. Migration 0300 LIT shipyard_enabled (it is one of the 44
+-- capability flags that migration turned on), so the 0185/0235-era seed this block used to lean on
+-- is gone: on the real chain the flag is TRUE by the time this proof runs. Asserting the seed was
+-- asserting a WORLD rather than a property — the exact failure recorded after 0300's lights-on wave
+-- — and it went unnoticed only because this workflow fired on no branch that carried 0300. The dark
+-- scenario now SETS its own precondition in-txn (the hold-transfer-proof idiom); the ROLLBACK
+-- reverts it either way, so the block is correct whichever way the committed flag ever points.
+update public.game_config set value='false'::jsonb where key='shipyard_enabled';
 -- ════════ P0 — DARK gate: shipyard_enabled OFF → gate-first reject, IDENTICAL for a real and a
 --          garbage hull (no existence oracle), zero writes; the PRIVATE writer rejects dark too. ════════
 do $$
 declare r1 jsonb; r2 jsonb; r3 jsonb; uB uuid := (select v from sy1 where k='uB'); n int;
+  v_ship uuid := (select v from sy1 where k='ship');    -- 0333: the ordering ship (docked at Haven)
+  v_store uuid := (select v from sy1 where k='store');  -- 0333: uB's store AT HAVEN
 begin
   -- wrapper, real hull vs garbage hull: the dark envelope must be BYTE-IDENTICAL (anti-probe).
-  r1 := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'bulk_hauler'));
-  r2 := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'no_such_hull_xyz'));
+  r1 := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'bulk_hauler', v_ship));
+  r2 := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'no_such_hull_xyz', v_ship));
   if (r1->>'code') is distinct from 'feature_disabled' then raise exception 'P0 FAIL dark real-hull: %', r1; end if;
   if r1 is distinct from r2 then raise exception 'P0 FAIL existence oracle: real % vs garbage %', r1, r2; end if;
-  -- the PRIVATE writer is gate-first on its own authority (not just the wrapper).
-  r3 := public.production_start_hull_build(uB, 'bulk_hauler', gen_random_uuid());
+  -- the PRIVATE writer is gate-first on its own authority (not just the wrapper). 0333 gave it the
+  -- port it draws from; dark, it must reject before ever looking at that store.
+  r3 := public.production_start_hull_build(uB, 'bulk_hauler', gen_random_uuid(), v_store);
   if (r3->>'reason') is distinct from 'feature_disabled' then raise exception 'P0 FAIL dark private writer: %', r3; end if;
 
   select count(*) into n from public.build_orders where player_id=uB;
@@ -105,15 +148,17 @@ end $$;
 do $$
 declare r jsonb; uB uuid := (select v from sy1 where k='uB'); v_req uuid := gen_random_uuid();
   v_order uuid; n int;
+  v_ship uuid := (select v from sy1 where k='ship');    -- 0333: the ordering ship (docked at Haven)
+  v_store uuid := (select v from sy1 where k='store');  -- 0333: uB's store AT HAVEN
 begin
   -- the EXACT 0185 hauler recipe: ore 24 + crystal 6 + engine_parts 6 + scrap 12 + blueprint_fragment 2.
   perform public.reward_grant('combat', gen_random_uuid(), uB, null,
     '{"items":[{"item_id":"ore","quantity":24},{"item_id":"crystal","quantity":6},{"item_id":"engine_parts","quantity":6},{"item_id":"scrap","quantity":12},{"item_id":"blueprint_fragment","quantity":2}]}'::jsonb);
-  if public.inventory_get_balance(uB,'ore') <> 24 or public.inventory_get_balance(uB,'blueprint_fragment') <> 2 then
-    raise exception 'P1 FAIL: reward_grant deposit did not land';
+  if public.inventory_get_balance(uB,v_store,'ore') <> 24 or public.inventory_get_balance(uB,v_store,'blueprint_fragment') <> 2 then
+    raise exception 'P1 FAIL: reward_grant deposit did not land in Haven''s store';
   end if;
 
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', v_req, 'bulk_hauler'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', v_req, 'bulk_hauler', v_ship));
   if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is true then raise exception 'P1 FAIL order: %', r; end if;
   if (r->>'hull_type_id') is distinct from 'bulk_hauler' or (r->>'credits_spent')::numeric <> 400 then raise exception 'P1 FAIL envelope: %', r; end if;
   v_order := (r->>'order_id')::uuid;
@@ -122,24 +167,29 @@ begin
   if (select balance from public.player_wallet where player_id=uB) <> 100 then
     raise exception 'P1 FAIL wallet % (want exactly 100 = 500 - 400)', (select balance from public.player_wallet where player_id=uB);
   end if;
-  -- every ingredient spent to EXACTLY 0 via the sole Inventory writer.
-  if public.inventory_get_balance(uB,'ore') <> 0 or public.inventory_get_balance(uB,'crystal') <> 0
-     or public.inventory_get_balance(uB,'engine_parts') <> 0 or public.inventory_get_balance(uB,'scrap') <> 0
-     or public.inventory_get_balance(uB,'blueprint_fragment') <> 0 then
-    raise exception 'P1 FAIL: ingredient balances not exactly zero after the spend';
+  -- every ingredient spent to EXACTLY 0 via the sole Inventory writer — MEASURED AT HAVEN, the port
+  -- the order was placed from and therefore the only stock 0333 lets the build draw on.
+  if public.inventory_get_balance(uB,v_store,'ore') <> 0 or public.inventory_get_balance(uB,v_store,'crystal') <> 0
+     or public.inventory_get_balance(uB,v_store,'engine_parts') <> 0 or public.inventory_get_balance(uB,v_store,'scrap') <> 0
+     or public.inventory_get_balance(uB,v_store,'blueprint_fragment') <> 0 then
+    raise exception 'P1 FAIL: Haven ingredient balances not exactly zero after the spend';
   end if;
 
   -- exactly ONE queue row in the HULL shape on the REUSED M4.5 queue: 'waiting', quantity 1,
-  -- unit_type_id NULL, base_id NULL, metal untouched, credits_spent 400, NO timestamps (the serial
-  -- law: only ACTIVE rows carry started_at/complete_at — SHIPYARD-2's engine promotes it).
+  -- unit_type_id NULL, metal untouched, credits_spent 400, NO timestamps (the serial law: only
+  -- ACTIVE rows carry started_at/complete_at — SHIPYARD-2's engine promotes it).
+  -- 0333 INVERTED the base_id half: build_orders_kind_coherent used to force base_id IS NULL on a
+  -- hull order, which is exactly why 0194's hull refund had no port to return items to. A hull
+  -- order now REQUIRES its store, so this pins the STRONGER property — the row records the port the
+  -- order was actually placed from (Haven's store), not merely "some base".
   select count(*) into n from public.build_orders where player_id=uB;
   if n <> 1 then raise exception 'P1 FAIL % build_orders rows', n; end if;
   if not exists (select 1 from public.build_orders
                    where id=v_order and player_id=uB and hull_type_id='bulk_hauler'
-                     and unit_type_id is null and base_id is null
+                     and unit_type_id is null and base_id = v_store
                      and status='waiting' and quantity=1 and metal_spent=0 and credits_spent=400
                      and started_at is null and complete_at is null) then
-    raise exception 'P1 FAIL: the queue row is not the exact waiting hull shape';
+    raise exception 'P1 FAIL: the queue row is not the exact waiting hull shape (incl. base_id = the Haven store it was ordered from)';
   end if;
 
   -- exactly ONE receipt with the exact fields (5 ingredient elements).
@@ -154,21 +204,23 @@ begin
 
   insert into sy1 values ('req1', v_req);      -- stash for the replay
   insert into sy1 values ('order1', v_order);
-  raise notice 'SHIPYARD_PASS_ORDER ok: hauler order queued waiting (hull shape, no timestamps); wallet 500->100 exact; all 5 ingredients spent to 0 exact; 1 receipt';
+  raise notice 'SHIPYARD_PASS_ORDER ok: hauler order queued waiting (hull shape, no timestamps, base_id = the Haven store it was ordered from); wallet 500->100 exact; all 5 Haven ingredient stocks spent to 0 exact; 1 receipt';
 end $$;
 
 -- ════════ P2 — replay idempotency: same (player, request_id) → SAME receipt/order verbatim,
 --          flagged replay, NO double spend/debit/order/receipt. ════════
 do $$
 declare r jsonb; uB uuid := (select v from sy1 where k='uB'); v_req uuid := (select v from sy1 where k='req1');
+  v_ship uuid := (select v from sy1 where k='ship');    -- 0333: the ordering ship (docked at Haven)
+  v_store uuid := (select v from sy1 where k='store');  -- 0333: uB's store AT HAVEN
 begin
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', v_req, 'bulk_hauler'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', v_req, 'bulk_hauler', v_ship));
   if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is not true then raise exception 'P2 FAIL not replay: %', r; end if;
   if (r->>'order_id')::uuid is distinct from (select v from sy1 where k='order1') then raise exception 'P2 FAIL replay order_id differs: %', r; end if;
   if (r->>'credits_spent')::numeric <> 400 then raise exception 'P2 FAIL replay envelope: %', r; end if;
 
   if (select balance from public.player_wallet where player_id=uB) <> 100 then raise exception 'P2 FAIL replay re-debited'; end if;
-  if public.inventory_get_balance(uB,'ore') <> 0 then raise exception 'P2 FAIL replay re-spent (impossible balance)'; end if;
+  if public.inventory_get_balance(uB,v_store,'ore') <> 0 then raise exception 'P2 FAIL replay re-spent (impossible balance)'; end if;
   if (select count(*) from public.build_orders where player_id=uB) <> 1 then raise exception 'P2 FAIL replay enqueued a second order'; end if;
   if (select count(*) from public.hull_build_receipts where player_id=uB) <> 1 then raise exception 'P2 FAIL replay wrote a receipt'; end if;
   raise notice 'SHIPYARD_PASS_REPLAY ok: same request_id -> same receipt/order verbatim, flagged idempotent_replay, no double spend/debit/order/receipt';
@@ -179,31 +231,33 @@ end $$;
 --          (pre-check-before-any-write ordering). Zero writes on both. ════════
 do $$
 declare r jsonb; uB uuid := (select v from sy1 where k='uB'); n int;
+  v_ship uuid := (select v from sy1 where k='ship');    -- 0333: the ordering ship (docked at Haven)
+  v_store uuid := (select v from sy1 where k='store');  -- 0333: uB's store AT HAVEN
 begin
   -- grant the corvette recipe EXCEPT blueprint_fragment: ore 16 + crystal 4 + weapon_parts 6 + pirate_alloy 8.
   perform public.reward_grant('combat', gen_random_uuid(), uB, null,
     '{"items":[{"item_id":"ore","quantity":16},{"item_id":"crystal","quantity":4},{"item_id":"weapon_parts","quantity":6},{"item_id":"pirate_alloy","quantity":8}]}'::jsonb);
 
-  -- (a) blueprint gate: 0 of 2 blueprint_fragment held → the gate ingredient rejects the build.
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'strike_corvette'));
+  -- (a) blueprint gate: 0 of 2 blueprint_fragment held AT HAVEN → the gate ingredient rejects the build.
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'strike_corvette', v_ship));
   if (r->>'code') is distinct from 'insufficient_items' or (r->>'item_id') is distinct from 'blueprint_fragment'
      or (r->>'have')::int <> 0 or (r->>'need')::int <> 2 then
     raise exception 'P3 FAIL blueprint-gate shortfall: %', r;
   end if;
-  if public.inventory_get_balance(uB,'ore') <> 16 then raise exception 'P3 FAIL shortfall spent ore'; end if;
+  if public.inventory_get_balance(uB,v_store,'ore') <> 16 then raise exception 'P3 FAIL shortfall spent ore'; end if;
   if (select balance from public.player_wallet where player_id=uB) <> 100 then raise exception 'P3 FAIL shortfall moved wallet'; end if;
 
   -- (b) credits short: complete the items (grant blueprint_fragment 2) but the wallet holds 100 < 400.
   perform public.reward_grant('combat', gen_random_uuid(), uB, null,
     '{"items":[{"item_id":"blueprint_fragment","quantity":2}]}'::jsonb);
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'strike_corvette'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'strike_corvette', v_ship));
   if (r->>'code') is distinct from 'insufficient_credits' or (r->>'need')::numeric <> 400 then
     raise exception 'P3 FAIL credits shortfall: %', r;
   end if;
-  -- ALL-OR-NOTHING ordering: the failed debit spent NO ingredients and moved NO credits.
-  if public.inventory_get_balance(uB,'ore') <> 16 or public.inventory_get_balance(uB,'crystal') <> 4
-     or public.inventory_get_balance(uB,'weapon_parts') <> 6 or public.inventory_get_balance(uB,'pirate_alloy') <> 8
-     or public.inventory_get_balance(uB,'blueprint_fragment') <> 2 then
+  -- ALL-OR-NOTHING ordering: the failed debit spent NO ingredients (at Haven) and moved NO credits.
+  if public.inventory_get_balance(uB,v_store,'ore') <> 16 or public.inventory_get_balance(uB,v_store,'crystal') <> 4
+     or public.inventory_get_balance(uB,v_store,'weapon_parts') <> 6 or public.inventory_get_balance(uB,v_store,'pirate_alloy') <> 8
+     or public.inventory_get_balance(uB,v_store,'blueprint_fragment') <> 2 then
     raise exception 'P3 FAIL: the credits shortfall consumed ingredients (all-or-nothing broken)';
   end if;
   if (select balance from public.player_wallet where player_id=uB) <> 100 then raise exception 'P3 FAIL credits shortfall moved wallet'; end if;
@@ -218,12 +272,14 @@ end $$;
 --          → then the lit positive arm. unknown_hull / no_recipe truthful reasons too. ════════
 do $$
 declare r jsonb; uB uuid := (select v from sy1 where k='uB'); n int;
+  v_ship uuid := (select v from sy1 where k='ship');    -- 0333: the ordering ship (docked at Haven)
+  v_store uuid := (select v from sy1 where k='store');  -- 0333: uB's store AT HAVEN
 begin
   -- unknown_hull vs no_recipe (the 0109 distinct-truthful-reason posture; starter_frigate is the
   -- deliberately recipe-less T0 — the credits-only commission stays the only way to get one).
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'no_such_hull_xyz'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'no_such_hull_xyz', v_ship));
   if (r->>'code') is distinct from 'unknown_hull' then raise exception 'P4 FAIL unknown_hull: %', r; end if;
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'starter_frigate'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'starter_frigate', v_ship));
   if (r->>'code') is distinct from 'no_recipe' then raise exception 'P4 FAIL starter_frigate must be no_recipe: %', r; end if;
 
   -- in-txn T2 catalog fixture (rolled back): a synthetic hull gated on bulk_hauler + captain lvl 2.
@@ -239,7 +295,7 @@ begin
 
   -- (a) required hull NOT owned (uB owns only the starter_frigate; the P1 hauler is a queued
   --     ORDER, not a delivered ship — the seam truth) → hull_prerequisite_not_met.
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'sy1_test_dread'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'sy1_test_dread', v_ship));
   if (r->>'code') is distinct from 'hull_prerequisite_not_met'
      or (r->>'required_hull_type_id') is distinct from 'bulk_hauler' then
     raise exception 'P4 FAIL hull prereq: %', r;
@@ -248,7 +304,7 @@ begin
   -- (b) prereq satisfied (fixture repoint to the owned starter hull) but ZERO captains → the level
   --     gate rejects on the existence arm.
   update public.hull_build_recipes set required_hull_type_id='starter_frigate' where hull_type_id='sy1_test_dread';
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'sy1_test_dread'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'sy1_test_dread', v_ship));
   if (r->>'code') is distinct from 'captain_level_too_low' or (r->>'required_captain_level')::int <> 2 then
     raise exception 'P4 FAIL level gate (no captains): %', r;
   end if;
@@ -256,7 +312,7 @@ begin
   -- (c) a REAL level-1 captain (minted via the sole Captain leaf, 0118) still fails a level-2
   --     requirement → the LEVEL arm rejects, not mere existence.
   perform public.captains_mint_instance(uB, 'gunnery_veteran', 'sy1:' || gen_random_uuid()::text);
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'sy1_test_dread'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'sy1_test_dread', v_ship));
   if (r->>'code') is distinct from 'captain_level_too_low' then raise exception 'P4 FAIL level gate (lvl-1 captain): %', r; end if;
 
   -- gates wrote nothing.
@@ -267,10 +323,10 @@ begin
   --     the gated build succeeds (10 credits, 1 scrap).
   update public.hull_build_recipes set required_captain_level=1 where hull_type_id='sy1_test_dread';
   perform public.reward_grant('combat', gen_random_uuid(), uB, null, '{"items":[{"item_id":"scrap","quantity":1}]}'::jsonb);
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'sy1_test_dread'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'sy1_test_dread', v_ship));
   if (r->>'ok')::boolean is not true then raise exception 'P4 FAIL gated build: %', r; end if;
   if (select balance from public.player_wallet where player_id=uB) <> 90 then raise exception 'P4 FAIL gated build wallet delta'; end if;
-  if public.inventory_get_balance(uB,'scrap') <> 0 then raise exception 'P4 FAIL gated build scrap spend'; end if;
+  if public.inventory_get_balance(uB,v_store,'scrap') <> 0 then raise exception 'P4 FAIL gated build scrap spend'; end if;
   select count(*) into n from public.build_orders where player_id=uB and status='waiting';
   if n <> 2 then raise exception 'P4 FAIL: expected 2 waiting orders, got %', n; end if;
   raise notice 'SHIPYARD_PASS_GATES ok: unknown_hull/no_recipe truthful; hull prereq reject; captain level reject on BOTH arms (no captain / real lvl-1 vs required 2, sole-leaf mint); boundary pass -> 2nd order queued';
@@ -301,6 +357,8 @@ end $$;
 --          kind-coherence CHECK holds; the shared queue cap counts hull orders. ════════
 do $$
 declare r jsonb; uB uuid := (select v from sy1 where k='uB'); n int; v_src text;
+  v_ship uuid := (select v from sy1 where k='ship');    -- 0333: the ordering ship (docked at Haven)
+  v_store uuid := (select v from sy1 where k='store');  -- 0333: uB's store AT HAVEN
 begin
   -- seam CLOSED by 0194: the deployed engine bodies carry BOTH arms — the byte-intact 0038 unit
   -- arm and the SHIPYARD-2 hull arm (promotion join / kind dispatch / commission delivery).
@@ -321,9 +379,11 @@ begin
     raise exception 'P6 FAIL: production_complete_order does not deliver through the ONE commission build core';
   end if;
 
-  -- kind coherence: a bare row and a hybrid row are both impossible by CHECK.
+  -- kind coherence: a bare row and a hybrid row are both impossible by CHECK. Both rows carry a
+  -- REAL base_id — 0333 flipped build_orders_kind_coherent so BOTH kinds now require one, and a
+  -- row that omitted it would be rejected for the wrong reason, testing nothing about kind.
   begin
-    insert into public.build_orders (player_id, quantity, status, queued_at) values (uB, 1, 'waiting', now());
+    insert into public.build_orders (player_id, base_id, quantity, status, queued_at) values (uB, v_store, 1, 'waiting', now());
     raise exception 'P6 FAIL: a bare (no unit, no hull) build_orders row was accepted';
   exception when check_violation then null;
   end;
@@ -332,11 +392,20 @@ begin
     select id into v_unit from public.unit_types limit 1;   -- seeded catalog: always present
     if v_unit is null then raise exception 'P6 FAIL: unit_types catalog empty (fixture grounding broken)'; end if;
     begin
-      insert into public.build_orders (player_id, hull_type_id, unit_type_id, quantity, status, queued_at)
-        values (uB, 'bulk_hauler', v_unit, 1, 'waiting', now());
+      insert into public.build_orders (player_id, base_id, hull_type_id, unit_type_id, quantity, status, queued_at)
+        values (uB, v_store, 'bulk_hauler', v_unit, 1, 'waiting', now());
       raise exception 'P6 FAIL: a hybrid hull+unit build_orders row was accepted';
     exception when check_violation then null;
     end;
+  end;
+
+  -- 0333's OTHER half of the same CHECK, in assert form: a hull order WITHOUT its store is now
+  -- impossible — which is what gives cancel_build_order's item refund a port to return to.
+  begin
+    insert into public.build_orders (player_id, hull_type_id, quantity, status, queued_at)
+      values (uB, 'bulk_hauler', 1, 'waiting', now());
+    raise exception 'P6 FAIL: a hull build_orders row with NO base_id was accepted (0333 requires the ordering store)';
+  exception when check_violation then null;
   end;
 
   -- the SHARED M4.5 cap: with 2 non-terminal hull orders and max_build_orders lowered to 2 (knob,
@@ -344,12 +413,12 @@ begin
   insert into public.game_config(key,value,description) values ('max_build_orders','2'::jsonb,'sy1 transient (rolled back)')
     on conflict (key) do update set value='2'::jsonb;
   perform public.reward_grant('combat', gen_random_uuid(), uB, null, '{"items":[{"item_id":"scrap","quantity":1}]}'::jsonb);
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', gen_random_uuid(), 'sy1_test_dread'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', gen_random_uuid(), 'sy1_test_dread', v_ship));
   if (r->>'code') is distinct from 'queue_full' or (r->>'max')::int <> 2 then raise exception 'P6 FAIL queue_full: %', r; end if;
-  if public.inventory_get_balance(uB,'scrap') <> 1 then raise exception 'P6 FAIL queue_full spent items'; end if;
+  if public.inventory_get_balance(uB,v_store,'scrap') <> 1 then raise exception 'P6 FAIL queue_full spent items'; end if;
   if (select balance from public.player_wallet where player_id=uB) <> 90 then raise exception 'P6 FAIL queue_full moved wallet'; end if;
 
-  raise notice 'SHIPYARD_PASS_QUEUE_SEAM ok: seam CLOSED by 0194 — the engine carries both arms (unit tokens byte-intact + hull promotion join + kind dispatch + commission delivery, prosrc-pinned); bare+hybrid rows check-rejected; shared cap queue_full at 2 with zero writes';
+  raise notice 'SHIPYARD_PASS_QUEUE_SEAM ok: seam CLOSED by 0194 — the engine carries both arms (unit tokens byte-intact + hull promotion join + kind dispatch + commission delivery, prosrc-pinned); bare+hybrid+storeless-hull rows check-rejected; shared cap queue_full at 2 with zero writes';
 end $$;
 
 -- ════════ P7 — RETENTION (review H1): the receipt OUTLIVES the 0047 reaper — a purged order row
@@ -358,6 +427,7 @@ end $$;
 do $$
 declare r jsonb; uB uuid := (select v from sy1 where k='uB'); v_req uuid := (select v from sy1 where k='req1');
   v_order uuid := (select v from sy1 where k='order1'); n int; v_bal0 numeric; nord int;
+  v_ship uuid := (select v from sy1 where k='ship');    -- 0333: the ordering ship (docked at Haven)
 begin
   -- make the P1 order reapable — terminal + aged past the 30-day window (fixture shaping of
   -- Production's own runtime row, in-txn, rolled back) — then run the REAL 0047 reaper
@@ -378,7 +448,7 @@ begin
   -- from the receipt row ALONE — no new debit, no new order, no second receipt.
   select balance into v_bal0 from public.player_wallet where player_id=uB;
   select count(*) into nord from public.build_orders where player_id=uB;
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', v_req, 'bulk_hauler'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', v_req, 'bulk_hauler', v_ship));
   if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is not true then raise exception 'P7 FAIL post-reap not replay: %', r; end if;
   if (r->>'credits_spent')::numeric <> 400 or (r->>'hull_type_id') is distinct from 'bulk_hauler' then raise exception 'P7 FAIL post-reap envelope: %', r; end if;
   if r->'order_id' is distinct from 'null'::jsonb then raise exception 'P7 FAIL post-reap order_id not null in the replay: %', r; end if;
@@ -395,6 +465,8 @@ end $$;
 do $$
 declare r jsonb; uB uuid := (select v from sy1 where k='uB'); v_done int; v_base uuid;
   v_uorder uuid; v_order3 uuid; v_req3 uuid := gen_random_uuid();
+  v_ship uuid := (select v from sy1 where k='ship');    -- 0333: the ordering ship (docked at Haven)
+  v_store uuid := (select v from sy1 where k='store');  -- 0333: uB's store AT HAVEN
 begin
   -- headroom for the remaining blocks (the P6 cap fixture lowered it to 2; in-txn, rolled back).
   update public.game_config set value='5'::jsonb where key='max_build_orders';
@@ -423,6 +495,12 @@ begin
   perform public.bootstrap_me();
   select id into v_base from public.bases where player_id=uB order by created_at limit 1;
   if v_base is null then raise exception 'P8 FAIL: bootstrap_me created no base'; end if;
+  -- GROUNDING (0333): uB's oldest active base IS its store at Haven — Home Base carries
+  -- location_id = Haven (0157/0295). That single identity is why a NULL-base reward_grant, the
+  -- hull order's derived store, and the unit order's base all name the same place in this proof.
+  if v_base is distinct from v_store then
+    raise exception 'P8 FAIL grounding: the oldest active base % is not the Haven store % (the proof''s port identity broke)', v_base, v_store;
+  end if;
   v_uorder := public.production_create_order(uB, v_base, 'scout', 2, 100);
   perform public.production_start_next(uB);   -- direct promoter call: must NOT double-promote
   if not exists (select 1 from public.build_orders
@@ -434,7 +512,7 @@ begin
     on conflict (player_id) do update set balance = excluded.balance;
   perform public.reward_grant('combat', gen_random_uuid(), uB, null,
     '{"items":[{"item_id":"ore","quantity":24},{"item_id":"crystal","quantity":6},{"item_id":"engine_parts","quantity":6},{"item_id":"scrap","quantity":12},{"item_id":"blueprint_fragment","quantity":2}]}'::jsonb);
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', v_req3, 'bulk_hauler'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', v_req3, 'bulk_hauler', v_ship));
   if (r->>'ok')::boolean is not true then raise exception 'P8 FAIL hauler order: %', r; end if;
   v_order3 := (r->>'order_id')::uuid;
   if not exists (select 1 from public.build_orders
@@ -460,6 +538,9 @@ declare r jsonb; uB uuid := (select v from sy1 where k='uB'); v_done int;
   v_base uuid := (select v from sy1 where k='base'); v_uorder uuid := (select v from sy1 where k='uorder');
   v_order3 uuid := (select v from sy1 where k='order3'); v_req3 uuid := (select v from sy1 where k='req3');
   v_ships0 int; v_scouts0 int; v_ship uuid; n int; v_rcpts int;
+  -- 0333: uB DELIVERS ships in this block, so the sole-ship shim stops resolving partway through.
+  -- The replay in (d) therefore names the starter frigate explicitly — it is still docked at Haven.
+  v_orderer uuid := (select v from sy1 where k='ship');
 begin
   select count(*) into v_ships0 from public.main_ship_instances where player_id=uB;   -- 1 (the starter)
   select quantity into v_scouts0 from public.base_units where base_id=v_base and unit_type_id='scout';
@@ -483,13 +564,27 @@ begin
     where player_id=uB and hull_type_id='sy1_test_dread';
   if v_ship is null then raise exception 'P9 FAIL: no ship was delivered'; end if;
   -- exact hull stats + the exact 0184 name idiom (2nd ship -> class name + '' II'').
+  -- ⚠ REPOINTED 2026-08-03. This assert read main_ship_instances.spatial_state / space_x / space_y
+  -- and pinned status='stationary'. `20260618000231_movement_schema_drop.sql` DROPPED all three
+  -- columns AND removed 'stationary' from the status CHECK (verified against production: none of
+  -- the three columns exists, and every live ship is 'home' or 'destroyed' — zero 'stationary').
+  -- fleetgo-proof.sql:2140 records the same fact: "port_entry_commission_build no longer mints
+  -- status='stationary'". This proof has therefore been broken since 0231 and nobody saw it,
+  -- because it fires only on `slice-shipyard**` branches and none has carried 0231 until 0333
+  -- widened the trigger. The property is KEPT, not weakened: "the delivered ship is canonically
+  -- at_location" is now asked of the authority that REPLACED all four —
+  -- mainship_space_validate_context, the same oracle every live caller uses. A lifecycle-status
+  -- literal was never the docking authority anyway; that is 0334's own argument.
   if not exists (select 1 from public.main_ship_instances
                    where main_ship_id=v_ship and name='SY1 Test Dreadnought II'
                      and hp=1000 and max_hp=1000 and cargo_capacity=50 and cargo_capacity_m3=50.0
-                     and support_capacity=10 and captain_slots=6 and module_slots=2
-                     and status='stationary' and spatial_state='at_location'
-                     and space_x is null and space_y is null) then
-    raise exception 'P9 FAIL: the delivered ship is not the exact hull stats/name shape (want SY1 Test Dreadnought II, 1000hp, 50 cargo, canonical at_location)';
+                     and support_capacity=10 and captain_slots=6 and module_slots=2) then
+    raise exception 'P9 FAIL: the delivered ship is not the exact hull stats/name shape (want SY1 Test Dreadnought II, 1000hp, 50 cargo) — got %',
+      (select row_to_json(m) from public.main_ship_instances m where m.main_ship_id=v_ship);
+  end if;
+  if (public.mainship_space_validate_context(v_ship)->>'state') is distinct from 'at_location'
+     or (public.mainship_space_validate_context(v_ship)->>'ok')::boolean is not true then
+    raise exception 'P9 FAIL: the delivered ship is not canonically at_location (%)', public.mainship_space_validate_context(v_ship);
   end if;
   -- docked at the commission port: the present/location fleet + canonical at_location coherence.
   if not exists (select 1 from public.fleets
@@ -545,12 +640,20 @@ begin
    where id=v_order3 and status='active';
   select public.process_build_queue() into v_done;
   if v_done <> 1 then raise exception 'P9 FAIL: expected exactly 1 hauler completion, got %', v_done; end if;
+  -- Same 0231 repoint as the Dreadnought assert above: spatial_state and the 'stationary' status
+  -- are both gone; the canonical at_location claim is asked of mainship_space_validate_context
+  -- instead, per delivered hull.
   if not exists (select 1 from public.main_ship_instances
                    where player_id=uB and hull_type_id='bulk_hauler' and name='Mule-class Hauler III'
                      and hp=650 and max_hp=650 and cargo_capacity=140 and cargo_capacity_m3=140.0
-                     and support_capacity=10 and captain_slots=8 and module_slots=2
-                     and status='stationary' and spatial_state='at_location') then
-    raise exception 'P9 FAIL: the delivered Mule is not the exact hull stats/name shape (want Mule-class Hauler III, 650hp, 140 cargo)';
+                     and support_capacity=10 and captain_slots=8 and module_slots=2) then
+    raise exception 'P9 FAIL: the delivered Mule is not the exact hull stats/name shape (want Mule-class Hauler III, 650hp, 140 cargo) — got %',
+      (select row_to_json(m) from public.main_ship_instances m where m.player_id=uB and m.name='Mule-class Hauler III');
+  end if;
+  if (select public.mainship_space_validate_context(m.main_ship_id)->>'state'
+        from public.main_ship_instances m
+       where m.player_id=uB and m.name='Mule-class Hauler III') is distinct from 'at_location' then
+    raise exception 'P9 FAIL: the delivered Mule is not canonically at_location';
   end if;
   if not exists (select 1 from public.build_orders where id=v_order3 and status='completed' and resolved_at is not null) then
     raise exception 'P9 FAIL: the hauler order is not terminal completed';
@@ -561,7 +664,7 @@ begin
   --     never consults order state): no re-debit, no second order, no second ship.
   select count(*) into v_rcpts from public.hull_build_receipts where player_id=uB;
   select count(*) into n from public.build_orders where player_id=uB;
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', v_req3, 'bulk_hauler'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', v_req3, 'bulk_hauler', v_orderer));
   if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is not true then
     raise exception 'P9 FAIL post-delivery replay not a replay: %', r;
   end if;
@@ -585,6 +688,9 @@ do $$
 declare r jsonb; uB uuid := (select v from sy1 where k='uB'); uC uuid;
   v_baseC uuid; v_uorderC uuid; v_reqH2 uuid := gen_random_uuid(); v_oH2 uuid;
   v_done int; v_scoutsC0 int; v_ships0 int; v_mules0 int;
+  -- 0333: uB owns 3 ships by now, so the order below MUST name one. The starter frigate is still
+  -- docked at Haven, and this order is placed BEFORE the docking service is poisoned below.
+  v_ship uuid := (select v from sy1 where k='ship');
 begin
   -- a SECOND fixture player uC (the same sy1 idiom): base via the real bootstrap leaf + a real
   -- unit order, promoted and fast-forwarded (exact-duration shift — the B1 constraint law).
@@ -610,7 +716,7 @@ begin
     on conflict (player_id) do update set balance = excluded.balance;
   perform public.reward_grant('combat', gen_random_uuid(), uB, null,
     '{"items":[{"item_id":"ore","quantity":24},{"item_id":"crystal","quantity":6},{"item_id":"engine_parts","quantity":6},{"item_id":"scrap","quantity":12},{"item_id":"blueprint_fragment","quantity":2}]}'::jsonb);
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', v_reqH2, 'bulk_hauler'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', v_reqH2, 'bulk_hauler', v_ship));
   if (r->>'ok')::boolean is not true then raise exception 'P9G FAIL hauler order: %', r; end if;
   v_oH2 := (r->>'order_id')::uuid;
   perform public.production_start_next(uB);
@@ -667,18 +773,28 @@ do $$
 declare r jsonb; uB uuid := (select v from sy1 where k='uB');
   v_reqC1 uuid := gen_random_uuid(); v_reqC2 uuid := gen_random_uuid();
   v_oC1 uuid; v_oC2 uuid; v_ships int; v_done int; n int;
+  -- 0333: uB owns 4 ships by now — every order below NAMES the starter frigate, which is still
+  -- docked at Haven (the P9G poison was restored), so every order derives the Haven store and the
+  -- cancel refunds return the ingredients to THAT port (cancel_build_order now credits o.base_id).
+  v_ship uuid := (select v from sy1 where k='ship');
+  v_store uuid := (select v from sy1 where k='store');
 begin
   select count(*) into v_ships from public.main_ship_instances where player_id=uB;
 
   -- (a) a WAITING corvette order: fund to a known 500, spend the exact P3 corvette mats.
   insert into public.player_wallet (player_id, balance) values (uB, 500)
     on conflict (player_id) do update set balance = excluded.balance;
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', v_reqC1, 'strike_corvette'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', v_reqC1, 'strike_corvette', v_ship));
   if (r->>'ok')::boolean is not true then raise exception 'P10 FAIL corvette order: %', r; end if;
   v_oC1 := (r->>'order_id')::uuid;
   if (select balance from public.player_wallet where player_id=uB) <> 100
-     or public.inventory_get_balance(uB,'ore') <> 0 or public.inventory_get_balance(uB,'blueprint_fragment') <> 0 then
-    raise exception 'P10 FAIL: the corvette order did not spend exactly';
+     or public.inventory_get_balance(uB,v_store,'ore') <> 0 or public.inventory_get_balance(uB,v_store,'blueprint_fragment') <> 0 then
+    raise exception 'P10 FAIL: the corvette order did not spend exactly (measured at Haven, the ordering port)';
+  end if;
+  -- the order recorded the port it was placed from — that record IS what gives the refund below a
+  -- place to return the ingredients to (0333: cancel_build_order's hull arm deposits into o.base_id).
+  if not exists (select 1 from public.build_orders where id=v_oC1 and base_id = v_store) then
+    raise exception 'P10 FAIL: the corvette order did not record the Haven store it was ordered from';
   end if;
   if not exists (select 1 from public.build_orders where id=v_oC1 and status='waiting') then
     raise exception 'P10 FAIL: the corvette order is not waiting (cancel-waiting is the arm under test)';
@@ -695,10 +811,11 @@ begin
     raise exception 'P10 FAIL waiting-cancel credits: wallet % (want exactly 500 = 100 + the full 400-credit refund)',
       (select balance from public.player_wallet where player_id=uB);
   end if;
-  if public.inventory_get_balance(uB,'ore') <> 16 or public.inventory_get_balance(uB,'crystal') <> 4
-     or public.inventory_get_balance(uB,'weapon_parts') <> 6 or public.inventory_get_balance(uB,'pirate_alloy') <> 8
-     or public.inventory_get_balance(uB,'blueprint_fragment') <> 2 then
-    raise exception 'P10 FAIL waiting-cancel ingredients: not the exact receipt bill restored (want 16/4/6/8/2)';
+  -- the refund landed AT THE ORDERING PORT — Haven's store — not in some placeless pool.
+  if public.inventory_get_balance(uB,v_store,'ore') <> 16 or public.inventory_get_balance(uB,v_store,'crystal') <> 4
+     or public.inventory_get_balance(uB,v_store,'weapon_parts') <> 6 or public.inventory_get_balance(uB,v_store,'pirate_alloy') <> 8
+     or public.inventory_get_balance(uB,v_store,'blueprint_fragment') <> 2 then
+    raise exception 'P10 FAIL waiting-cancel ingredients: not the exact receipt bill restored to the ordering port (want 16/4/6/8/2)';
   end if;
   if (select count(*) from public.main_ship_instances where player_id=uB) <> v_ships then
     raise exception 'P10 FAIL: a cancel delivered a ship';
@@ -712,21 +829,21 @@ begin
     if sqlerrm not like '%cannot cancel a cancelled order%' then raise; end if;
   end;
   if (select balance from public.player_wallet where player_id=uB) <> 500
-     or public.inventory_get_balance(uB,'ore') <> 16 then
+     or public.inventory_get_balance(uB,v_store,'ore') <> 16 then
     raise exception 'P10 FAIL: the rejected double-cancel refunded again';
   end if;
 
   -- (d) post-cancel replay: the receipt is NEVER rewritten — the same request_id still returns
   --     the ORIGINAL success envelope verbatim; nothing re-spends, no second order.
   select count(*) into n from public.build_orders where player_id=uB;
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', v_reqC1, 'strike_corvette'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', v_reqC1, 'strike_corvette', v_ship));
   if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is not true
      or (r->>'order_id')::uuid is distinct from v_oC1 or (r->>'credits_spent')::numeric <> 400
      or jsonb_array_length(r->'ingredients_spent') <> 5 then
     raise exception 'P10 FAIL post-cancel replay envelope not the verbatim original: %', r;
   end if;
   if (select balance from public.player_wallet where player_id=uB) <> 500
-     or public.inventory_get_balance(uB,'ore') <> 16
+     or public.inventory_get_balance(uB,v_store,'ore') <> 16
      or (select count(*) from public.build_orders where player_id=uB) <> n then
     raise exception 'P10 FAIL: the post-cancel replay moved state';
   end if;
@@ -734,7 +851,7 @@ begin
   -- (e) cancel ACTIVE -> the unit arm''s 50% law: re-order, let the cron sweep promote it, cancel:
   --     credits floor(400 x 0.5) = 200 (wallet 100 -> 300 exact) + the floor-half refund per
   --     ingredient (ore 8, crystal 2, weapon_parts 3, pirate_alloy 4, blueprint_fragment 1).
-  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L)', v_reqC2, 'strike_corvette'));
+  r := pg_temp.call_as(uB, format('public.start_hull_build(%L::uuid, %L, %L::uuid)', v_reqC2, 'strike_corvette', v_ship));
   if (r->>'ok')::boolean is not true then raise exception 'P10 FAIL second corvette order: %', r; end if;
   v_oC2 := (r->>'order_id')::uuid;
   select public.process_build_queue() into v_done;   -- no due actives; the sweep promotes
@@ -750,10 +867,10 @@ begin
     raise exception 'P10 FAIL active-cancel credits: wallet % (want exactly 300 = 100 + floor(400 x 0.5))',
       (select balance from public.player_wallet where player_id=uB);
   end if;
-  if public.inventory_get_balance(uB,'ore') <> 8 or public.inventory_get_balance(uB,'crystal') <> 2
-     or public.inventory_get_balance(uB,'weapon_parts') <> 3 or public.inventory_get_balance(uB,'pirate_alloy') <> 4
-     or public.inventory_get_balance(uB,'blueprint_fragment') <> 1 then
-    raise exception 'P10 FAIL active-cancel ingredients: not the exact floor-half refund (want 8/2/3/4/1)';
+  if public.inventory_get_balance(uB,v_store,'ore') <> 8 or public.inventory_get_balance(uB,v_store,'crystal') <> 2
+     or public.inventory_get_balance(uB,v_store,'weapon_parts') <> 3 or public.inventory_get_balance(uB,v_store,'pirate_alloy') <> 4
+     or public.inventory_get_balance(uB,v_store,'blueprint_fragment') <> 1 then
+    raise exception 'P10 FAIL active-cancel ingredients at the ordering port: not the exact floor-half refund (want 8/2/3/4/1)';
   end if;
   if (select count(*) from public.main_ship_instances where player_id=uB) <> v_ships then
     raise exception 'P10 FAIL: an active-cancel delivered a ship';

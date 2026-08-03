@@ -80,6 +80,11 @@ begin
   select main_ship_id into v_ship from public.main_ship_instances where player_id=uS1;
   if (select count(*) from public.player_wallet where player_id=uS1) <> 0 then raise exception 'SEED_DARK FAIL: wallet exists pre-buy'; end if;
 
+  -- THE PRECONDITION IS OURS, NOT THE SEED'S. Migration 0300 (lights_on) lights trade_market_enabled
+  -- IN THE CHAIN, so trusting the ambient seed made this assert a WORLD rather than a property. Set
+  -- the dark state under test — in-txn, rolled back with everything else, like the enable below.
+  update public.game_config set value='false'::jsonb where key='trade_market_enabled';
+
   r := pg_temp.call_as(uS1, format('public.market_buy(%L::uuid, %L, %s, %L::uuid)', v_ship, 'ore', 1, gen_random_uuid()));
   if (r->>'reason') is distinct from 'trade_market_disabled' then raise exception 'SEED_DARK FAIL not dark-rejected: %', r; end if;
   select count(*) into n from public.player_wallet where player_id=uS1;
@@ -129,6 +134,11 @@ begin
   -- set uR up as an existing rock-bottom account: wallet row at balance 0 (owner insert), no cargo.
   insert into public.player_wallet (player_id, balance) values (uR, 0)
     on conflict (player_id) do update set balance = 0;
+
+  -- THE PRECONDITION IS OURS, NOT THE SEED'S. Migration 0300 (lights_on) lights trade_relief_enabled
+  -- IN THE CHAIN, so trusting the ambient seed made this assert a WORLD rather than a property. Set
+  -- the dark state under test — in-txn, rolled back with everything else, like the enable below.
+  update public.game_config set value='false'::jsonb where key='trade_relief_enabled';
 
   r := pg_temp.call_as(uR, format('public.market_claim_relief(%L::uuid)', gen_random_uuid()));
   if (r->>'reason') is distinct from 'trade_relief_disabled' then raise exception 'RELIEF_DARK FAIL not dark-rejected: %', r; end if;

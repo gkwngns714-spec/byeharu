@@ -9,7 +9,7 @@ import {
   type GetPortContractsResult,
 } from './haulBoard'
 import { haulReasonMessage } from './haulReasonMessage'
-import { Button, Card, CardHeader, SectionLabel } from '../../components/ui'
+import { Button, CollapsibleCard, SectionLabel } from '../../components/ui'
 import { ItemChip } from '../../components/items'
 
 // HAUL-3 — the dark port bulletin board: the docked port's fresh contract offers (good, qty,
@@ -126,8 +126,15 @@ export function HaulBoardPanel({
 
   return (
     // UI R2: the Card primitive owns the chrome (warning tone = the trade-family identity).
-    <Card tone="warning" data-testid="haul-board">
-      <CardHeader title="Contract Board" subtitle="Haul goods between ports for posted rewards." />
+    // HIERARCHY (2026-08-03): occasional-use → folded CLOSED by default (persists per player).
+    <CollapsibleCard
+      tone="warning"
+      data-testid="haul-board"
+      title="Contract Board"
+      subtitle="Haul goods between ports for posted rewards."
+      storageKey="port.contracts"
+      defaultOpen={false}
+    >
 
       {/* Tab 1 — this port's fresh offers (the 0181 read already excludes stale rows). */}
       <SectionLabel className="mt-2">On the board</SectionLabel>
@@ -241,7 +248,7 @@ export function HaulBoardPanel({
                     due {haulDeadlineLabel(m.deliver_by, nowMs)}
                   </span>
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate font-mono tabular-nums text-[9px] text-ink-muted">
+                    <span className="truncate font-mono tabular-nums text-[10px] text-ink-muted">
                       hold {cargoFor(m.good_id)}/{m.quantity}
                     </span>
                     <Button
@@ -273,6 +280,6 @@ export function HaulBoardPanel({
           })}
         </ul>
       )}
-    </Card>
+    </CollapsibleCard>
   )
 }

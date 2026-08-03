@@ -114,6 +114,12 @@ do $$
 declare r jsonb; n int;
   uH uuid := (select v from hl1 where k='uH'); shipH uuid := (select v from hl1 where k='shipuH');
 begin
+  -- THE PRECONDITION IS OURS, NOT THE SEED'S. Migration 0300 (lights_on) lights haul_contracts_enabled
+  -- IN THE CHAIN, so trusting the ambient seed made this whole block assert a WORLD rather than a
+  -- property. Set the dark state under test — in-txn, rolled back with everything else, like the
+  -- enable below. Every dark assertion here is unchanged; only its precondition is now owned.
+  update public.game_config set value='false'::jsonb where key='haul_contracts_enabled';
+
   -- the cron fires this exact call today in production; while dark it must return (never raise)
   -- with the feature_disabled envelope and write NOTHING.
   r := public.haul_generate_offers();

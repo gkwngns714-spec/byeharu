@@ -86,15 +86,19 @@ test('worldEditorCoordinates + worldEditorFocus contain no IO and no coordinate 
   }
 })
 
-// ── 4. the overlap radius arrives FROM CONTEXT; validators stay pure; 750 is a labeled fallback ─────
-test('mining/exploration validators read ctx.overlapRadius, never the network; 750 demoted to a labeled fallback', () => {
+// ── 4. the overlap radius arrives FROM CONTEXT; validators stay pure; the constant is a fallback ────
+// The guarded property is the STRUCTURE — context is the authority, the constant is a labeled
+// non-authoritative fallback, and the validator never reaches the network. It is NOT the number.
+// This used to pin `= 750`, which made it fail when miningValidation's fallback was corrected to
+// production's 60 — an assertion that fired on a fix while the structure it was named for was intact.
+test('mining/exploration validators read ctx.overlapRadius, never the network; the radius constant is only a labeled fallback', () => {
   for (const name of ['miningValidation.ts', 'explorationValidation.ts']) {
     const src = read(join(WE, name))
     expect(src, `${name} must take the radius from the validation context`).toMatch(
       /ctx\.overlapRadius/,
     )
-    expect(src, `${name} must label 750 as a non-authoritative fallback`).toMatch(
-      /OVERLAP_RADIUS_FALLBACK = 750/,
+    expect(src, `${name} must expose the radius as a labeled non-authoritative fallback`).toMatch(
+      /OVERLAP_RADIUS_FALLBACK = \d/,
     )
     // purity unchanged — no live network in the pure validators
     expect(src, `${name} must not touch supabase`).not.toMatch(/supabase/i)

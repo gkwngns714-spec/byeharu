@@ -51,6 +51,7 @@ const loc = (over: Partial<MapLocation> = {}): MapLocation => ({
   min_power_required: 0,
   is_public: true,
   status: 'active',
+  territory_radius: null, // 0217: always present in the get_world_map JSON; NULL = projects no territory
   ...over,
 })
 
@@ -94,14 +95,14 @@ test('combat — present at a hunt/pirate site → "In combat at <name>"', () =>
   expect(r.label).toBe('In combat at Pirate Den')
 })
 
-test('returning — a return-home movement → "Returning home" (no destination name)', () => {
+test('returning — a return leg → "Returning" (no destination name, and no "home": NO-HOME law)', () => {
   const r = resolveShipLocationLabel(
     fleet({ status: 'returning' }),
     movement({ mission_type: 'return_home', target_type: 'base', target_location_id: null }),
     LOCS,
   )
   expect(r.kind).toBe('returning')
-  expect(r.label).toBe('Returning home')
+  expect(r.label).toBe('Returning')
   expect(r.heading).toBe(true)
   expect(r.etaText).not.toBeNull()
 })

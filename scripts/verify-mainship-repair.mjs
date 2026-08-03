@@ -1,12 +1,24 @@
 // Phase 10F verification — main-ship destroyed/repair safelock.
 //   node scripts/verify-mainship-repair.mjs
 //
+// ⚠ THIS VERIFIER CANNOT RUN AS WRITTEN, AND HAS NOT BEEN ABLE TO SINCE MIGRATION 0232.
+// Steps 1/1a/1b/1c and 7 below drive `dev_set_main_ship_destroyed`, which 0232:260 DROPPED. It is
+// workflow_dispatch-only (verify-mainship-repair.yml) so nothing has ever reported the breakage.
+// Discovered while unifying repair in 0335 — its sibling scripts/repair-econ-proof.sql hit the same
+// dead call the moment that proof's trigger was widened past `slice-repairecon**`, and was fixed
+// onto the tick's own terminal leaf (mainship_mark_combat_destroyed). This file's steps 4/5 are
+// repointed onto the one repair verb below so it names nothing that no longer exists on the repair
+// side, but reviving the destruction half needs a decision this slice does not own: the surviving
+// leaf marks a hull destroyed and does NOT clean up the linked fleet, which is exactly what steps
+// 1a–1c assert. Everything this file claims about repair is now covered by the disposable
+// repair-econ proof, which runs on every slice branch, every PR and main.
+//
 // Proves the safe landing + recovery path (NO combat, NO trigger — uses the service-role-only
 // dev_set_main_ship_destroyed helper to simulate a future defeat):
 //   • destroying a ship mid-expedition cleans up its linked fleet/movement/presence and wins over
 //     in-flight state (status='destroyed', hp=0, no active main-ship fleet remains)
 //   • send is blocked while destroyed; request_main_ship_return cannot return from it
-//   • repair_main_ship() restores status='home', hp=max_hp (instant, free)
+//   • repair_ship_hull() restores status='home', hp=max_hp (instant, free — 0335's wreck policy)
 //   • send works again after repair
 //   • no fleet_units were ever created for main-ship fleets
 //
@@ -16,6 +28,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { readFileSync } from 'node:fs'
 import { teardownVerifier } from './lib/verifier-teardown.mjs'
+import { requireDisposableTarget } from './lib/require-disposable-db.mjs'
 
 function loadEnv(p) {
   const e = {}
@@ -28,6 +41,9 @@ const anonKey = env.VITE_SUPABASE_ANON_KEY
 const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_KEY || env.SUPABASE_SECRET_KEY
 if (!url || !anonKey) { console.error('Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY'); process.exit(2) }
 if (!serviceKey) { console.error('needs SUPABASE_SERVICE_ROLE_KEY'); process.exit(2) }
+// This verifier writes GLOBAL game_config (travel_scale / min_travel_seconds + flags) and cannot
+// guarantee it restores them if the process is killed. It runs against a throwaway database only.
+requireDisposableTarget(url, 'verify-mainship-repair')
 
 const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
 let pass = 0, fail = 0
@@ -113,17 +129,25 @@ async function main() {
     error ? ok('3. request_main_ship_return fails (no active present fleet)') : bad('3. return block', 'return accepted!')
   }
 
-  // ── 4) repair_main_ship (as the authenticated player) → home + full hp ───────────────────────
-  const { data: rep, error: rErr } = await u.client.rpc('repair_main_ship', {})
+  // ── 4) repair_ship_hull (as the authenticated player) → home + full hp, FREE ─────────────────
+  // 0335: ONE repair verb. A null amount restores the whole hull; the request id is the replay key.
+  // A wreck is free by policy whatever repair_credits_per_hp says, so total_price must be 0.
+  const { data: rep, error: rErr } = await u.client.rpc('repair_ship_hull', {
+    p_main_ship_id: shipId, p_repair_hp: null, p_request_id: crypto.randomUUID(),
+  })
   if (rErr) die(`repair failed: ${rErr.message}`)
   const s2 = await shipRow(u.userId)
-  rep?.status === 'home' && s2.status === 'home' && s2.hp === maxHp
-    ? ok(`4. repair → home, hp restored ${s2.hp}/${maxHp}`) : bad('4. repair', JSON.stringify({ rep, s2 }))
+  rep?.ok === true && rep?.status === 'home' && Number(rep?.total_price) === 0 && s2.status === 'home' && s2.hp === maxHp
+    ? ok(`4. repair → home, hp restored ${s2.hp}/${maxHp}, free (0 credits)`) : bad('4. repair', JSON.stringify({ rep, s2 }))
 
-  // ── 5) repair again now fails clearly (not destroyed) ────────────────────────────────────────
+  // ── 5) repair again now answers nothing_to_repair (a value — 0335 never raises) ───────────────
   {
-    const { error } = await u.client.rpc('repair_main_ship', {})
-    error && /not disabled|nothing to repair/i.test(error.message) ? ok('5. repair on a healthy ship fails clearly') : bad('5. repair guard', error?.message ?? 'repaired a healthy ship')
+    const { data, error } = await u.client.rpc('repair_ship_hull', {
+      p_main_ship_id: shipId, p_repair_hp: null, p_request_id: crypto.randomUUID(),
+    })
+    !error && data?.ok === false && data?.reason === 'nothing_to_repair'
+      ? ok('5. repair on a healthy full-hull ship answers nothing_to_repair')
+      : bad('5. repair guard', error?.message ?? JSON.stringify(data))
   }
 
   // ── 6) send works again after repair ─────────────────────────────────────────────────────────

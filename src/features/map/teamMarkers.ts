@@ -3,6 +3,9 @@ import type { FleetMovement } from '../fleets/fleetTypes'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
+import type { CombatUnit } from '../combat/combatTypes'
+import type { FleetEncounterLite } from '../combat/encounterAnchor'
+import { resolveFleetFightPosition } from './fleetFightPosition'
 import type { MapLocation } from './mapTypes'
 import { interpolateMovementPoint } from './movementInterpolation'
 import { territoryAt } from './territoryAt'
@@ -108,10 +111,24 @@ export function resolveTeamDockBadges(rollups: readonly DockedTeamRollup[]): Tea
 // so an empty input is guaranteed in today's prod and the layer renders nothing.
 // The label takes the member count from the group's rollup (rollups exist for every group, docked or
 // not) — the fleet's ships are WITH it in space, mirroring the in-flight badge's phrasing.
+//
+// ⚑ THIS IS THE AMBUSH-COMBAT BADGE TOO, AND IT MUST FOLLOW THE FIGHT. An ambush does NOT leave the
+// fleet 'present' at a location: 0301:1109 calls fleet_set_in_space, which writes status='idle',
+// location_mode='space', current_location_id=NULL (0231:1157-1161). teamRollup's
+// isCombatSortiePresence (:103-105) requires 'present' AND a location, so an ambushed fleet is
+// invisible to resolveFleetCombatBadges and lands HERE — verified against production: all eight of
+// the owner's off-centre encounters are idle/space/no-location. So the parked point this badge used
+// to draw is a STALE start-of-fight position, while the fleet's own ships (spatialCombatLayer, from
+// combat_units.pos_x/pos_y) march 20-30 units away from it. Same fleet, drawn twice, two places.
+// Position now comes from the ONE shared rule — fleetFightPosition: THE HULL NEAREST THE ENEMY, a
+// real ship, never an average of several — with the parked coordinate as its fallback, so a fleet
+// that is NOT fighting is byte-identical to before.
 export interface FleetSpaceBadgeDescriptor {
   groupId: string
   label: string
-  /** WORLD coordinates in the legacy movement domain (project through the map's `norm`). */
+  /** WORLD coordinates in the legacy movement domain (project through the map's `norm`). While the
+   *  fleet is in a positioned fight this is the position of one of its OWN SHIPS — the one nearest
+   *  the enemy — not its parked point. */
   x: number
   y: number
 }
@@ -125,6 +142,11 @@ export function resolveFleetSpaceBadges(
    *  (which composes the ONE distance()). Optional, default [] → byte-identical labels for every
    *  existing caller (and for a world with no territory data). */
   locations: readonly Pick<MapLocation, 'id' | 'name' | 'x' | 'y' | 'territory_radius'>[] = [],
+  /** The caller's live encounters + combat units (useCombat's already-polled rows — no new fetch).
+   *  Optional, default [] → no fleet is ever "fighting" and every badge keeps its parked point, i.e.
+   *  today's behaviour for every existing caller. */
+  encounters: readonly FleetEncounterLite[] = [],
+  units: readonly CombatUnit[] = [],
 ): FleetSpaceBadgeDescriptor[] {
   if (groups.length === 0) return []
   const nameById = new Map(groups.map((g) => [g.group_id, g.name]))
@@ -136,18 +158,38 @@ export function resolveFleetSpaceBadges(
     if (f.space_x == null || f.space_y == null || !Number.isFinite(f.space_x) || !Number.isFinite(f.space_y)) continue
     if (!nameById.has(f.group_id)) continue // fail closed: unknown/foreign tag → no badge, never a guessed name
     if (seen.has(f.group_id)) continue // one fleet per group; duplicates are a broken invariant — first wins
+    // WHERE the fleet is: the ship of its own at the point of attack while it fights, its parked
+    // point otherwise — the ONE shared rule. The parked coordinate is finite (guarded above), so
+    // this cannot be null.
+    const at = resolveFleetFightPosition({
+      fleetId: f.id,
+      encounters,
+      units,
+      fallback: { x: f.space_x, y: f.space_y },
+    })
+    if (!at) continue // unreachable given the guard above; never emit an unplaced badge
     seen.add(f.group_id)
     const name = nameById.get(f.group_id) as string
     const n = countByGroup.get(f.group_id) ?? 0
     const base = n > 1 ? `Fleet ${name} · ${n} ships` : `Fleet ${name}`
-    // S2 TERRITORY: the parked coordinate is WORLD-domain, exactly what territoryAt takes. No
-    // containing territory → the plain label (never a guessed orbit).
-    const orbit = territoryAt({ x: f.space_x, y: f.space_y }, locations)
+    // S2 TERRITORY: a WORLD-domain point is exactly what territoryAt takes, and it reads the point
+    // the badge is actually DRAWN at, so the label can never name a place the badge is not near.
+    // No containing territory → the plain label (never a guessed orbit).
+    const place = territoryAt({ x: at.x, y: at.y }, locations)
+    // A fighting fleet says so. "in orbit of X" describes a fleet at rest and would be a quiet lie
+    // mid-battle; the place name is kept either way so the player still knows where they are.
+    const suffix = at.fighting
+      ? place
+        ? ` · in combat near ${place.name}`
+        : ' · in combat'
+      : place
+        ? ` · in orbit of ${place.name}`
+        : ''
     out.push({
       groupId: f.group_id,
-      label: orbit ? `${base} · in orbit of ${orbit.name}` : base,
-      x: f.space_x,
-      y: f.space_y,
+      label: `${base}${suffix}`,
+      x: at.x,
+      y: at.y,
     })
   }
   return out.sort((a, b) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0))
@@ -160,14 +202,31 @@ export function resolveFleetSpaceBadges(
 // chevron fallback that used to draw its members (fleetShipsLayer) was DELETED in S5 — so without
 // this badge the fleet is INVISIBLE for the whole combat phase of every hunt. Input is the exact
 // COMPLEMENT of the dock fold's exclusion (teamRollup.selectCombatSortieFleets — the ONE combat
-// classification, never re-derived here); this resolver only validates shape, names, and renders at
-// the site's own position. Fail closed like every sibling: unknown/foreign group tag, or a combat
+// classification, never re-derived here); this resolver only validates shape, names, and places the
+// badge. Fail closed like every sibling: unknown/foreign group tag, or a combat
 // site not in the visible world read → NO badge (never a guessed name/position, no hidden-site leak).
+//
+// ⚑ THE BADGE STANDS ON A SHIP, NOT ON THE SITE'S CENTRE AND NOT ON AN AVERAGE — the SAME rule the
+// in-space badge above obeys, so "where is this fleet" has ONE answer no matter which arm draws it.
+// The deliberate-hunt path needs it just as badly as the ambush path: 0234 seeds this fight's units at
+// the site centre and the tick then MOVES them (0234/0294/0311/0314 are the writers of pos_x; 0313
+// writes none — it cut the ranges that make the mover's close/kite arms fire at all, which is why the
+// drift only became visible now, but crediting it with the movement is wrong), so within a couple of
+// ticks the ships have walked 20-30 world units off the centre this badge used to be pinned to — the
+// identical drawn-twice-in-two-places defect, differing only in where the drift starts. Position
+// therefore comes from map/fleetFightPosition (this fleet's own living, positioned ship NEAREST THE
+// ENEMY), with the site centre as its fallback: no live encounter, or an aggregate fight with no
+// positioned unit, and the badge is exactly where it has always been.
+// The LABEL is unchanged: the fleet really is fighting at that site, it is simply not standing on
+// the site's centre pixel.
 export interface FleetCombatBadgeDescriptor {
   groupId: string
   label: string
+  /** The combat SITE — the fight's owning location. Drives per-site badge stacking, not position. */
   locationId: string
-  /** WORLD coordinates — the combat site's own position (the fleet is present AT it). */
+  /** WORLD coordinates — the position of this fleet's own ship nearest the enemy while it fights,
+   *  the site centre when it has no positioned fight. Always finite (a site with unusable
+   *  coordinates yields no badge). */
   x: number
   y: number
 }
@@ -177,6 +236,11 @@ export function resolveFleetCombatBadges(
   groups: readonly GroupRow[],
   rollups: readonly DockedTeamRollup[],
   locations: readonly Pick<MapLocation, 'id' | 'name' | 'x' | 'y'>[],
+  /** The caller's live encounters + combat units (useCombat's already-polled rows — already on the
+   *  map for the units layer; no new fetch, no new poll). Optional, default [] → every badge sits on
+   *  its site's centre, i.e. the pre-slice position, for any caller with nothing in hand. */
+  encounters: readonly FleetEncounterLite[] = [],
+  units: readonly CombatUnit[] = [],
 ): FleetCombatBadgeDescriptor[] {
   if (groups.length === 0) return []
   const nameById = new Map(groups.map((g) => [g.group_id, g.name]))
@@ -189,6 +253,16 @@ export function resolveFleetCombatBadges(
     if (seen.has(f.group_id)) continue // one fleet per group; duplicates are a broken invariant — first wins
     const loc = locations.find((l) => l.id === f.current_location_id)
     if (!loc) continue // combat site not in the visible world read → no badge, no id leak
+    // WHERE the fleet is — the ONE shared rule. It answers null only for a site with non-finite
+    // coordinates, which drops the badge rather than pushing NaN into an SVG transform (a NaN in a
+    // transform silently blanks the element).
+    const at = resolveFleetFightPosition({
+      fleetId: f.id,
+      encounters,
+      units,
+      fallback: { x: loc.x, y: loc.y },
+    })
+    if (!at) continue
     seen.add(f.group_id)
     const name = nameById.get(f.group_id) as string
     const n = countByGroup.get(f.group_id) ?? 0
@@ -197,8 +271,8 @@ export function resolveFleetCombatBadges(
       groupId: f.group_id,
       label: `${base} · in combat at ${loc.name}`,
       locationId: loc.id,
-      x: loc.x,
-      y: loc.y,
+      x: at.x,
+      y: at.y,
     })
   }
   return out.sort((a, b) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0))
@@ -401,6 +475,12 @@ export function teamMarkersLayer(args: {
    *  complement of the dock fold's exclusion) for the in-combat badge. Optional, default [] →
    *  byte-identical layer (dark: the unified fetch is gated, so this is always []). */
   combatFleets?: UnifiedGroupFleetLite[]
+  /** The caller's live encounters + combat units — the SAME arrays the spatial units layer beside
+   *  this one is drawn from, so a fleet's badge and its ships are placed from one source. Optional,
+   *  default [] → no fleet reads as fighting and every badge keeps its resting position, i.e. the
+   *  pre-slice layer byte for byte. */
+  encounters?: FleetEncounterLite[]
+  units?: CombatUnit[]
 }): ReactElement[] {
   if (args.groups.length === 0) return []
   const out: ReactElement[] = [
@@ -431,11 +511,19 @@ export function teamMarkersLayer(args: {
       }),
     )
   }
-  // MAP-INTEGRATION M1 — in-combat fleet badges (the hunt sortie's combat phase). Static (a fleet
-  // in combat holds at the site), rendered at the site's own marker with the danger tint. Shares
-  // the per-location stack counter with the dock badges so co-located badge text never overlaps
-  // (a combat site can never carry a dock badge — the fold excludes it — but co-fighting teams stack).
-  for (const b of resolveFleetCombatBadges(args.combatFleets ?? [], args.groups, args.rollups, args.locations)) {
+  // MAP-INTEGRATION M1 — in-combat fleet badges (the hunt sortie's combat phase), rendered on the
+  // fleet's own LEAD SHIP (see the resolver's header) with the danger tint, and so moving with it as
+  // the poll advances. Shares the per-location stack counter with the dock badges so co-located badge
+  // text never overlaps (a combat site can never carry a dock badge — the fold excludes it — but
+  // co-fighting teams stack). Stacking stays keyed on the SITE, which is what they share.
+  for (const b of resolveFleetCombatBadges(
+    args.combatFleets ?? [],
+    args.groups,
+    args.rollups,
+    args.locations,
+    args.encounters ?? [],
+    args.units ?? [],
+  )) {
     const stack = perLoc.get(b.locationId) ?? 0
     perLoc.set(b.locationId, stack + 1)
     const p = args.norm({ x: b.x, y: b.y })
@@ -451,10 +539,20 @@ export function teamMarkersLayer(args: {
       }),
     )
   }
-  // FLEET-GO 4a-1 — in-space fleet badges (parked unified fleets). Static (no interpolation tick —
-  // a parked fleet does not move), reusing the moving badge's presentation under its own testid.
-  // S2 TERRITORY: the world read feeds the "in orbit of X" label extension.
-  for (const b of resolveFleetSpaceBadges(args.unifiedFleets ?? [], args.groups, args.rollups, args.locations)) {
+  // FLEET-GO 4a-1 — in-space fleet badges (parked unified fleets), reusing the moving badge's
+  // presentation under its own testid. No interpolation tick: a parked fleet does not move, and a
+  // FIGHTING one is repositioned by the ~1.5s useCombat poll that refreshes `units`, not by a clock
+  // here. S2 TERRITORY: the world read feeds the place-name clause.
+  // ⚑ This is also the AMBUSH-combat badge — per production, every one of the owner's off-centre
+  // fights lands here, not on the combat arm above (see the resolver's header).
+  for (const b of resolveFleetSpaceBadges(
+    args.unifiedFleets ?? [],
+    args.groups,
+    args.rollups,
+    args.locations,
+    args.encounters ?? [],
+    args.units ?? [],
+  )) {
     const p = args.norm({ x: b.x, y: b.y })
     out.push(
       createElement(TeamMarkerBadge, {

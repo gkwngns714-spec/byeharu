@@ -14,13 +14,13 @@ export function CaptainXpBar({ xp, level, instanceId }: { xp?: number; level?: n
   const p = captainProgress(xp ?? 0, level ?? 1)
   return (
     <div data-testid={`captain-xp-${instanceId}`} className="mt-1 flex items-center gap-1.5">
-      <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[9px] tabular-nums text-ink-muted">
+      <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-ink-muted">
         Lv {p.level}
       </span>
       <span className="w-16 shrink-0">
         <Meter pct={p.fraction * 100} tone="accent" />
       </span>
-      <span className="min-w-0 truncate font-mono text-[9px] tabular-nums text-ink-faint">
+      <span className="min-w-0 truncate font-mono text-[10px] tabular-nums text-ink-faint">
         {Math.round(p.intoLevel)}/{p.span} xp
       </span>
     </div>

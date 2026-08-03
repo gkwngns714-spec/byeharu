@@ -194,10 +194,11 @@ const loc = (over: Partial<MapLocation> & Pick<MapLocation, 'id' | 'name'>): Map
   y: 0,
   base_difficulty: 0,
   reward_tier: 0,
-  activity_type: 'trade',
+  activity_type: 'trade_visit', // the real ActivityType a trade_outpost carries; 'trade' is not one
   min_power_required: 0,
   is_public: true,
   status: 'active',
+  territory_radius: null, // 0217: always present in the get_world_map JSON; NULL = projects no territory
   ...over,
 })
 const pos = (over: Partial<FleetPosition> & Pick<FleetPosition, 'main_ship_id' | 'place'>): FleetPosition => ({
@@ -237,7 +238,7 @@ test('fleetPositionLocationLabel: in_space → "In deep space"', () => {
   )
 })
 
-test('fleetPositionLocationLabel: transit return leg (target_kind base) → "Returning home"', () => {
+test('fleetPositionLocationLabel: transit return leg (target_kind base) → "Returning"', () => {
   const label = fleetPositionLocationLabel(
     pos({
       main_ship_id: 's1',
@@ -249,7 +250,9 @@ test('fleetPositionLocationLabel: transit return leg (target_kind base) → "Ret
     }),
     world,
   )
-  expect(label).toBe('Returning home')
+  // ONE NAME PER STATE + NO-HOME: a return leg reads "Returning" — never "Returning home"
+  // (there is no home; ports are the only base), and it is the same word the roster badge uses.
+  expect(label).toBe('Returning')
 })
 
 test('fleetPositionLocationLabel: outbound transit fails closed (segment has no target id) → "In transit to its destination"', () => {
@@ -305,9 +308,10 @@ test('fleetPositionLocationLabel: berthed at a HIDDEN port → generic "Docked",
 // ── commandFleetState — the Command roster's per-ship badge (play-test fix, 2026-07-18) ───────────
 // "the command UI right now doesn't show the state of the fleet itself... The ship in Command —
 // fleet says 'ready to launch', which doesn't make sense." These pin: a MOVING fleet shows a
-// destination-agnostic verb + a live eta/progress; a DOCKED/BERTHED fleet reads "Docked" (never
-// "Ready to launch"); "Ready to launch" survives ONLY as the raw-status fallback for a genuinely
-// unresolved position.
+// destination-agnostic verb + a live eta/progress; a DOCKED/BERTHED fleet reads "Docked" (never a
+// readiness claim); the raw-status fallback survives ONLY for a genuinely unresolved position —
+// and since the one-name-per-state pass that fallback says "Idle" (neutral), the same word the
+// dossier's location resolver uses for the same state.
 
 const DEP = '2026-01-01T00:00:00Z'
 const ARR = '2026-01-01T00:10:00Z'
@@ -316,36 +320,36 @@ const arrMs = Date.parse(ARR)
 
 test('commandFleetState: no position row at all → falls back to the raw status label/tone', () => {
   const s = commandFleetState(undefined, world, 'home')
-  expect(s.label).toBe('Ready to launch')
-  expect(s.tone).toBe('success')
+  expect(s.label).toBe('Idle')
+  expect(s.tone).toBe('neutral')
   expect(s.etaText).toBeNull()
   expect(s.progress).toBeNull()
 })
 
 test('commandFleetState: place=hidden (no berth, no fleet — e.g. freshly grouped, never sent) → same raw-status fallback', () => {
-  // THE REGRESSION THIS FIX GUARDS: this is the one true "Ready to launch" case — a ship with no
-  // resolvable position genuinely has nothing holding it. It must NOT appear for a moving/docked ship.
+  // THE REGRESSION THIS FIX GUARDS: this is the one true raw-fallback case — a ship with no
+  // resolvable position. It reads "Idle" (quiet), and must NOT appear for a moving/docked ship.
   const s = commandFleetState(pos({ main_ship_id: 's1', place: 'hidden', status: 'home' }), world, 'home')
-  expect(s.label).toBe('Ready to launch')
-  expect(s.tone).toBe('success')
+  expect(s.label).toBe('Idle')
+  expect(s.tone).toBe('neutral')
 })
 
-test('commandFleetState: docked at a named port → "Docked", neutral — never "Ready to launch"', () => {
+test('commandFleetState: docked at a named port → "Docked", neutral — never the idle fallback', () => {
   const s = commandFleetState(pos({ main_ship_id: 's1', place: 'docked', location_id: 'haven' }), world, 'home')
   expect(s.label).toBe('Docked')
   expect(s.tone).toBe('neutral')
-  expect(s.label).not.toBe('Ready to launch')
+  expect(s.label).not.toBe('Idle')
   expect(s.etaText).toBeNull()
   expect(s.progress).toBeNull()
 })
 
-test('commandFleetState: BERTHED (unfleeted, docked) with raw status=home → "Docked", NOT "Ready to launch"', () => {
+test('commandFleetState: BERTHED (unfleeted, docked) with raw status=home → "Docked", NOT the idle fallback', () => {
   // The exact owner complaint: an unfleeted ship settled at a berth carries status='home', and the
-  // OLD badge read that raw column straight → "Ready to launch" even though the ship is plainly
-  // docked somewhere real.
+  // OLD badge read that raw column straight (then "Ready to launch", now "Idle") even though the
+  // ship is plainly docked somewhere real.
   const s = commandFleetState(pos({ main_ship_id: 's1', place: 'berthed', location_id: 'haven' }), world, 'home')
   expect(s.label).toBe('Docked')
-  expect(s.label).not.toBe('Ready to launch')
+  expect(s.label).not.toBe('Idle')
 })
 
 test('commandFleetState: docked at a COMBAT site → "In combat", danger', () => {
@@ -360,7 +364,7 @@ test('commandFleetState: in_space with no port → "In deep space", neutral', ()
   expect(s.tone).toBe('neutral')
 })
 
-test('commandFleetState: outbound transit → "Traveling", warning tone, live eta + mid-flight progress', () => {
+test('commandFleetState: outbound transit → "In transit", warning tone, live eta + mid-flight progress', () => {
   const s = commandFleetState(
     pos({
       main_ship_id: 's1',
@@ -373,7 +377,8 @@ test('commandFleetState: outbound transit → "Traveling", warning tone, live et
     world,
     'home', // the raw status must NOT leak through while a position resolves
   )
-  expect(s.label).toBe('Traveling')
+  // "In transit" — the SAME word the location line uses ("In transit to X"); one state, one name.
+  expect(s.label).toBe('In transit')
   expect(s.tone).toBe('warning')
   expect(s.etaText).not.toBeNull()
   expect(s.progress).not.toBeNull()

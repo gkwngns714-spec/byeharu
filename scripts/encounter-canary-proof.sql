@@ -86,10 +86,34 @@ update public.game_config set value='true'::jsonb  where key='encounter_authorin
 update public.game_config set value='true'::jsonb  where key='encounter_binding_authoring_enabled'; -- E2
 update public.game_config set value='false'::jsonb where key='encounter_resolver_enabled';        -- E3 starts DARK
 update public.game_config set value='false'::jsonb where key='pirate_intercept_enabled';          -- no en-route ambush noise
+-- 0300 lit combat_telegraph_enabled in the CHAIN, so a hunt arrival now QUEUES a telegraph instead
+-- of opening combat inline — and this harness's send-then-settle staging found "no active
+-- encounter" on every post-0300 chain (verified 2026-08-02: identical failure on main, no 0314).
+-- This proof's subject is the TICK, not the telegraph — so it OWNS the inline-opening world the
+-- danger-combat way: telegraph pinned dark in-txn (rolled back with everything else).
+update public.game_config set value='false'::jsonb where key='combat_telegraph_enabled';
 
 do $$
 begin
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);      -- v_variance = 1
+  -- 0320 pins the SECOND spread knob too. The per-hit roll 0314 added reads
+  --   coalesce(cfg_num('combat_hit_variance_pct'), v_var_pct)
+  -- so it INHERITED the damage-variance pin above only while that key did not exist. 0320 seeds it
+  -- (production runs it at 0.5), and the moment it exists the inheritance stops and every exact
+  -- damage equality below becomes a +/-50% roll. A proof must state the precondition it owns
+  -- rather than rely on a row's ABSENCE.
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);         -- exact numbers (0314 per-hit roll)
+  -- 0314: the tick arms REAL weapon cooldowns and now() is txn-frozen — a positive cooldown means
+  -- fire-once-per-proof, which would stall the REWARD block's second-tick wave clear. This harness
+  -- asserts the fire-every-tick world, so it OWNS that precondition in-txn, zeroed BEFORE anything
+  -- snapshots a cooldown into weapons_json (catalog included: the fixture gun is a crafted
+  -- autocannon). The cooldown property itself is proven where it is owned: danger-combat-proof's
+  -- RSFEEL block. (The per-hit damage roll is pinned to 0 EXPLICITLY above — it used to inherit
+  -- the damage-variance pin, which only worked while combat_hit_variance_pct did not exist; 0320
+  -- seeds that key, so the inheritance is gone and the pin has to be stated.)
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+  update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
   perform public.set_game_config('combat_tick_logging',  'true'::jsonb);
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
   perform public.set_game_config('enemy_hp_base',        '500'::jsonb);          -- the enemy survives the spawn tick
@@ -207,6 +231,20 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL ship (%): %', p_tag, r; end if;
   select main_ship_id into s from public.main_ship_instances where player_id = uP;
 
+  -- ARM FIRST (0333): items live PER PORT (`base_items`) and craft_module derives the port it spends
+  -- from the crafting ship's VALIDATED DOCK. Retiring the commission fleet below is exactly what
+  -- stops the ship being 'at_location', so a craft after it would answer `not_docked`. Craft while
+  -- the ship is still docked at Haven Reach and NAME it (the shim would resolve a sole ship, but
+  -- naming it is what makes the port this call spends from explicit). A NULL-base grant lands in
+  -- uP's oldest active base — the Home Base, location_id = Haven — i.e. the store the craft uses.
+  perform public.reward_grant('combat', gen_random_uuid(), uP, null,
+    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
+  r := pg_temp.call_as(uP, format('public.craft_module(%L, ''autocannon_battery'', %L::uuid)', 'ecp-gun-'||p_tag, s));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft (%): %', p_tag, r; end if;
+  m := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, %L)', m, s, 'ecp-fit-'||p_tag));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit (%): %', p_tag, r; end if;
+
   -- retire the commission dock fleet (the team-command-proof normalisation, mirrored).
   update public.main_ship_instances set status='home', updated_at=now() where main_ship_id = s;
   update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
@@ -214,14 +252,6 @@ begin
    where main_ship_id = s and status='present';
   update public.location_presence set status='completed', updated_at=now()
    where fleet_id in (select id from public.fleets where main_ship_id = s and status='destroyed') and status='active';
-
-  perform public.reward_grant('combat', gen_random_uuid(), uP, null,
-    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
-  r := pg_temp.call_as(uP, format('public.craft_module(%L, ''autocannon_battery'')', 'ecp-gun-'||p_tag));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft (%): %', p_tag, r; end if;
-  m := (r->>'instance_id')::uuid;
-  r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, %L)', m, s, 'ecp-fit-'||p_tag));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit (%): %', p_tag, r; end if;
 
   r := pg_temp.call_as(uP, format('public.upsert_ship_group(1, %L)', 'ECP '||p_tag));
   if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL group (%): %', p_tag, r; end if;

@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import {
+  getCommissionConfigRows,
   getMarketOffers,
   getShipCargoLots,
   getWalletBalance,
@@ -9,9 +10,10 @@ import {
   type GetMarketOffersResult,
   type ShipCargoLot,
 } from './tradeApi'
+import { foldStartingCredits, salvageWalletDisplay } from '../port/salvageMarket'
 import { tradeReasonMessage } from './tradeReasonMessage'
 import type { SelectableShip } from './useMainShipSelection'
-import { Button, Skeleton } from '../../components/ui'
+import { Button, Card, CardHeader, Skeleton } from '../../components/ui'
 import { ItemGlyph, itemLabel } from '../../components/items'
 
 // TRADE-UI-1 — trade surface for the SELECTED ship. Shows the ship's name, wallet balance, occupied cargo
@@ -19,9 +21,15 @@ import { ItemGlyph, itemLabel } from '../../components/items'
 // station's offers, with per-offer Buy/Sell actions (market_buy / market_sell). Each intentional click is one
 // idempotent command keyed by a fresh crypto.randomUUID() request id; the row's buttons disable while its
 // request is in flight so a double-click can't double-submit, and a success re-reads wallet/cargo/offers via
-// refresh(). DARK: mounted only behind TRADE_MARKET_ENABLED (osnReleaseGates.ts) AND the server rejects every
-// trade RPC while trade_market_enabled is false — double fail-closed. All {ok:false, reason} shapes collapse to
-// a quiet note via tradeReasonMessage; nothing throws into the render path.
+// refresh(). Mounted behind TRADE_MARKET_ENABLED (osnReleaseGates.ts) — LIVE since 2026-08-03 — and the server
+// independently rejects every trade RPC unless its own `trade_market_enabled` is true: still double
+// fail-closed, both layers now lit. All {ok:false, reason} shapes collapse to a quiet note via
+// tradeReasonMessage; nothing throws into the render path.
+//
+// THIS PANEL IS THE ECONOMY'S ONLY DOOR IN. `market_buy` is the sole player-reachable writer of
+// ship_cargo_lots, and haul contract delivery (haul_deliver_contract, 0179) FIFO-consumes those lots.
+// While this panel was unmounted, production held zero cargo lots in the entire game and every accepted
+// contract was permanently undeliverable. Anything that hides this panel hides the whole trade loop.
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -38,8 +46,26 @@ function unavailableNote(offers: GetMarketOffersResult | null): string {
   return 'Trading is not available here yet.'
 }
 
-export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | null }) {
-  const [wallet, setWallet] = useState<number>(0)
+export function MarketPanel({
+  selectedShip,
+  onCargoChanged,
+}: {
+  selectedShip: SelectableShip | null
+  /** Fired after a trade the server ACCEPTED — the ship's cargo lots have changed. PortScreen bumps
+   *  its shared lifecycleKey so the sibling that reads the same lots (the haul contract board's
+   *  "hold n/qty" + Deliver enable) re-reads instead of showing the pre-trade hold. Optional so the
+   *  panel stays mountable standalone (a harness, a future screen) with no wiring obligation. */
+  onCargoChanged?: () => void
+}) {
+  // WALLET HONESTY (the getWalletBalance sentinel semantics, 0093's LAZY wallet): number = a seeded
+  // row; null = genuinely NO row, so the player is still on `starting_credits` and 0 would be a FALSE
+  // claim; 'error' = a transient read failure, so neither. This panel previously collapsed all three
+  // to 0 — and on production 72 of 73 players with ships have no wallet row, so a lit market would
+  // have told nearly everyone they were broke while they held the starting balance. The fold and the
+  // display string are REUSED from salvageMarket.ts (generic, not salvage-specific — repairEconomy.ts
+  // re-exports the same two), never re-implemented here.
+  const [wallet, setWallet] = useState<number | null | 'error' | undefined>(undefined)
+  const [startingCredits, setStartingCredits] = useState<number | null>(null)
   const [lots, setLots] = useState<ShipCargoLot[]>([])
   const [offers, setOffers] = useState<GetMarketOffersResult | null>(null)
   const [loading, setLoading] = useState(true)
@@ -58,9 +84,18 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
   // true, so a post-trade refresh updates in place without a flicker; the mount path starts with loading=true.
   const refresh = useCallback(async () => {
     if (!shipId) return
-    const [w, l, o] = await Promise.all([getWalletBalance(), getShipCargoLots(shipId), getMarketOffers(shipId)])
+    const [w, l, o, cfg] = await Promise.all([
+      getWalletBalance(),
+      getShipCargoLots(shipId),
+      getMarketOffers(shipId),
+      // The lazy-wallet seed, from PUBLIC-READ game_config (0003) — the SalvageMarketPanel /
+      // ShipyardPanel / RepairPanel wallet-honesty posture. Error → [] → the fold answers null →
+      // the display degrades to an honest '—', never a fabricated number.
+      getCommissionConfigRows(),
+    ])
     if (!activeRef.current) return
-    setWallet(typeof w === 'number' ? w : 0) // null/'error' → this panel's prior 0 display
+    setWallet(w) // sentinels preserved verbatim — salvageWalletDisplay owns the rendering decision
+    setStartingCredits(foldStartingCredits(new Map(cfg.map((r) => [r.key, r.value])).get('starting_credits')))
     setLots(l)
     setOffers(o)
     setLoading(false)
@@ -92,6 +127,10 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
           : await marketSell(shipId, goodId, n, requestId)
       if (!activeRef.current) return
       if (res.ok) {
+        // The server accepted: this ship's cargo lots changed. Tell the screen BEFORE our own
+        // re-read so the sibling that renders the same lots (the contract board's hold count)
+        // refetches in the same beat — see the onCargoChanged prop note.
+        onCargoChanged?.()
         await refresh()
       } else {
         setRowError((e) => ({ ...e, [goodId]: tradeReasonMessage(res.reason) }))
@@ -108,12 +147,13 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
   const capM3 = selectedShip.cargo_capacity_m3
 
   return (
-    <div
-      data-testid="market-panel"
-      // UX-CLEANUP item 5: design-system tokens (warning tone = the trade identity), the overlay-block idiom.
-      className="mt-3 rounded-lg border border-warning/25 bg-surface-2/50 p-4 text-sm text-ink"
-    >
-      <h3 className="font-medium text-ink">🪙 Market — {selectedShip.name}</h3>
+    // WEIGHT = USAGE (2026-08-03): this is the highest-frequency panel on the Port screen and it
+    // was the only one NOT wearing the Card/CardHeader chrome — it read as lighter than the dark
+    // panels around it. Promoted to the shared primitives (warning tone = the trade family), the
+    // stray mt-3 (which double-spaced against Screen's space-y-4) dropped, and the emoji removed
+    // (no emoji in chrome — the Icon set is the one glyph system).
+    <Card tone="warning" data-testid="market-panel">
+      <CardHeader title="Market" subtitle={`Buy & sell goods — ${selectedShip.name}`} />
 
       {loading && (
         // UI R4: design-system Skeleton rows instead of bare loading text (same condition).
@@ -127,7 +167,7 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
       {!loading && (
         <>
           <dl className="mt-3 space-y-1.5">
-            <Row label="Credits" value={wallet.toLocaleString()} />
+            <Row label="Credits" value={salvageWalletDisplay(wallet, startingCredits)} />
             <Row label="Cargo (m³)" value={`${usedM3.toFixed(2)} / ${capM3.toFixed(2)}`} />
           </dl>
 
@@ -205,7 +245,8 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
                             <td
                               colSpan={4}
                               data-testid={`trade-error-${o.good_id}`}
-                              className="pb-1 text-right text-[10px] text-danger"
+                              // text-xs floor: this is the one line a FAILING trade must read.
+                              className="pb-1 text-right text-xs text-danger"
                             >
                               {err}
                             </td>
@@ -216,6 +257,12 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
                   })}
                 </tbody>
               </table>
+              {/* EMPTY STATE: a lit market with zero offers used to render a bare header row. */}
+              {offers.offers.length === 0 && (
+                <p data-testid="market-offers-empty" className="mt-2 text-center text-xs text-ink-faint">
+                  No goods traded at this port right now.
+                </p>
+              )}
             </div>
           ) : (
             <p className="mt-3 border-t border-edge pt-3 text-center text-xs text-ink-faint">
@@ -224,6 +271,6 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
           )}
         </>
       )}
-    </div>
+    </Card>
   )
 }

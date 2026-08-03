@@ -22,6 +22,8 @@ on:
     branches:
       - 'autopilot/**'
       - 'slice-spatial-sticky-mode**'
+      # 0314 arms real weapon cooldowns — this harness owns the zeroed-cooldown precondition now.
+      - 'slice-runescape-**'
 
 permissions:
   contents: read

@@ -1,36 +1,45 @@
 import { test, expect } from '@playwright/test'
-import { repairReasonMessage } from '../src/features/port/repairReasonMessage'
+import { repairReasonMessage } from '../src/features/ship/repairReasonMessage'
 
-// REPAIR-ECON — specs for the pure reason→message map (repair_ship_hull_at_port, migration 0201). Every
-// server reject string maps to non-empty player text; the transport fallback 'unavailable' and any
-// unknown code degrade to the generic line (never a raw code, never a throw). The salvageReasonMessage
-// mold. Run: `npx playwright test repairReasonMessage.spec.ts`.
+// ONE WAY TO REPAIR — specs for THE pure reason→message map (repair_ship_hull, migration 0335).
+// Every server reject string maps to non-empty player text; the transport fallback 'unavailable' and
+// any unknown code degrade to the generic line (never a raw code, never a throw). The
+// salvageReasonMessage mold. Run: `npx playwright test repairReasonMessage.spec.ts`.
 
-test('every 0201 server reason maps to a distinct non-empty message', () => {
-  const reasons = [
-    'repair_economy_disabled',
-    'not_authenticated',
-    'invalid_request',
-    'invalid_amount',
-    'ship_not_found',
-    'ship_destroyed',
-    'not_docked',
-    'nothing_to_repair',
-    'repair_misconfigured',
-    'insufficient_credits',
-  ]
+// The COMPLETE 0335 reject vocabulary. There is exactly one repair verb now, so this list is the
+// whole surface — if the server grows a reason and this list does not, the "distinct" assertion
+// below is what catches the missing copy.
+const REASONS = [
+  'repair_economy_disabled',
+  'not_authenticated',
+  'invalid_request',
+  'invalid_amount',
+  'ship_not_found',
+  'not_at_port',
+  'nothing_to_repair',
+  'hull_unrepairable',
+  'repair_misconfigured',
+  'insufficient_credits',
+]
+
+test('every 0335 server reason maps to a distinct non-empty message', () => {
   const seen = new Set<string>()
-  for (const r of reasons) {
+  for (const r of REASONS) {
     const msg = repairReasonMessage(r)
     expect(msg.length).toBeGreaterThan(0)
     expect(msg).not.toBe('Repair unavailable.') // each known reason has its OWN copy
+    expect(msg).not.toContain('_') // no snake_case code ever leaks to the screen
     seen.add(msg)
   }
-  expect(seen.size).toBe(reasons.length) // all distinct
+  expect(seen.size).toBe(REASONS.length) // all distinct
 })
 
-test('the destroyed-seam message points to the FREE recovery (not the paid desk)', () => {
-  expect(repairReasonMessage('ship_destroyed').toLowerCase()).toContain('free')
+test('the retired vocabularies are GONE — one verb, one set of reasons', () => {
+  // 0201's destroyed-seam reject and its dock reject both disappeared with the second function:
+  // a wreck is no longer refused (it is recovered) and position has one name. If either came back
+  // it would mean a second repair path had been re-introduced.
+  expect(repairReasonMessage('ship_destroyed')).toBe('Repair unavailable.')
+  expect(repairReasonMessage('not_docked')).toBe('Repair unavailable.')
 })
 
 test('the transport fallback + unknown codes degrade to the generic line (no raw code, no throw)', () => {

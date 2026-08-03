@@ -46,7 +46,8 @@ import { fetchShipCommandBuff, type ShipCommandBuffData } from './commandBuffApi
 import { shipMeterPair } from './meterPair'
 import { MeterPairBars } from './MeterPairBars'
 import { normalizeShipName, renameReasonMessage, shipNameProblem, SHIP_NAME_MAX } from './shipName'
-import { canRepair, canTow, repairGateNote, REPAIR_LABEL, TOW_LABEL, type RepairGate } from './shipRecovery'
+import { freshestShipStatus, type DisabledShipRow } from './shipRecovery'
+import { RepairPanel } from './RepairPanel'
 import { Badge, Button, Card, CardHeader, Notice, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 
@@ -57,12 +58,13 @@ import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 //     shipName.ts pure guards; rename_main_ship_self);
 //   · location — from the ONE fleet-positions row the screen threads down (ZERO own location
 //     reads; the fleetPositionLocationLabel adapter — the same fold every roster row uses);
-//   · condition — the shared shield/hull pair (MeterPairBars over shipMeterPair) + the free
-//     RECOVERY ACTION when the ship is disabled (NO-SOFTLOCK: the free path is the ONLY recovery
-//     for a destroyed ship — RepairPanel's paid desk defers to it — so an action must render here
-//     regardless of any flag). 0297 made that free repair POSITION-GATED, so which action shows is
-//     decided by the ONE pure gate (shipRecovery.repairGate) and BOTH commands are the screen's
-//     single implementations, threaded down as `recovery` — this component owns no copy of them;
+//   · condition — the shared shield/hull pair (MeterPairBars over shipMeterPair), then THE ONE
+//     REPAIR SURFACE (RepairPanel — its ONE mount, unconditional). It renders a wreck and a dent
+//     alike, because since 0335 the server is one verb whose wreck/dent difference is only the
+//     POLICY it applies. This component used to choose between TWO repair blocks here — the panel
+//     for a living hull and a hand-rolled free Repair/Tow block below it for a wreck — which is
+//     what the owner saw as a separate repair section. That block is DELETED, not hidden, and the
+//     panel owns the whole concept: both position reads, both commands, one vocabulary;
 //   · THE FITTING EDIT SURFACE — the ONE place fit/unfit renders (moved OUT of ModulesPanel's
 //     Workshop in this same slice; ModulesPanel keeps crafting only). The row IS the ship: fit
 //     targets this ship directly, no <select>. ENABLED when the ship's place is 'docked' or
@@ -83,29 +85,13 @@ import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 // NO optimistic UI: every command awaits the server then refetches (its own wave + the screen's
 // shared reads via onLoadoutChanged / onIdentityChanged).
 
-/**
- * 0297 — the disabled-ship recovery surface, decided and executed by ShipScreen (the ONE owner of
- * both commands) and rendered here. The detail never calls repair or tow itself: a second copy of a
- * recovery command is exactly the duplication that made the row and the detail drift apart before.
- */
-export interface ShipRecoveryView {
-  gate: RepairGate
-  repairing: boolean
-  /** Already player words (shipRecovery.repairErrorMessage) — never a raw server raise. */
-  repairError: string | null
-  towing: boolean
-  towNote: string | null
-  onRepair: () => Promise<void>
-  onTow: () => Promise<void>
-}
-
 export function FittingDetail({
   ship,
   shipRow,
   hullName,
   position,
   locations,
-  recovery,
+  disabledShips,
   allFittings,
   shipCaptains,
   refreshKey,
@@ -121,8 +107,8 @@ export function FittingDetail({
   /** This ship's ONE location fact — its map.fleetPositions row (undefined = not in the projection). */
   position: FleetPosition | undefined
   locations: MapLocation[]
-  /** The screen's recovery state + commands for THIS ship (0297). */
-  recovery: ShipRecoveryView
+  /** 0297's wreck-readiness read, from the screen's shared wave (null = unavailable → fail open). */
+  disabledShips: DisabledShipRow[] | null
   /** The WHOLE fittings read (server-lit) or null while dark/unloaded — per-ship subset derived here. */
   allFittings: ShipFittingRow[] | null
   /** This ship's assigned captains (server-lit) or null while dark. */
@@ -260,13 +246,20 @@ export function FittingDetail({
         <Skeleton className="h-5 w-36" />
         <Skeleton className="mt-3 h-8 w-full rounded-lg" />
         <Skeleton className="mt-2 h-8 w-2/3 rounded-lg" />
-        <span className="sr-only">Reading the ship&rsquo;s fitting…</span>
+        <span className="sr-only">Reading the ship&rsquo;s equipment…</span>
       </Card>
     )
   }
 
   // ── pure projections (specs: tests/shipDossier.spec.ts, tests/fittingView.spec.ts) ─────────────
-  const isDisabled = ship.status === 'destroyed'
+  // Status resolution is the ONE shared leaf (freshestShipStatus, spec'd in tests/shipRecovery.spec.ts):
+  // the refetched shared read first, the never-repolled selection row as the fallback — a fallback
+  // whose doc honestly notes it covers pre-load AND a failed shared read (fetchMyMainShips collapses
+  // errors to []). It is threaded straight into the ONE repair surface, which decides everything
+  // repair-shaped from it; this component keeps it only for the hull meter's danger tone. There is
+  // no longer a second decider here choosing between two repair blocks.
+  const shipStatus = freshestShipStatus(shipRow, ship)
+  const isDisabled = shipStatus === 'destroyed'
   const gate = fittingEditability(position)
   const locLabel = fleetPositionLocationLabel(position, locations)
   const litFittings = allFittings ? fittingsForShip(allFittings, shipId) : null
@@ -457,52 +450,23 @@ export function FittingDetail({
         </div>
       )}
 
-      {/* NO-SOFTLOCK — a destroyed ship recovers ONLY through the free path (RepairPanel's paid desk
-          explicitly defers to it), so a recovery ACTION renders here for any disabled ship,
-          independent of every flag. 0297: the free repair is position-gated, so the gate decides
-          which action — Repair in port, Tow when adrift — and an adrift ship is told plainly why
-          rather than being handed a button the server will refuse. */}
-      {isDisabled && (
-        <div className="mt-3 rounded-lg border border-edge bg-surface-2/50 p-3">
-          <Notice tone="warning" data-testid="mainship-disabled-note" className="mb-2">
-            {repairGateNote(recovery.gate)}
-          </Notice>
-          {recovery.towNote && (
-            <Notice tone="neutral" data-testid="mainship-tow-note" className="mb-2">
-              {recovery.towNote}
-            </Notice>
-          )}
-          {recovery.repairError && (
-            <Notice tone="danger" data-testid="mainship-repair-error" className="mb-2">
-              {recovery.repairError}
-            </Notice>
-          )}
-          {canTow(recovery.gate) ? (
-            <Button
-              variant="warning"
-              data-testid="mainship-tow"
-              busy={recovery.towing}
-              busyLabel="Towing…"
-              onClick={() => void recovery.onTow()}
-              className="min-h-11 w-full"
-            >
-              {TOW_LABEL}
-            </Button>
-          ) : (
-            <Button
-              variant="warning"
-              data-testid="mainship-repair"
-              disabled={!canRepair(recovery.gate)}
-              busy={recovery.repairing}
-              busyLabel="Repairing…"
-              onClick={() => void recovery.onRepair()}
-              className="min-h-11 w-full"
-            >
-              {REPAIR_LABEL}
-            </Button>
-          )}
-        </div>
-      )}
+      {/* ██ THE ONE REPAIR SURFACE ██ — right under the hull meter it mends. Mounted
+          UNCONDITIONALLY: it renders a wreck and a dent alike, from the same verb, the same
+          position vocabulary and the same copy. The second block that used to sit below this one
+          (a hand-rolled free Repair/Tow desk for a wreck) is deleted — it was the "separate repair
+          section" the owner asked to remove. The panel is fed FACTS only, never a decision: the
+          freshest status, 0297's wreck-readiness read, and this ship's own positions row; it folds
+          them into one position answer itself, so no caller can disagree with it about where a
+          ship is or what its hull needs. It stays silent for a healthy hull. */}
+      <RepairPanel
+        mainShipId={shipId}
+        shipName={ship.name}
+        shipStatus={shipStatus}
+        disabledShips={disabledShips}
+        position={position}
+        lifecycleKey={refreshKey}
+        onChanged={onIdentityChanged}
+      />
 
       {/* SHIP-POWER — the per-ship stats strip (server truth; hidden while dark/no-ship). */}
       {shipStats.kind !== 'hidden' && (
@@ -617,7 +581,7 @@ export function FittingDetail({
       {litFittings && (
         <>
           <div className="mt-4 flex items-baseline justify-between gap-2">
-            <SectionLabel className="mb-0">Fitted modules</SectionLabel>
+            <SectionLabel className="mb-0">Equipped modules</SectionLabel>
             <span data-testid="fitting-slot-usage" className="font-mono text-xs tabular-nums text-ink-muted">
               {slotLimit != null ? `${slotsUsed}/${slotLimit} slots` : `${slotsUsed} slots used`}
             </span>
@@ -662,16 +626,16 @@ export function FittingDetail({
                         data-testid={`fitting-unfit-${f.module_instance_id}`}
                         disabled={!gate.editable}
                         busy={isPending}
-                        busyLabel="Unfitting…"
+                        busyLabel="Removing…"
                         onClick={() =>
                           void runFitting(
                             { instance_id: f.module_instance_id, name: f.name },
                             () => unfitModuleFromShip(f.module_instance_id, crypto.randomUUID()),
-                            'Unfitted',
+                            'Removed',
                           )
                         }
                       >
-                        Unfit
+                        Remove
                       </Button>
                     </div>
                     {openModule === f.module_instance_id && moduleInfoPanel(f.module_type_id, f.module_instance_id)}
@@ -686,7 +650,7 @@ export function FittingDetail({
             </ul>
           ) : (
             <p data-testid="fitting-fitted-empty" className="mt-2 text-sm text-ink-faint">
-              No modules fitted.
+              No modules equipped.
             </p>
           )}
 
@@ -740,12 +704,12 @@ export function FittingDetail({
                             data-testid={`fitting-fit-${m.instance_id}`}
                             disabled={!gate.editable}
                             busy={isPending}
-                            busyLabel="Fitting…"
+                            busyLabel="Equipping…"
                             onClick={() =>
-                              void runFitting(m, () => fitModuleToShip(m.instance_id, shipId, crypto.randomUUID()), 'Fitted')
+                              void runFitting(m, () => fitModuleToShip(m.instance_id, shipId, crypto.randomUUID()), 'Equipped')
                             }
                           >
-                            Fit
+                            Equip
                           </Button>
                         </div>
                         {openModule === m.instance_id && moduleInfoPanel(m.module_type_id, m.instance_id)}
