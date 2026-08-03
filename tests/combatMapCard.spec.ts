@@ -11,9 +11,21 @@ const src = (rel: string) => readFileSync(join(here, '..', 'src', rel), 'utf8')
 const card = src('features/map/CombatMapCard.tsx')
 const mapScreen = src('features/map/MapScreen.tsx')
 
+/** Source with comment lines stripped — so an assertion about what the component RENDERS is not
+ *  satisfied by the paragraph that explains what it deliberately does not render. */
+const codeOnly = (text: string) =>
+  text
+    .split(/\r?\n/)
+    .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+    .join('\n')
+
 test('the card is mounted on the MAP, over the shell state that is already polled', () => {
   expect(mapScreen).toContain("import { CombatMapCard } from './CombatMapCard'")
-  expect(mapScreen).toContain('<CombatMapCard encounters={combat.encounters} units={combat.units} />')
+  // Every prop is the shell state already polled for the map — no second fetch, no second poll.
+  expect(mapScreen).toContain(`<CombatMapCard`)
+  for (const prop of ['encounters={combat.encounters}', 'units={combat.units}', 'ticks={combat.ticks}', 'autoExit={combat.autoExit}']) {
+    expect(mapScreen, `the card must be fed ${prop} from the shell`).toContain(prop)
+  }
 })
 
 test('the ops-side panel is NOT replaced — the map card is a second VIEW, not a move', () => {
@@ -46,11 +58,40 @@ test('a RETREATING encounter still shows — that is when the readout matters mo
   expect(card).toMatch(/status === 'active' \|\| e\.status === 'retreating'/)
 })
 
-test('both sides are shown, each with power and integrity', () => {
-  expect(card).toContain('player_power_current')
-  expect(card).toContain('enemy_power_current')
+// REPOINTED, and STRENGTHENED. The old assertion required the card to READ both power columns;
+// that was asserting the defect. `enemy_power_current` is the enemy's remaining INTEGRITY, not
+// power — 0299:150-156 says so in the migration that deliberately left it that way, and on every
+// production row it equals `enemy_integrity_current` exactly. Printing it beside the player's real
+// attack power under one word made a winning fight read as a hopeless one. The property that
+// matters now is the opposite one: both sides show the SAME comparable quantity, and the
+// non-comparable column is not rendered at all.
+test('both sides show the same comparable quantity — hull, never "power"', () => {
   expect(card).toContain('player_integrity_current')
   expect(card).toContain('enemy_integrity_current')
+  expect(card).toContain('player_integrity_max')
+  expect(card).toContain('enemy_integrity_max')
+  // the mislabelled column may appear ONLY in the comment that explains why it is not rendered
+  const code = codeOnly(card)
+  expect(code, 'the card must not render enemy_power_current').not.toContain('enemy_power_current')
+  expect(code, 'the card must not render player_power_current either — the two are not comparable').not.toContain('player_power_current')
+})
+
+test('the card carries the LAST EXCHANGE and the auto-retreat line, from the ONE derivations', () => {
+  // "am I winning" needs a rate, not two static bars; the exchange comes straight off combat_ticks.
+  expect(card).toContain('player_damage')
+  expect(card).toContain('enemy_damage')
+  // …and the safety line is the shared resolver, never re-derived here
+  expect(card).toContain('resolveAutoExitLine')
+  expect(card).not.toContain('auto_exit_hp_pct')
+})
+
+test('retreat is the ONE shared control, not a second copy of the verb', () => {
+  expect(card).toContain('<RetreatControl')
+  // a hand-rolled retreat here would mean two busy flags and two readings of the server reject
+  expect(card).not.toContain('requestRetreat')
+  const panel = src('features/combat/ActiveCombatPanel.tsx')
+  expect(panel).toContain('<RetreatControl')
+  expect(panel).not.toContain('requestRetreat')
 })
 
 test('ship counts sum alive_count — a unit row is a STACK, not one ship', () => {

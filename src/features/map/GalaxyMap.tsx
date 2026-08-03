@@ -10,7 +10,7 @@ import { miningFieldRangeLayer } from './miningFieldLayer'
 import { MiningFieldMarker } from './MiningFieldMarker'
 import type { MiningField } from '../mining/miningTypes'
 import { dangerZoneLayer } from './dangerZoneLayer'
-import { spatialCombatLayer } from './spatialCombatLayer'
+import { combatFocusWorldPoints, focusableEncounterId, spatialCombatLayer } from './spatialCombatLayer'
 import type { CombatEncounter, CombatEvent, CombatUnit } from '../combat/combatTypes'
 import type { DangerZoneLite } from './pirateApi'
 import type { GroupRow } from '../command/teamRoster'
@@ -21,11 +21,12 @@ import { SpaceMoveTargetMarker } from './SpaceMoveTarget'
 import { classifyPointerGesture } from './spaceMoveCommand'
 import { isMapBackground } from './mapBackground'
 import { type FleetGoTargetView } from './fleetGoTarget'
-import { screenDeltaToViewBox, screenToWorld, worldToViewBox, type ViewBoxCoord, type WorldCoord } from './openSpaceTransform'
+import { screenDeltaToViewBox, screenToWorld, viewBoxDisplayRect, worldToViewBox, type ViewBoxCoord, type WorldCoord } from './openSpaceTransform'
 import {
   VIEW,
   BUTTON_ZOOM_STEP,
   clampPan,
+  fitCameraToWorldPoints,
   focusCamera,
   focusWorldPoints,
   zoomCameraAbout,
@@ -318,6 +319,68 @@ export function GalaxyMap({
   // Cursor-anchored wheel zoom — the ONE binding, shared with the World Editor. The map now zooms
   // toward the point under the pointer instead of the viewBox centre.
   useWheelZoom(svgEl, zoomByFactor)
+
+  // ── HOW BIG IS A PIXEL HERE ────────────────────────────────────────────────────────────────────
+  // CSS px per viewBox unit, from the ONE letterbox authority (openSpaceTransform.viewBoxDisplayRect)
+  // applied to this element's real box. The combat readout needs it because `÷ k` is constant in
+  // VIEWBOX units, not pixels: on a 390px-wide map that is 0.39×, which rendered a nominally-10
+  // damage number at 3.9 CSS px. Measured, never assumed — and re-measured on resize/rotate, the only
+  // time it can change. Nothing else consumes it and no POSITION depends on it: this corrects
+  // screen-constant chrome only.
+  const [pxPerViewBox, setPxPerViewBox] = useState(1)
+  useEffect(() => {
+    if (!svgEl) return
+    const measure = () => {
+      const r = svgEl.getBoundingClientRect()
+      if (r.width === 0 || r.height === 0) return
+      const s = viewBoxDisplayRect({ width: r.width, height: r.height }).scale
+      if (Number.isFinite(s) && s > 0) setPxPerViewBox(s)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(svgEl)
+    return () => ro.disconnect()
+  }, [svgEl])
+
+  // ── FOCUS THE FIGHT ────────────────────────────────────────────────────────────────────────────
+  // A battle is 5-6 world units of weapon range and a 6-unit formation ring (0316) inside a 20000-unit
+  // world, so at the map's own default camera the whole engagement is a handful of pixels — smaller
+  // than the damage number drawn over it. Nothing in the map offered to go there: a grep for
+  // focusCamera/zoomTo/centerOn across src/features/map found no combat caller at all, so seeing your
+  // own fight required knowing to scroll ~25 wheel notches at the right spot.
+  //
+  // The camera goes to the fight; the fight is NOT redrawn larger than it is (see
+  // combatFocusWorldPoints' header for why an arena presentation scale was rejected). It composes
+  // the SAME `fitCameraToWorldPoints` the initial view and the reset button already use — one
+  // framing authority, given different points.
+  //
+  // AUTOMATIC ONCE PER BATTLE, then the camera is the player's again. Deliberately NOT gated on
+  // `userMovedRef`: a fight starting is the one event that outranks a camera the player set earlier,
+  // and it is exactly the case the content-fit's "frozen once touched" rule would have silently
+  // skipped for every player who has ever panned. It fires once per encounter id, so a poll cannot
+  // yank the view back while the player is looking elsewhere mid-fight, and ⟲ still resets.
+  const fightId = useMemo(
+    () => focusableEncounterId(combatEncounters, combatUnits),
+    [combatEncounters, combatUnits],
+  )
+  const focusFight = useCallback(
+    (id: string | null) => {
+      const pts = combatFocusWorldPoints(combatUnits, id)
+      if (pts.length === 0) return
+      userMovedRef.current = true // the battle framing is now the camera; no auto-fit may override it
+      setView(fitCameraToWorldPoints(pts))
+    },
+    [combatUnits],
+  )
+  const focusedFightRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!fightId || focusedFightRef.current === fightId) return
+    focusedFightRef.current = fightId
+    // Intentional: frame the battle the moment it becomes visible. Ref-gated to exactly one
+    // application per encounter — this is the "derive the view from newly-arrived data" effect, not
+    // a render loop.
+    focusFight(fightId)
+  }, [fightId, focusFight])
   // Reset re-enables the deterministic content-fit camera (frames the player ship / active movement,
   // else named content). NOT k=1/origin — at k=1 the fixed frame would show current seed content as a
   // tiny central cluster.
@@ -537,7 +600,7 @@ export function GalaxyMap({
               while spatial_combat_enabled is off, no combat_units row carries a position, so `combatUnits`
               has no positioned rows and this renders NOTHING — byte-identical to today. Re-renders each
               ~1.5s poll (useCombat), so approach + kiting + fire animate as ticks land. */}
-          {spatialCombatLayer({ units: combatUnits, events: combatEvents, norm, k: view.k })}
+          {spatialCombatLayer({ units: combatUnits, events: combatEvents, norm, k: view.k, pxScale: pxPerViewBox })}
 
           {/* 4C-CLIENT: the per-ship overlay layer (shipLayer — route + MainShipMarker) is DELETED
               with the per-ship movement client (S5 already deleted the redundant fleetShipsLayer).
@@ -595,6 +658,21 @@ export function GalaxyMap({
           stack here moved into the ONE bottom-center FleetCommandPanel (MapScreen). */}
       <OverlayRail slot="top-right">
         <OverlayPanel className="flex flex-col gap-1">
+          {/* FOCUS THE FIGHT — a CAMERA control, so it lives with the other camera controls rather
+              than forking a second place that moves the view. Mounted only while a battle actually
+              has ships on the map; a clean map is unchanged. */}
+          {fightId && (
+            <Button
+              size="icon"
+              variant="warning"
+              data-testid="map-focus-fight"
+              onClick={() => focusFight(fightId)}
+              aria-label="Focus the battle"
+              title="Focus the battle"
+            >
+              ⌖
+            </Button>
+          )}
           <Button size="icon" onClick={() => zoomByFactor(BUTTON_ZOOM_STEP)} aria-label="Zoom in">+</Button>
           <Button size="icon" onClick={() => zoomByFactor(1 / BUTTON_ZOOM_STEP)} aria-label="Zoom out">−</Button>
           <Button size="icon" onClick={reset} aria-label="Reset view" className="text-xs">⟲</Button>

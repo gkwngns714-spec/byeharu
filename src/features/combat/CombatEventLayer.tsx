@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { CombatEvent } from './combatTypes'
+import { feedRows } from './combatFeed'
 import { SectionLabel } from '../../components/ui'
 import { ItemChip } from '../../components/items'
 
@@ -37,8 +38,18 @@ function describe(e: CombatEvent): { icon: string; text: ReactNode } {
         ? { icon: '🔧', text: `Pirate hit landed — ${who} took ${dmg} damage` }
         : { icon: '💢', text: `Our hit landed — ${who} took ${dmg} damage` }
     }
-    case 'unit_destroyed':
-      return { icon: '☠️', text: `${num(p.count)} ${cap(p.group)} destroyed` }
+    case 'unit_destroyed': {
+      // The SPATIAL payload is {count, unit_id} — it has no `group`, so the old line read
+      // `${count} ${cap(undefined)} destroyed` and printed "1  destroyed": no noun, two spaces.
+      // `source` is the side that FIRED the killing shot (0299:931-933), so the side that LOST the
+      // ship is the other one — which is the fact worth saying and the one thing the payload
+      // reliably supports. The aggregate arm still carries `group`; it keeps its own wording.
+      const n = num(p.count) || 1
+      if (p.group) return { icon: '☠️', text: `${n} ${cap(p.group)} destroyed` }
+      return e.source === 'pirate'
+        ? { icon: '☠️', text: n > 1 ? `${n} of our ships destroyed` : 'One of our ships was destroyed' }
+        : { icon: '☠️', text: n > 1 ? `${n} pirate ships destroyed` : 'Pirate ship destroyed' }
+    }
     case 'explosion':
       // ITEM-VIZ: the metal reward as an ItemChip (glyph + name + mono qty) — same payload data.
       if (p.wave_cleared)
@@ -70,7 +81,7 @@ function sideColor(source: string | null) {
 }
 
 export function CombatEventLayer({ events }: { events: CombatEvent[] }) {
-  const recent = events.slice().sort((a, b) => b.id - a.id).slice(0, 14)
+  const recent = feedRows(events)
 
   return (
     <div>

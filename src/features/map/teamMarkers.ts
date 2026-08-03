@@ -9,6 +9,7 @@ import { resolveFleetFightPosition } from './fleetFightPosition'
 import type { MapLocation } from './mapTypes'
 import { interpolateMovementPoint } from './movementInterpolation'
 import { territoryAt } from './territoryAt'
+import { fleetLabel } from '../command/fleetLabel'
 
 // TEAMMAP-2 — the team's OWN map marker (owner directive: "The team should have a marker of its own
 // and be shown on map"). Read-only display layer over server-committed rows; additive beside the
@@ -74,7 +75,7 @@ export function resolveTeamMarkers(
     const name = nameById.get(gid) as string
     out.push({
       groupId: gid,
-      label: list.length > 1 ? `Fleet ${name} · ${list.length} ships` : `Fleet ${name}`,
+      label: list.length > 1 ? `${fleetLabel(name)} · ${list.length} ships` : fleetLabel(name),
       x: p.x,
       y: p.y,
       fleetCount: list.length,
@@ -97,7 +98,7 @@ export function resolveTeamDockBadges(rollups: readonly DockedTeamRollup[]): Tea
     .filter((r): r is DockedTeamRollup & { locationId: string } => r.locationId !== null && r.memberCount > 0)
     .map((r) => ({
       groupId: r.groupId,
-      label: `Fleet ${r.name} ${r.dockedCount}/${r.memberCount}`,
+      label: `${fleetLabel(r.name)} ${r.dockedCount}/${r.memberCount}`,
       locationId: r.locationId,
     }))
 }
@@ -171,7 +172,7 @@ export function resolveFleetSpaceBadges(
     seen.add(f.group_id)
     const name = nameById.get(f.group_id) as string
     const n = countByGroup.get(f.group_id) ?? 0
-    const base = n > 1 ? `Fleet ${name} · ${n} ships` : `Fleet ${name}`
+    const base = n > 1 ? `${fleetLabel(name)} · ${n} ships` : fleetLabel(name)
     // S2 TERRITORY: a WORLD-domain point is exactly what territoryAt takes, and it reads the point
     // the badge is actually DRAWN at, so the label can never name a place the badge is not near.
     // No containing territory → the plain label (never a guessed orbit).
@@ -266,7 +267,7 @@ export function resolveFleetCombatBadges(
     seen.add(f.group_id)
     const name = nameById.get(f.group_id) as string
     const n = countByGroup.get(f.group_id) ?? 0
-    const base = n > 1 ? `Fleet ${name} · ${n} ships` : `Fleet ${name}`
+    const base = n > 1 ? `${fleetLabel(name)} · ${n} ships` : fleetLabel(name)
     out.push({
       groupId: f.group_id,
       label: `${base} · in combat at ${loc.name}`,

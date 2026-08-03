@@ -211,6 +211,7 @@ export function buildShellState(state: LookState): ShellState {
     ticks: [],
     units: [],
     reports: active ? REPORTS : [],
+    autoExit: {},
     refresh: noopAsync,
   }
 

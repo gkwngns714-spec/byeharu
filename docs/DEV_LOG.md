@@ -77,6 +77,84 @@ strong — a real overlap still invalidates the property it proves.
 
 ---
 
+## 2026-08-03 — THE COMBAT AUDIT, AND THE WAVE AROUND IT (0334 → 0335, + client)
+
+Recorded after the fact: this covers ~15 merges the log skipped while the work was in flight.
+
+### Migrations
+- **0334 `a_wreck_is_where_its_fleet_is`** — a destroyed ship resolved NO port, so recovery
+  demanded a tow the owner correctly called unnecessary: *"we have arrived at a dock already."*
+  The resolver never read `status`; the wrecks simply owned no per-ship fleet row (one is minted
+  for a ship that comes BACK from a fight) and, being grouped, could hold no berth. New arm: a
+  grouped ship's port is the single port its group's live fleets are docked at. Verified on prod —
+  Sparrow IV/V went `null` → **Haven**.
+- **0335 `one_way_to_repair`** — `repair_main_ship` and `repair_ship_hull_at_port` DROPPED for one
+  `repair_ship_hull`. They had **two position authorities that disagreed**: a berthed ship read
+  at-a-port for recovery and `not_docked` for mending on the same tick, and the client carried copy
+  written only to explain that bug. **Also fixed a live outage:** 0201 rejected any price ≤ 0 as
+  `repair_misconfigured`, so setting `repair_credits_per_hp = 0` to make repair FREE had turned it
+  OFF. Now 0 means free; null/negative still fail closed.
+
+### Config (production, via the new `scripts/set-knob.mjs`)
+- `combat_tick_logging` **false → true**. A knob documented "debug only" was gating four
+  player-facing surfaces: `combat_ticks` held **88 rows total, all from one June encounter** — every
+  fight since wrote nothing, so "Latest exchange" and every round log were permanently empty.
+- `pirate_intercept_min_risk` **0.98 → 0.02**, `exposure_floor` **1 → 0.15**. The floor sat above
+  every other term, so fleet strength, zone size, crossing length and all four per-zone overrides
+  were **inert**: every intercept since 19 July was risk 0.98 and **28/28 hit**. Came from a
+  migration named *reliable_ambush* — a test aid never turned back down.
+- `repair_credits_per_hp` **0.5 → 0** (owner's call, temporary, pending the loot economy).
+
+### Client
+- Trade buy-surface restored — a compile-time `false` let the tree-shaker **delete `market_buy`
+  from the shipped bundle**, so `ship_cargo_lots` had 0 rows game-wide and haul contracts could be
+  accepted but never delivered.
+- **One repair surface** — there were THREE renderings of one concept; a selected wreck showed two
+  repair buttons at once.
+- **A game that reads** — hierarchy, foldable sections, nav is now Map · Ships · Fleet · Port ·
+  Mission with Command folded into Fleet and Account behind the profile corner.
+
+### The four-domain combat audit — findings, not yet all fixed
+Ran against prod at 0335. One agent **executed the deployed mover** for 14 ticks; one built a
+**tick-exact simulator** that reproduced encounter `d9d19ed3` (escaped tick 37, 1 wave, 131/500)
+against a prediction of tick 36–37, 1 wave, 131/500.
+
+**Engine (in flight, 0336):** a multi-gun ship discards its extra guns on kill ticks (target is
+chosen once, before the weapon loop); every enemy in a wave spawns on ONE identical point (8/8 prod
+encounters); retreating spawns a fresh wave that fires while the player cannot (**4 confirmed prod
+deaths** at 3.4–5.8 s into the window, each wiping the whole haul); the four terminal arms are
+unconfined raise sites; The Furnace (D=60, hidden) is a **mathematically unwinnable** no-damage
+standoff at `d = R_e − v_p`.
+
+**Screen (in flight):** the battle occupies **0–9 px** at the map's own camera (1 world unit =
+1.53 px after 0316's ÷5 — distances were scaled, the drawing was not); multiple hits on one ship
+collapse to one splat; the **killing blow renders nothing**; `enemy_power_current` is the enemy's
+HP printed under the label "power" (a first fight reads 15 vs 312 while the player is *winning*);
+loot renders `Items ×[object Object]` and is silently dropped from reports; no retreat control
+where the fight is drawn and no combat indicator in the nav.
+
+**Economy (deferred by the owner until combat is playable — RS3 as the target):** Reaver and
+Blackden have `min_power_required = 0` but need ~16 and ~26, so a starter fleet is guaranteed a
+zero-reward loss; the reward curve is **inverted** (Snare pays ~10× Blackden for identical hull
+cost, because loot gates on wave DEPTH); **metal is a dead currency** — 179,599 banked, `build_orders`
+empty since launch; repair at 0.5/hp was 2.5× the break-even of the BEST location.
+
+### Lessons that cost real time today
+- **A migration that cannot deploy holds every later migration hostage.** 0333 aborted on a grant
+  assert and blocked 0334; it had to be reverted from `main`. Never merge a migration before it can
+  deploy.
+- **Establish, never assert.** New tables inherit a Supabase project-default `GRANT ALL` to `anon`
+  (eight verbs, `pg_default_acl`); CI has no project defaults, so it is structurally blind to this.
+- **Duplicate migration versions are not a git conflict** — the second is silently skipped and the
+  slice deploys as a no-op with everything green.
+- **Proof suites that fire only on branch globs go dead unnoticed.** FOUR found this session; one had
+  been unrunnable for ~100 migrations.
+- The DANGER-ZONE fixture guard fails at random because seeded zones are rebuilt with `random()` per
+  fresh DB — a randomly-shaped world vs a fixed coordinate. Re-run past four times; being fixed at
+  the root in 0336.
+
+---
+
 ## 2026-08-03 — ITEMS LIVE AT PORTS (`slice-items-live-at-ports`, migration 0333 rev.3)
 
 **The owner's laws, restated because they had to be repeated:** items are not unlimited (VOLUME
