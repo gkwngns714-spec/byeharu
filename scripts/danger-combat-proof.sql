@@ -152,6 +152,30 @@
 --                              the derivation is a fallback, never an override. A single-hull fleet
 --                              is its own lead. RED by construction on the pre-0315 body: a flagless
 --                              fleet put nobody on the anchor and nobody at priority 100.
+--   DZCOMBAT_PASS_DEADFIRE   — (0317) A UNIT DESTROYED EARLIER IN A TICK TAKES NO TURN. Two staged
+--                              fights on the real ambush chain.
+--                              (A) A MUTUAL ONE-SHOT KILL — one hull, one pirate, each sized from
+--                              the fight's own numbers to destroy the other in a single shot at
+--                              distance 0. Post-0317 the tick must produce EXACTLY ONE salvo, EXACTLY
+--                              ONE landed hit and EXACTLY ONE destroyed unit: whichever the loop
+--                              reaches first kills, and the loser — whichever SIDE it is — emits no
+--                              attack event and deals no damage. RED by construction on the pre-0317
+--                              body, where both fired and both died (two of each). The block also
+--                              proves the loser WAS a live threat (its own weapon, at the real
+--                              distance, would have destroyed the survivor) so the silence is not
+--                              vacuous, and that the survivor's hull is untouched.
+--                              (B) THE LIVING STILL ACT, AND THE FREEZE SURVIVES — a two-hull fleet
+--                              against a six-pirate wave where exactly one pirate dies. Every pirate
+--                              still alive after the tick must have fired exactly once (the fix must
+--                              not silence survivors), and BOTH player hulls must have fired at the
+--                              SAME pirate — the one the frozen snapshot named — with only ONE of
+--                              those two shots landing damage. That second shot on a corpse is the
+--                              proof that targeting still resolves from the pre-move freeze and that
+--                              0317 re-reads the ACTOR's liveness only, never the snapshot.
+--                              (C) THE INVARIANT, OVER BOTH FIGHTS AND BOTH SIDES — no unit emits a
+--                              missile_salvo at a seq later than the unit_destroyed event naming it
+--                              in the same tick. Quantified over every unit of every side, so a
+--                              violation anywhere fails it.
 --
 -- Self-rolling-back (begin;…rollback;, no COMMIT); every dark flag flipped ONLY inside the txn;
 -- provisioning is 100% real-RPC; group_sortie_members and combat_units are NEVER hand-written.
@@ -3235,6 +3259,453 @@ begin
   end if;
 
   raise notice 'DZCOMBAT_PASS_NOLIVE ok: empty_group kept its own code; a damaged-but-alive ship at instance hp 0 (the tick''s round-to-zero shape) still moved; with every ship destroyed, go(coordinate)/go(port)/go_route/dock all refused with the typed no_living_ships and minted nothing (source-derived, not observed: the pre-0312 body reaches movement_create right here — the member count is death-blind and 0166''s fold has no status filter — a proof can only run the post-fix chain); and on exactly that dead fleet the brake, the tow, the repair and the re-assign all worked — one living ship un-bricked the group';
+end $$;
+
+-- ════════ DZCOMBAT_PASS_DEADFIRE (0317): THE DEAD DO NOT SHOOT — AND THE LIVING STILL DO ═════════
+-- THE DEFECT: the spatial fire loop iterates a population snapshot frozen before any movement, and
+-- re-reads only the TARGET's liveness before applying damage. The ACTOR's is never re-read, so a
+-- unit destroyed earlier in the same tick still reached its own iteration and still moved and fired.
+--
+-- (A) THE MUTUAL KILL — RED BY CONSTRUCTION on the pre-0317 body. One hull, one pirate, both at the
+--     engagement anchor (distance 0), each sized FROM THE FIGHT'S OWN NUMBERS to destroy the other
+--     in a single shot. On the head both fired and both died: two salvos, two landed hits, two
+--     destroyed units. Post-0317 the tick must produce EXACTLY ONE of each — whichever the loop
+--     reaches first kills, and the loser takes no turn.
+--     WHICH SIDE loses is NOT asserted, because it is NOT determined: v_units is built by jsonb_agg
+--     over an unordered scan of combat_units, so the firing order inside a tick is heap order and
+--     effectively arbitrary. That is a real finding about the engine, not a gap in this block — and
+--     it is why the block asserts the SYMMETRIC property (the loser, whichever side it is, emits no
+--     attack event and deals no damage) instead of two side-specific outcomes. A construction that
+--     pinned the side would be asserting an ambient implementation detail.
+--     VACUITY IS CLOSED THREE WAYS: the loser must have been a live threat (its own weapon, at the
+--     real post-tick distance, within its real range, would have destroyed the survivor outright);
+--     the survivor must be un-hit (the single landed hit names the LOSER, never the survivor); and
+--     the wave size is derived from the same knobs the tick reads, never assumed.
+-- (B) THE LIVING STILL ACT, AND THE FREEZE SURVIVES. A two-hull fleet against a six-pirate wave in
+--     which exactly one pirate dies. Every pirate still alive after the tick must have fired exactly
+--     once — the failure mode where 0317 goes green by silencing everybody. And BOTH hulls must have
+--     fired at the SAME pirate, the one the frozen snapshot named, with only ONE of those two shots
+--     landing: the second lands on a corpse and deals nothing. That corpse shot is the positive
+--     proof that targeting still resolves from the pre-move freeze — 0317 re-reads the ACTOR's own
+--     liveness and nothing else, so simultaneity is intact.
+-- (C) THE INVARIANT, OVER BOTH FIGHTS AND BOTH SIDES: no unit emits a missile_salvo at a seq later
+--     than the unit_destroyed event naming it in the same tick.
+-- Staging is the RSFEEL idiom end to end: fresh players, real RPCs only, a real drawn zone, the real
+-- movement processor firing a real ambush, and pg_temp.ae_tick as the one cadence driver. Every knob
+-- this block depends on is OWNED here and restored afterwards.
+do $$
+declare
+  r jsonb; n int; n2 int; n_units int; n_exp int; n_alive int;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  uA uuid; sA uuid; gA uuid;
+  uB uuid; sB1 uuid; sB2 uuid; gB uuid;
+  o_x double precision; o_y double precision; v_verts jsonb;
+  v_mv uuid; v_encA uuid; v_encB uuid;
+  mv record; pi record;
+  k_hp double precision; k_atk double precision; k_frng double precision; k_erng double precision;
+  k_dvar double precision; k_hvar double precision; k_ecd double precision; k_pcd double precision;
+  v_pw double precision; v_pwA double precision; v_php double precision; v_pshield double precision; v_pdef double precision;
+  v_bd double precision; v_defb double precision;
+  v_danger int; v_hpsc double precision; v_atksc double precision;
+  v_tA int; v_tB int;
+  v_dead uuid; v_live uuid; v_live_side text; v_live_def double precision;
+  v_dead_pow double precision; v_dead_rng double precision; v_would double precision;
+  v_live_eff double precision; v_dist double precision;
+  v_esc uuid; v_esc_hp double precision; v_tgt uuid; v_hit_unit uuid;
+  ax double precision; ay double precision; v_gap double precision;
+begin
+  -- ── OWN every knob this block reads back, and capture it for restore. ───────────────────────────
+  k_hp   := coalesce(public.cfg_num('enemy_hp_base'), 14);
+  k_atk  := coalesce(public.cfg_num('enemy_attack_base'), 1.0);
+  k_frng := coalesce(public.cfg_num('combat_player_fallback_weapon_range'), 5);
+  k_erng := coalesce(public.cfg_num('enemy_synthetic_range_base'), 3.6);
+  k_dvar := coalesce(public.cfg_num('combat_damage_variance_pct'), 0);
+  k_hvar := coalesce(public.cfg_num('combat_hit_variance_pct'), 0);
+  k_ecd  := coalesce(public.cfg_num('enemy_synthetic_cooldown_seconds'), 0);
+  k_pcd  := coalesce(public.cfg_num('combat_player_fallback_weapon_cooldown_seconds'), 0);
+  v_defb := coalesce(public.cfg_num('defense_curve_base'), 100);
+  if v_defb <= 0 then raise exception 'DEADFIRE FAIL: defense_curve_base is % — the mitigation arithmetic below has no base', v_defb; end if;
+  -- OWN the determinism world rather than inherit it (the proofs-never-assert-ambient-defaults law):
+  -- every damage number below is sized to the exact hit, so a live spread would make "one shot kills"
+  -- a coin flip, and a live cooldown against txn-frozen now() would silence a unit for the wrong
+  -- reason. Restored with the rest at the end of the block.
+  perform public.set_game_config('combat_damage_variance_pct',                    '0'::jsonb);
+  perform public.set_game_config('combat_hit_variance_pct',                       '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds',              '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+
+  -- ══ (A) THE MUTUAL KILL ════════════════════════════════════════════════════════════════════════
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.dfa.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uA;
+  insert into public.player_wallet (player_id, balance) values (uA, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uA, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: commission A: %', r; end if;
+  select main_ship_id into sA from public.main_ship_instances where player_id = uA;
+  r := pg_temp.call_as(uA, 'public.upsert_ship_group(1, ''Dead Fire A'')');
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: group A: %', r; end if;
+  gA := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uA, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sA, gA));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: assign A: %', r; end if;
+  r := pg_temp.call_as(uA, format('public.set_fleet_command_ship(%L::uuid, true)', sA));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: command A: %', r; end if;
+  -- decouple 0310's arm: a fleet that auto-retreats would hold fire (v_offense) and prove nothing.
+  r := pg_temp.call_as(uA, format('public.set_group_auto_exit(%L::uuid, false, 30)', gA));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: auto-exit off A: %', r; end if;
+
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uA and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gA
+   limit 1;
+  if o_x is null then raise exception 'DEADFIRE FAIL: could not resolve A''s docked origin'; end if;
+  v_verts := jsonb_build_array(
+    jsonb_build_array(o_x - 100, o_y + 400),
+    jsonb_build_array(o_x + 100, o_y + 400),
+    jsonb_build_array(o_x + 100, o_y + 600),
+    jsonb_build_array(o_x - 100, o_y + 600));
+  r := pg_temp.call_as(uA, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC Dead Fire Zone A', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: zone A: %', r; end if;
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gA, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: go A: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'DEADFIRE FAIL: no pending ambush on A''s leg (risk knobs are 1.0)'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_encA from public.combat_encounters where player_id = uA and status = 'active';
+  if v_encA is null then raise exception 'DEADFIRE FAIL: the ambush opened no encounter for A'; end if;
+
+  -- the ONE hull is its own lead (0315), so it stands ON the anchor and the wave spawns ON it too:
+  -- distance 0, inside every seeded range, and the fight opens on tick 1.
+  select count(*) into n from public.combat_units where encounter_id = v_encA and side = 'player';
+  if n <> 1 then raise exception 'DEADFIRE FAIL: A fielded % player unit(s) (the mutual kill needs exactly 1)', n; end if;
+  select hp_current, coalesce(shield_current, 0), coalesce(defense_snapshot, 0)
+    into v_php, v_pshield, v_pdef
+    from public.combat_units where encounter_id = v_encA and side = 'player';
+  select max((w->>'power')::double precision) into v_pw
+    from public.combat_units u, jsonb_array_elements(u.weapons_json) w
+   where u.encounter_id = v_encA and u.side = 'player';
+  if v_php is null or v_php <= 0 or v_pw is null or v_pw <= 0 then
+    raise exception 'DEADFIRE FAIL: A''s hull carries hp % / weapon power % — the one-shot sizing has nothing to size against', v_php, v_pw;
+  end if;
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_encA;
+  if v_bd is null or v_bd <= 0 then raise exception 'DEADFIRE FAIL: base_difficulty %', v_bd; end if;
+
+  -- danger derived from the same inputs the tick reads (never assumed): a fresh encounter is danger
+  -- 1, so the wave is exactly ONE pirate — which is what makes the kill mutual rather than a volley.
+  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_encA)
+              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_encA)))
+                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
+  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
+  if n_exp <> 1 then
+    raise exception 'DEADFIRE FAIL: staging derives % pirate(s) for the mutual kill (want exactly 1)', n_exp;
+  end if;
+  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
+  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- the pirate dies to ONE player shot: half the player's own weapon power, spread over one unit.
+  perform public.set_game_config('enemy_hp_base',
+    to_jsonb(round(((0.5 * v_pw) / (v_bd * v_hpsc))::numeric, 9)));
+  -- and the hull dies to ONE pirate shot: three times its hull-plus-shield, de-mitigated.
+  perform public.set_game_config('enemy_attack_base',
+    to_jsonb(round((((3.0 * (v_php + v_pshield)) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+
+  perform pg_temp.ae_tick(v_encA);
+  select tick_number into v_tA from public.combat_encounters where id = v_encA;
+  select count(*) into n_units from public.combat_units where encounter_id = v_encA and side = 'enemy';
+  if n_units <> 1 then
+    raise exception 'DEADFIRE FAIL: % pirate unit(s) spawned into the mutual kill (want the danger-derived 1)', n_units;
+  end if;
+
+  -- THE THREE COUNTS. On the pre-0317 body every one of them is 2.
+  select count(*) into n from public.combat_events
+   where encounter_id = v_encA and tick_number = v_tA and event_type = 'missile_salvo';
+  if n <> 1 then
+    raise exception 'DEADFIRE FAIL: % attack event(s) in the mutual-kill tick (want exactly 1) — a unit that was destroyed earlier in the tick still fired', n;
+  end if;
+  select count(*) into n from public.combat_events
+   where encounter_id = v_encA and tick_number = v_tA and event_type = 'hull_damage';
+  if n <> 1 then
+    raise exception 'DEADFIRE FAIL: % landed hit(s) in the mutual-kill tick (want exactly 1) — the dead unit dealt damage after its own destruction', n;
+  end if;
+  select count(*) into n from public.combat_events
+   where encounter_id = v_encA and tick_number = v_tA and event_type = 'unit_destroyed';
+  if n <> 1 then
+    raise exception 'DEADFIRE FAIL: % unit(s) destroyed in the mutual-kill tick (want exactly 1) — both units died, so the loser still fired from beyond the grave', n;
+  end if;
+
+  select (payload_json->>'unit_id')::uuid into v_dead from public.combat_events
+   where encounter_id = v_encA and tick_number = v_tA and event_type = 'unit_destroyed';
+  select (payload_json->>'unit_id')::uuid into v_live from public.combat_events
+   where encounter_id = v_encA and tick_number = v_tA and event_type = 'missile_salvo';
+  select (payload_json->>'unit_id')::uuid into v_hit_unit from public.combat_events
+   where encounter_id = v_encA and tick_number = v_tA and event_type = 'hull_damage';
+  if v_dead is null or v_live is null or v_hit_unit is null then
+    raise exception 'DEADFIRE FAIL: the tick did not name the dead / the firer / the hit unit (% / % / %) — absence is failure, not a pass', v_dead, v_live, v_hit_unit;
+  end if;
+  if v_dead = v_live then
+    raise exception 'DEADFIRE FAIL: the destroyed unit is the one that fired — a unit that was destroyed earlier in the tick still fired';
+  end if;
+  if v_hit_unit <> v_dead then
+    raise exception 'DEADFIRE FAIL: the survivor took damage from a unit that was already destroyed (the one landed hit names %, not the loser %)', v_hit_unit, v_dead;
+  end if;
+  select alive_count into n from public.combat_units where id = v_dead;
+  if n is null or n <> 0 then raise exception 'DEADFIRE FAIL: the unit the tick reported destroyed still has alive_count %', n; end if;
+  select alive_count into n from public.combat_units where id = v_live;
+  if n is null or n <= 0 then raise exception 'DEADFIRE FAIL: the firer did not survive its own kill (alive_count %)', n; end if;
+
+  -- NON-VACUITY: the loser was a live threat. Its own weapon, at the real distance between the two
+  -- units and inside its own real range, would have DESTROYED the survivor outright had it fired.
+  select side, coalesce(defense_snapshot, 0), hp_current + coalesce(shield_current, 0)
+    into v_live_side, v_live_def, v_live_eff
+    from public.combat_units where id = v_live;
+  select max((w->>'power')::double precision), max((w->>'range')::double precision)
+    into v_dead_pow, v_dead_rng
+    from public.combat_units u, jsonb_array_elements(u.weapons_json) w
+   where u.id = v_dead;
+  select public.osn_distance(a.pos_x, a.pos_y, b.pos_x, b.pos_y) into v_dist
+    from public.combat_units a, public.combat_units b where a.id = v_dead and b.id = v_live;
+  if v_dead_pow is null or v_dead_rng is null or v_dist is null or v_live_eff is null then
+    raise exception 'DEADFIRE FAIL: the loser''s weapon (% power / % range), the distance (%) or the survivor''s pool (%) is NULL — the loser could not have killed its target anyway would be unprovable', v_dead_pow, v_dead_rng, v_dist, v_live_eff;
+  end if;
+  if v_dist > v_dead_rng then
+    raise exception 'DEADFIRE FAIL: the loser was out of range (% > %) — the loser could not have killed its target anyway, so its silence proves nothing', v_dist, v_dead_rng;
+  end if;
+  v_would := v_dead_pow * (case when v_live_side = 'player' then v_defb / (v_defb + v_live_def) else 1 end);
+  if v_would < v_live_eff then
+    raise exception 'DEADFIRE FAIL: the loser could not have killed its target anyway (% damage vs % hull+shield) — the mutual kill was not mutual and this block proves nothing', v_would, v_live_eff;
+  end if;
+
+  v_pwA := v_pw;   -- A's own weapon power, kept for the notice (B re-uses v_pw for its own fleet)
+
+  -- ══ (B) THE LIVING STILL ACT, AND THE FREEZE SURVIVES ══════════════════════════════════════════
+  -- Two hulls, six pirates, exactly one pirate dying. The ranges are OWNED here: the escort spawns on
+  -- the formation ring, which the seeded post-0316 ranges deliberately exceed (that is 0313/0316's
+  -- CLOSURE property, proven above and not re-litigated) — this block needs everyone firing on tick 1
+  -- instead, so it sets both ranges wide and restores them.
+  perform public.set_game_config('combat_player_fallback_weapon_range', '60'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_base',          '60'::jsonb);
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.dfb.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uB;
+  insert into public.player_wallet (player_id, balance) values (uB, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uB, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: commission B1: %', r; end if;
+  select main_ship_id into sB1 from public.main_ship_instances where player_id = uB;
+  r := pg_temp.call_as(uB, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: commission B2: %', r; end if;
+  select main_ship_id into sB2 from public.main_ship_instances
+   where player_id = uB and main_ship_id <> sB1 limit 1;
+  if sB2 is null then raise exception 'DEADFIRE FAIL: no second hull materialised for B'; end if;
+  r := pg_temp.call_as(uB, 'public.upsert_ship_group(1, ''Dead Fire B'')');
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: group B: %', r; end if;
+  gB := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sB1, gB));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: assign B1: %', r; end if;
+  r := pg_temp.call_as(uB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sB2, gB));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: assign B2: %', r; end if;
+  r := pg_temp.call_as(uB, format('public.set_fleet_command_ship(%L::uuid, true)', sB1));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: command B: %', r; end if;
+  r := pg_temp.call_as(uB, format('public.set_group_auto_exit(%L::uuid, false, 30)', gB));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: auto-exit off B: %', r; end if;
+
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uB and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gB
+   limit 1;
+  if o_x is null then raise exception 'DEADFIRE FAIL: could not resolve B''s docked origin'; end if;
+  v_verts := jsonb_build_array(
+    jsonb_build_array(o_x - 100, o_y + 400),
+    jsonb_build_array(o_x + 100, o_y + 400),
+    jsonb_build_array(o_x + 100, o_y + 600),
+    jsonb_build_array(o_x - 100, o_y + 600));
+  r := pg_temp.call_as(uB, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC Dead Fire Zone B', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: zone B: %', r; end if;
+  r := pg_temp.call_as(uB, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gB, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'DEADFIRE FAIL: go B: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'DEADFIRE FAIL: no pending ambush on B''s leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_encB from public.combat_encounters where player_id = uB and status = 'active';
+  if v_encB is null then raise exception 'DEADFIRE FAIL: the ambush opened no encounter for B'; end if;
+
+  select count(*) into n from public.combat_units where encounter_id = v_encB and side = 'player';
+  if n <> 2 then raise exception 'DEADFIRE FAIL: B fielded % player unit(s) (this scenario needs exactly 2)', n; end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_encB and side = 'player' and aggro_priority = 0;
+  if n <> 1 then
+    raise exception 'DEADFIRE FAIL: B carries % screened hull(s) at aggro 0 (want exactly 1, so the whole volley lands on one known escort)', n;
+  end if;
+  select id, hp_current + coalesce(shield_current, 0) into v_esc, v_esc_hp
+    from public.combat_units where encounter_id = v_encB and side = 'player' and aggro_priority = 0;
+  if v_esc is null or v_esc_hp is null or v_esc_hp <= 0 then
+    raise exception 'DEADFIRE FAIL: B has no screened escort to absorb the volley (% / %)', v_esc, v_esc_hp;
+  end if;
+  -- GEOMETRY PREMISE, owned rather than assumed: the pirates spawn ON the engagement anchor and the
+  -- escort spawns on the formation ring, so the ring IS the gap both the escort's gun and every
+  -- pirate's gun must cover for tick 1 to be a full exchange. NULL-pinned (the 0313 law): a missing
+  -- coordinate would make this premise pass while proving nothing.
+  select engagement_x, engagement_y into ax, ay from public.combat_encounters where id = v_encB;
+  select public.osn_distance(ax, ay, u.pos_x, u.pos_y) into v_gap
+    from public.combat_units u where u.id = v_esc;
+  if ax is null or ay is null or v_gap is null then
+    raise exception 'DEADFIRE FAIL: B''s anchor (%,%) or its escort''s spawn gap (%) is NULL — an unpositioned fight cannot prove everyone was in range', ax, ay, v_gap;
+  end if;
+  if v_gap >= 60 then
+    raise exception 'DEADFIRE FAIL: B''s escort spawned % units out, at or beyond the 60-unit range this block owns — the formation grew and tick 1 would no longer be a full exchange', v_gap;
+  end if;
+  select min((w->>'power')::double precision) into v_pw
+    from public.combat_units u, jsonb_array_elements(u.weapons_json) w
+   where u.encounter_id = v_encB and u.side = 'player';
+  select coalesce(max(defense_snapshot), 0) into v_pdef
+    from public.combat_units where encounter_id = v_encB and side = 'player';
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_encB;
+  if v_pw is null or v_pw <= 0 or v_bd is null or v_bd <= 0 then
+    raise exception 'DEADFIRE FAIL: B''s weapon power % / base_difficulty % cannot size the wave', v_pw, v_bd;
+  end if;
+
+  -- a SIX-pirate wave: rewind started_at so the tick's own danger derivation reaches the cap.
+  update public.combat_encounters set started_at = started_at - interval '930 seconds' where id = v_encB;
+  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_encB)
+              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_encB)))
+                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
+  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
+  if n_exp < 3 then
+    raise exception 'DEADFIRE FAIL: staging derives only % pirate(s) — with fewer than 3 there are too few survivors to prove the living still act', n_exp;
+  end if;
+  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
+  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- each pirate dies to ONE player shot (unit hp = half the player's weapon power) …
+  perform public.set_game_config('enemy_hp_base',
+    to_jsonb(round(((0.5 * v_pw * n_exp) / (v_bd * v_hpsc))::numeric, 9)));
+  -- … and the whole volley costs the screened escort about a tenth of its pool, so nobody on the
+  -- player side dies and "the living still act" is asked of a fight that is still going.
+  perform public.set_game_config('enemy_attack_base',
+    to_jsonb(round((((0.1 * v_esc_hp) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+
+  perform pg_temp.ae_tick(v_encB);
+  select tick_number into v_tB from public.combat_encounters where id = v_encB;
+  select count(*) into n_units from public.combat_units where encounter_id = v_encB and side = 'enemy';
+  if n_units <> n_exp then
+    raise exception 'DEADFIRE FAIL: % pirate unit(s) spawned into B (want the danger-derived %)', n_units, n_exp;
+  end if;
+
+  -- exactly ONE pirate died, and no player hull did (the fight is still a fight).
+  select count(*) into n from public.combat_events
+   where encounter_id = v_encB and tick_number = v_tB and event_type = 'unit_destroyed';
+  if n <> 1 then
+    raise exception 'DEADFIRE FAIL: % pirate(s) destroyed in B''s tick (want exactly 1 — two player guns firing at the ONE snapshot-named target)', n;
+  end if;
+  select (payload_json->>'unit_id')::uuid into v_tgt from public.combat_events
+   where encounter_id = v_encB and tick_number = v_tB and event_type = 'unit_destroyed';
+  select side into v_live_side from public.combat_units where id = v_tgt;
+  if v_live_side is distinct from 'enemy' then
+    raise exception 'DEADFIRE FAIL: the unit destroyed in B is on side % (this scenario kills a pirate)', v_live_side;
+  end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_encB and side = 'player' and alive_count = 0;
+  if n <> 0 then
+    raise exception 'DEADFIRE FAIL: % player hull(s) died in B''s tick — the volley was sized not to, and the survivors assert below would be measuring a different fight', n;
+  end if;
+
+  -- THE FREEZE SURVIVES: both hulls fired, at the SAME pirate, and only ONE of the two landed.
+  select count(*) into n from public.combat_events
+   where encounter_id = v_encB and tick_number = v_tB and event_type = 'missile_salvo' and source = 'player';
+  if n <> 2 then
+    raise exception 'DEADFIRE FAIL: % player salvo(s) in B''s tick (want exactly 2 — a living unit went silent)', n;
+  end if;
+  select count(*) into n from public.combat_events
+   where encounter_id = v_encB and tick_number = v_tB and event_type = 'missile_salvo' and source = 'player'
+     and (payload_json->>'target_id')::uuid = v_tgt;
+  if n <> 2 then
+    raise exception 'DEADFIRE FAIL: only % of 2 player shots aimed at the snapshot-named pirate — the second shooter re-acquired a live target, so the population freeze was re-read and simultaneity is gone', n;
+  end if;
+  select count(*) into n from public.combat_events
+   where encounter_id = v_encB and tick_number = v_tB and event_type = 'hull_damage' and target = 'pirate';
+  if n <> 1 then
+    raise exception 'DEADFIRE FAIL: % landed hit(s) on the pirate side (want exactly 1 — the second shot must land on a corpse and deal nothing)', n;
+  end if;
+
+  -- THE LIVING STILL ACT: every pirate still alive after the tick fired exactly once in it.
+  select count(*) into n_alive from public.combat_units
+   where encounter_id = v_encB and side = 'enemy' and alive_count > 0;
+  if n_alive < 2 then
+    raise exception 'DEADFIRE FAIL: only % pirate(s) survived B''s tick — with fewer than 2 the survivors assert is vacuous', n_alive;
+  end if;
+  select count(*) into n from public.combat_units u
+   where u.encounter_id = v_encB and u.side = 'enemy' and u.alive_count > 0
+     and not exists (select 1 from public.combat_events ev
+                      where ev.encounter_id = v_encB and ev.tick_number = v_tB
+                        and ev.event_type = 'missile_salvo'
+                        and (ev.payload_json->>'unit_id')::uuid = u.id);
+  if n <> 0 then
+    raise exception 'DEADFIRE FAIL: % of % surviving pirate(s) emitted no attack event — a living unit went silent, which is how this fix goes green by breaking the fight', n, n_alive;
+  end if;
+  select count(*) into n from public.combat_events ev
+   where ev.encounter_id = v_encB and ev.tick_number = v_tB and ev.event_type = 'missile_salvo'
+     and ev.source = 'pirate'
+     and (ev.payload_json->>'unit_id')::uuid = v_tgt
+     and ev.seq > (select d.seq from public.combat_events d
+                    where d.encounter_id = v_encB and d.tick_number = v_tB
+                      and d.event_type = 'unit_destroyed'
+                      and (d.payload_json->>'unit_id')::uuid = v_tgt);
+  if n <> 0 then
+    raise exception 'DEADFIRE FAIL: the destroyed pirate fired % time(s) after its own destruction event', n;
+  end if;
+
+  -- ══ (C) THE INVARIANT, OVER BOTH FIGHTS AND BOTH SIDES ═════════════════════════════════════════
+  select count(*) into n2 from public.combat_events
+   where encounter_id in (v_encA, v_encB) and event_type = 'unit_destroyed';
+  if n2 < 2 then
+    raise exception 'DEADFIRE FAIL: only % destruction event(s) across both fights — the ordering invariant would be vacuous', n2;
+  end if;
+  select count(*) into n from public.combat_events s
+    join public.combat_events d
+      on d.encounter_id = s.encounter_id
+     and d.tick_number  = s.tick_number
+     and d.event_type   = 'unit_destroyed'
+     and d.payload_json->>'unit_id' = s.payload_json->>'unit_id'
+   where s.encounter_id in (v_encA, v_encB)
+     and s.event_type = 'missile_salvo'
+     and s.seq > d.seq;
+  if n <> 0 then
+    raise exception 'DEADFIRE FAIL: % attack event(s) were emitted by a unit after the event that destroyed it in the same tick — the dead unit fired after its own destruction', n;
+  end if;
+
+  -- ── restore every knob this block owned. ───────────────────────────────────────────────────────
+  perform public.set_game_config('enemy_hp_base',                       to_jsonb(k_hp));
+  perform public.set_game_config('enemy_attack_base',                   to_jsonb(k_atk));
+  perform public.set_game_config('combat_player_fallback_weapon_range', to_jsonb(k_frng));
+  perform public.set_game_config('enemy_synthetic_range_base',          to_jsonb(k_erng));
+  perform public.set_game_config('combat_damage_variance_pct',                     to_jsonb(k_dvar));
+  perform public.set_game_config('combat_hit_variance_pct',                        to_jsonb(k_hvar));
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds',               to_jsonb(k_ecd));
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', to_jsonb(k_pcd));
+
+  raise notice 'DZCOMBAT_PASS_DEADFIRE ok: in a MUTUAL one-shot kill (hull power %, pirate power %, distance %, both inside range) the tick produced exactly ONE salvo, ONE landed hit and ONE destroyed unit — the loser (side %) emitted nothing and dealt nothing even though its own weapon would have dealt % against the survivor''s % hull+shield; and in a % -pirate wave exactly one pirate died while all % survivors still fired and BOTH hulls still fired at the pirate the FROZEN snapshot named, only one of those two shots landing — the corpse shot that proves targeting was not re-read; across both fights, zero attack events were emitted after the event that destroyed their firer',
+    v_pwA, v_dead_pow, v_dist, (select side from public.combat_units where id = v_dead), v_would, v_live_eff, n_units, n_alive;
 end $$;
 
 -- ── WHY THIS BLOCK IS LAST IN THE FILE ─────────────────────────────────────────────────────────

@@ -1,0 +1,62 @@
+name: HIDDEN STAYS HIDDEN — anon-seat visibility + grant-lockdown disposable proof (no production)
+
+# Proves migration 0318 on a THROWAWAY local Supabase — NEVER production.
+#   * `supabase start` applies the FULL chain 0001 -> 0318, so 0318's own self-asserts (the
+#     get_world_map full-body md5 pin, the reverse-derivation parity check, the grant end state, the
+#     one-policy-per-table check) execute against real Postgres. A regression there aborts the apply
+#     RED before the proof below even runs.
+#   * the proof then observes the SECURITY property from the seat a PostgREST request occupies —
+#     `set local role anon` / `set local role authenticated` — which is the only seat from which an
+#     RLS policy is observable at all (postgres carries BYPASSRLS, so the migration's own asserts are
+#     structurally blind to it).
+# Write-then-ROLLBACK: the proof seeds its own fixtures and rolls everything back; it flips no
+# committed flag and keeps no row. No `environment:` on any job, so none can read production secrets.
+# Modeled on pirate-zone-grant-lockdown-proof.yml / combat-fallback-weapon-proof.yml.
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'autopilot/**'
+      - 'slice-**'
+      - 'osn3-**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hidden-stays-hidden-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: HIDDEN-STAYS-HIDDEN selftest (DB-free static harness checks)
+        run: bash scripts/hidden-stays-hidden-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0318)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: HIDDEN-STAYS-HIDDEN real-chain proof (anon seat, authenticated seat, owner seat)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/hidden-stays-hidden-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

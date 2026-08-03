@@ -125,9 +125,17 @@ export interface GalaxyMapData {
   refresh: () => Promise<void>
 }
 
-/** Mirrors the server's own coalesce(cfg_num('mining_extract_radius'), 750) fallback (0104) — used
- *  only if the game_config row is somehow missing/unreadable, so the range ring still renders. */
-const DEFAULT_MINING_EXTRACT_RADIUS = 750
+/** Last-resort fallback for the range ring, used only if the game_config row is missing or
+ *  unreadable. The AUTHORITY is game_config.mining_extract_radius, fetched below.
+ *
+ *  60 is the LIVE value (production, re-read 2026-08-03) and, since migration 0320, the chain's
+ *  too. It used to be 750 — mirroring the server's own stale
+ *  `coalesce(cfg_num('mining_extract_radius'), 750)` (0104) — so a client that lost the config row
+ *  drew a ring twelve and a half times too wide and told the player they could extract from fields
+ *  the server would refuse. A fallback that disagrees with production is not a safety net; it is a
+ *  second, wrong authority that only shows up when something is already going wrong. (The
+ *  server-side 750 literals are a separate slice — see docs/DEV_LOG.md.) */
+const DEFAULT_MINING_EXTRACT_RADIUS = 60
 
 async function fetchMainShip(mainShipId?: string | null): Promise<MainShipLite | null> {
   // Owner-read RLS returns only the caller's ship(s). Plural-safe: read ALL and resolve deterministically

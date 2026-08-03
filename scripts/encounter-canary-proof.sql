@@ -96,12 +96,21 @@ update public.game_config set value='false'::jsonb where key='combat_telegraph_e
 do $$
 begin
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);      -- v_variance = 1
+  -- 0320 pins the SECOND spread knob too. The per-hit roll 0314 added reads
+  --   coalesce(cfg_num('combat_hit_variance_pct'), v_var_pct)
+  -- so it INHERITED the damage-variance pin above only while that key did not exist. 0320 seeds it
+  -- (production runs it at 0.5), and the moment it exists the inheritance stops and every exact
+  -- damage equality below becomes a +/-50% roll. A proof must state the precondition it owns
+  -- rather than rely on a row's ABSENCE.
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);         -- exact numbers (0314 per-hit roll)
   -- 0314: the tick arms REAL weapon cooldowns and now() is txn-frozen — a positive cooldown means
   -- fire-once-per-proof, which would stall the REWARD block's second-tick wave clear. This harness
   -- asserts the fire-every-tick world, so it OWNS that precondition in-txn, zeroed BEFORE anything
   -- snapshots a cooldown into weapons_json (catalog included: the fixture gun is a crafted
   -- autocannon). The cooldown property itself is proven where it is owned: danger-combat-proof's
-  -- RSFEEL block. (The per-hit damage roll inherits the variance-0 pin above.)
+  -- RSFEEL block. (The per-hit damage roll is pinned to 0 EXPLICITLY above — it used to inherit
+  -- the damage-variance pin, which only worked while combat_hit_variance_pct did not exist; 0320
+  -- seeds that key, so the inheritance is gone and the pin has to be stated.)
   perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
   perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
   update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;

@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
--- 0317 — ONE AUTHORITY FOR ATTACK
+-- 0331 — ONE AUTHORITY FOR ATTACK
 --        (the fold's combat_power becomes the damage a ship deals; a weapon decides HOW it is
 --         delivered, never HOW MUCH — and the fold itself stops carrying a dead path)
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -189,7 +189,19 @@
 -- state to unwind: this migration writes no player data and backfills nothing. Fights opened under
 -- it are unaffected by the revert for the same freeze-at-creation reason stated above.
 --
--- Forward-only: 0001-0316 unedited.
+-- ── WHY 0331 AND NOT 0317 ────────────────────────────────────────────────────────────────────────
+-- This slice was authored as 0317. While it was in CI, main took that number twice over
+-- (the-dead-do-not-shoot as 0317, then hidden-stays-hidden 0318, drawn-zones 0319, the-knobs 0320,
+-- the-mover 0330) and DEPLOYED all of them: production's head is 20260618000330. A migration number
+-- that is already applied on production can never be applied again, so the file is renumbered rather
+-- than merged into a collision. Nothing about the slice changed with the number: the two functions it
+-- rewrites were re-read from production at head 0330 and are byte-identical to the text these hunks
+-- were cut from (calculate_expedition_stats md5 3b7d9f216ce9aa4554d9c75e08b8c4bd, still 0205's body
+-- verbatim; combat_create_group_encounter md5 eb8251db724e633c929add3ed7d397ff, still 0301+0308+0315+
+-- 0316). 0317 rewrote process_combat_ticks and 0320 deleted eight game_config rows — neither touched
+-- either function, and neither deleted the knob this migration deletes.
+--
+-- Forward-only: 0001-0330 unedited.
 
 begin;
 set local time zone 'UTC';
@@ -206,19 +218,19 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'calculate_expedition_stats';
   if v_n <> 1 then
-    raise exception '0317 PRECONDITION FAIL: public.calculate_expedition_stats has % definition(s), want exactly 1', v_n;
+    raise exception '0331 PRECONDITION FAIL: public.calculate_expedition_stats has % definition(s), want exactly 1', v_n;
   end if;
   select regexp_replace(pg_get_functiondef(p.oid), '--[^' || chr(10) || ']*', '', 'g') into v_src
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'calculate_expedition_stats';
   if position('v_cmdbuffs_enabled' in v_src) = 0 then
-    raise exception '0317 PRECONDITION FAIL: the deployed fold does not carry the 0205 command-buff hunk — the slices were cut against a different head';
+    raise exception '0331 PRECONDITION FAIL: the deployed fold does not carry the 0205 command-buff hunk — the slices were cut against a different head';
   end if;
   if position('support_craft_types' in v_src) = 0 then
-    raise exception '0317 PRECONDITION FAIL: the deployed fold has no support-craft loop — it has already been simplified by something this migration does not know about';
+    raise exception '0331 PRECONDITION FAIL: the deployed fold has no support-craft loop — it has already been simplified by something this migration does not know about';
   end if;
   if position('pirate_attention' in v_src) = 0 then
-    raise exception '0317 PRECONDITION FAIL: the deployed fold does not emit pirate_attention at all — this is not the function 0317 was generated against';
+    raise exception '0331 PRECONDITION FAIL: the deployed fold does not emit pirate_attention at all — this is not the function 0331 was generated against';
   end if;
 
   -- combat_create_group_encounter — BY NAME, never by a typed signature: 0301 gave it two more
@@ -227,33 +239,33 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'combat_create_group_encounter';
   if v_n <> 1 then
-    raise exception '0317 PRECONDITION FAIL: public.combat_create_group_encounter has % definition(s), want exactly 1', v_n;
+    raise exception '0331 PRECONDITION FAIL: public.combat_create_group_encounter has % definition(s), want exactly 1', v_n;
   end if;
   select regexp_replace(pg_get_functiondef(p.oid), '--[^' || chr(10) || ']*', '', 'g') into v_src
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'combat_create_group_encounter';
   if position('p_engagement_x' in v_src) = 0 then
-    raise exception '0317 PRECONDITION FAIL: the deployed builder does not carry the 0301 mandatory engagement point';
+    raise exception '0331 PRECONDITION FAIL: the deployed builder does not carry the 0301 mandatory engagement point';
   end if;
   if position('group_sortie_live_members(pr.fleet_id)' in v_src) = 0
      or position('module_is_firing_weapon(t)' in v_src) = 0 then
-    raise exception '0317 PRECONDITION FAIL: the deployed builder lacks the 0308 authorities';
+    raise exception '0331 PRECONDITION FAIL: the deployed builder lacks the 0308 authorities';
   end if;
   if position('v_lead_ship_id' in v_src) = 0 or position('v_is_lead' in v_src) = 0 then
-    raise exception '0317 PRECONDITION FAIL: the deployed builder has no 0315 lead derivation';
+    raise exception '0331 PRECONDITION FAIL: the deployed builder has no 0315 lead derivation';
   end if;
   if position('combat_player_speed_scale' in v_src) = 0 then
-    raise exception '0317 PRECONDITION FAIL: the deployed builder has no 0316 combat speed scale — the head this slice was cut against is not deployed';
+    raise exception '0331 PRECONDITION FAIL: the deployed builder has no 0316 combat speed scale — the head this slice was cut against is not deployed';
   end if;
   if position('v_weight_total' in v_src) > 0 then
-    raise exception '0317 PRECONDITION FAIL: the deployed builder already normalises weapon power — refusing to re-emit over an unknown edit';
+    raise exception '0331 PRECONDITION FAIL: the deployed builder already normalises weapon power — refusing to re-emit over an unknown edit';
   end if;
 end $pre$;
 
 -- ── 1. CAPTURE what must not move, BEFORE any write (derived, never hard-coded) ─────────────────
-create temp table _0317_before (k text primary key, v text) on commit drop;
+create temp table _0331_before (k text primary key, v text) on commit drop;
 
-insert into _0317_before
+insert into _0331_before
 select 'mod_' || id || '_' || key, value from (
   select id, 'power' as key, coalesce(power::text, '<null>') as value from public.module_types
   union all select id, 'range', coalesce(range::text, '<null>') from public.module_types
@@ -262,16 +274,16 @@ select 'mod_' || id || '_' || key, value from (
   union all select id, 'stats_json', stats_json::text from public.module_types
 ) m;
 
-insert into _0317_before
+insert into _0331_before
 select 'cfg_' || key, value::text from public.game_config
  where key in ('combat_player_fallback_weapon_range', 'combat_player_fallback_weapon_projectile_speed',
                'combat_player_fallback_weapon_cooldown_seconds', 'combat_player_fallback_weapon_module_type_id',
                'combat_tick_seconds', 'enemy_attack_base', 'enemy_hp_base', 'spatial_formation_ring_radius');
 
-insert into _0317_before
+insert into _0331_before
 select 'hull_' || hull_type_id, base_stats_json::text from public.main_ship_hull_types;
 
-insert into _0317_before
+insert into _0331_before
 select 'fn_' || p.proname, pg_get_userbyid(p.proowner) || '|' || p.prosecdef::text || '|' || p.provolatile::text
        || '|' || coalesce(array_to_string(p.proconfig, ','), '') || '|' || pg_get_function_identity_arguments(p.oid)
        || '|' || pg_get_function_result(p.oid) || '|' || coalesce(p.proacl::text, '')
@@ -342,7 +354,7 @@ begin
   if v_used > v_ship.support_capacity then
     raise exception 'calculate_expedition_stats: loadout uses % support capacity, ship limit is %', v_used, v_ship.support_capacity;
   end if;$h1o$,
-     $h1n$  -- 0317 THE SUPPORT-CRAFT PATH IS DELETED (51 lines of unreachable code, not disabled — removed).
+     $h1n$  -- 0331 THE SUPPORT-CRAFT PATH IS DELETED (51 lines of unreachable code, not disabled — removed).
   -- p_loadout is a literal '[]' at every call site in the database: calculate_group_expedition_stats,
   -- combat_create_group_encounter, get_my_group_expedition_preview and send_ship_group_hunt all pass
   -- an empty array, and get_my_expedition_preview merely FORWARDS its own argument, whose only
@@ -370,7 +382,7 @@ begin
      $h2n$  return jsonb_build_object(
     'main_ship_id',           v_ship.main_ship_id,
     'activity_type',          p_activity_type,
-    -- 0317: support_capacity_used / support_capacity_limit are GONE with the loop that computed
+    -- 0331: support_capacity_used / support_capacity_limit are GONE with the loop that computed
     -- them. Nothing read either one: no in-database function and no line of src/ (the client
     -- shapes are ShipStatsStrip and MemberStats/ADDITIVE_STAT_KEYS, neither of which lists them),
     -- and the ship's own support_capacity column is still reported by get_my_expedition_preview's
@@ -381,7 +393,7 @@ begin
      $h3o$    'pirate_attention', greatest(0, round(a_attention, 2)),
     'warnings',         v_warnings
   );$h3o$,
-     $h3n$    -- 0317: 'warnings' is GONE. The deleted support-craft loop was its only writer, so after this
+     $h3n$    -- 0331: 'warnings' is GONE. The deleted support-craft loop was its only writer, so after this
     -- slice it could only ever be [] — a field that exists to say nothing. No in-database reader and
     -- no client reader (grep-verified across src/).
     'pirate_attention', greatest(0, round(a_attention, 2))
@@ -400,7 +412,7 @@ begin
   a_attention numeric := 0;
   a_spd_pen   numeric := 0;
   v_warnings  jsonb := '[]'::jsonb;$h4o$,
-     $h4n$  -- 0317: r / v_used / v_warnings are GONE with the support-craft loop that was their only
+     $h4n$  -- 0331: r / v_used / v_warnings are GONE with the support-craft loop that was their only
   -- reader. What survives is the accumulator SET — every source (hull, traits, command buffs,
   -- modules, captains) folds into these and nothing else.
   a_combat    numeric := 0;
@@ -419,7 +431,7 @@ begin
   a_survival := a_survival + coalesce((v_hull_stats->>'defense')::numeric, 0);$h5o$,
      $h5n$  select coalesce(base_stats_json, '{}'::jsonb) into v_hull_stats
     from main_ship_hull_types where hull_type_id = v_ship.hull_type_id;
-  -- 0317: THE HULL SPEAKS THE SHARED VOCABULARY. The head read exactly two keys — attack and
+  -- 0331: THE HULL SPEAKS THE SHARED VOCABULARY. The head read exactly two keys — attack and
   -- defense — while the trait loop below, the command-buff loop, the module loop and the captain
   -- loop all read eight. A hull could therefore declare repair/cargo/scan/mining/evasion or a
   -- pirate_attention in its base_stats_json and the fold would silently drop them: the same class
@@ -456,7 +468,7 @@ begin
       a_scout     := a_scout     + coalesce((tr.stats_json->>'scan')::numeric, 0);
       a_mining    := a_mining    + coalesce((tr.stats_json->>'mining')::numeric, 0);
       a_retreat   := a_retreat   + coalesce((tr.stats_json->>'evasion')::numeric, 0);
-      -- 0317: pirate_attention joins the shared vocabulary. A trait had NO way to say it before —
+      -- 0331: pirate_attention joins the shared vocabulary. A trait had NO way to say it before —
       -- the only sources of attention were three hardcoded CASEs over role/slot_type/specialization,
       -- so no catalog row could ever set it. Absent key = +0, so this is byte-inert for all eight
       -- seeded traits.
@@ -478,14 +490,14 @@ begin
       a_scout     := a_scout     + coalesce((cb.stats_json->>'scan')::numeric, 0);
       a_mining    := a_mining    + coalesce((cb.stats_json->>'mining')::numeric, 0);
       a_retreat   := a_retreat   + coalesce((cb.stats_json->>'evasion')::numeric, 0);
-      -- 0317: pirate_attention joins the shared vocabulary here too — a command buff is a fleet
+      -- 0331: pirate_attention joins the shared vocabulary here too — a command buff is a fleet
       -- identity and 'this doctrine makes you conspicuous' is exactly the kind of thing it should
       -- be able to say. Absent key = +0: byte-inert for all twenty seeded buffs.
       a_attention := a_attention + coalesce((cb.stats_json->>'pirate_attention')::numeric, 0);
       v_cmdbuff_speed_bonus := v_cmdbuff_speed_bonus + coalesce((cb.stats_json->>'speed_mult_bonus')::numeric, 0);$h7n$),
     (8, 'calculate_expedition_stats',
      $h8o$    a_attention := a_attention + (case m.slot_type when 'weapon' then 2 when 'cargo' then 2 when 'sensor' then 1 else 0 end) * m.slot_cost;$h8o$,
-     $h8n$    -- 0317: pirate_attention IS NOW A CATALOG KEY, and the CASE below is its DEFAULT — used only
+     $h8n$    -- 0331: pirate_attention IS NOW A CATALOG KEY, and the CASE below is its DEFAULT — used only
     -- when the row does not state a value. Before this, attention could be produced by exactly three
     -- hardcoded CASEs and by nothing else, so "this module draws pirates" was a fact no module could
     -- state about itself. Byte-inert for the nine seeded module types (none carries the key).
@@ -496,7 +508,7 @@ begin
       end;$h8n$),
     (9, 'calculate_expedition_stats',
      $h9o$    a_attention := a_attention + (case c.specialization when 'combat' then 2 when 'trade' then 1 when 'exploration' then 1 when 'mining' then 1 else 0 end);$h9o$,
-     $h9n$    -- 0317: pirate_attention IS NOW A CATALOG KEY here too, with the CASE as its default. It is
+     $h9n$    -- 0331: pirate_attention IS NOW A CATALOG KEY here too, with the CASE as its default. It is
     -- NOT multiplied by v_lvl_mult / v_aff_mult — the head keeps the attention tradeoff level-flat
     -- and station-flat on purpose ("growth is never a stealth cost raise"), and a stated value must
     -- follow the same law as the default it replaces. Byte-inert for the five seeded captain types.
@@ -508,7 +520,7 @@ begin
     (10, 'combat_create_group_encounter',
      $h10o$  v_is_lead         boolean;$h10o$,
      $h10n$  v_is_lead         boolean;
-  -- 0317 THE ONE AUTHORITY FOR ATTACK: v_weight_total is the sum of the SHARE WEIGHTS over this
+  -- 0331 THE ONE AUTHORITY FOR ATTACK: v_weight_total is the sum of the SHARE WEIGHTS over this
   -- ship's weapon entries, used at exactly one line to turn weights into damage. v_hp_max is the
   -- ship's CAPACITY (main_ship_instances.max_hp), which the head confused with its current hp.
   v_weight_total    double precision;
@@ -516,7 +528,7 @@ begin
   v_hull_cur        double precision;$h10n$),
     (11, 'combat_create_group_encounter',
      $h11o$    select gsm.main_ship_id, gsm.player_id, msi.hp, msi.shield, msi.max_shield$h11o$,
-     $h11n$    -- 0317: msi.max_hp joins the projection. The builder already reads this row; the ONE thing it
+     $h11n$    -- 0331: msi.max_hp joins the projection. The builder already reads this row; the ONE thing it
     -- never took from it was the ship's capacity, which is why the fleet's integrity bar and 0310's
     -- auto-exit denominator could disagree.
     select gsm.main_ship_id, gsm.player_id, msi.hp, msi.shield, msi.max_shield, msi.max_hp$h11n$),
@@ -525,7 +537,7 @@ begin
     v_shield_max := null; v_shield_cur := null;$h12o$,
      $h12n$    v_attack := 0; v_defense := 0; v_hp := 0; v_alive := 0;
     v_shield_max := null; v_shield_cur := null;
-    -- 0317 THE INTEGRITY BAR TELLS THE TRUTH. combat_units.hp_max was seeded from the ship's
+    -- 0331 THE INTEGRITY BAR TELLS THE TRUTH. combat_units.hp_max was seeded from the ship's
     -- CURRENT hp, so player_integrity_max (the sum of it, below) always equalled
     -- player_integrity_current at creation and every fleet entered every fight showing a FULL bar,
     -- however battered it was. Meanwhile 0310's auto-exit divides by sum(main_ship_instances.max_hp),
@@ -558,7 +570,7 @@ begin
     (15, 'combat_create_group_encounter',
      $h15o$  select coalesce(sum(hp_max), 0) into v_hull from combat_units where encounter_id = v_enc;
   update combat_encounters set player_integrity_max = v_hull, player_integrity_current = v_hull where id = v_enc;$h15o$,
-     $h15n$  -- 0317: MAX and CURRENT are now two different sums, because they are two different questions.
+     $h15n$  -- 0331: MAX and CURRENT are now two different sums, because they are two different questions.
   -- The head asked sum(hp_max) once and wrote the answer into both columns — which was self-
   -- consistent only while hp_max meant "hp at entry". With hp_max meaning capacity (B3), current
   -- integrity is sum(hp_current), the same quantity process_combat_ticks recomputes and writes every
@@ -570,7 +582,7 @@ begin
   update combat_encounters set player_integrity_max = v_hull, player_integrity_current = v_hull_cur where id = v_enc;$h15n$),
     (16, 'combat_create_group_encounter',
      $h16o$              'power',            v_attack * coalesce(public.cfg_num('combat_player_fallback_weapon_power_from_attack'), 1),$h16o$,
-     $h16n$              -- 0317: THE SYNTHESIZED WEAPON CARRIES A WEIGHT OF 1, NOT A POWER. It is the ship's
+     $h16n$              -- 0331: THE SYNTHESIZED WEAPON CARRIES A WEIGHT OF 1, NOT A POWER. It is the ship's
               -- only weapon entry, so it takes the whole share and the normalisation below resolves
               -- it to exactly the ship's combat_power — which is what the knob
               -- combat_player_fallback_weapon_power_from_attack (seeded 1) was expressing. That knob
@@ -584,7 +596,7 @@ begin
      $h17n$              'ammo_remaining',   null));
           end if;
 
-          -- ██ 0317 ONE AUTHORITY FOR ATTACK ██████████████████████████████████████████████████████
+          -- ██ 0331 ONE AUTHORITY FOR ATTACK ██████████████████████████████████████████████████████
           -- THE FOLD DECIDES HOW MUCH; THE WEAPON DECIDES HOW. Every entry's power is rewritten from
           -- this ship's combat_power (v_attack — calculate_expedition_stats' fold of hull + traits +
           -- command buffs + modules + captains, the number the card shows) split across the ship's
@@ -628,32 +640,32 @@ begin
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'public' and p.proname = r.fname;
     if v_oid is null then
-      raise exception '0317 REWRITE FAIL [%]: function public.% not found', r.idx, r.fname;
+      raise exception '0331 REWRITE FAIL [%]: function public.% not found', r.idx, r.fname;
     end if;
     if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
          where n.nspname = 'public' and p.proname = r.fname) <> 1 then
-      raise exception '0317 REWRITE FAIL [%]: public.% is overloaded — refusing to guess', r.idx, r.fname;
+      raise exception '0331 REWRITE FAIL [%]: public.% is overloaded — refusing to guess', r.idx, r.fname;
     end if;
 
     v_src := pg_get_functiondef(v_oid);
     v_n := (length(v_src) - length(replace(v_src, r.old_t, ''))) / length(r.old_t);
     if v_n <> 1 then
-      raise exception '0317 REWRITE FAIL [%]: hunk text occurs % time(s) in public.%, expected exactly 1 — the deployed body is not what this migration was generated against',
+      raise exception '0331 REWRITE FAIL [%]: hunk text occurs % time(s) in public.%, expected exactly 1 — the deployed body is not what this migration was generated against',
         r.idx, v_n, r.fname;
     end if;
 
     v_new := replace(v_src, r.old_t, r.new_t);
     if length(v_new) <> length(v_src) - length(r.old_t) + length(r.new_t) then
-      raise exception '0317 REWRITE FAIL [%]: unexpected length delta rewriting public.%', r.idx, r.fname;
+      raise exception '0331 REWRITE FAIL [%]: unexpected length delta rewriting public.%', r.idx, r.fname;
     end if;
     execute v_new;
     v_done := v_done + 1;
   end loop;
 
   if v_done <> 17 then
-    raise exception '0317 REWRITE FAIL: rewrote % site(s), expected 17', v_done;
+    raise exception '0331 REWRITE FAIL: rewrote % site(s), expected 17', v_done;
   end if;
-  raise notice '0317: a ship now hits for exactly the number on its card, and a weapon decides only how that number is delivered';
+  raise notice '0331: a ship now hits for exactly the number on its card, and a weapon decides only how that number is delivered';
 end $rewrite$;
 
 -- ── 3. THE KNOB THAT EXPRESSED THE OLD SECOND RULE IS DELETED ───────────────────────────────────
@@ -665,7 +677,7 @@ delete from public.game_config
 
 -- ── 4. THE COLUMN SAYS WHAT IT NOW MEANS ────────────────────────────────────────────────────────
 comment on column public.module_types.power is
-  'COMBAT-S0, REDEFINED BY 0317: for a FIRING WEAPON (slot_type=weapon — see module_is_firing_weapon) '
+  'COMBAT-S0, REDEFINED BY 0331: for a FIRING WEAPON (slot_type=weapon — see module_is_firing_weapon) '
   'this is a unitless SHARE WEIGHT, never a damage number. combat_create_group_encounter splits the '
   'ship''s folded combat_power across its fitted weapons in proportion to it, so only the RATIOS '
   'between a ship''s guns matter and the absolute scale of this column affects nothing. A module''s '
@@ -675,7 +687,7 @@ comment on column public.module_types.power is
   'mining archetype (slot_type=mining) the column is inert: nothing reads it (mining_extract sizes '
   'its radius from .range), and 0316 pins the row byte-for-byte. NULL = not a weapon and not read.';
 
--- ── 5. SELF-ASSERTS — one DO block per property; RED on the pre-0317 body by construction ───────
+-- ── 5. SELF-ASSERTS — one DO block per property; RED on the pre-0331 body by construction ───────
 
 -- (a) THE ONE AUTHORITY IS INSTALLED. The builder derives every weapon's power from the ship's
 --     folded attack and from nothing else, and the deleted knob has no reader left anywhere.
@@ -691,20 +703,20 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'combat_create_group_encounter';
   if position('v_weight_total' in v_src) = 0 then
-    raise exception '0317 ASSERT (a) FAIL: the builder carries no weight normalisation — hunk 17 did not land';
+    raise exception '0331 ASSERT (a) FAIL: the builder carries no weight normalisation — hunk 17 did not land';
   end if;
   if position('combat_player_fallback_weapon_power_from_attack' in v_src) > 0 then
-    raise exception '0317 ASSERT (a) FAIL: the builder still reads the deleted knob — the fitted and unfitted paths are still two rules';
+    raise exception '0331 ASSERT (a) FAIL: the builder still reads the deleted knob — the fitted and unfitted paths are still two rules';
   end if;
   select count(*) into v_n
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public'
      and position('combat_player_fallback_weapon_power_from_attack' in regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g')) > 0;
   if v_n <> 0 then
-    raise exception '0317 ASSERT (a) FAIL: % function(s) still read combat_player_fallback_weapon_power_from_attack after its row was deleted — a live reader would silently fall back to its literal', v_n;
+    raise exception '0331 ASSERT (a) FAIL: % function(s) still read combat_player_fallback_weapon_power_from_attack after its row was deleted — a live reader would silently fall back to its literal', v_n;
   end if;
   if exists (select 1 from public.game_config where key = 'combat_player_fallback_weapon_power_from_attack') then
-    raise exception '0317 ASSERT (a) FAIL: combat_player_fallback_weapon_power_from_attack still exists — the guarded DELETE no-opped, i.e. the deployed value had drifted off the chain this migration was written against';
+    raise exception '0331 ASSERT (a) FAIL: combat_player_fallback_weapon_power_from_attack still exists — the guarded DELETE no-opped, i.e. the deployed value had drifted off the chain this migration was written against';
   end if;
 end $a$;
 
@@ -720,30 +732,30 @@ begin
   if position('support_craft_types' in v_src) > 0
      or position('support_capacity_used' in v_src) > 0
      or position('v_warnings' in v_src) > 0 then
-    raise exception '0317 ASSERT (b) FAIL: the support-craft path survived the rewrite';
+    raise exception '0331 ASSERT (b) FAIL: the support-craft path survived the rewrite';
   end if;
   if position('support craft are retired' in v_src) = 0 then
-    raise exception '0317 ASSERT (b) FAIL: p_loadout is not fail-closed — a non-empty loadout would be silently ignored';
+    raise exception '0331 ASSERT (b) FAIL: p_loadout is not fail-closed — a non-empty loadout would be silently ignored';
   end if;
   foreach v_k in array array['attack','defense','repair','cargo','scan','mining','evasion','pirate_attention'] loop
     if position('v_hull_stats->>''' || v_k || '''' in v_src) = 0 then
-      raise exception '0317 ASSERT (b) FAIL: the hull fold does not read the shared key %', v_k;
+      raise exception '0331 ASSERT (b) FAIL: the hull fold does not read the shared key %', v_k;
     end if;
   end loop;
   if position('v_hull_stats->>''speed_mult_bonus''' in v_src) > 0 then
-    raise exception '0317 ASSERT (b) FAIL: the hull fold reads speed_mult_bonus — that would be a second hull speed authority beside base_speed';
+    raise exception '0331 ASSERT (b) FAIL: the hull fold reads speed_mult_bonus — that would be a second hull speed authority beside base_speed';
   end if;
   v_missing := '';
   foreach v_k in array array['tr','cb','m','c'] loop
     if position(v_k || '.stats_json' in v_src) = 0 then
-      raise exception '0317 ASSERT (b) FAIL: source % no longer folds stats_json at all', v_k;
+      raise exception '0331 ASSERT (b) FAIL: source % no longer folds stats_json at all', v_k;
     end if;
     if position(v_k || '.stats_json->>''pirate_attention''' in v_src) = 0 then
       v_missing := v_missing || v_k || ' ';
     end if;
   end loop;
   if v_missing <> '' then
-    raise exception '0317 ASSERT (b) FAIL: these sources still cannot set pirate_attention: % — the key is not shared vocabulary yet', v_missing;
+    raise exception '0331 ASSERT (b) FAIL: these sources still cannot set pirate_attention: % — the key is not shared vocabulary yet', v_missing;
   end if;
 end $b$;
 
@@ -762,7 +774,7 @@ declare
 begin
   select count(*) into v_n from public.main_ship_instances where hp > 0;
   if v_n < 1 then
-    raise notice '0317: this database holds no living main ship, so the executed fold-vs-catalog comparison had nothing to run against (expected on a freshly-applied chain; on production it would mean the fleet table is empty). The property is proven behaviourally by DZCOMBAT_PASS_ONEPOWER.';
+    raise notice '0331: this database holds no living main ship, so the executed fold-vs-catalog comparison had nothing to run against (expected on a freshly-applied chain; on production it would mean the fleet table is empty). The property is proven behaviourally by DZCOMBAT_PASS_ONEPOWER.';
     return;
   end if;
   for s in select msi.main_ship_id, msi.player_id, msi.hull_type_id from public.main_ship_instances msi where msi.hp > 0 loop
@@ -803,13 +815,13 @@ begin
       v_bad := v_bad || s.main_ship_id::text || ' (fold ' || (v_stats->>'combat_power') || ' vs catalog ' || greatest(0, round(v_expect, 2))::text || ') ';
     end if;
     if v_stats ? 'warnings' or v_stats ? 'support_capacity_used' or v_stats ? 'support_capacity_limit' then
-      raise exception '0317 ASSERT (c) FAIL: the fold still emits a retired field for ship %', s.main_ship_id;
+      raise exception '0331 ASSERT (c) FAIL: the fold still emits a retired field for ship %', s.main_ship_id;
     end if;
   end loop;
   if v_bad <> '' then
-    raise exception '0317 ASSERT (c) FAIL: the fold disagrees with the catalog for: % — the rewrite changed a number it must not have', v_bad;
+    raise exception '0331 ASSERT (c) FAIL: the fold disagrees with the catalog for: % — the rewrite changed a number it must not have', v_bad;
   end if;
-  raise notice '0317: the fold returns the identical combat_power for all % living ships (hull vocabulary + pirate_attention additions are byte-inert against the deployed catalog)', v_n;
+  raise notice '0331: the fold returns the identical combat_power for all % living ships (hull vocabulary + pirate_attention additions are byte-inert against the deployed catalog)', v_n;
 end $c$;
 
 -- (d) THE LOADOUT PARAMETER IS FAIL-CLOSED, PROVEN BY CALL. A non-empty loadout must raise; the
@@ -821,7 +833,7 @@ declare s_id uuid; s_pl uuid; v_ok boolean := false;
 begin
   select main_ship_id, player_id into s_id, s_pl from public.main_ship_instances where hp > 0 order by main_ship_id limit 1;
   if s_id is null then
-    raise notice '0317: no living ship to call the fold on, so the fail-closed p_loadout probe did not run (expected on a freshly-applied chain). scripts/verify-phase8.mjs and verify-mainship-preview.mjs assert the same refusal against a real database.';
+    raise notice '0331: no living ship to call the fold on, so the fail-closed p_loadout probe did not run (expected on a freshly-applied chain). scripts/verify-phase8.mjs and verify-mainship-preview.mjs assert the same refusal against a real database.';
     return;
   end if;
   perform public.calculate_expedition_stats(s_pl, s_id, '[]'::jsonb, 'pirate_hunt');
@@ -831,7 +843,7 @@ begin
     v_ok := true;
   end;
   if not v_ok then
-    raise exception '0317 ASSERT (d) FAIL: a non-empty p_loadout was ACCEPTED — the retired parameter is being silently ignored rather than refused';
+    raise exception '0331 ASSERT (d) FAIL: a non-empty p_loadout was ACCEPTED — the retired parameter is being silently ignored rather than refused';
   end if;
 end $d$;
 
@@ -842,13 +854,13 @@ end $d$;
 do $e$
 declare v_bad text; v_n int; v_cur int;
 begin
-  select count(*) into v_n from _0317_before where k like 'mod\_%' escape '\';
+  select count(*) into v_n from _0331_before where k like 'mod\_%' escape '\';
   select count(*) * 5 into v_cur from public.module_types;
   if v_n < 5 or v_n <> v_cur then
-    raise exception '0317 ASSERT (e) FAIL: the module_types capture holds % attribute rows against % expected — a catalog row appeared or vanished under this migration', v_n, v_cur;
+    raise exception '0331 ASSERT (e) FAIL: the module_types capture holds % attribute rows against % expected — a catalog row appeared or vanished under this migration', v_n, v_cur;
   end if;
   select string_agg(b.k || ': ' || b.v || ' -> ' || cur.v, '; ') into v_bad
-    from _0317_before b
+    from _0331_before b
     join (select 'mod_' || id || '_' || key as k, value as v from (
             select id, 'power' as key, coalesce(power::text, '<null>') as value from public.module_types
             union all select id, 'range', coalesce(range::text, '<null>') from public.module_types
@@ -858,37 +870,37 @@ begin
           ) q) cur on cur.k = b.k
    where cur.v is distinct from b.v;
   if v_bad is not null then
-    raise exception '0317 ASSERT (e) FAIL: a module_types attribute changed (%) — this migration redefines what power MEANS, it must not move a single value', v_bad;
+    raise exception '0331 ASSERT (e) FAIL: a module_types attribute changed (%) — this migration redefines what power MEANS, it must not move a single value', v_bad;
   end if;
 
-  select count(*) into v_n from _0317_before where k like 'hull\_%' escape '\';
+  select count(*) into v_n from _0331_before where k like 'hull\_%' escape '\';
   if v_n < 1 then
-    raise exception '0317 ASSERT (e) FAIL: the hull capture is empty — the byte-inertness pin below would prove nothing';
+    raise exception '0331 ASSERT (e) FAIL: the hull capture is empty — the byte-inertness pin below would prove nothing';
   end if;
   select string_agg(b.k || ': ' || b.v || ' -> ' || coalesce(h.base_stats_json::text, '<gone>'), '; ') into v_bad
-    from _0317_before b
+    from _0331_before b
     left join public.main_ship_hull_types h on 'hull_' || h.hull_type_id = b.k
    where b.k like 'hull\_%' escape '\'
      and coalesce(h.base_stats_json::text, '<gone>') is distinct from b.v;
   if v_bad is not null then
-    raise exception '0317 ASSERT (e) FAIL: a hull base_stats_json changed under this migration (%)', v_bad;
+    raise exception '0331 ASSERT (e) FAIL: a hull base_stats_json changed under this migration (%)', v_bad;
   end if;
 
   select string_agg(b.k || ': ' || b.v || ' -> ' || coalesce(g.value::text, '<gone>'), '; ') into v_bad
-    from _0317_before b
+    from _0331_before b
     left join public.game_config g on 'cfg_' || g.key = b.k
    where b.k like 'cfg\_%' escape '\'
      and coalesce(g.value::text, '<gone>') is distinct from b.v;
   if v_bad is not null then
-    raise exception '0317 ASSERT (e) FAIL: a knob this migration must not touch changed (%) — the enemy and the fallback profile are a separate balance decision', v_bad;
+    raise exception '0331 ASSERT (e) FAIL: a knob this migration must not touch changed (%) — the enemy and the fallback profile are a separate balance decision', v_bad;
   end if;
 
-  select count(*) into v_n from _0317_before where k like 'fn\_%' escape '\';
+  select count(*) into v_n from _0331_before where k like 'fn\_%' escape '\';
   if v_n <> 2 then
-    raise exception '0317 ASSERT (e) FAIL: the function-metadata capture holds % row(s) (want 2)', v_n;
+    raise exception '0331 ASSERT (e) FAIL: the function-metadata capture holds % row(s) (want 2)', v_n;
   end if;
   select string_agg(b.k || ': ' || b.v || ' -> ' || cur.v, '; ') into v_bad
-    from _0317_before b
+    from _0331_before b
     join (select 'fn_' || p.proname as k,
                  pg_get_userbyid(p.proowner) || '|' || p.prosecdef::text || '|' || p.provolatile::text
                  || '|' || coalesce(array_to_string(p.proconfig, ','), '') || '|' || pg_get_function_identity_arguments(p.oid)
@@ -898,7 +910,7 @@ begin
       on cur.k = b.k
    where cur.v is distinct from b.v;
   if v_bad is not null then
-    raise exception '0317 ASSERT (e) FAIL: a re-created function changed more than its body (%) — a CREATE OR REPLACE that alters owner/security/volatility/search_path/signature/ACL is a different function wearing the same name', v_bad;
+    raise exception '0331 ASSERT (e) FAIL: a re-created function changed more than its body (%) — a CREATE OR REPLACE that alters owner/security/volatility/search_path/signature/ACL is a different function wearing the same name', v_bad;
   end if;
 end $e$;
 
@@ -919,13 +931,13 @@ declare v_n int; v_bad text; v_src text;
 begin
   select count(*) into v_n from public.module_types t where public.module_is_firing_weapon(t);
   if v_n < 1 then
-    raise exception '0317 ASSERT (f) FAIL: the catalog contains no firing weapon at all — every property below would be vacuous';
+    raise exception '0331 ASSERT (f) FAIL: the catalog contains no firing weapon at all — every property below would be vacuous';
   end if;
   select string_agg(t.id || ' weight ' || coalesce(t.power::text, '<null>'), '; ') into v_bad
     from public.module_types t
    where public.module_is_firing_weapon(t) and coalesce(t.power, 0) <= 0;
   if v_bad is not null then
-    raise exception '0317 ASSERT (f1) FAIL: a firing weapon carries a non-positive share weight (%) — it would take no share of its ship''s volley', v_bad;
+    raise exception '0331 ASSERT (f1) FAIL: a firing weapon carries a non-positive share weight (%) — it would take no share of its ship''s volley', v_bad;
   end if;
   -- f2/f4: the builder's normalisation divides by the sum of the weights over the SHIP's entries,
   -- so the shares sum to 1 for any non-empty set with a positive total. f1 has just established
@@ -935,10 +947,10 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'combat_create_group_encounter';
   if position('/ v_weight_total' in v_src) = 0 then
-    raise exception '0317 ASSERT (f2) FAIL: the builder does not divide by the weight total — the shares would not sum to the card';
+    raise exception '0331 ASSERT (f2) FAIL: the builder does not divide by the weight total — the shares would not sum to the card';
   end if;
   if position('''power'',            1,' in v_src) = 0 then
-    raise exception '0317 ASSERT (f4) FAIL: the synthesized fallback weapon does not carry a weight of 1 — the fitted and unfitted paths are not the same rule';
+    raise exception '0331 ASSERT (f4) FAIL: the synthesized fallback weapon does not carry a weight of 1 — the fitted and unfitted paths are not the same rule';
   end if;
   -- f3: the ordering fact the property rests on. Both live guns satisfy it (battery attack 10 <
   -- mk2 attack 18); a future weapon that raised power without raising attack would fail here rather
@@ -951,7 +963,7 @@ begin
      and a.power < b2.power
      and coalesce((a.stats_json->>'attack')::numeric, 0) >= coalesce((b2.stats_json->>'attack')::numeric, 0);
   if v_bad is not null then
-    raise exception '0317 ASSERT (f3) FAIL: a weapon with a LARGER share weight contributes no more attack than a smaller one (%) — fitting the bigger gun would not raise the ship''s volley, and the owner''s "a better module is simply a bigger number" would stop holding', v_bad;
+    raise exception '0331 ASSERT (f3) FAIL: a weapon with a LARGER share weight contributes no more attack than a smaller one (%) — fitting the bigger gun would not raise the ship''s volley, and the owner''s "a better module is simply a bigger number" would stop holding', v_bad;
   end if;
 end $f$;
 
@@ -966,22 +978,22 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'combat_create_group_encounter';
   if position('v_hp_max := m.max_hp;' in v_src) = 0 then
-    raise exception '0317 ASSERT (g) FAIL: the builder does not seed hp_max from the ship''s capacity';
+    raise exception '0331 ASSERT (g) FAIL: the builder does not seed hp_max from the ship''s capacity';
   end if;
   if position('(e->>''hp_max'')::double precision, (e->>''hp'')::double precision,' in v_src) = 0 then
-    raise exception '0317 ASSERT (g) FAIL: the combat_units INSERT still writes current hp into hp_max — the bar would still open full on a damaged fleet';
+    raise exception '0331 ASSERT (g) FAIL: the combat_units INSERT still writes current hp into hp_max — the bar would still open full on a damaged fleet';
   end if;
   if position('player_integrity_current = v_hull_cur' in v_src) = 0 then
-    raise exception '0317 ASSERT (g) FAIL: player_integrity_current is still the same sum as player_integrity_max';
+    raise exception '0331 ASSERT (g) FAIL: player_integrity_current is still the same sum as player_integrity_max';
   end if;
   if position('coalesce(sum(hp_current), 0)' in v_src) = 0 then
-    raise exception '0317 ASSERT (g) FAIL: current integrity is not summed from hp_current';
+    raise exception '0331 ASSERT (g) FAIL: current integrity is not summed from hp_current';
   end if;
   -- and the denominator 0310 divides by must be the same quantity, from the same column.
   if position('sum(msi.max_hp)' in (select regexp_replace(pg_get_functiondef(p.oid), '--[^' || chr(10) || ']*', '', 'g')
                                       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
                                      where n.nspname = 'public' and p.proname = 'process_combat_ticks')) = 0 then
-    raise exception '0317 ASSERT (g) FAIL: the tick no longer divides by sum(main_ship_instances.max_hp) — the definition this migration just aligned the bar to has moved, and the two numbers would disagree again';
+    raise exception '0331 ASSERT (g) FAIL: the tick no longer divides by sum(main_ship_instances.max_hp) — the definition this migration just aligned the bar to has moved, and the two numbers would disagree again';
   end if;
 end $g$;
 
