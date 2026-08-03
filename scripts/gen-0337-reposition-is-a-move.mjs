@@ -66,8 +66,18 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // 0336 is exempted BY NAME on the tick: its eighteen hunks were read one by one and every anchor
   // below was verified disjoint from all of them. It is not a blanket pass — a NEW surgeon on this
   // function still fails this gate.
+  //
+  // 0338 JOINS, by name, on the same terms. It rewrites exactly TWO lines: the PHASE argument handed
+  // to combat_formation_point at each of the two wave-spawn arms, so a wave arrives on the bearing to
+  // the zone's own settlement instead of on a bare constant. This file's four tick anchors are the
+  // declare block, the v_is_spatial line, the per-unit position write and the foot of the spatial
+  // arm — none of them is a combat_formation_point call, and 0338 moves no radius, no branch and no
+  // guard. The disjointness is also structural: those two call sites did not exist before 0336
+  // CREATED them, so no slice this file takes from the 0299 head can overlap them. Naming it here
+  // keeps the gate live for 0339 and after.
   guard('process_combat_ticks', '20260618000299',
-    new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000336']));
+    new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000336',
+             '20260618000338']));
   guard('command_ship_group_go', '20260618000330', new Set());
 }
 
