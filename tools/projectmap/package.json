@@ -1,0 +1,22 @@
+{
+  "name": "byeharu-projectmap",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "3D map of the Byeharu codebase — what exists, what connects, what is actually live. Standalone: not part of the game build.",
+  "scripts": {
+    "scan": "node scan/scan.mjs",
+    "live": "node scan/live.mjs",
+    "wip": "node scan/wip.mjs",
+    "refresh": "node scan/scan.mjs && node scan/live.mjs && node scan/wip.mjs",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
+  }
+}

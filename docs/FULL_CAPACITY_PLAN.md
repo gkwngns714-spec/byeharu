@@ -174,6 +174,129 @@ parity + lit fleet-wide fold exactness + no-command-no-buff + the group_id gate)
 (`scripts/activate-command-buffs.{sql,sh}`) flips the flag — FLAG-ONLY, with a catalog-freeze +
 buff-slot-coverage precondition and the FLEET-CONTROL dependency; NO client PR needed (runtime-flag-gated).
 
+### MOVEMENT — unified fleet movement: fleets move, not ships *(L — SHIPPED & FLIPPED LIVE 2026-07-18 as migs 0207/0208/0209/0210/0211/0212/0213/0214/0215; flag `fleet_movement_unified_enabled` ON in prod)*
+
+The movement-unification arc, now LIVE in production. A FLEET — never an individual ship — is the unit of
+movement: it travels to a port OR an open-space coordinate, is redirectable in flight, and everything happens
+on the map. The mover `command_ship_group_go` (migs 0207/0208), the brake with the sortie guard
+`command_ship_group_stop` (migs 0209/0215), the group-fleet resolver `mainship_resolve_fleet` (0210), the
+dock-read dedup (0211), the ONE map/location read `get_my_fleet_positions` (0212), the assign co-location
+guard (0213), and the hunt-learns-the-fleet minting fix (0214). The flip (step 4b, reversible) turned
+`fleet_movement_unified_enabled` ON and the three legacy per-ship movement flags OFF. Deps: the FLEET
+control-model (0204/0205). Guard: ONE movement authority — the legacy per-ship movers are retired as their
+own slices (4a-post client delete, 4c signal retirement, 4b-drop server drop).
+
+### BERTH — S1 the berth-model foundation: a ship is fleeted XOR berthed *(M — SHIPPED LIVE 2026-07-18 as mig 0216)*
+
+The foundation of the berth arc, now LIVE in production (74 ships berthed, 2 fleeted, zero XOR violations).
+A ship's location is a schema-level fact: FLEETED (moves with a fleet, IS a map marker) **XOR** BERTHED
+(docked at a port, shown as info only) — enforced by a CHECK `(group_id is null) = (berth_location_id is
+not null)`, so ghost-dock is structurally impossible. One resolver; `get_my_fleet_positions` gains a
+`berthed` branch. Deps: MOVEMENT. Everything below is built ON this foundation.
+
+### TERRITORY — S2: each location's radius is its territory *(S/M — SHIPPED LIVE 2026-07-18 as mig 0217)*
+
+Berth arc S2. A `locations.territory_radius` column drawn as a ring on the map; a fleet entering the radius
+gets options (dock now, combat later). The ground for future enemy-fleet spawns in hostile territory like a
+pirate den. One column, one map ring — no parallel system. Deps: BERTH.
+
+### POSLEAF — S3: one position + territory server leaf *(S — SHIPPED LIVE 2026-07-18 as mig 0218)*
+
+Berth arc S3. Fold the movement-interpolation math currently inlined across the mover and brake into ONE
+`fleet_current_position` leaf, plus `fleet_in_territory` composing it with the territory radius — the
+containment authority the dock guard and future enemy-spawn both reuse. Deps: TERRITORY.
+
+### TIMEDOCK — S4: docking takes time, shown on the map *(S/M — SHIPPED dark as mig 0219, behind `timed_docking_enabled`)*
+
+Berth arc S4. Arriving at a port no longer docks instantly; DOCK becomes a timed movement leg (~45s) riding
+the existing timer spine, with a live countdown on the map. Dark-first behind a new `timed_docking_enabled`
+flag. Deps: POSLEAF.
+
+### MAPUX — S5: one fleet-command panel *(S — SHIPPED, merged to main 2026-07-18)*
+
+Berth arc S5. Consolidate the scattered map panels (destination / stop / dock) into ONE fleet-command
+surface owning Go / Redirect / Stop / Dock — deletes three panels instead of adding a fourth. Deps: RETIRE.
+
+### FITTING — S6: the ship tab becomes a fitting tab *(M — SHIPPED, merged to main 2026-07-18)*
+
+Berth arc S6. Ships grouped by fleet plus a Berthed section — condition, stats, buffs, and fitting when
+docked; the Command tab owns fleet composition, the Fitting tab owns per-ship equipment. Deps: BERTH.
+
+### RETIRE — legacy movement retirement *(S/M — COMPLETE: 4a-post + 4c repoints SHIPPED; 4b-drop server drops SHIPPED as migs 0231/0232)*
+
+Retire the replaced per-ship movement system as its own slices: 4a-post deletes the dead per-ship client,
+4c retires the legacy movement signals, 4b-drop drops the legacy server movers (drain-asserted:
+`movement_schema_drop` mig 0231 + `movement_function_drop` mig 0232). Deps: MOVEMENT live + soaked.
+
+### PIRATES — pirate intercept + danger zones *(M — SHIPPED dark as migs 0233/0236/0237, behind `pirate_intercept_enabled`)*
+
+Polygon danger zones on the map with intercept rolls when a fleet's route crosses one: zone geometry +
+draw/read RPCs + waypoint route advancing (mig 0233), reliable-ambush intercept tuning (mig 0236), and
+slime-tier danger zones (mig 0237). Every server arm rejects on the dark gate BEFORE any other read —
+flag off means movement/combat is byte-identical to before. Deps: MOVEMENT, POSLEAF.
+
+### COMBAT-SPATIAL — per-ship spatial group combat *(L — SHIPPED as migs 0234/0240/0241/0242, behind `spatial_combat_enabled`)*
+
+Group combat gains real space: per-ship positions, movement, and targeting inside the encounter
+(`combat_spatial_tick`, mig 0234), synthetic pirate units capped and tuned by knobs, aggregate-bucket
+uniqueness so multi-pirate waves cannot stall (mig 0240), the `next_wave_incoming` tick result admitted
+to the CHECK (mig 0241), and sticky spatial mode so a mid-fight de-spatialization cannot happen
+(mig 0242). Deps: COMBAT S0-S2 (migs 0229/0230), PIRATES.
+
+### PORTSHOP — the port outfitter *(M — SHIPPED dark as mig 0235, behind `port_shop_enabled`)*
+
+Buy entry-level modules at a port: a server-authoritative `port_shop_buy` with catalog pricing, plus the
+docked ShopPanel client. Dark behind `port_shop_enabled`. Deps: P1 ECON-SEED, BERTH.
+
+### WORLDEDIT — the WORLD EDITOR: the owner edits the world from inside it *(L — COMPLETE: four-domain authoring, V1.5 audit + History, unified revert and lifecycle catalog SHIPPED as migs 0238/0243/0244/0245/0246/0247/0248/0249/0250/0252/0254/0255/0256/0263/0264/0265/0266/0267/0268/0269/0270/0271 — mutation paths proven by CI apply-proof on real Postgres; the production closure smoke was READ-ONLY by design)*
+
+The owner's in-game world-authoring surface (`src/features/worldeditor/`, one `/dev/world` route;
+arch: `docs/ZONE_TEMPLATES_ARCH.md`; closure records: `docs/WORLD_EDITOR_V1_CLOSURE.md`,
+`docs/WORLD_EDITOR_ROADMAP_CLOSURE.md`). It authors four domains — locations, mining fields,
+exploration sites, danger zones — and it owns no table: every write lands in tables other systems own,
+which is exactly why it is not allowed to write them directly.
+
+**The spine.** V1 was read-only unified map layers behind the client dev route gated by
+`dev_zone_editor_enabled` (mig 0238; UX gating, never authorization). V1B-0 shipped the ONE
+server-authoritative owner security spine — `app_owners` + `is_owner()` + the audit/idempotency command
+contract every editor command calls FIRST (mig 0243). Every authoring command since rides that one
+spine: `SECURITY DEFINER`, `search_path=''`, EXECUTE to `authenticated` only, owner enforced in-body,
+and the same fixed sequence — authorize, validate, deduplicate by `request_id`, compare the `expected`
+fork-time snapshot, mutate, insert the before/after audit row in the same transaction.
+
+**Four-domain authoring.** Create / edit / lifecycle for all four domains: point domains first
+(migs 0244/0246/0247/0248/0249/0250/0252), then zones — create (mig 0254), unpublish (mig 0255),
+update (mig 0266) and reactivate (mig 0268), which is where zones reached lifecycle parity with the
+other three. Nothing is ever hard-deleted: unpublish is a status transition, the row stays as its own
+audit artifact, and reactivation is a first-class command rather than a database repair.
+
+**Audit, revert, catalog.** V1.5 made the ledger readable: `world_editor_audit_list` (mig 0256), an
+owner-only, sanitized, keyset-paginated read behind the History panel. Mig 0267 turned that into
+recovery — ONE `world_editor_revert` that replays any audit record's `before` snapshot back through
+that domain's own `*_update` command, never as a direct table write, so a revert obeys exactly the
+validation and audit rules an edit does. Migs 0269/0270/0271 added the lifecycle catalog and detail
+reads: the only world reads in the game that return inactive entities, supplying the opaque
+concurrency token a reactivation needs and the marker-style fields the editor map draws from.
+
+**Coordinates.** `space_anchors` is the single location-coordinate authority for read (mig 0263) and
+write (mig 0264), and mig 0265 collapsed six duplicated inline ±10000 checks into one canonical
+`canonical_coord_violation` validator. The physical ×17 rescale (slot 0253) stays HELD and unmerged;
+the approved direction is the C1 display adapter — stored gameplay coordinates unchanged, editor view
+controlled by typed display adapters plus the camera.
+
+**Frontend V5** (client-only, Pages-deployed): entity search with camera jump, coordinate go-to,
+layer and status filters, a global active/inactive/all lifecycle filter, inactive-entity selection and
+reactivation, a global unpublished-drafts indicator, one-click revert from History, and a mandatory
+unsaved-draft navigation guard on every context switch.
+
+**What is proven, and how.** Every mutation path — create, update, unpublish, reactivate, revert,
+concurrency, audit, reactivation contracts — is proven end-to-end by the disposable PostgreSQL CI
+apply-proofs through mig 0271, with the gameplay readers asserted byte-identical. The production
+closure smoke was deliberately READ-ONLY (editor loads owner-gated, catalog across all four domains,
+search, lifecycle filter, History, coordinate go-to, drafts indicator, map render) — **no production
+write RPC was invoked**, so live mutation is proven by CI, not by a production write. Deps: none on
+game loops — fully editor-side.
+
 ### P0 — NO-HOME: launch from the dock, dock at the return port *(S/M — SHIPPED dark as mig 0199; the OWNER'S ABSOLUTE LAW)*
 
 There is NO home base; ports are the only base; a ship acts from WHEREVER it is docked. The bug: SEND

@@ -1,0 +1,6 @@
+# Production state snapshot — deliberately NOT committed.
+# This repo is public. live.json is a point-in-time read of prod (flag values,
+# deploy run state). game_config is anon-readable so this leaks no secret, but a
+# public repo should not carry a running log of production posture.
+# Generate it locally instead:  npm run live
+public/live.json
