@@ -208,7 +208,7 @@ begin
   if v_n <> 1 then
     raise exception '0317 PRECONDITION FAIL: public.calculate_expedition_stats has % definition(s), want exactly 1', v_n;
   end if;
-  select pg_get_functiondef(p.oid) into v_src
+  select regexp_replace(pg_get_functiondef(p.oid), '--[^' || chr(10) || ']*', '', 'g') into v_src
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'calculate_expedition_stats';
   if position('v_cmdbuffs_enabled' in v_src) = 0 then
@@ -229,7 +229,7 @@ begin
   if v_n <> 1 then
     raise exception '0317 PRECONDITION FAIL: public.combat_create_group_encounter has % definition(s), want exactly 1', v_n;
   end if;
-  select pg_get_functiondef(p.oid) into v_src
+  select regexp_replace(pg_get_functiondef(p.oid), '--[^' || chr(10) || ']*', '', 'g') into v_src
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'combat_create_group_encounter';
   if position('p_engagement_x' in v_src) = 0 then
@@ -679,10 +679,15 @@ comment on column public.module_types.power is
 
 -- (a) THE ONE AUTHORITY IS INSTALLED. The builder derives every weapon's power from the ship's
 --     folded attack and from nothing else, and the deleted knob has no reader left anywhere.
+--     EVERY TEXT PROBE IN THIS FILE READS THE COMMENT-STRIPPED BODY (the house idiom, proven against
+--     this database by 0305/0306/0308/0310/0314/0315). It is not cosmetic: this migration's own
+--     explanatory comments NAME the things it removed — the deleted knob, support_capacity_used,
+--     v_warnings — so an unstripped probe finds the prose describing the deletion and concludes the
+--     deletion did not happen. That is exactly what the first apply attempt did.
 do $a$
 declare v_src text; v_n int;
 begin
-  select pg_get_functiondef(p.oid) into v_src
+  select regexp_replace(pg_get_functiondef(p.oid), '--[^' || chr(10) || ']*', '', 'g') into v_src
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'combat_create_group_encounter';
   if position('v_weight_total' in v_src) = 0 then
@@ -694,7 +699,7 @@ begin
   select count(*) into v_n
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public'
-     and position('combat_player_fallback_weapon_power_from_attack' in p.prosrc) > 0;
+     and position('combat_player_fallback_weapon_power_from_attack' in regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g')) > 0;
   if v_n <> 0 then
     raise exception '0317 ASSERT (a) FAIL: % function(s) still read combat_player_fallback_weapon_power_from_attack after its row was deleted — a live reader would silently fall back to its literal', v_n;
   end if;
@@ -709,7 +714,7 @@ end $a$;
 do $b$
 declare v_src text; v_k text; v_missing text;
 begin
-  select pg_get_functiondef(p.oid) into v_src
+  select regexp_replace(pg_get_functiondef(p.oid), '--[^' || chr(10) || ']*', '', 'g') into v_src
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'calculate_expedition_stats';
   if position('support_craft_types' in v_src) > 0
@@ -926,7 +931,7 @@ begin
   -- so the shares sum to 1 for any non-empty set with a positive total. f1 has just established
   -- every weight is positive, which is exactly the precondition that makes that total positive for
   -- every fittable combination and for the single-entry fallback array alike.
-  select pg_get_functiondef(p.oid) into v_src
+  select regexp_replace(pg_get_functiondef(p.oid), '--[^' || chr(10) || ']*', '', 'g') into v_src
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'combat_create_group_encounter';
   if position('/ v_weight_total' in v_src) = 0 then
@@ -957,7 +962,7 @@ end $f$;
 do $g$
 declare v_src text;
 begin
-  select pg_get_functiondef(p.oid) into v_src
+  select regexp_replace(pg_get_functiondef(p.oid), '--[^' || chr(10) || ']*', '', 'g') into v_src
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'combat_create_group_encounter';
   if position('v_hp_max := m.max_hp;' in v_src) = 0 then
@@ -973,7 +978,7 @@ begin
     raise exception '0317 ASSERT (g) FAIL: current integrity is not summed from hp_current';
   end if;
   -- and the denominator 0310 divides by must be the same quantity, from the same column.
-  if position('sum(msi.max_hp)' in (select pg_get_functiondef(p.oid)
+  if position('sum(msi.max_hp)' in (select regexp_replace(pg_get_functiondef(p.oid), '--[^' || chr(10) || ']*', '', 'g')
                                       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
                                      where n.nspname = 'public' and p.proname = 'process_combat_ticks')) = 0 then
     raise exception '0317 ASSERT (g) FAIL: the tick no longer divides by sum(main_ship_instances.max_hp) — the definition this migration just aligned the bar to has moved, and the two numbers would disagree again';
