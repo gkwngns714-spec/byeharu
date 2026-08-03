@@ -50,10 +50,17 @@ import {
 // HUNT — absorbed from TeamMapSend VERBATIM so no second command surface survives: two-click armed
 // confirm carrying the location id it was armed FOR (switching targets disarms by derivation), the
 // groupHuntAvailability mirror, and the NO-HOME return-port picker (never forced back to origin).
+//
+// STANDING HUNT (owner, 2026-08-04, second report: "i am in combat zone, and the fight does not
+// start") — the zoneHunt section. It is a SIGNPOST, not a fourth verb: it submits nothing, has no
+// busy key, no confirm and no picker. It hands a location id to onSelectHuntSite (the map's marker
+// selection), which re-renders THIS panel with the hunt section above. There is still exactly ONE
+// call site for the hunt RPC in the whole client, and tests/howAFightStarts.spec.ts keeps it that way.
 
 export function FleetCommandPanel({
   onCommanded,
   onClearTarget,
+  onSelectHuntSite,
   timedDockingEnabled,
   ...inputs
 }: FleetCommandModelInput & {
@@ -61,6 +68,13 @@ export function FleetCommandPanel({
   onCommanded: () => void
   /** Clears the live target (point AND port selection) — the model re-derives to no target. */
   onClearTarget: () => void
+  /**
+   * STANDING HUNT (owner, 2026-08-04): select a hunt SITE by id — the map's OWN marker-selection
+   * path, the very one a tap on that marker takes. Not a command: it swings the hub to the fleet
+   * stage where the EXISTING hunt section below renders. Deliberately NOT an optional prop — an
+   * optional one would let a caller mount a signpost that points nowhere, which is the dead end.
+   */
+  onSelectHuntSite: (locationId: string) => void
   /** S4 (0219): runtime timed-dock gate — branches ONLY the dock-row submit (see the header). */
   timedDockingEnabled: boolean
 }) {
@@ -384,6 +398,39 @@ export function FleetCommandPanel({
                     }
                   >
                     Dock at {r.portName}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      case 'zoneHunt':
+        // STANDING HUNT — the fleet is parked INSIDE this zone and the site it wraps is huntable.
+        // Owner, 2026-08-04 (twice): "i am in combat zone, and the fight does not start." The only
+        // signpost was four steps deep in the hub, so a fleet sitting on top of the fight was told
+        // nothing. Word-economy per the map-UX rules: a label that says where they are, a fleet
+        // name, and the ONE action — no paragraph, and nothing that tells them to go find a marker.
+        // The button is a SELECTION, not a command: it never submits, so it is not gated on a
+        // confirm and cannot be mistaken for one. It still yields to `verbDisabled` because
+        // re-targeting the panel under an in-flight request would move the ground beneath it.
+        return (
+          <div key="zoneHunt" className="border-t border-edge/60 pt-2 first:border-t-0 first:pt-0">
+            <SectionLabel>In a pirate zone</SectionLabel>
+            <div className="mt-1.5 space-y-1.5">
+              {s.rows.map((r) => (
+                <div key={r.groupId} className="flex items-center justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm text-ink">{r.name}</span>
+                    <span className="text-xs text-ink-faint">at {r.siteName}</span>
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    data-testid={`fleet-zone-hunt-${r.groupId}`}
+                    disabled={locks.verbDisabled}
+                    onClick={() => onSelectHuntSite(r.locationId)}
+                  >
+                    {r.label}
                   </Button>
                 </div>
               ))}

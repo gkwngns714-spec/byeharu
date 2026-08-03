@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { buildZoneInfo, zoneAtPoint } from '../src/features/map/zoneInfoModel'
+import { buildZoneInfo, zoneAtPoint, zoneHuntSite } from '../src/features/map/zoneInfoModel'
 import { dangerZoneLayer } from '../src/features/map/dangerZoneLayer'
 import { MAP_PASSTHROUGH_ATTR, isMapBackground } from '../src/features/map/mapBackground'
 import type { DangerZoneLite } from '../src/features/map/pirateApi'
@@ -93,6 +93,35 @@ test('a PORT inside a zone is never offered as a hunt — only a real hunt desti
   // An inactive hunt site is not a destination either.
   const closed = loc({ id: 'loc-1', status: 'inactive' })
   expect(buildZoneInfo(zone({ location_id: 'loc-1' }), [closed]).huntSite).toBeNull()
+})
+
+// ── ONE AUTHORITY for "does this zone wrap a huntable site" ──────────────────────────────────────
+// Owner, 2026-08-04, the second report: "i am in combat zone, and the fight does not start." The fix
+// had to make the same offer in a SECOND place (fleetCommandModel's standing-hunt section, for a
+// fleet parked inside the blob). Two places asking the same question with two copies of the
+// predicate is precisely how the site/zone copy became three different answers the first time, so
+// the predicate was EXTRACTED and both callers compose it. This pins that there is one answer.
+
+test('zoneHuntSite is the ONE decision — buildZoneInfo returns exactly what it returns, case for case', () => {
+  const site = loc()
+  const port = loc({ id: 'loc-1', name: 'Haven', activity_type: 'none', location_type: 'trade_outpost' })
+  const cases: [string, DangerZoneLite, MapLocation[]][] = [
+    ['a zone around a hunt site', zone({ location_id: 'loc-1' }), [site]],
+    ['a loose zone', zone({ location_id: null }), [site]],
+    ['a site this client never loaded', zone({ location_id: 'loc-missing' }), [site]],
+    ['a zone around a PORT', zone({ location_id: 'loc-1' }), [port]],
+    ['a zone around an inactive site', zone({ location_id: 'loc-1' }), [loc({ status: 'inactive' })]],
+    ['no locations at all', zone({ location_id: 'loc-1' }), []],
+  ]
+  for (const [why, z, locs] of cases) {
+    expect(buildZoneInfo(z, locs).huntSite, why).toEqual(zoneHuntSite(z, locs))
+  }
+  // …and it is a real answer in the affirmative case, not two matching nulls.
+  expect(zoneHuntSite(zone({ location_id: 'loc-1' }), [site])).toEqual({
+    locationId: 'loc-1',
+    name: 'Reaver',
+    label: 'Hunt at Reaver',
+  })
 })
 
 test('a blank name falls back to plain words — never a raw id in front of a player', () => {

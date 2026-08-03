@@ -574,6 +574,7 @@ export function MapScreen() {
                         unifiedFleets={unifiedGroupFleets}
                         rollups={dockedTeamRollups}
                         locations={locations}
+                        dangerZones={dangerZones}
                         ships={selection.ships}
                         membership={teamGroupMap}
                         launchFromDock={launchFromDockEnabled}
@@ -584,6 +585,12 @@ export function MapScreen() {
                           void selection.refresh()
                         }}
                         onClearTarget={backToMenu}
+                        // STANDING HUNT (owner, 2026-08-04: "i am in combat zone, and the fight
+                        // does not start") — the SAME handoff the zone panel below uses, for the
+                        // same reason: `handleSelect` is the map's own marker-selection path, so a
+                        // fleet parked inside a zone reaches the EXISTING hunt section by exactly
+                        // the route a tap on that site's marker takes. No new state, no new RPC.
+                        onSelectHuntSite={(locationId) => handleSelect(locationId)}
                       />
                     )}
 

@@ -5,6 +5,42 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-04 — HUNT FROM WHERE YOU STAND (`slice-hunt-from-where-you-stand`, client-only)
+
+**The owner, twice:** *"i am in combat zone, and the fight does not start."*
+
+**The rule is unchanged and correct.** A fight starts exactly one way — `send_ship_group_hunt`,
+reached by selecting a `hunt_pirates` SITE — and the server refuses a move to a combat destination
+(`combat_destination`). Standing in the shaded blob does nothing, by design.
+
+**The measured cause is ours, again.** Yesterday's signpost exists but is buried four steps deep:
+double-tap → command hub → "What's here" → zone panel → the button. A fleet parked INSIDE Snare's
+zone was offered nothing, and the map's idle prompt only describes the gesture in prose — it never
+says a site is under your feet.
+
+**What was built.** A `zoneHunt` section on the FleetCommandPanel: a fleet parked in space inside a
+danger zone that wraps a huntable site gets **"Hunt at &lt;site&gt;"**, right there. It is a
+**signpost, not a fourth verb** — it submits nothing, has no busy key, no confirm and no return-port
+picker. It hands the location id to the map's own marker selection (`handleSelect`), exactly as the
+zone panel's button does, and the **existing** hunt section renders. `sendShipGroupHunt` still has
+exactly one call site in the entire client, and a new spec keeps it that way.
+
+**One authority, not two copies.** The offer needed the same "does this zone wrap a huntable site"
+decision the zone panel already made, so the predicate was **extracted** into
+`zoneInfoModel.zoneHuntSite` and both callers compose it (spec: `buildZoneInfo(...).huntSite` equals
+`zoneHuntSite(...)` case for case). Containment reuses `zoneAtPoint` — no second point-in-polygon.
+The section is shaped after the **dock** row: state-predicated, target-independent, honest at the
+edges (in flight, docked, no coordinates, no zone, zone with no site → no offer), and it retires
+itself once the site is selected so there are never two "Hunt at Snare" affordances at once.
+
+**NO-SOFTLOCK holds.** Stop is still section 0, still target-independent, still outside the scroll
+container; the standing offer is ranked above dock and can never precede the brake (pinned).
+
+**Proof:** `tsc -b` clean · `vite build` clean · spec suite **1866 → 1874** (+8, nothing regressed) ·
+rendered UI proofs 95 passed.
+
+---
+
 ## 2026-08-04 — ENEMIES COME OUT OF THE ZONE'S OWN CITY (`slice-enemies-emerge`, migration 0338)
 
 **The owner:** *"make the enemy come out from the city of the zone. for example snare."*

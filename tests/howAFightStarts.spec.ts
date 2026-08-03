@@ -190,6 +190,28 @@ test('the zone panel, the first-orders checklist and the map refusal all say the
   expect(refusal).not.toContain('combat_destination')
 })
 
+// ── 5 · ONE WAY IN — one submit site, however many signposts point at it ─────────────────────────
+// Owner, 2026-08-04, the same complaint a second time: "i am in combat zone, and the fight does not
+// start." The fix adds a THIRD place that offers a hunt (the fleet command panel, for a fleet parked
+// inside a zone that wraps a site) on top of the zone panel and the site marker. Every one of them
+// is a SIGNPOST that selects the site and lets the ONE hunt control render; none of them submits.
+// This is the guard on that: more entrances are fine, a second door is not.
+
+test('the hunt RPC has exactly ONE call site in the whole client', () => {
+  // `sendShipGroupHunt` is declared in teamApi.ts (the wrapper) and must be CALLED from exactly one
+  // surface. A second caller means a second armed-confirm, a second return-port picker, and a second
+  // set of rules about who may hunt — the spaghetti this slice refused to write.
+  const callers = PLAYER_TEXT.filter(
+    (f) => f.path !== 'features/command/teamApi.ts' && /\bsendShipGroupHunt\s*\(/.test(f.text),
+  ).map((f) => f.path)
+  expect(callers, 'one hunt control, however many places point at it').toEqual([
+    'features/map/FleetCommandPanel.tsx',
+  ])
+  // …and the wrapper itself is the only place that names the RPC on the wire.
+  const rpcSites = PLAYER_TEXT.filter((f) => f.text.includes("rpc('send_ship_group_hunt'")).map((f) => f.path)
+  expect(rpcSites).toEqual(['features/command/teamApi.ts'])
+})
+
 test('the checklist step still points at the starter site, without the map-zone name that confused it', () => {
   const hint = deriveFirstOrders({
     shipCount: 1,
