@@ -1,4 +1,4 @@
--- Byeharu — 0332: ITEMS HAVE A PLACE.
+-- Byeharu — 0333: ITEMS HAVE A PLACE.
 --
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 -- THE OWNER'S DESIGN LAWS THIS MIGRATION EXISTS TO SATISFY (stated long ago, repeated 2026-08-03):
@@ -148,16 +148,16 @@ begin
      or to_regclass('public.item_types') is null
      or to_regclass('public.bases') is null
      or to_regclass('public.base_resources') is null then
-    raise exception '0332 PRECONDITION FAIL: an inventory/base table this slice extends is absent';
+    raise exception '0333 PRECONDITION FAIL: an inventory/base table this slice extends is absent';
   end if;
 
   if to_regclass('public.base_items') is not null then
-    raise exception '0332 PRECONDITION FAIL: public.base_items already exists — this migration must not re-run or land over an unknown edit';
+    raise exception '0333 PRECONDITION FAIL: public.base_items already exists — this migration must not re-run or land over an unknown edit';
   end if;
 
   if exists (select 1 from information_schema.columns
               where table_schema = 'public' and table_name = 'item_types' and column_name = 'volume_m3') then
-    raise exception '0332 PRECONDITION FAIL: item_types.volume_m3 already exists — same reason';
+    raise exception '0333 PRECONDITION FAIL: item_types.volume_m3 already exists — same reason';
   end if;
 
   -- the capacity authority must be the column this slice believes it is.
@@ -165,13 +165,13 @@ begin
                   where table_schema = 'public' and table_name = 'main_ship_instances'
                     and column_name = 'cargo_capacity_m3' and data_type = 'numeric'
                     and is_nullable = 'NO') then
-    raise exception '0332 PRECONDITION FAIL: main_ship_instances.cargo_capacity_m3 is not the numeric NOT NULL capacity column — the hold has no capacity authority';
+    raise exception '0333 PRECONDITION FAIL: main_ship_instances.cargo_capacity_m3 is not the numeric NOT NULL capacity column — the hold has no capacity authority';
   end if;
 
   -- bases must already BE the per-port store (0157), or "per-port" has nothing to key on.
   if not exists (select 1 from information_schema.columns
                   where table_schema = 'public' and table_name = 'bases' and column_name = 'location_id') then
-    raise exception '0332 PRECONDITION FAIL: bases.location_id is missing — bases is not the per-port store this slice keys on';
+    raise exception '0333 PRECONDITION FAIL: bases.location_id is missing — bases is not the per-port store this slice keys on';
   end if;
 
   -- every function this migration COMPOSES must exist. It invents none of them.
@@ -185,12 +185,12 @@ begin
      or to_regprocedure('public.mainship_space_lock_context(uuid,boolean)') is null
      or to_regprocedure('public.get_my_docked_store(uuid)') is null
      or to_regprocedure('public.cfg_bool(text)') is null then
-    raise exception '0332 PRECONDITION FAIL: a function this migration composes is missing';
+    raise exception '0333 PRECONDITION FAIL: a function this migration composes is missing';
   end if;
 
   -- the gate this slice rides must already exist (0157). It is NOT created or flipped here.
   if not exists (select 1 from public.game_config where key = 'station_storage_enabled') then
-    raise exception '0332 PRECONDITION FAIL: station_storage_enabled is absent — this slice rides that gate, it does not invent one';
+    raise exception '0333 PRECONDITION FAIL: station_storage_enabled is absent — this slice rides that gate, it does not invent one';
   end if;
 end $pre$;
 
@@ -665,7 +665,7 @@ declare
   v_store     uuid;
   v_resources jsonb;
   v_units     jsonb;
-  v_items     jsonb;   -- ★ 0332 HUNK 2
+  v_items     jsonb;   -- ★ 0333 HUNK 2
   c_empty     constant jsonb := '[]'::jsonb;
 begin
   if v_player is null then
@@ -721,7 +721,7 @@ begin
       into v_units
       from public.base_units u where u.base_id = v_store and u.quantity > 0;
 
-    -- ★ 0332 HUNK 2: this port's own ITEM stock, with the catalog volume carried so the panel shows
+    -- ★ 0333 HUNK 2: this port's own ITEM stock, with the catalog volume carried so the panel shows
     -- what a withdrawal would cost in hold space without computing a volume of its own.
     select coalesce(jsonb_agg(jsonb_build_object('item_id', i.item_id, 'quantity', i.quantity,
                                                  'volume_m3', t.volume_m3,
@@ -776,13 +776,13 @@ declare
 begin
   select count(*) into v_n from public.item_types;
   if v_n < 13 then
-    raise exception '0332 (a) FAIL: expected at least the 13 seeded item types, found %', v_n;
+    raise exception '0333 (a) FAIL: expected at least the 13 seeded item types, found %', v_n;
   end if;
 
   -- LAW 1, established: not one row is volumeless or zero-volume.
   select count(*) into v_bad from public.item_types where volume_m3 is null or volume_m3 <= 0;
   if v_bad <> 0 then
-    raise exception '0332 (a) FAIL: % item type(s) have no positive volume', v_bad;
+    raise exception '0333 (a) FAIL: % item type(s) have no positive volume', v_bad;
   end if;
 
   -- the owner's five, pinned exactly as he gave them.
@@ -791,7 +791,7 @@ begin
      or (select volume_m3 from public.item_types where item_id = 'scrap')        <> 0.5
      or (select volume_m3 from public.item_types where item_id = 'weapon_parts') <> 0.2
      or (select volume_m3 from public.item_types where item_id = 'pirate_alloy') <> 0.5 then
-    raise exception '0332 (a) FAIL: an owner-set volume does not match the value he gave';
+    raise exception '0333 (a) FAIL: an owner-set volume does not match the value he gave';
   end if;
 
   -- the CHECK must EXIST and be VALIDATED (a NOT VALID constraint would let a bad row in later).
@@ -801,29 +801,29 @@ begin
       and c.conname  = 'item_types_volume_m3_positive'
       and c.contype  = 'c';
   if v_conv is null then
-    raise exception '0332 (a) FAIL: the volume_m3 > 0 CHECK is absent';
+    raise exception '0333 (a) FAIL: the volume_m3 > 0 CHECK is absent';
   end if;
   if v_conv is not true then
-    raise exception '0332 (a) FAIL: the volume_m3 CHECK exists but is NOT VALIDATED';
+    raise exception '0333 (a) FAIL: the volume_m3 CHECK exists but is NOT VALIDATED';
   end if;
 
   -- the DEFAULT is what makes a future volumeless catalog row impossible.
   select column_default into v_default from information_schema.columns
     where table_schema = 'public' and table_name = 'item_types' and column_name = 'volume_m3';
   if v_default is null or position('1.0' in v_default) = 0 then
-    raise exception '0332 (a) FAIL: volume_m3 has no 1.0 default — a new item type could arrive volumeless (got %)', coalesce(v_default, '<null>');
+    raise exception '0333 (a) FAIL: volume_m3 has no 1.0 default — a new item type could arrive volumeless (got %)', coalesce(v_default, '<null>');
   end if;
 
   -- and the deployed CHECK, EVALUATED rather than re-typed: it must actually reject 0 and negatives.
   begin
     insert into public.item_types (item_id, name, category, volume_m3)
-      values ('_0332_probe_', 'probe', 'material', 0);
-    raise exception '0332 (a) FAIL: the deployed CHECK accepted volume_m3 = 0';
+      values ('_0333_probe_', 'probe', 'material', 0);
+    raise exception '0333 (a) FAIL: the deployed CHECK accepted volume_m3 = 0';
   exception when check_violation then
     null;  -- correct: the real constraint expression rejected it
   end;
 
-  raise notice '0332 SELF-ASSERT (a) PASS: % item types, every one with a positive volume; the owner-set five pinned; CHECK present, validated and proven to reject zero; default 1.0 makes a volumeless item unrepresentable', v_n;
+  raise notice '0333 SELF-ASSERT (a) PASS: % item types, every one with a positive volume; the owner-set five pinned; CHECK present, validated and proven to reject zero; default 1.0 makes a volumeless item unrepresentable', v_n;
 end $a$;
 
 -- ── (b) base_items mirrors base_resources: shape, RLS, one owner-scoped SELECT policy, no writes ──
@@ -832,19 +832,19 @@ declare
   v_n integer;
 begin
   if to_regclass('public.base_items') is null then
-    raise exception '0332 (b) FAIL: public.base_items was not created';
+    raise exception '0333 (b) FAIL: public.base_items was not created';
   end if;
 
   -- shape parity with base_resources: id / base_id / <code> / <amount> / updated_at, same PK+FK+unique.
   if not exists (select 1 from information_schema.columns
                   where table_schema='public' and table_name='base_items' and column_name='base_id'
                     and data_type='uuid' and is_nullable='NO') then
-    raise exception '0332 (b) FAIL: base_items.base_id is not the NOT NULL uuid key base_resources uses';
+    raise exception '0333 (b) FAIL: base_items.base_id is not the NOT NULL uuid key base_resources uses';
   end if;
   if not exists (select 1 from information_schema.columns
                   where table_schema='public' and table_name='base_items' and column_name='quantity'
                     and data_type='integer' and is_nullable='NO') then
-    raise exception '0332 (b) FAIL: base_items.quantity is not NOT NULL integer';
+    raise exception '0333 (b) FAIL: base_items.quantity is not NOT NULL integer';
   end if;
 
   -- ON DELETE CASCADE from bases (base_resources' rule) — a deleted store takes its items with it.
@@ -852,7 +852,7 @@ begin
     select 1 from pg_constraint c
      where c.conrelid = 'public.base_items'::regclass and c.contype = 'f'
        and c.confrelid = 'public.bases'::regclass and c.confdeltype = 'c') then
-    raise exception '0332 (b) FAIL: base_items.base_id does not cascade from bases the way base_resources does';
+    raise exception '0333 (b) FAIL: base_items.base_id does not cascade from bases the way base_resources does';
   end if;
 
   -- FK on item_types: an item id that is not in the catalog (and so has no volume) is unstorable.
@@ -860,7 +860,7 @@ begin
     select 1 from pg_constraint c
      where c.conrelid = 'public.base_items'::regclass and c.contype = 'f'
        and c.confrelid = 'public.item_types'::regclass) then
-    raise exception '0332 (b) FAIL: base_items.item_id is not FK-bound to item_types — an uncatalogued (volumeless) item could be stored';
+    raise exception '0333 (b) FAIL: base_items.item_id is not FK-bound to item_types — an uncatalogued (volumeless) item could be stored';
   end if;
 
   -- one stack per (store, item) — base_resources' unique (base_id, resource_code).
@@ -870,23 +870,23 @@ begin
        and c.conkey @> array[
              (select attnum from pg_attribute where attrelid='public.base_items'::regclass and attname='base_id'),
              (select attnum from pg_attribute where attrelid='public.base_items'::regclass and attname='item_id')]::smallint[]) then
-    raise exception '0332 (b) FAIL: base_items has no unique (base_id, item_id) — a port could hold two stacks of one item';
+    raise exception '0333 (b) FAIL: base_items has no unique (base_id, item_id) — a port could hold two stacks of one item';
   end if;
 
   -- RLS on, and EXACTLY one policy, and it is a SELECT policy (no write policy may ever appear).
   if not (select relrowsecurity from pg_class where oid = 'public.base_items'::regclass) then
-    raise exception '0332 (b) FAIL: RLS is not enabled on base_items';
+    raise exception '0333 (b) FAIL: RLS is not enabled on base_items';
   end if;
   select count(*) into v_n from pg_policies where schemaname='public' and tablename='base_items';
   if v_n <> 1 then
-    raise exception '0332 (b) FAIL: base_items has % policies, expected exactly 1 (the owner-scoped SELECT)', v_n;
+    raise exception '0333 (b) FAIL: base_items has % policies, expected exactly 1 (the owner-scoped SELECT)', v_n;
   end if;
   if not exists (select 1 from pg_policies where schemaname='public' and tablename='base_items'
                    and policyname='base_items_select_own' and cmd='SELECT') then
-    raise exception '0332 (b) FAIL: the one base_items policy is not the owner-scoped SELECT';
+    raise exception '0333 (b) FAIL: the one base_items policy is not the owner-scoped SELECT';
   end if;
 
-  raise notice '0332 SELF-ASSERT (b) PASS: base_items mirrors base_resources — cascade from bases, FK to item_types, one stack per (store,item), RLS on with exactly one owner-scoped SELECT policy';
+  raise notice '0333 SELF-ASSERT (b) PASS: base_items mirrors base_resources — cascade from bases, FK to item_types, one stack per (store,item), RLS on with exactly one owner-scoped SELECT policy';
 end $b$;
 
 -- ── (c) ACLs, ESTABLISHED above and asserted here ────────────────────────────────────────────────
@@ -897,22 +897,22 @@ declare
 begin
   -- the two client RPCs: authenticated YES, anon/public NO.
   if not has_function_privilege('authenticated', 'public.transfer_items(uuid,text,text,numeric,uuid)', 'execute') then
-    raise exception '0332 (c) FAIL: transfer_items is not executable by authenticated';
+    raise exception '0333 (c) FAIL: transfer_items is not executable by authenticated';
   end if;
   if has_function_privilege('anon', 'public.transfer_items(uuid,text,text,numeric,uuid)', 'execute')
      or has_function_privilege('public', 'public.transfer_items(uuid,text,text,numeric,uuid)', 'execute') then
-    raise exception '0332 (c) FAIL: transfer_items is reachable by anon/public';
+    raise exception '0333 (c) FAIL: transfer_items is reachable by anon/public';
   end if;
   if not has_function_privilege('authenticated', 'public.get_my_hold()', 'execute') then
-    raise exception '0332 (c) FAIL: get_my_hold is not executable by authenticated';
+    raise exception '0333 (c) FAIL: get_my_hold is not executable by authenticated';
   end if;
   if has_function_privilege('anon', 'public.get_my_hold()', 'execute')
      or has_function_privilege('public', 'public.get_my_hold()', 'execute') then
-    raise exception '0332 (c) FAIL: get_my_hold is reachable by anon/public';
+    raise exception '0333 (c) FAIL: get_my_hold is reachable by anon/public';
   end if;
   -- the carried-through 0211 ACL on the re-created read.
   if not has_function_privilege('authenticated', 'public.get_my_docked_store(uuid)', 'execute') then
-    raise exception '0332 (c) FAIL: the re-created get_my_docked_store lost its authenticated grant';
+    raise exception '0333 (c) FAIL: the re-created get_my_docked_store lost its authenticated grant';
   end if;
 
   -- the four leaves are SERVER-ONLY. A client-callable base_items_add would be an item printer.
@@ -923,10 +923,10 @@ begin
     if has_function_privilege('anon', v_g, 'execute')
        or has_function_privilege('authenticated', v_g, 'execute')
        or has_function_privilege('public', v_g, 'execute') then
-      raise exception '0332 (c) FAIL: leaf % is client-callable', v_g;
+      raise exception '0333 (c) FAIL: leaf % is client-callable', v_g;
     end if;
     if not has_function_privilege('service_role', v_g, 'execute') then
-      raise exception '0332 (c) FAIL: leaf % is not executable by service_role', v_g;
+      raise exception '0333 (c) FAIL: leaf % is not executable by service_role', v_g;
     end if;
   end loop;
 
@@ -938,20 +938,20 @@ begin
       if has_table_privilege(v_g, v_t, 'insert')
          or has_table_privilege(v_g, v_t, 'update')
          or has_table_privilege(v_g, v_t, 'delete') then
-        raise exception '0332 (c) FAIL: % still holds client write on %', v_g, v_t;
+        raise exception '0333 (c) FAIL: % still holds client write on %', v_g, v_t;
       end if;
     end loop;
   end loop;
 
   -- the owner-read surfaces stay readable by authenticated and stay CLOSED to anon.
   if not has_table_privilege('authenticated', 'public.base_items', 'select') then
-    raise exception '0332 (c) FAIL: authenticated cannot SELECT base_items — the hangar would be blind';
+    raise exception '0333 (c) FAIL: authenticated cannot SELECT base_items — the hangar would be blind';
   end if;
   if has_table_privilege('anon', 'public.base_items', 'select') then
-    raise exception '0332 (c) FAIL: anon can SELECT base_items';
+    raise exception '0333 (c) FAIL: anon can SELECT base_items';
   end if;
 
-  raise notice '0332 SELF-ASSERT (c) PASS: transfer_items + get_my_hold authenticated-only; the four leaves service-role only; client INSERT/UPDATE/DELETE revoked on base_items, item_transfer_receipts, player_inventory, item_types and inventory_ledger; base_items readable by authenticated and closed to anon';
+  raise notice '0333 SELF-ASSERT (c) PASS: transfer_items + get_my_hold authenticated-only; the four leaves service-role only; client INSERT/UPDATE/DELETE revoked on base_items, item_transfer_receipts, player_inventory, item_types and inventory_ledger; base_items readable by authenticated and closed to anon';
 end $c$;
 
 -- ── (d) transfer_items composes the ONE authority for every fact, and acquires no second one ─────
@@ -963,94 +963,94 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'transfer_items';
   if v_src is null then
-    raise exception '0332 (d) FAIL: transfer_items is absent';
+    raise exception '0333 (d) FAIL: transfer_items is absent';
   end if;
   -- strip comments so no probe below can be satisfied by prose alone (the 0222 vacuity lesson).
   v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
 
   -- LAW 3: the dock comes from the ONE shared resolver, and the surface CANNOT name a port.
   if position('mainship_resolve_docked_location(' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items does not resolve the dock through the one shared resolver';
+    raise exception '0333 (d) FAIL: transfer_items does not resolve the dock through the one shared resolver';
   end if;
   -- Not a text probe of the body: the SIGNATURE ITSELF, read from the catalog, must carry no
   -- location-shaped argument. This is what makes law 3 unexpressable rather than merely checked.
   if (select pg_get_function_identity_arguments(p.oid)
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
        where n.nspname='public' and p.proname='transfer_items') ilike '%location%' then
-    raise exception '0332 (d) FAIL: transfer_items has a location-shaped parameter — law 3 must be unexpressable, not merely checked';
+    raise exception '0333 (d) FAIL: transfer_items has a location-shaped parameter — law 3 must be unexpressable, not merely checked';
   end if;
   if (select pg_get_function_identity_arguments(p.oid)
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
        where n.nspname='public' and p.proname='transfer_items')
      is distinct from 'p_main_ship_id uuid, p_direction text, p_item_id text, p_quantity numeric, p_request_id uuid' then
-    raise exception '0332 (d) FAIL: transfer_items signature drifted from the one this slice established (got %)',
+    raise exception '0333 (d) FAIL: transfer_items signature drifted from the one this slice established (got %)',
       (select pg_get_function_identity_arguments(p.oid) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
         where n.nspname='public' and p.proname='transfer_items');
   end if;
 
   -- ownership, the lock, and the port predicate all come from the existing authorities.
   if position('mainship_resolve_owned_ship(' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items does not assert ownership through the one resolver';
+    raise exception '0333 (d) FAIL: transfer_items does not assert ownership through the one resolver';
   end if;
   if position('mainship_space_lock_context(' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items does not take the per-ship lock';
+    raise exception '0333 (d) FAIL: transfer_items does not take the per-ship lock';
   end if;
   -- and the PLAYER-scoped advisory lock, WITHOUT which the capacity check is only advisory: two of
   -- one player's ships could each pass it and land the hold over capacity between them.
   if position('pg_advisory_xact_lock(hashtext(''item_transfer'')' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items does not take the per-player advisory lock — the capacity check would not be authoritative across a player''s ships';
+    raise exception '0333 (d) FAIL: transfer_items does not take the per-player advisory lock — the capacity check would not be authoritative across a player''s ships';
   end if;
   -- ORDER MATTERS (the 0112:30 law): the advisory lock is taken BEFORE any row lock, or two
   -- transactions can acquire them in opposite orders and deadlock.
   if position('pg_advisory_xact_lock(' in v_src) > position('mainship_space_lock_context(' in v_src) then
-    raise exception '0332 (d) FAIL: the per-ship row lock is taken BEFORE the per-player advisory lock — inverted lock order';
+    raise exception '0333 (d) FAIL: the per-ship row lock is taken BEFORE the per-player advisory lock — inverted lock order';
   end if;
   if position('is_home_port_eligible(' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items does not reuse the canonical port predicate';
+    raise exception '0333 (d) FAIL: transfer_items does not reuse the canonical port predicate';
   end if;
   if position('get_or_create_store(' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items does not resolve the store through the one resolver';
+    raise exception '0333 (d) FAIL: transfer_items does not resolve the store through the one resolver';
   end if;
   if position('auth.uid()' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items does not derive the actor from auth.uid()';
+    raise exception '0333 (d) FAIL: transfer_items does not derive the actor from auth.uid()';
   end if;
 
   -- the writes go through the sole writers and through NOTHING else.
   if position('inventory_spend(' in v_src) = 0 or position('inventory_deposit(' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items does not move the hold through the 0039 sole writers';
+    raise exception '0333 (d) FAIL: transfer_items does not move the hold through the 0039 sole writers';
   end if;
   if position('base_items_add(' in v_src) = 0 or position('base_items_take(' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items does not move the port stock through the base_items sole writers';
+    raise exception '0333 (d) FAIL: transfer_items does not move the port stock through the base_items sole writers';
   end if;
   if v_src ~* 'insert\s+into\s+public\.player_inventory'
      or v_src ~* 'update\s+public\.player_inventory'
      or v_src ~* 'delete\s+from\s+public\.player_inventory' then
-    raise exception '0332 (d) FAIL: transfer_items writes player_inventory directly — a second writer';
+    raise exception '0333 (d) FAIL: transfer_items writes player_inventory directly — a second writer';
   end if;
   if v_src ~* 'insert\s+into\s+public\.base_items'
      or v_src ~* 'update\s+public\.base_items'
      or v_src ~* 'delete\s+from\s+public\.base_items' then
-    raise exception '0332 (d) FAIL: transfer_items writes base_items directly — a second writer';
+    raise exception '0333 (d) FAIL: transfer_items writes base_items directly — a second writer';
   end if;
   -- and it touches nothing outside its own domain.
   if v_src ~* '(insert\s+into|update|delete\s+from)\s+public\.(base_resources|base_units|ship_cargo_lots|player_wallet|main_ship_instances|fleets)' then
-    raise exception '0332 (d) FAIL: transfer_items writes a table outside the item-transfer domain';
+    raise exception '0333 (d) FAIL: transfer_items writes a table outside the item-transfer domain';
   end if;
 
   -- capacity is REFUSED, never clamped: the reject envelope exists and no clamping verb appears.
   if position('hold_over_capacity' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items has no over-capacity refusal';
+    raise exception '0333 (d) FAIL: transfer_items has no over-capacity refusal';
   end if;
   if v_src ~* 'least\s*\(\s*v_qty' or v_src ~* 'v_qty\s*:=\s*least' then
-    raise exception '0332 (d) FAIL: transfer_items clamps the quantity instead of refusing';
+    raise exception '0333 (d) FAIL: transfer_items clamps the quantity instead of refusing';
   end if;
 
   -- idempotency is the receipt key, not a best-effort guess.
   if position('item_transfer_receipts' in v_src) = 0 or position('idempotent_replay' in v_src) = 0 then
-    raise exception '0332 (d) FAIL: transfer_items is not receipt-idempotent';
+    raise exception '0333 (d) FAIL: transfer_items is not receipt-idempotent';
   end if;
 
-  raise notice '0332 SELF-ASSERT (d) PASS: transfer_items composes the docked/ownership/lock/port/store authorities, moves both sides only through their sole writers, cannot name a port at all, refuses over-capacity without clamping, and is receipt-idempotent';
+  raise notice '0333 SELF-ASSERT (d) PASS: transfer_items composes the docked/ownership/lock/port/store authorities, moves both sides only through their sole writers, cannot name a port at all, refuses over-capacity without clamping, and is receipt-idempotent';
 end $d$;
 
 -- ── (e) get_my_docked_store carried through every 0211 invariant ─────────────────────────────────
@@ -1063,7 +1063,7 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'get_my_docked_store';
   if v_src is null then
-    raise exception '0332 (e) FAIL: get_my_docked_store is absent';
+    raise exception '0333 (e) FAIL: get_my_docked_store is absent';
   end if;
   v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
 
@@ -1073,7 +1073,7 @@ begin
   -- number means a branch was lost or duplicated in the re-create.
   select count(*) into v_n from regexp_matches(v_src, 'jsonb_build_object\(', 'g');
   if v_n <> 11 then
-    raise exception '0332 (e) FAIL: the re-created body has % jsonb_build_object sites, expected exactly 11 — a return branch was lost or duplicated', v_n;
+    raise exception '0333 (e) FAIL: the re-created body has % jsonb_build_object sites, expected exactly 11 — a return branch was lost or duplicated', v_n;
   end if;
 
   -- every carried-through state literal must still be emitted.
@@ -1084,48 +1084,48 @@ begin
      or position('''in_transit''' in v_src) = 0
      or position('''in_space''' in v_src) = 0
      or position('''destroyed''' in v_src) = 0 then
-    raise exception '0332 (e) FAIL: a 0211 state literal is missing from the re-created body';
+    raise exception '0333 (e) FAIL: a 0211 state literal is missing from the re-created body';
   end if;
 
   -- the dark gate, the resolver chain and the port predicate all survived.
   if position('cfg_bool(''station_storage_enabled'')' in v_src) = 0 then
-    raise exception '0332 (e) FAIL: the station_storage_enabled gate was lost';
+    raise exception '0333 (e) FAIL: the station_storage_enabled gate was lost';
   end if;
   if position('mainship_resolve_owned_ship(' in v_src) = 0
      or position('mainship_space_validate_context(' in v_src) = 0
      or position('mainship_resolve_docked_location(' in v_src) = 0
      or position('is_home_port_eligible(' in v_src) = 0
      or position('get_or_create_store(' in v_src) = 0 then
-    raise exception '0332 (e) FAIL: a 0211 resolver was lost from the re-created body';
+    raise exception '0333 (e) FAIL: a 0211 resolver was lost from the re-created body';
   end if;
 
   -- the existing projections are untouched.
   if position('base_resources' in v_src) = 0 or position('base_units' in v_src) = 0 then
-    raise exception '0332 (e) FAIL: the resources/units projections were lost';
+    raise exception '0333 (e) FAIL: the resources/units projections were lost';
   end if;
 
   -- HUNK 1: the 'items' key is on EVERY return, so the client parser keeps ONE contract — exactly
   -- eight emissions, one per envelope. Fewer means an envelope shape diverged.
   select count(*) into v_n from regexp_matches(v_src, '''items''', 'g');
   if v_n <> 8 then
-    raise exception '0332 (e) FAIL: the items key appears on % sites, expected exactly 8 — it is not uniform across every envelope', v_n;
+    raise exception '0333 (e) FAIL: the items key appears on % sites, expected exactly 8 — it is not uniform across every envelope', v_n;
   end if;
 
   -- HUNK 2: the port's item stock is read from base_items, joined to the catalog for the volume.
   if position('public.base_items' in v_src) = 0 then
-    raise exception '0332 (e) FAIL: the docked branch does not read base_items';
+    raise exception '0333 (e) FAIL: the docked branch does not read base_items';
   end if;
   if position('volume_m3' in v_src) = 0 then
-    raise exception '0332 (e) FAIL: the item projection carries no volume — the panel would have to compute one';
+    raise exception '0333 (e) FAIL: the item projection carries no volume — the panel would have to compute one';
   end if;
 
   -- it acquired no write authority: a read function must stay a read function (get_or_create_store's
   -- lazy store materialization is the one pre-existing exception, unchanged from 0211).
   if v_src ~* '(insert\s+into|update|delete\s+from)\s+public\.(base_items|player_inventory|base_resources|base_units)' then
-    raise exception '0332 (e) FAIL: the re-created read acquired a write';
+    raise exception '0333 (e) FAIL: the re-created read acquired a write';
   end if;
 
-  raise notice '0332 SELF-ASSERT (e) PASS: get_my_docked_store kept all six branches, every state literal, the dark gate and the whole resolver chain; the items key is uniform across every envelope and the docked branch reads base_items with the catalog volume';
+  raise notice '0333 SELF-ASSERT (e) PASS: get_my_docked_store kept all six branches, every state literal, the dark gate and the whole resolver chain; the items key is uniform across every envelope and the docked branch reads base_items with the catalog volume';
 end $e$;
 
 -- ── (f) the capacity is DERIVED from one source, and no second capacity authority exists ─────────
@@ -1142,43 +1142,43 @@ begin
     from pg_proc p join pg_namespace n on n.oid=p.pronamespace
    where n.nspname='public' and p.proname='hold_used_m3';
   if v_cap is null or v_used is null then
-    raise exception '0332 (f) FAIL: a capacity leaf is absent';
+    raise exception '0333 (f) FAIL: a capacity leaf is absent';
   end if;
   v_cap  := regexp_replace(v_cap,  '--[^\n]*', '', 'g');
   v_used := regexp_replace(v_used, '--[^\n]*', '', 'g');
 
   -- capacity reads cargo_capacity_m3 and excludes wrecks.
   if position('cargo_capacity_m3' in v_cap) = 0 then
-    raise exception '0332 (f) FAIL: hold_capacity_m3 does not read cargo_capacity_m3';
+    raise exception '0333 (f) FAIL: hold_capacity_m3 does not read cargo_capacity_m3';
   end if;
   if position('destroyed' in v_cap) = 0 then
-    raise exception '0332 (f) FAIL: hold_capacity_m3 counts destroyed ships';
+    raise exception '0333 (f) FAIL: hold_capacity_m3 counts destroyed ships';
   end if;
   -- and it reads the DEAD integer columns from 0043 nowhere (they are a lookalike trap).
   if position('cargo_capacity ' in v_cap) <> 0 or position('cargo_used' in v_cap) <> 0 then
-    raise exception '0332 (f) FAIL: hold_capacity_m3 reads the dead 0043 cargo columns';
+    raise exception '0333 (f) FAIL: hold_capacity_m3 reads the dead 0043 cargo columns';
   end if;
 
   -- occupancy reads the catalog volume, and only the hold.
   if position('volume_m3' in v_used) = 0 or position('player_inventory' in v_used) = 0 then
-    raise exception '0332 (f) FAIL: hold_used_m3 is not the item-volume fold over the hold';
+    raise exception '0333 (f) FAIL: hold_used_m3 is not the item-volume fold over the hold';
   end if;
 
   -- NO STORED CAPACITY COLUMN may exist anywhere — a stored copy is the drift this prevents.
   select count(*) into v_n from information_schema.columns
    where table_schema='public' and column_name in ('hold_capacity_m3','hold_used_m3','hold_capacity');
   if v_n <> 0 then
-    raise exception '0332 (f) FAIL: % stored hold-capacity column(s) exist — capacity must be derived, never stored', v_n;
+    raise exception '0333 (f) FAIL: % stored hold-capacity column(s) exist — capacity must be derived, never stored', v_n;
   end if;
 
   -- market_buy is left BYTE-UNTOUCHED: trade cargo keeps its own per-ship check (see the header).
   if to_regprocedure('public.market_buy(uuid,text,numeric,uuid)') is not null then
     if (select position('ship_cargo_lots' in pg_get_functiondef(to_regprocedure('public.market_buy(uuid,text,numeric,uuid)')::oid))) = 0 then
-      raise exception '0332 (f) FAIL: market_buy no longer checks ship_cargo_lots — this migration must not have touched it';
+      raise exception '0333 (f) FAIL: market_buy no longer checks ship_cargo_lots — this migration must not have touched it';
     end if;
   end if;
 
-  raise notice '0332 SELF-ASSERT (f) PASS: hold capacity is DERIVED from cargo_capacity_m3 over non-destroyed ships, occupancy from item_types.volume_m3 over the hold; no stored capacity column exists; market_buy untouched';
+  raise notice '0333 SELF-ASSERT (f) PASS: hold capacity is DERIVED from cargo_capacity_m3 over non-destroyed ships, occupancy from item_types.volume_m3 over the hold; no stored capacity column exists; market_buy untouched';
 end $f$;
 
 -- ── final ────────────────────────────────────────────────────────────────────────────────────────
@@ -1197,8 +1197,8 @@ begin
      group by pi.player_id
     having sum(pi.quantity * t.volume_m3) > public.hold_capacity_m3(pi.player_id)
   ) s;
-  raise notice '0332 BACKFILL: % player_inventory rows left exactly where they are (they ARE the hold). % player(s) are over capacity on day one — nothing was deleted, clamped or confiscated; they can still deposit to a port, and get_my_hold reports over_capacity honestly.', v_tot, v_over;
-  raise notice '0332 SELF-ASSERT PASS: items have a place — a volume, a per-port store, and one docked-only transfer verb between the hold and that port.';
+  raise notice '0333 BACKFILL: % player_inventory rows left exactly where they are (they ARE the hold). % player(s) are over capacity on day one — nothing was deleted, clamped or confiscated; they can still deposit to a port, and get_my_hold reports over_capacity honestly.', v_tot, v_over;
+  raise notice '0333 SELF-ASSERT PASS: items have a place — a volume, a per-port store, and one docked-only transfer verb between the hold and that port.';
 end $z$;
 
 commit;

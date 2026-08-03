@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { fetchMyHold } from './holdApi'
 import { HOLD_EMPTY, type Hold } from './hold'
 
-// ITEMS-HAVE-A-PLACE (0332) — React adapter over the ONE hold read (get_my_hold) and re-fetches
+// ITEMS-HAVE-A-PLACE (0333) — React adapter over the ONE hold read (get_my_hold) and re-fetches
 // whenever its key changes. Mirrors useDockStore/useDockServices exactly: starts at HOLD_EMPTY so
 // nothing renders until the first server answer, clears on any key change so a stale hold can never
 // linger while a refetch is in flight, and any fetch error collapses to the empty default inside

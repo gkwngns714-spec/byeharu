@@ -1,5 +1,5 @@
--- ITEMS-HAVE-A-PLACE — disposable REAL-CHAIN proof (runs on the actual chain 0001..0332 in a
--- throwaway Supabase). Proves migration 0332: item volumes, the per-port `base_items` store, and
+-- ITEMS-HAVE-A-PLACE — disposable REAL-CHAIN proof (runs on the actual chain 0001..0333 in a
+-- throwaway Supabase). Proves migration 0333: item volumes, the per-port `base_items` store, and
 -- the ONE docked-only transfer verb between the ship's hold and that port's storage.
 --
 -- Fixture users carry the 'hx1.' email prefix. The ENTIRE proof runs inside ONE transaction that
@@ -27,7 +27,7 @@
 -- TRUE afterwards; the movement/team flags are forced TRUE for the law-3 undock. The ROLLBACK
 -- reverts all of them. Items are granted ONLY through the REAL secured-deposit pipeline leaf
 -- public.reward_grant (0040 → inventory_deposit), never by a direct player_inventory insert; port
--- stock is placed ONLY through public.base_items_add (0332's sole writer), never by a direct
+-- stock is placed ONLY through public.base_items_add (0333's sole writer), never by a direct
 -- base_items insert.
 
 \set ON_ERROR_STOP on
@@ -343,7 +343,7 @@ declare r jsonb; uA uuid := (select v from hx1 where k='uA'); v_ship uuid := (se
   v_slagstore uuid; g uuid; t0 int; n int; v_args text;
 begin
   -- ── (a) REMOTE RETRIEVAL. uA is docked at HAVEN and has scrap stored at SLAGWORKS. ──────────────
-  -- The Slagworks stock is placed through 0332's OWN sole writer (base_items_add), so the fixture
+  -- The Slagworks stock is placed through 0333's OWN sole writer (base_items_add), so the fixture
   -- is a state the game itself can produce.
   v_slagstore := public.get_or_create_store(uA, slag);
   perform public.base_items_add(v_slagstore, 'scrap', 9);

@@ -16,7 +16,7 @@ import {
   type HoldItem,
 } from '../inventory/hold'
 
-// STATION-STORAGE + ITEMS-HAVE-A-PLACE (0332) — the docked-port STORAGE surface, and the one place
+// STATION-STORAGE + ITEMS-HAVE-A-PLACE (0333) — the docked-port STORAGE surface, and the one place
 // the player moves items between the ship's HOLD and THIS PORT's storage.
 //
 // The owner's laws, made visible here: storage is PER-PORT ("what you see belongs to THIS port

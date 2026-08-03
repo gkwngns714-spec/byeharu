@@ -1,7 +1,7 @@
 import { supabase } from '../../lib/supabase'
 import { HOLD_EMPTY, parseHold, type Hold } from './hold'
 
-// ITEMS-HAVE-A-PLACE (0332) — typed client API for THE HOLD and for the one transfer verb.
+// ITEMS-HAVE-A-PLACE (0333) — typed client API for THE HOLD and for the one transfer verb.
 // Mirrors salvageApi.ts / haulApi.ts conventions: thin wrappers; a transport/DB error resolves to a
 // normalized fail-closed value, never a raw error thrown into the render path. The command is
 // idempotent on (main_ship_id, request_id) — the client passes a fresh crypto.randomUUID() per
@@ -21,7 +21,7 @@ export async function fetchMyHold(): Promise<Hold> {
 /** Which way a stack moves. The server takes the same two literals and rejects anything else. */
 export type TransferDirection = 'to_storage' | 'to_hold'
 
-// transfer_items envelope (0332): success carries the receipted move (+ idempotent_replay on a
+// transfer_items envelope (0333): success carries the receipted move (+ idempotent_replay on a
 // same (ship, request_id) replay — replayed VERBATIM, nothing moved twice) and the hold's numbers
 // AFTER the move; failure is REASON-keyed (transferReasonMessage maps the full vocabulary;
 // insufficient_* also carry have/need, hold_over_capacity carries the volumes). Discriminated

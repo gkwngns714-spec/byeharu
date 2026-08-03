@@ -13,7 +13,7 @@ import {
 import { parseDockedStore, DOCK_STORE_EMPTY } from '../src/features/map/dockStore'
 import { transferReasonMessage } from '../src/features/inventory/transferReasonMessage'
 
-// ITEMS-HAVE-A-PLACE (0332) — pure-logic specs for the hold model, the docked-store item
+// ITEMS-HAVE-A-PLACE (0333) — pure-logic specs for the hold model, the docked-store item
 // projection and the transfer reason map (no app/Supabase). These assert the CLIENT half of the
 // owner's laws: items have a volume, the hold has a visible cap, over-capacity is a legal state
 // that only blocks LOADING, and the surface never invents or recomputes a capacity.
@@ -281,7 +281,7 @@ test('parseDockedStore: a weightless stored item is dropped, like in the hold', 
 
 // ── transferReasonMessage — every server reason has plain words; nothing leaks a raw code ────────
 
-test('transferReasonMessage: the full 0332 reject vocabulary is mapped', () => {
+test('transferReasonMessage: the full 0333 reject vocabulary is mapped', () => {
   for (const reason of [
     'not_authenticated',
     'station_storage_disabled',

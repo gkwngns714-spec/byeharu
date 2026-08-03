@@ -13,7 +13,7 @@ export interface StoreUnit {
   unitTypeId: string
   quantity: number
 }
-// ITEMS-HAVE-A-PLACE (0332) — this port's own ITEM stock (base_items), the sibling base_resources
+// ITEMS-HAVE-A-PLACE (0333) — this port's own ITEM stock (base_items), the sibling base_resources
 // always had and items never did. The catalog volume rides along so no surface has to compute one.
 export interface StoreItem {
   itemId: string

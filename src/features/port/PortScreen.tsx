@@ -70,7 +70,7 @@ export function PortScreen() {
   const chosenBerthPort = chosenPos?.place === 'berthed' ? portOfShip(ports, chosenShipId) : null
   const chosenBerthShipName = chosenBerthPort?.ships.find((s) => s.mainShipId === chosenShipId)?.name ?? 'This ship'
   // STATION-STORAGE — the docked port's own hangar.
-  // ITEMS-HAVE-A-PLACE (0332): the read now carries the CHOSEN ship, the same way the dock-services
+  // ITEMS-HAVE-A-PLACE (0333): the read now carries the CHOSEN ship, the same way the dock-services
   // read above always has. Without it the server's sole-ship shim resolved to NULL for anyone with
   // two or more ships and this card never rendered at all. `storageRevision` re-reads THIS port's
   // storage after a move; it is deliberately NOT folded into `lifecycleKey`, so moving an item does
@@ -209,7 +209,7 @@ export function PortScreen() {
             />
           </div>
           <div className={screenRailClass('aside')}>
-            {/* STATION-STORAGE + ITEMS-HAVE-A-PLACE (0332) — this port's own storage AND the one
+            {/* STATION-STORAGE + ITEMS-HAVE-A-PLACE (0333) — this port's own storage AND the one
                 surface that moves items between it and the ship's hold. Both halves live in one
                 card because the verb is a move BETWEEN them. Renders null unless the ship is
                 docked at a storable port (get_my_docked_store returns empty otherwise). */}

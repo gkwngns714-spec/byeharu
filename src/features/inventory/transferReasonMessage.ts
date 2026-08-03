@@ -1,5 +1,5 @@
-// ITEMS-HAVE-A-PLACE (0332) — pure, fail-closed reason→message map for the hold↔storage transfer
-// (transfer_items). Maps the ACTUAL server reason strings (0332's full reject vocabulary) to short
+// ITEMS-HAVE-A-PLACE (0333) — pure, fail-closed reason→message map for the hold↔storage transfer
+// (transfer_items). Maps the ACTUAL server reason strings (0333's full reject vocabulary) to short
 // player-facing text; any unmapped reason — INCLUDING the holdApi transport fallback 'unavailable',
 // deliberately NOT in the map — degrades to a generic line, so the UI never surfaces a raw code and
 // never throws. No React/DOM/state (the salvageReasonMessage.ts mold).

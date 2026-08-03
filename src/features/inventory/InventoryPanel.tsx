@@ -15,11 +15,11 @@ const cap = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUppe
 // at a port, in the Storage card (the hold and the port's storage sit in one place because the
 // verb is a move between them).
 //
-// ITEMS-HAVE-A-PLACE (0332): this panel now reads the ONE hold authority (get_my_hold) instead of
+// ITEMS-HAVE-A-PLACE (0333): this panel now reads the ONE hold authority (get_my_hold) instead of
 // selecting player_inventory directly, so it shows what every other surface shows — each stack's
 // VOLUME and how full the hold is. It computes neither: used/capacity/free all arrive from the
 // server (hold_used_m3 / hold_capacity_m3). A client-side copy of the capacity formula would be a
-// second authority for "how full is my hold", which is the defect 0332 exists to prevent.
+// second authority for "how full is my hold", which is the defect 0333 exists to prevent.
 // The raw-quantity read (modulesApi.fetchMyItemBalances) stays where it belongs — ModulesPanel's
 // "have n" recipe hints, which need counts and no volumes.
 //

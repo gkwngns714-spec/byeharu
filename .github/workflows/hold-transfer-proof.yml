@@ -8,7 +8,7 @@ name: ITEMS-HAVE-A-PLACE — hold ↔ port storage transfer disposable proof (no
 #      (commission_first_main_ship / reward_grant / base_items_add / command_ship_group_go; never a
 #      direct player_inventory, base_items or item_transfer_receipts insert) and ends in ROLLBACK
 #      with NO COMMIT, so it persists nothing);
-#   2. a disposable local Supabase (the full chain incl. 0332) running the real-chain matrix:
+#   2. a disposable local Supabase (the full chain incl. 0333) running the real-chain matrix:
 #      dark gate (both directions reject before any read, zero writes) → volume catalog pins (every
 #      item positive, the owner-set five, 25 ore per 50 m³ hull, a zero-volume item refused by the
 #      live constraint) → hold↔storage round trip with exact deltas and CONSERVATION → capacity
@@ -50,7 +50,7 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-      - name: Start disposable local Supabase (applies the full migration chain incl. 0332)
+      - name: Start disposable local Supabase (applies the full migration chain incl. 0333)
         run: supabase start
       - name: Export disposable DB_URL (no secrets)
         run: |

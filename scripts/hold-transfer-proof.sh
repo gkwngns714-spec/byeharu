@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ITEMS-HAVE-A-PLACE — disposable proof orchestrator for migration 0332 (item_types.volume_m3 +
+# ITEMS-HAVE-A-PLACE — disposable proof orchestrator for migration 0333 (item_types.volume_m3 +
 # base_items + base_items_add/take + hold_capacity_m3/hold_used_m3 + transfer_items + get_my_hold +
 # the get_my_docked_store item projection).
 # Modes:

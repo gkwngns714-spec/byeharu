@@ -1,11 +1,11 @@
 import { itemLabel } from '../../components/items'
 
-// ITEMS-HAVE-A-PLACE (0332) — PURE, framework-free model of THE SHIP'S HOLD and of a transfer
+// ITEMS-HAVE-A-PLACE (0333) — PURE, framework-free model of THE SHIP'S HOLD and of a transfer
 // between the hold and the docked port's storage. No React/DOM/fetch here (the dockStore.ts mold).
 // Specs: tests/hold.spec.ts.
 //
 // THE ONE RULE THIS FILE OBEYS: it never COMPUTES a capacity or an occupancy. Both numbers arrive
-// from the server (get_my_hold → hold_capacity_m3 / hold_used_m3, migration 0332) and this file
+// from the server (get_my_hold → hold_capacity_m3 / hold_used_m3, migration 0333) and this file
 // only validates, formats and compares them. A client-side second copy of the capacity formula
 // would be a second authority for "how full is my hold", which is the exact defect the migration
 // exists to prevent. `stackFits` below is a DISPLAY precheck over server-supplied numbers — the

@@ -9,7 +9,7 @@ import { DOCK_STORE_EMPTY, type DockedStore } from './dockStore'
 
 export function useDockStore(
   lifecycleKey: string,
-  // ITEMS-HAVE-A-PLACE (0332): mainShipId joins the SAME overrides bag useDockServices already
+  // ITEMS-HAVE-A-PLACE (0333): mainShipId joins the SAME overrides bag useDockServices already
   // uses — one idiom for both dock reads on this screen, not a second parameter shape. Passing the
   // CHOSEN ship stops the read falling into the server's sole-ship shim, which resolves to NULL
   // (and so to an empty, invisible hangar) for any player who owns two or more ships.
