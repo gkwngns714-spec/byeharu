@@ -30,11 +30,28 @@ predicate — composed at first acquisition and at per-weapon re-acquisition),
 `fleet_consume_retreat_target` (read-and-clear, composed by all four arms),
 `combat_encounter_release` (the confined world-state release, composed by all four arms).
 
-**The knob is derived, not decreed.** `spatial_formation_ring_radius` is raised at apply time to
-`max(current, widest_synthetic_enemy_range + 1)`, computed from the live knobs and the live
-`locations.base_difficulty` — 6.0 → 7.0 on today's world, which clears all three Ember sites. It only
-ever raises. A future site that outgrows the ring fails the CI assertion instead of quietly becoming
-unwinnable.
+**No knob moves, and that is the interesting part.** The first draft raised
+`spatial_formation_ring_radius` 6.0 → 7.0 so the ring would clear the widest enemy range. Adversarial
+review killed it, correctly: spawning the wave on the *escort ring* does not establish the invariant,
+because the escorts sit on that same circle — the nearest escort is a chord away, `2·R·sin(π/16) =
+0.39·R`, i.e. **2.73 against a reach of 6.0**. The property held only for the lead, the one hull at
+the anchor, and rescuing it by knob would have needed `R > 2.56 · enemy_range` — a ring of 16.
+
+The wave instead spawns at **`spatial_formation_ring_radius + its own range + 1`**. Every player ship
+sits at radius ≤ the ring, so the minimum distance from *any* player ship to *any* enemy is that
+range + 1 — outside the wave's reach **by construction**, at every difficulty, with no tuning that can
+drift and no balance change riding along. Defect 8 is fixed structurally rather than numerically.
+
+That leaves exactly one half the geometry cannot establish, and it is what the CI assertion now
+checks: when the closing wave *stops* closing it must be inside the player's range, i.e. for every
+location with a positive difficulty (hidden included)
+`enemy_range(D) ≤ player_min_range` **or** `enemy_speed(D) > enemy_range(D) − player_min_range`,
+where `player_min_range` is derived from the fallback knob and the catalog's firing weapons — the
+weakest gun in the game, because that is the hull that decides whether a site is playable.
+
+Verified against the **deployed** `combat_unit_decide_move` at live knobs: from the structural opening
+gap the player fires on tick 0–1 and the fight settles at 3.8–4.0 at all six live and hidden
+difficulties — including The Furnace, where today it never fires at all.
 
 **Built with `scripts/gen-0336-combat-engine-repairs.mjs`** (the 16th generator): 17 hunks over two
 functions, every `old_t` sliced verbatim from the migration that owns its deployed text (0299 for the
