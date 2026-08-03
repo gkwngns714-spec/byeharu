@@ -4149,7 +4149,23 @@ begin
     raise exception 'NOHOME FAIL: team hunt return port not recorded (want Slagworks)'; end if;
   -- launched FROM the docked port (origin_type='location'=Slagworks), not the (0,0) base:
   select count(*) into n from public.fleet_movements where id=v_team_mv and origin_type='location' and origin_location_id=slag;
-  if n <> 1 then raise exception 'NOHOME FAIL: team hunt did not depart from the docked port'; end if;
+  if n <> 1 then
+    -- SELF-DIAGNOSING (2026-08-03, the REAMBUSH idiom): this block has been unreachable since 0300,
+    -- so a first failure here has no history to read it against. Say WHAT the leg actually recorded
+    -- and WHICH arm minted it (a group-tagged fleet means the 0214 unified consume ran; NULL means
+    -- the 0199 head's launch-from-dock branch did).
+    raise exception 'NOHOME FAIL: team hunt did not depart from the docked port — leg origin_type=% origin_location_id=% origin_base_id=% origin=(%,%); want location/% ; team fleet group_id=% origin_base_id=% ; the member''s pre-send present fleets: %',
+      (select origin_type from public.fleet_movements where id=v_team_mv),
+      (select origin_location_id from public.fleet_movements where id=v_team_mv),
+      (select origin_base_id from public.fleet_movements where id=v_team_mv),
+      (select origin_x from public.fleet_movements where id=v_team_mv),
+      (select origin_y from public.fleet_movements where id=v_team_mv),
+      slag,
+      (select group_id from public.fleets where id=v_team_fleet),
+      (select origin_base_id from public.fleets where id=v_team_fleet),
+      coalesce((select string_agg(format('%s status=%s mode=%s loc=%s grp=%s mv=%s', f.id, f.status, f.location_mode, f.current_location_id, f.group_id, f.active_movement_id), ' | ')
+                  from public.fleets f where f.player_id=uNT), '<none>');
+  end if;
   select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='hunting';
   if n <> 1 then raise exception 'NOHOME FAIL: team member not hunting after the docked launch'; end if;
   -- the member's OWN docked present fleet was dissolved (it flies with the team now):
