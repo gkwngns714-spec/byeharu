@@ -35,16 +35,48 @@ PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
-  # ── GENERATED-MIGRATION PARITY GATE (added 0308; 0311 joined) ──────────────────────────────────
-  # 0305, 0306, 0308 and 0311 each re-create LIVE plpgsql by SLICING the deployed text and replacing
-  # marked hunks, and each ships a generator whose --check re-derives the migration from those slices.
-  # That makes byte parity outside the hunks a property of the METHOD rather than a review promise —
-  # but ONLY if the generator is actually run. Before this gate existed, `--check` was wired into no
+  # ── GENERATED-MIGRATION PARITY GATE (added 0308; 0311 joined; 0307 backfilled) ─────────────────
+  # THE ONE AUTHORITY for "every generated migration still matches the slices it claims to take".
+  # Each such migration re-creates LIVE plpgsql by SLICING the deployed text and replacing marked
+  # hunks, and each ships a generator whose --check re-derives the migration from those slices. That
+  # makes byte parity outside the hunks a property of the METHOD rather than a review promise — but
+  # ONLY if the generator is actually run. Before this gate existed, `--check` was wired into no
   # workflow, no harness and no npm script, so a hand-edit of a generated migration passed every gate
   # in the repo and would have surfaced as an exactly-once probe failing AT DEPLOY TIME ON PRODUCTION
-  # instead of in CI. Adversarial review found that hole. All three are gated together, not just the
-  # newest, because the gap was identical for the two that came before.
+  # instead of in CI. Adversarial review found that hole. Every generator is gated together, not just
+  # the newest, because the gap is identical for the ones that came before.
+  # THIS SUITE IS THE HOST because it is the only proof triggered on `pull_request` AND on push to
+  # main — every PR and every merge runs it. fleetgo-proof.yml, which briefly carried a second copy
+  # of this check for gen-0306 alone, fires only on `osn3-**`/`slice-**` pushes, so it was strictly
+  # narrower coverage of the same property in a second place. That copy is deleted; one authority.
+  # 0307 JOINS — AND THE HAND-MAINTAINED LIST IS NO LONGER TRUSTED TO BE COMPLETE. gen-0307 was
+  # authored TEN MINUTES before this gate was written (1d3e3e4 2026-08-02 12:11 vs the gate in
+  # c34ee51 12:48), which enumerated "0305/0306/0308" — the wave its author was holding in mind — and
+  # 0307 fell between them and was never registered. It then sat ungated for the whole 0310→0316 arc
+  # while nine siblings were added around it, and its --check had been reporting the DEPLOYED,
+  # UNMODIFIED migration as OUT OF DATE the entire time (it lacked the CRLF normalisation every
+  # sibling has), which nothing ran and nobody saw. THE REAL DEFECT WAS NOT THE MISSING NAME — it was
+  # that a hand-written list can be incomplete and still print ALL PASSED. So the loop below is now
+  # closed in BOTH directions: every scripts/gen-*.mjs on disk must be registered here (a new
+  # generator can never again be silently ungated), and every registered generator must still exist
+  # and pass (a deleted generator can never again be silently skipped). Neither half alone is enough.
+  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter"
   if command -v node >/dev/null 2>&1; then
+    # DIRECTION 1 — nothing on disk may be unregistered. This is the half that would have caught 0307
+    # on the day the gate was written, and it needs no maintenance to keep working.
+    found_any=0
+    for f in "$REPO_ROOT"/scripts/gen-*.mjs; do
+      [ -f "$f" ] || continue
+      found_any=1
+      b="$(basename "$f" .mjs)"
+      case " $GENERATORS " in
+        *" $b "*) ;;
+        *) fail "$b.mjs exists but is NOT registered in this gate's GENERATORS list — its migration is re-created by slicing LIVE plpgsql and NOTHING is verifying that it still matches its slices. Add it to the list (that is the whole fix); do not delete this check." ;;
+      esac
+    done
+    [ "$found_any" = "1" ] \
+      || fail "no scripts/gen-*.mjs found at all — every generated migration is unverified. The generators were moved or deleted; this gate must never pass on an empty set."
+    # DIRECTION 2 — nothing registered may be missing or failing.
     # UNION, resolved by hand at the 0310/0311 merge. Adversarial review warned about exactly this
     # conflict: "a resolution that drops gen-0311 from the generator loop silently reopens the hole
     # this gate exists to close." BOTH generators stay. Never resolve this hunk by taking one side.
@@ -62,7 +94,7 @@ if [ "$MODE" = "selftest" ]; then
     # sliced from 0301:754, the one line 0308 and 0315 both left alone. NINE generators now. Note
     # that gen-0315's own "nobody rewrote this function after me" head check names 0316 explicitly
     # rather than being widened, so it still fires for 0317 and everything after it.
-    for gen in gen-0305-sortie-authority gen-0306-dock-authority gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter; do
+    for gen in $GENERATORS; do
       # A MISSING generator is a HARD FAIL, not a skip. The first version of this gate wrapped the
       # check in `if [ -f … ]; then … fi`, and adversarial review broke it empirically: hand-edit a
       # generated migration AND delete its generator, and the selftest went green. A refactor that
