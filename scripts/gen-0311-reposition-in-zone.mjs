@@ -26,19 +26,32 @@ const OUT = MIG('20260618000311_reposition_inside_the_fights_zone.sql');
 // checkout hands this script CRLF. Normalise on read, refuse to emit a CR.
 const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\n');
 
-// ── HEAD CHECK: 0301 must still be the newest textual re-create of command_ship_group_go. ─────────
-// 0305/0307 rewrite it by replace() over pg_get_functiondef (no textual re-create), so a textual
-// `create or replace function public.command_ship_group_go(` in any migration NEWER than 0301 means
-// the head moved and this generator's slice source is stale. Do NOT assume — scan.
+// ── HEAD CHECK: 0301 must still be the newest textual re-create of command_ship_group_go AT THE
+// ── MOMENT 0311 APPLIES. 0305/0307 rewrite it by replace() over pg_get_functiondef (no textual
+// ── re-create), so a textual `create or replace function public.command_ship_group_go(` in any
+// ── migration between 0301 and 0311 means the head moved and this generator's slice source is
+// ── stale. Do NOT assume — scan.
+//
+// THE WINDOW ENDS AT 0311, NOT AT "EVERYTHING NEWER THAN 0301" (corrected by 0330). Migrations apply
+// in version order, so a re-creation numbered ABOVE 0311 runs AFTER 0311 and cannot possibly make
+// 0311's slice stale — 0311 already ran against the older text, on production and on every disposable
+// chain. The original scan excluded only 0311's own file, which meant the FIRST migration ever to
+// write a full `create or replace` of this function again would fail this generator's --check and, by
+// way of the parity gate in scripts/danger-combat-proof.sh, red every PR in the repo. 0330 is that
+// migration: it restores the deployed bodies of five movement verbs to the repository precisely so
+// that the head is readable again. Bounding the window is the correct repair, not exempting 0330 by
+// name — the gate keeps firing for anything that lands in (0301, 0311), which is the only range where
+// a moved head could actually invalidate the slice below.
 {
   const reCreate = /create\s+or\s+replace\s+function\s+public\.command_ship_group_go\s*\(/i;
   const version = (f) => (f.match(/^(\d{14})_/) || [])[1] ?? '';
   const newerHeads = readdirSync(MIGDIR)
-    .filter((f) => f.endsWith('.sql') && version(f) > '20260618000301' && version(f) !== '20260618000311')
+    .filter((f) => f.endsWith('.sql')
+      && version(f) > '20260618000301' && version(f) < '20260618000311')
     .filter((f) => reCreate.test(readFileSync(MIG(f), 'utf8')));
   if (newerHeads.length > 0) {
     throw new Error(
-      `command_ship_group_go was textually re-created AFTER 0301 by: ${newerHeads.join(', ')} — ` +
+      `command_ship_group_go was textually re-created between 0301 and 0311 by: ${newerHeads.join(', ')} — ` +
       're-point the slice at the new head before generating.');
   }
 }

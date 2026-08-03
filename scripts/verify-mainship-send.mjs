@@ -20,6 +20,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { readFileSync } from 'node:fs'
 import { teardownVerifier } from './lib/verifier-teardown.mjs'
+import { requireDisposableTarget } from './lib/require-disposable-db.mjs'
 
 function loadEnv(p) {
   const e = {}
@@ -32,6 +33,9 @@ const anonKey = env.VITE_SUPABASE_ANON_KEY
 const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_KEY || env.SUPABASE_SECRET_KEY
 if (!url || !anonKey) { console.error('Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY'); process.exit(2) }
 if (!serviceKey) { console.error('needs SUPABASE_SERVICE_ROLE_KEY (flag + ship + reconciler)'); process.exit(2) }
+// This verifier writes GLOBAL game_config (travel_scale / min_travel_seconds + flags) and cannot
+// guarantee it restores them if the process is killed. It runs against a throwaway database only.
+requireDisposableTarget(url, 'verify-mainship-send')
 
 const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
 let pass = 0, fail = 0
