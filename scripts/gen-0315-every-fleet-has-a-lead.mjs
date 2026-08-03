@@ -64,7 +64,7 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // 0301 and 0308, both frozen. NOTE the one real coupling: 0331 slices two lines out of the file
   // 0315 EMITS (its declaration tail and its roster projection), so an edit to gen-0315 that changes
   // either of those emitted lines will break gen-0331's --check, loudly, in the same CI run.
-  const KNOWN_LATER_REWRITERS = new Set(['20260618000316', '20260618000331']);
+  const KNOWN_LATER_REWRITERS = new Set(['20260618000316', '20260618000331', '20260618000336']);
   const reHunkRow = /\(\s*\d+\s*,\s*'combat_create_group_encounter'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000308'
     && !KNOWN_LATER_REWRITERS.has(version(f))

@@ -313,6 +313,65 @@ begin
   perform public.set_game_config('max_active_fleets',               '50'::jsonb);
 end $$;
 
+-- ════════ DZCOMBAT_PASS_OWNWORLD (0336): THE PROOF OWNS ITS ZONE WORLD — NO RANDOM BLOB IN IT ═══════
+-- ── THE FLAKE THIS ENDS, AND ITS EXACT MECHANISM ─────────────────────────────────────────────────
+-- This suite failed and passed on IDENTICAL commits four times in one day, always here:
+--     danger-combat-proof.sql:REPOSITION FAIL fixture: 1 unrelated active zone(s) also hold the
+--     engagement point (<uuid> Reaver) — move the fixture geometry.
+-- naming Reaver every time, with a DIFFERENT uuid every run. It was never a flake. It is a
+-- randomly-shaped world colliding with a fixed test coordinate:
+--   * The seeded pirate zones are regenerated on every fresh disposable database, and the generator
+--     (0237, carried into 0296's rematerializer) builds each polygon from random(): 12..24 vertices,
+--     3..6 lobes, a random phase, per-vertex angular jitter, and a per-vertex radial wobble of
+--     0.6..1.5 x territory_radius modulated by (1 +/- 0.18). So a seeded blob's reach from its own
+--     centre lands anywhere in [0.492, 1.77] x territory_radius, redrawn on every CI run.
+--   * The ROSTERAUTH fixture's ambush entry — the engagement point REPOSITION measures from — sits
+--     at the starter port's (x, y + 200). Against the seeded world that is 18.03 units from Reaver's
+--     centre, whose territory_radius is 12: minimum reach 5.90, MAXIMUM reach 21.24. The fixture
+--     point lies INSIDE that annulus, so Reaver's blob covered it on some runs and not on others.
+-- ── THE FIX: OWN THE PRECONDITION, DO NOT WIDEN THE GUARD ────────────────────────────────────────
+-- The REPOSITION guard is right and stays exactly as strong as it was: a real overlap WOULD
+-- invalidate the property it proves, and 0317's named diagnostic is what made this diagnosable at
+-- all. What was wrong is that the block INHERITED an ambient, randomly-shaped world instead of
+-- establishing its own — the proofs-never-assert-ambient-defaults law, in its geometric form.
+-- So: every zone this proof did not draw is deactivated here, in-txn, before any fixture geometry
+-- exists. From this line on, the ONLY active danger zones in the world are the ones this file
+-- creates through pirate_zone_create, at coordinates this file chose. Every downstream zone
+-- assertion — REPOSITION's single-holder guard, REPOOVERLAP's quantifier, the intercept plans, the
+-- entry-point geometry — becomes deterministic, on every database, forever.
+-- WHY DEACTIVATE RATHER THAN RESHAPE: the only in-repo reshaper is the random generator itself, and
+-- this file may not call random() (the 0041 determinism law). Status is the one lever that is both
+-- deterministic and already the authority every reader uses: RLS, get_danger_zones and
+-- pirate_intercept_leg_zone_hits all filter status = 'active'.
+-- WHY IT WEAKENS NOTHING: no block in this file references a seeded zone, by name or by id; every
+-- ambush it stages is planned from a zone it drew itself at risk 1.0. Removing ambient blobs can
+-- only REMOVE unplanned intercepts, never add one — so the "exactly one pending ambush" asserts
+-- downstream get stronger, not weaker.
+do $$
+declare n_seeded int; n_left int;
+begin
+  select count(*) into n_seeded from public.danger_zones where status = 'active' and source <> 'drawn';
+  update public.danger_zones set status = 'inactive', updated_at = now()
+   where status = 'active' and source <> 'drawn';
+  -- NON-VACUITY: a world with no seeded zone at all would satisfy the asserts below while proving
+  -- nothing, and would also mean the seed stopped producing the very shapes this block exists to
+  -- exclude. Fail loudly instead — the next author must decide whether that is a real seed change.
+  if n_seeded = 0 then
+    raise exception 'OWNWORLD FAIL: the chain seeded ZERO active non-drawn danger zones — either the seed changed or this block is now inert, and either way the determinism it establishes is no longer being established';
+  end if;
+  select count(*) into n_left from public.danger_zones where status = 'active' and source <> 'drawn';
+  if n_left <> 0 then
+    raise exception 'OWNWORLD FAIL: % randomly-shaped seeded zone(s) are still active — a fixed test coordinate would keep colliding with them at random', n_left;
+  end if;
+  -- and nothing DRAWN is active yet either: this runs before the first pirate_zone_create, so the
+  -- world is empty of zones and every later one is this file's own.
+  select count(*) into n_left from public.danger_zones where status = 'active';
+  if n_left <> 0 then
+    raise exception 'OWNWORLD FAIL: % active zone(s) remain before any fixture is drawn — this block must run before the first pirate_zone_create', n_left;
+  end if;
+  raise notice 'DZCOMBAT_PASS_OWNWORLD ok: % randomly-shaped seeded zone(s) deactivated in-txn; zero active zones remain, so every zone this proof measures from here on is one it drew itself at a coordinate it chose', n_seeded;
+end $$;
+
 -- ════════ PROVISION: TWO command ships via the real RPCs, TWO teams ══════════════════════════════════
 -- Team A carries the main scenario through to combat. Team B is kept clear for the STOP / re-order /
 -- evasion scenario, which needs a fleet that is not already in a fight.
