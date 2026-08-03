@@ -159,7 +159,14 @@ test('reward bundle: null on a CREATE is a WARNING (no reward configured) — st
 
 // ── field overlap (ONE shared distance formula; touching is NOT overlap) ────────────────────────────
 test('field_overlap: d < mining_extract_radius warns; d == radius does not; an edit ignores its own row', () => {
-  expect(MINING_FIELD_OVERLAP_RADIUS_FALLBACK).toBe(750)
+  // The pin is deliberate and is NOT an ambient default: this constant only earns its place by
+  // MATCHING game_config.mining_extract_radius, which production holds at 60 and migration 0320
+  // now seeds at 60. Pinning the number here means a future retune of that knob turns this test red
+  // and names the client constant that has to move with it — which is the point, because a fallback
+  // that silently drifts off production is a second, wrong authority. It read 750 (the pre-0320
+  // chain seed) while the game ran at 60. Everything below derives from the constant, so this is
+  // the only line that moves when the knob does.
+  expect(MINING_FIELD_OVERLAP_RADIUS_FALLBACK).toBe(60)
 
   // exactly at the radius → NOT an overlap
   const touching = ctx({ live: [field({ space_x: MINING_FIELD_OVERLAP_RADIUS_FALLBACK, space_y: 0 })] })
@@ -178,22 +185,28 @@ test('field_overlap: d < mining_extract_radius warns; d == radius does not; an e
   expect(codes(validateMiningDraft(d, ctx({ live: [src] })))).toEqual([])
 })
 
-// ── C1: the radius arrives FROM CONTEXT (server-authoritative); 750 is only the labeled fallback ────
-test('field_overlap radius: ctx.overlapRadius (game_config) overrides the 750 fallback; absent/invalid context falls back', () => {
-  const at400 = () => createDraft({ space_x: 0, space_y: 0 })
-  const live400 = [field({ space_x: 400, space_y: 0 })]
+// ── C1: the radius arrives FROM CONTEXT (server-authoritative); the constant is only the fallback ──
+// Every distance below is DERIVED from the fallback constant rather than written as a literal. The
+// property under test is "context wins, absent context falls back" — that is true at any radius, so
+// hard-coding 400/300/500 against a fallback of 750 was asserting the knob's value, not the rule.
+// It broke the moment the fallback tracked production (750 -> 60) even though the rule never changed.
+test('field_overlap radius: ctx.overlapRadius (game_config) overrides the labeled fallback; absent/invalid context falls back', () => {
+  const R = MINING_FIELD_OVERLAP_RADIUS_FALLBACK
+  const gap = R * 0.8 // strictly inside the fallback, strictly outside a half-width server radius
+  const atOrigin = () => createDraft({ space_x: 0, space_y: 0 })
+  const liveAtGap = [field({ space_x: gap, space_y: 0 })]
 
-  // server radius 300: distance 400 is OUTSIDE → no overlap (would warn under the 750 fallback)
-  expect(codes(validateMiningDraft(at400(), ctx({ live: live400, overlapRadius: 300 })))).toEqual([])
+  // server radius R/2: the gap is OUTSIDE → no overlap (it WOULD warn under the fallback)
+  expect(codes(validateMiningDraft(atOrigin(), ctx({ live: liveAtGap, overlapRadius: R / 2 })))).toEqual([])
 
-  // server radius 500: distance 400 is INSIDE → warning
-  const wide = validateMiningDraft(at400(), ctx({ live: live400, overlapRadius: 500 }))
+  // server radius R: the gap is INSIDE → warning
+  const wide = validateMiningDraft(atOrigin(), ctx({ live: liveAtGap, overlapRadius: R }))
   expect(codes(wide)).toEqual(['field_overlap'])
   expect(severityOf(wide, 'field_overlap')).toBe('warning')
 
-  // absent (undefined), null, and invalid (0 / NaN) all fall back to the labeled 750 default
+  // absent (undefined), null, and invalid (0 / NaN) all fall back to the labeled default
   for (const overlapRadius of [undefined, null, 0, Number.NaN]) {
-    const r = validateMiningDraft(at400(), ctx({ live: live400, overlapRadius }))
+    const r = validateMiningDraft(atOrigin(), ctx({ live: liveAtGap, overlapRadius }))
     expect(codes(r), `overlapRadius ${String(overlapRadius)}`).toEqual(['field_overlap'])
   }
 })
@@ -232,9 +245,18 @@ test('conflicting_draft: another edit of the same live row (edit), or a same-nam
 
 // ── publishable semantics ───────────────────────────────────────────────────────────────────────────
 test('publishable flips ONLY on error severity: warnings alone stay publishable', () => {
-  // warnings only: duplicate name + overlap + stale-changed + no bundle
+  // warnings only: duplicate name + overlap + stale-changed + no bundle.
+  // The offset is DERIVED from the fallback so the overlap warning is guaranteed at any radius; a
+  // literal 100 next to a 750 fallback silently stopped producing an overlap when the fallback
+  // tracked production down to 60, and this test then failed on an issue COUNT, three rules away
+  // from the thing that had actually changed.
   const warnOnly = validateMiningDraft(
-    createDraft({ name: 'Ferrite Shoal', space_x: 5100, space_y: 5000, reward_bundle_json: null }),
+    createDraft({
+      name: 'Ferrite Shoal',
+      space_x: 5000 + MINING_FIELD_OVERLAP_RADIUS_FALLBACK / 2,
+      space_y: 5000,
+      reward_bundle_json: null,
+    }),
     ctx({ live: [field({ name: 'ferrite shoal' })], sourceStatus: 'source_changed' }),
   )
   expect(warnOnly.issues.length).toBeGreaterThanOrEqual(4)

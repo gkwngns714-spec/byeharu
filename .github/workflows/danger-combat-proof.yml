@@ -79,6 +79,12 @@ on:
       # function and adds no behaviour block here; the branch is named so its own generator is checked
       # on the branch that introduces it rather than first on main.
       - 'slice-drawn-zones**'
+      # 0320 DELETES eight game_config rows and writes three more. Its whole safety argument is an
+      # apply-time precondition ("no function in this database mentions these keys") that only a real
+      # Postgres can evaluate — a static read of the file proves nothing about it. This proof is the
+      # `supabase start` that applies the chain INCLUDING 0320, so a knob branch that does not fire
+      # it ships a DELETE against the live config table on text self-asserts alone.
+      - 'slice-knobs**'
 
 permissions:
   contents: read

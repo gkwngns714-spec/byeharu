@@ -209,6 +209,13 @@ update public.game_config set value='false'::jsonb where key='combat_telegraph_e
 do $tune$
 begin
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);   -- determinism (variance≡1)
+  -- 0320 pins the SECOND spread knob too. The per-hit roll 0314 added reads
+  --   coalesce(cfg_num('combat_hit_variance_pct'), v_var_pct)
+  -- so it INHERITED the damage-variance pin above only while that key did not exist. 0320 seeds it
+  -- (production runs it at 0.5), and the moment it exists the inheritance stops and every exact
+  -- damage equality below becomes a +/-50% roll. A proof must state the precondition it owns
+  -- rather than rely on a row's ABSENCE.
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);      -- determinism (0314 per-hit roll)
   -- 0314: the tick arms REAL weapon cooldowns and now() is txn-frozen — a positive cooldown means
   -- fire-once-per-proof, which would stall the three-wave lifecycle (every wave is cleared by fire
   -- across ticks). This harness asserts the fire-every-tick world, so it OWNS that precondition

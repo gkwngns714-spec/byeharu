@@ -124,6 +124,13 @@ update public.game_config set value='false'::jsonb where key='combat_telegraph_e
 do $$
 begin
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);   -- v_variance = 1 (exact numbers)
+  -- 0320 pins the SECOND spread knob too. The per-hit roll 0314 added reads
+  --   coalesce(cfg_num('combat_hit_variance_pct'), v_var_pct)
+  -- so it INHERITED the damage-variance pin above only while that key did not exist. 0320 seeds it
+  -- (production runs it at 0.5), and the moment it exists the inheritance stops and every exact
+  -- damage equality below becomes a +/-50% roll. A proof must state the precondition it owns
+  -- rather than rely on a row's ABSENCE.
+  perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);      -- exact numbers (0314 per-hit roll)
   perform public.set_game_config('combat_tick_logging',  'true'::jsonb);
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_base', '10000'::jsonb); -- in range at dist 0
