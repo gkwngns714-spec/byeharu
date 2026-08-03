@@ -31,8 +31,8 @@
     "noFallthroughCasesInSwitch": true
   },
   /* BOTH playwright configs, not just the default one. playwright.osnui.config.ts is a live CI
-     entrypoint (.github/workflows/phase9-dock-services-ui-proof.yml:40) and is the config that RUNS
-     tests/dockServicesUi.uispec.ts — the very file this gate exists to start covering. Leaving it out
+     entrypoint (the `rendered-ui` job in .github/workflows/frontend-tests.yml) and is the config that
+     RUNS the *.uispec.ts proofs — the very files this gate exists to start covering. Leaving it out
      would have made the gate cover the test but not the thing that runs it. If another
      playwright.*.config.ts is ever added, it belongs here on the same day. */
   "include": ["tests", "playwright.config.ts", "playwright.osnui.config.ts"]
