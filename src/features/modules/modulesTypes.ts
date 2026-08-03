@@ -67,6 +67,13 @@ export interface ItemTypeRow {
   description: string | null
   stackable: boolean
   icon_key: string | null
+  /** Catalog volume of ONE unit (`item_types.volume_m3`, added by migration 0333; NOT NULL,
+   *  CHECK > 0 server-side). ASSETS-TAB added it to this ONE catalog read rather than opening a
+   *  second select on `item_types` for the same fact. This is CATALOG data — the per-unit size of
+   *  a kind of thing — and it is never the authority for how full a hold or a store IS: those
+   *  numbers come from the server (get_my_hold / get_my_docked_store) and are never recomputed
+   *  client-side. numeric arrives from PostgREST as a string → coerced in fetchItemCatalog. */
+  volume_m3: number
 }
 
 /** One module_recipe_ingredients row (0107; public read — direct client select). */

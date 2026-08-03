@@ -10,8 +10,11 @@ import { defineConfig, devices } from '@playwright/test'
 // /camera.html — the real <GalaxyMap> + useWheelZoom under a real pointer; /fold.html — the real
 // <ReportsSection> (the Collapsible fold contract); /repair.html — the real <RepairPanel>, THE ONE
 // repair surface, driven across every server state (wreck / dent / adrift / dark flag / failed
-// reads). Readiness polls /dock.html because ONE entry is enough to prove the server is up; all
-// are served by it.
+// reads); /hunt.html — the signpost out of the pirate-zone dead end; /fight.html — the rendered
+// battle readout at a phone width; /nav.html — the bottom bar MEASURED at the 320px floor;
+// /assets.html — the asset ledger across every price-coverage state, proving a missing price
+// reaches the screen as words and never as a zero. Readiness polls /dock.html because ONE entry is
+// enough to prove the server is up; all are served by it.
 export default defineConfig({
   testDir: './tests',
   testMatch: '**/*.uispec.ts',

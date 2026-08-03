@@ -101,15 +101,30 @@ test('nothing else is merged — two hits really are two hits', () => {
 })
 
 // ── a battle is announced on every screen ─────────────────────────────────────────────────────────
+// REPOINTED (ASSETS-TAB, 2026-08-04): the nav markup moved out of AppShell into NavBar.tsx so the
+// bar could be rendered and MEASURED on its own at 320px (tests/navFits.uispec.ts). The property
+// this test protects is unchanged — a live battle is announced on every screen, keyed off the one
+// tab table, riding already-polled state — it just holds one file down now. Repointed to the real
+// structure and STRENGTHENED while here: the shell owns the polled count, the bar owns the alert,
+// neither hardcodes which destination is the combat one, and there is exactly ONE bar.
 test('the nav carries a combat alert, keyed off the ONE tab table', () => {
   const shell = src('app/AppShell.tsx')
+  const nav = src('app/NavBar.tsx')
   const tabs = src('app/navTabs.ts')
   expect(tabs).toContain('export const COMBAT_TAB_TO')
-  expect(shell).toContain('COMBAT_TAB_TO')
-  expect(shell).toContain('nav-combat-alert')
-  // it must ride the already-polled state, never its own read
-  expect(shell).toContain('combat.encounters.length > 0')
-  expect(shell, 'the shell must not hardcode which destination owns combat').not.toContain("t.to === '/mission'")
+  // The BAR draws the alert, and asks the TABLE which destination owns it.
+  expect(nav).toContain('COMBAT_TAB_TO')
+  expect(nav).toContain('nav-combat-alert')
+  // It rides the already-polled shell state, never its own read: the shell reads combat.encounters
+  // and hands the count down as a prop; the bar queries nothing.
+  expect(shell).toContain('combat.encounters.length')
+  expect(nav, 'the bar must not fetch combat state itself').not.toContain('useCombat')
+  // Neither file may hardcode which destination owns combat — that is the table's job.
+  expect(nav, 'the bar must not hardcode which destination owns combat').not.toContain("t.to === '/mission'")
+  expect(shell, 'the shell must not hardcode which destination owns combat').not.toContain("'/mission'")
+  // ONE bar: the extraction must not have left a second copy behind in the shell.
+  expect(shell).toContain('<NavBar')
+  expect(shell, 'the shell must not still carry its own copy of the bar').not.toContain('data-testid="app-nav"')
 })
 
 // ── the poll cannot regress the readout ───────────────────────────────────────────────────────────

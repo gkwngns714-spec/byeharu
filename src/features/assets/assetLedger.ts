@@ -1,0 +1,352 @@
+import { itemLabel } from '../../components/items'
+
+// ASSETS-TAB (owner order 2026-08-04: "i need to be able to see my assets… show what i have, the
+// estimate price, on which city") — the PURE, framework-free model of the player's asset ledger.
+// No React/DOM/fetch here (the hold.ts / dockStore.ts / salvageMarket.ts mold). Specs:
+// tests/assetLedger.spec.ts.
+//
+// ═══ THE ONE RULE THIS FILE EXISTS TO ENFORCE ═══════════════════════════════════════════════════
+// A MISSING PRICE IS `null`, NEVER `0`, AND NEVER AN EXTRAPOLATION.
+//
+// This is the whole point of the file. A screen whose job is telling the owner what they own is
+// worse than useless if it invents a valuation: a fabricated number is indistinguishable from a
+// real one, and they will act on it. So:
+//   · `unitPrice: null` means "this port does not price this — I do not know what it is worth."
+//   · `unitPrice: 0` means the port genuinely pays ZERO. That is a real price and it renders as
+//     one. (The same distinction migration 0335 had to make for repair, where 0 had wrongly meant
+//     "misconfigured" and broke a free repair. One meaning per value.)
+//   · A total NEVER silently absorbs an unpriced stack. Every total carries `unpricedKinds`
+//     alongside it, so the renderer cannot show a sum without also being able to say what it left
+//     out. `valued` is not "your assets are worth this"; it is "this much of it is priced."
+//   · No global/average/nearest-port price is ever synthesised. Prices are PER PORT (that is the
+//     design law — storage is per-port), so the same item in two cities has two different answers,
+//     and both are correct.
+//
+// ═══ TWO PRICE CATALOGUES, NEVER MERGED ════════════════════════════════════════════════════════
+// Verified read-only against production 2026-08-04, and this is NOT what it looks like at a glance:
+//
+//   · `port_item_demand (location_id, item_id, unit_price, active)` prices ITEMS — the things in
+//     `item_types` that live in `base_items` (port storage) and `fleet_items` (the hold). It is
+//     what `sell_item_at_port` actually pays you, so it is the honest answer to "what is this
+//     worth here". 5 items × 3 ports, all active.
+//   · `market_offers (location_id, good_id, buy_price, …)` prices TRADE GOODS — the `trade_goods`
+//     rows that live in `ship_cargo_lots`. 6 goods × 3 ports.
+//
+// `item_types` and `trade_goods` are SEPARATE NAMESPACES that happen to share one string: `ore`.
+// They are not the same thing — `item_types.ore` is "Ore", 2.00 m³; `trade_goods.ore` is "Raw
+// Ore", 1.00 m³. Pricing a held ITEM off `market_offers` because the id matched would be a
+// cross-namespace fabrication — the exact defect the rule above forbids, wearing a plausible
+// disguise. So `priceAt` below is used TWICE over TWO row sets that are never concatenated, and
+// the type system keeps them apart by making the caller choose the rows.
+//
+// Consequence, measured on prod: of the six item kinds actually held, `port_item_demand` prices
+// four (scrap, pirate_alloy, weapon_parts, engine_parts) and prices NEITHER `crystal` NOR `ore`.
+// So the ledger will honestly say "no price here" for 122 of 312 held rows on day one. That is the
+// truth, and showing it is the feature.
+
+// ── the price lookup (one shape, used over each catalogue separately) ────────────────────────────
+
+/** One row of a per-port price list. Both catalogues project onto this — but the two row SETS are
+ *  never mixed, because their id namespaces are different (see the header). */
+export interface PriceRow {
+  locationId: string
+  /** `item_types.item_id` for the item catalogue, `trade_goods.good_id` for the goods catalogue. */
+  refId: string
+  unitPrice: number
+  active: boolean
+}
+
+/** Key for the price index. Kept private so no caller can hand-build one out of the wrong pair. */
+// NUL as the delimiter, written as an explicit escape: it is the one byte that cannot occur in
+// a uuid or an item id, so no pair of (port, ref) can ever collide with another pair by
+// concatenation. (It is escaped rather than typed literally so this file stays TEXT to git and
+// remains reviewable as a diff.)
+const priceKey = (locationId: string, refId: string) => `${locationId}\u0000${refId}`
+
+/** A prepared per-port price index. Build once per render, query per stack. */
+export type PriceIndex = ReadonlyMap<string, number>
+
+/**
+ * Index a price catalogue by (port, ref). INACTIVE ROWS ARE DROPPED — an inactive row is not a
+ * price, and carrying it would let the ledger quote something the server would refuse to honour.
+ * A non-finite or negative price is also dropped (malformed data must not become a valuation);
+ * ZERO is kept, because zero is a real price. On a duplicate (port, ref) the FIRST row wins, so
+ * the result never depends on row order the server did not promise.
+ */
+export function buildPriceIndex(rows: readonly PriceRow[]): PriceIndex {
+  const index = new Map<string, number>()
+  for (const r of rows) {
+    if (!r.active) continue
+    if (typeof r.unitPrice !== 'number' || !Number.isFinite(r.unitPrice) || r.unitPrice < 0) continue
+    const k = priceKey(r.locationId, r.refId)
+    if (!index.has(k)) index.set(k, r.unitPrice)
+  }
+  return index
+}
+
+/**
+ * What one unit of `refId` is worth AT `locationId` — or null when this port does not price it.
+ *
+ * null is returned for: no row at all, an inactive row, a malformed price, and — deliberately — a
+ * null `locationId`, which is the "this fleet is in deep space, there is no port to price against"
+ * case. There is no fallback to another port's price: that would be the extrapolation this whole
+ * module refuses to do.
+ */
+export function priceAt(index: PriceIndex, locationId: string | null, refId: string): number | null {
+  if (locationId === null) return null
+  const v = index.get(priceKey(locationId, refId))
+  return v === undefined ? null : v
+}
+
+// ── a valued stack ───────────────────────────────────────────────────────────────────────────────
+
+/** One item kind, in one place, with what that place will pay for it (or an honest null). */
+export interface ValuedStack {
+  refId: string
+  /** Display name from the catalogue; falls back to the title-cased id, never crashes. */
+  label: string
+  quantity: number
+  /** Catalog volume of ONE unit. 0 when the catalogue did not carry one (never invented). */
+  volumeM3: number
+  /** quantity × volumeM3. Volume is a client-safe multiplication: it is CATALOG data, not the
+   *  server's capacity accounting — no hold/store occupancy is ever recomputed here. */
+  stackM3: number
+  /** null ⇒ THIS PORT DOES NOT PRICE THIS. Never 0-as-unknown. */
+  unitPrice: number | null
+  /** quantity × unitPrice, or null iff unitPrice is null. Never 0-as-unknown. */
+  stackValue: number | null
+}
+
+/** The one place a stack becomes a valued stack. Nothing else in the app may compute stackValue. */
+export function valueStack(input: {
+  refId: string
+  quantity: number
+  volumeM3: number
+  unitPrice: number | null
+}): ValuedStack {
+  const quantity = Number.isFinite(input.quantity) && input.quantity > 0 ? input.quantity : 0
+  const volumeM3 = Number.isFinite(input.volumeM3) && input.volumeM3 > 0 ? input.volumeM3 : 0
+  const unitPrice =
+    typeof input.unitPrice === 'number' && Number.isFinite(input.unitPrice) && input.unitPrice >= 0
+      ? input.unitPrice
+      : null
+  return {
+    refId: input.refId,
+    label: itemLabel(input.refId, 'item'),
+    quantity,
+    volumeM3,
+    stackM3: quantity * volumeM3,
+    unitPrice,
+    // The null propagates. This single line is why a missing price can never become a zero in a
+    // total: there is no arithmetic path from null to a number.
+    stackValue: unitPrice === null ? null : quantity * unitPrice,
+  }
+}
+
+// ── a total that cannot lie about what it left out ───────────────────────────────────────────────
+
+/**
+ * A sum over stacks, plus the count of what could NOT be summed. The two travel together as one
+ * value on purpose: a renderer physically cannot display `valued` without having `unpricedKinds`
+ * in its hand, so "1,240 cr" can never appear where the honest string is "1,240 cr + 2 kinds not
+ * priced here".
+ */
+export interface LedgerTotal {
+  /** Credits from the stacks that HAVE a price. Not "what your assets are worth". */
+  valued: number
+  /** How many stacks contributed to `valued`. */
+  pricedKinds: number
+  /** How many stacks were left out because this place does not price them. >0 ⇒ incomplete. */
+  unpricedKinds: number
+}
+
+export const EMPTY_TOTAL: LedgerTotal = { valued: 0, pricedKinds: 0, unpricedKinds: 0 }
+
+/** Total a list of valued stacks. Unpriced stacks are COUNTED, never coerced to 0 and added. */
+export function totalStacks(stacks: readonly ValuedStack[]): LedgerTotal {
+  let valued = 0
+  let pricedKinds = 0
+  let unpricedKinds = 0
+  for (const s of stacks) {
+    if (s.stackValue === null) unpricedKinds += 1
+    else {
+      valued += s.stackValue
+      pricedKinds += 1
+    }
+  }
+  return { valued, pricedKinds, unpricedKinds }
+}
+
+/** Combine totals (port totals → the ledger total). Associative, and it never loses the caveat. */
+export function sumTotals(totals: readonly LedgerTotal[]): LedgerTotal {
+  return totals.reduce<LedgerTotal>(
+    (acc, t) => ({
+      valued: acc.valued + t.valued,
+      pricedKinds: acc.pricedKinds + t.pricedKinds,
+      unpricedKinds: acc.unpricedKinds + t.unpricedKinds,
+    }),
+    EMPTY_TOTAL,
+  )
+}
+
+/** True when this total is missing something — the renderer MUST caveat it. */
+export function totalIsPartial(t: LedgerTotal): boolean {
+  return t.unpricedKinds > 0
+}
+
+// ── the places, and what sits in each ────────────────────────────────────────────────────────────
+
+/** What kind of pile this is. The two differ in a way the player must see: storage STAYS, a hold
+ *  MOVES. Volumes and prices work the same; the sentence under them does not. */
+export type HoldingKind = 'storage' | 'hold' | 'cargo'
+
+export interface Holding {
+  kind: HoldingKind
+  /** Stable id for keys/testids — the base id, the fleet id, or the ship id. */
+  id: string
+  /** "Port storage", the fleet's name, the ship's name. */
+  title: string
+  stacks: ValuedStack[]
+  total: LedgerTotal
+  /** kind==='hold' only: the SERVER'S occupancy numbers, carried through verbatim from
+   *  `get_my_hold` and never recomputed here. A volume cap the player cannot see is a trap, so the
+   *  hold's fullness travels with its contents; a client-side copy of the capacity formula would be
+   *  the second authority migration 0333 exists to prevent. */
+  capacity?: { usedM3: number; capacityM3: number; overCapacity: boolean }
+}
+
+export interface PlaceHoldings {
+  /** null = not at any port (in transit / deep space). Nothing here can be priced. */
+  locationId: string | null
+  /** The city's name, or the honest label for "nowhere in particular". */
+  locationName: string
+  holdings: Holding[]
+  total: LedgerTotal
+}
+
+export interface AssetLedger {
+  places: PlaceHoldings[]
+  total: LedgerTotal
+  /** How many distinct places hold something. */
+  placeCount: number
+}
+
+/** Sort stacks the way every other item list in this app sorts them (holdEntries/salvageEntries):
+ *  by the player-facing name, locale PINNED to 'en' so the order never varies by user locale, with
+ *  the raw id as the deterministic tiebreaker. Zero-quantity stacks are dropped — a spent stack is
+ *  not held. */
+export function orderStacks(stacks: readonly ValuedStack[]): ValuedStack[] {
+  return stacks
+    .filter((s) => s.quantity > 0)
+    .slice()
+    .sort((a, b) => a.label.localeCompare(b.label, 'en') || a.refId.localeCompare(b.refId, 'en'))
+}
+
+/** Build one holding from already-valued stacks (ordering + totalling in one place). */
+export function makeHolding(kind: HoldingKind, id: string, title: string, stacks: readonly ValuedStack[]): Holding {
+  const ordered = orderStacks(stacks)
+  return { kind, id, title, stacks: ordered, total: totalStacks(ordered) }
+}
+
+/**
+ * Assemble the ledger: group holdings by place, total each place, total the whole.
+ *
+ * ORDER — the cities the player can act in come first, and among them the most valuable first, so
+ * the top of the screen is the answer to "where is my stuff". "Not at a port" always sorts LAST:
+ * it is the one group nothing can be priced in, and it must never head the list and make the
+ * ledger look unpriced. Ties break on the place name, then the id, so the order is deterministic.
+ */
+export function buildLedger(holdings: readonly (Holding & { locationId: string | null; locationName: string })[]): AssetLedger {
+  const byPlace = new Map<string, PlaceHoldings>()
+  for (const h of holdings) {
+    // The empty-string key is unreachable as a real uuid, so it cannot collide with a port.
+    const key = h.locationId ?? ''
+    const place = byPlace.get(key)
+    if (place) place.holdings.push(h)
+    else
+      byPlace.set(key, {
+        locationId: h.locationId,
+        locationName: h.locationName,
+        holdings: [h],
+        total: EMPTY_TOTAL,
+      })
+  }
+
+  const places = [...byPlace.values()]
+    .map((p) => ({ ...p, total: sumTotals(p.holdings.map((h) => h.total)) }))
+    .sort((a, b) => {
+      // "Not at a port" last, always.
+      if ((a.locationId === null) !== (b.locationId === null)) return a.locationId === null ? 1 : -1
+      return (
+        b.total.valued - a.total.valued ||
+        a.locationName.localeCompare(b.locationName, 'en') ||
+        (a.locationId ?? '').localeCompare(b.locationId ?? '', 'en')
+      )
+    })
+
+  return { places, total: sumTotals(places.map((p) => p.total)), placeCount: places.length }
+}
+
+// ── display strings (the ONE place each phrasing is written) ─────────────────────────────────────
+
+/** The literal a stack with no price shows. Plain words, no jargon — it says what is true and
+ *  what to do about it, and it is a CONSTANT so a spec can prove no "0" ever stands in for it. */
+export const NO_PRICE_HERE = 'No price here'
+
+/** Grouped credits, locale-pinned — the same formatting every credit in the app already uses. */
+export function formatValue(n: number): string {
+  return n.toLocaleString('en-US')
+}
+
+/** A stack's price cell: "12 cr each", "0 cr each" (genuinely free), or the honest no-price line. */
+export function unitPriceLabel(stack: ValuedStack): string {
+  return stack.unitPrice === null ? NO_PRICE_HERE : `${formatValue(stack.unitPrice)} cr each`
+}
+
+/** A stack's value cell: the extended value, or the honest no-price line. NEVER "0" for unknown. */
+export function stackValueLabel(stack: ValuedStack): string {
+  return stack.stackValue === null ? NO_PRICE_HERE : `${formatValue(stack.stackValue)} cr`
+}
+
+/**
+ * A total, WITH its caveat. There is deliberately no way to render a total without this function,
+ * and no argument that suppresses the caveat.
+ *
+ *   complete  → "1,240 cr"
+ *   partial   → "1,240 cr · 2 kinds not priced here"
+ *   nothing priced → "No prices here · 3 kinds"  (never "0 cr")
+ */
+export function totalLabel(t: LedgerTotal): string {
+  const caveat =
+    t.unpricedKinds === 0
+      ? ''
+      : ` · ${t.unpricedKinds} kind${t.unpricedKinds === 1 ? '' : 's'} not priced here`
+  if (t.pricedKinds === 0 && t.unpricedKinds > 0) {
+    return `No prices here · ${t.unpricedKinds} kind${t.unpricedKinds === 1 ? '' : 's'}`
+  }
+  return `${formatValue(t.valued)} cr${caveat}`
+}
+
+/**
+ * The same total, split into its two pieces so a layout can put them on separate lines (the badge
+ * gets the number, the line under it gets the caveat) without either being droppable by accident.
+ *
+ * This does NOT weaken the rule `totalLabel` enforces. The caveat is a REQUIRED field of the
+ * result, not an option — a caller destructuring this has the caveat in hand and the rendered
+ * proof asserts it reaches the DOM. What it buys is that a long caveat no longer has to live
+ * inside an uppercase pill on a 320px phone, where it wrapped to three lines and shouted.
+ */
+export function totalParts(t: LedgerTotal): { value: string; caveat: string | null } {
+  const kinds = (n: number) => `${n} kind${n === 1 ? '' : 's'}`
+  if (t.pricedKinds === 0 && t.unpricedKinds > 0) {
+    return { value: 'No prices here', caveat: kinds(t.unpricedKinds) }
+  }
+  return {
+    value: `${formatValue(t.valued)} cr`,
+    caveat: t.unpricedKinds === 0 ? null : `${kinds(t.unpricedKinds)} not priced here`,
+  }
+}
+
+/** The one sentence explaining why a number is missing, shown once per screen rather than per row. */
+export const WHY_NO_PRICE =
+  'A port only prices what it buys. Anything it does not buy has no value here — that is not zero, it is unknown.'
