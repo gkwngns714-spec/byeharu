@@ -369,6 +369,13 @@ begin
   if v_val is null or jsonb_typeof(v_val) <> 'boolean' then
     raise exception '0320 ASSERT (d) FAIL: dev_zone_editor_enabled missing or not a boolean';
   end if;
+  -- Same shape as the mining check above: assert the CHAIN SEED is gone, not a literal value. On a
+  -- fresh chain 0238 leaves it false and the guarded update above must have moved it, so a false
+  -- here means the update matched nothing and the drift silently survived — which is the exact
+  -- failure a guarded update can hide.
+  if v_val = 'false'::jsonb then
+    raise exception '0320 ASSERT (d) FAIL: dev_zone_editor_enabled is still the chain seed false — the catch-up update did not land';
+  end if;
 
   select value into v_val from public.game_config where key = 'combat_hit_variance_pct';
   if v_val is null then
