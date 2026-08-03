@@ -67,6 +67,9 @@ export interface CombatUnit {
   side?: 'player' | 'enemy'
   // Frozen-at-spawn weapon array; the map reads only `range` (the max across weapons is the unit's
   // range ring). Other fields (power/cooldown/projectile_speed/…) are server fire-state, unused here.
+  // The ring drawn from the MAX is the right thing to SHOW — it is how far this unit can hit. It is
+  // deliberately not where the engine holds station: since 0336 the mover caps a kite by the unit's
+  // SHORTEST gun, so a mixed-range ship parks inside this ring with every barrel bearing.
   weapons_json?: CombatWeapon[]
 }
 

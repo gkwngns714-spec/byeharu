@@ -24,9 +24,14 @@
 // ── WHAT ANIMATES, AND HOW ───────────────────────────────────────────────────────────────────────────
 // This layer holds no clock. It re-renders whenever `units` / `events` change, and useCombat (mounted
 // once in AppShell, exposed via useShellState) re-polls both every ~1.5s — the combat tick cadence. So:
-//   • enemy pirates spawn at the location centre and CLOSE toward the fleet → their pos_x/pos_y update
-//     each tick → the dots visibly march inward each poll (the "spawn from centre → approach" beat).
-//   • kiting player ships back away to their range edge → their dots slide out each tick.
+//   • enemy pirates spawn on a RING around the engagement anchor — one distinct point per unit, at
+//     spatial_formation_ring_radius, half a slot off the player escort ring (0336; before it EVERY
+//     unit of a wave was inserted at the anchor itself, so a whole wave drew as ONE dot). The ring is
+//     deliberately wider than the pirates' own weapon range, so they CLOSE toward the fleet instead of
+//     kiting from the first tick → their pos_x/pos_y update each tick → the dots visibly march inward
+//     each poll (the "spawn on the ring → close" beat).
+//   • kiting player ships back away to their range edge — their SHORTEST gun's edge, never their
+//     longest (0336), so a two-gun ship holds where both barrels bear → their dots slide out each tick.
 //   • a weapon that fired THIS tick emits a combat_event (missile_salvo, payload {unit_id,target_id})
 //     → a fire line is drawn source→target for the latest tick's shots, fading with the next poll.
 import { createElement, type ReactElement } from 'react'
