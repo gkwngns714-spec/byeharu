@@ -24,12 +24,13 @@
 // ── WHAT ANIMATES, AND HOW ───────────────────────────────────────────────────────────────────────────
 // This layer holds no clock. It re-renders whenever `units` / `events` change, and useCombat (mounted
 // once in AppShell, exposed via useShellState) re-polls both every ~1.5s — the combat tick cadence. So:
-//   • enemy pirates spawn on a RING around the engagement anchor — one distinct point per unit, at
-//     spatial_formation_ring_radius, half a slot off the player escort ring (0336; before it EVERY
-//     unit of a wave was inserted at the anchor itself, so a whole wave drew as ONE dot). The ring is
-//     deliberately wider than the pirates' own weapon range, so they CLOSE toward the fleet instead of
-//     kiting from the first tick → their pos_x/pos_y update each tick → the dots visibly march inward
-//     each poll (the "spawn on the ring → close" beat).
+//   • enemy pirates spawn on a RING around the engagement anchor — one distinct point per unit, half
+//     a slot off the player escort ring (0336; before it EVERY unit of a wave was inserted at the
+//     anchor itself, so a whole wave drew as ONE dot). That ring's radius is the player formation ring
+//     PLUS the wave's own weapon range plus one, so every pirate starts strictly outside its own reach
+//     of every player ship and therefore CLOSEs toward the fleet instead of kiting from the first tick
+//     → their pos_x/pos_y update each tick → the dots visibly march inward each poll (the "spawn on
+//     the ring → close" beat). Expect one to two silent closing polls before the first fire line.
 //   • kiting player ships back away to their range edge — their SHORTEST gun's edge, never their
 //     longest (0336), so a two-gun ship holds where both barrels bear → their dots slide out each tick.
 //   • a weapon that fired THIS tick emits a combat_event (missile_salvo, payload {unit_id,target_id})
