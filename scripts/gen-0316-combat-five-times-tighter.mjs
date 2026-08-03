@@ -49,8 +49,18 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
       're-point the slice at the new head before generating.');
   }
 
+  // 0331 IS EXEMPT BY NAME, not by widening the window — the idiom gen-0315 introduced, for exactly
+  // the same reason. 0317 rewrites this function AFTER 0316 (the weapon-power normalisation, the
+  // hp_max seed), which is precisely what this gate is built to notice; but 0316's ONE slice is
+  // 0301:754, frozen history that 0317 does not touch, and the file 0316 emits is frozen too. What
+  // the gate protects is "never cut a NEW slice from a head that has moved", and 0316 cuts nothing
+  // new. Naming each known later rewriter keeps the protection live for 0318 and everything after
+  // it; raising the version floor would not.
+  const KNOWN_LATER_REWRITERS = new Set(['20260618000331']);
   const reHunkRow = /\(\s*\d+\s*,\s*'combat_create_group_encounter'\s*,/;
-  const newerSurgery = files.filter((f) => version(f) > '20260618000315' && reHunkRow.test(stripped.get(f)));
+  const newerSurgery = files.filter((f) => version(f) > '20260618000315'
+    && !KNOWN_LATER_REWRITERS.has(version(f))
+    && reHunkRow.test(stripped.get(f)));
   if (newerSurgery.length > 0) {
     throw new Error(
       `combat_create_group_encounter was rewritten by hunk surgery AFTER 0315 by: ${newerSurgery.join(', ')} — ` +

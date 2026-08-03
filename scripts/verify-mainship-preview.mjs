@@ -54,19 +54,30 @@ async function main() {
   const hull = (await admin.from('main_ship_hull_types').select('base_stats_json').eq('hull_type_id', 'starter_frigate').single()).data
   const hullAtk = Number(hull?.base_stats_json?.attack ?? 0)
   const p0 = (await preview(u1.client, [])).data
-  p0 && p0.has_ship === true && p0.valid === true && p0.stats?.support_capacity_limit === 10 && p0.stats?.support_capacity_used === 0 && p0.stats?.combat_power === hullAtk
-    ? ok(`1. empty loadout → has_ship, valid, base stats (cap 0/10, combat ${hullAtk} = the hull seed)`) : bad('1. base preview', JSON.stringify(p0))
+  p0 && p0.has_ship === true && p0.valid === true && p0.stats?.combat_power === hullAtk
+    ? ok(`1. empty loadout → has_ship, valid, base stats (combat ${hullAtk} = the hull seed)`) : bad('1. base preview', JSON.stringify(p0))
 
-  const p1 = (await preview(u1.client, [{ support_craft_type_id: 'missile_boat', quantity: 1 }])).data
-  p1?.valid === true && p1.stats?.support_capacity_used === 3 && p1.stats?.combat_power > 0
-    ? ok(`2. valid loadout → capacity_used 3, combat_power ${p1.stats.combat_power} (reuses calculate_expedition_stats)`) : bad('2. valid loadout', JSON.stringify(p1))
+  // 0317 — the support-craft path the next three checks exercised is DELETED (it was unreachable:
+  // p_loadout is '[]' at every call site, and this very client hard-codes []). The wrapper's own
+  // p_loadout parameter is untouched, so the CONTRACT this file exists to prove is unchanged: a
+  // loadout the adapter refuses must surface as valid:false with the message — never a crash, and
+  // never a silently-ignored argument. That is now the single property, and the retired output
+  // fields must be gone with it.
+  const pRetired = (await preview(u1.client, [{ support_craft_type_id: 'missile_boat', quantity: 1 }])).data
+  pRetired?.has_ship === true && pRetired.valid === false && /support craft|loadout/i.test(pRetired.error ?? '')
+    ? ok('2. a non-empty loadout → valid:false + the retired-path message (refused, not silently ignored — 0317)')
+    : bad('2. retired loadout', JSON.stringify(pRetired))
 
-  const pOver = (await preview(u1.client, [{ support_craft_type_id: 'trade_barge', quantity: 3 }])).data // 15 > 10
-  pOver?.has_ship === true && pOver.valid === false && /capacity/i.test(pOver.error ?? '')
-    ? ok('3. over-capacity loadout → valid:false + capacity message (preview warning, not crash)') : bad('3. over-capacity', JSON.stringify(pOver))
+  const pFields = (await preview(u1.client, [])).data
+  pFields?.stats && !('warnings' in pFields.stats) && !('support_capacity_used' in pFields.stats) && !('support_capacity_limit' in pFields.stats)
+    ? ok('3. the retired stat fields (warnings / support_capacity_used / support_capacity_limit) are gone (0317)')
+    : bad('3. retired fields', JSON.stringify(pFields?.stats))
 
-  const pUnknown = (await preview(u1.client, [{ support_craft_type_id: 'does_not_exist', quantity: 1 }])).data
-  pUnknown?.valid === false ? ok('4. unknown support craft → valid:false (surfaced, not thrown to client)') : bad('4. unknown craft', JSON.stringify(pUnknown))
+  // the ship's own support_capacity is still reported on the SHIP object — only its duplicate
+  // inside stats went away, so the number itself has not become unreachable.
+  p0?.ship?.support_capacity === 10
+    ? ok('4. the ship object still carries support_capacity (the column is unchanged)')
+    : bad('4. ship support_capacity', JSON.stringify(p0?.ship))
 
   // ── user WITHOUT a ship → read-only hull teaser, no write ────────────────────
   const u2 = await newUser('b')

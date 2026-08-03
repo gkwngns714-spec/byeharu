@@ -35,6 +35,9 @@ on:
       # (300 -> 60); this proof derives every expected value from those knobs, so it is the gate that
       # proves the derivation still holds at the new scale.
       - 'slice-combat-five-times**'
+      # 0317 rewrites BOTH calculate_expedition_stats and combat_create_group_encounter and repoints
+      # this proof's weapon-power assertions, so it must run on the branch that does it.
+      - 'slice-one-authority**'
 
 permissions:
   contents: read

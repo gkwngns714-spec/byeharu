@@ -1540,10 +1540,24 @@ begin
   select count(*) into n from public.combat_units cu
     join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
     where cu.encounter_id = v_enc
+  -- ★ hp_max REPOINTED BY 0317, AND THE ASSERT GOT STRONGER, NOT WEAKER. It pinned hp_max to msi.hp
+  -- ★ too — i.e. it asserted that a fleet's integrity BAR starts full however battered the fleet is,
+  -- ★ which is exactly the defect 0317 removes: player_integrity_max is the sum of this column while
+  -- ★ 0310's auto-exit divides by sum(msi.max_hp), so the two fleet-level "how much hull" numbers
+  -- ★ could never agree (measured on the owner's own fleet: 583/583 shown, auto-exit on tick 1 at a
+  -- ★ 30% threshold). hp_max is CAPACITY now; hp_current is the live hull; ship_hp is UNTOUCHED (it
+  -- ★ is the per-stack divisor the tick uses for alive_count, where "the hp it entered with" is the
+  -- ★ right number). The repoint is non-vacuous BY CONSTRUCTION — c2 was dented to 350 before the
+  -- ★ send, so msi.hp <> msi.max_hp and the old and new expectations genuinely differ. Pinned below,
+  -- ★ so a fixture that stopped denting c2 could never make this pass for the wrong reason.
       and cu.hp_current is not distinct from msi.hp::double precision
-      and cu.hp_max     is not distinct from msi.hp::double precision
+      and cu.hp_max     is not distinct from msi.max_hp::double precision
       and cu.ship_hp    is not distinct from msi.hp::double precision;
-  if n <> 2 then raise exception 'TEAMHUNT FAIL: member hp columns diverge from the ships'' real hp'; end if;
+  if n <> 2 then raise exception 'TEAMHUNT FAIL: member hp columns diverge from the ships'' real hp/capacity (0317: hp_max is main_ship_instances.max_hp, hp_current and ship_hp are the live hull)'; end if;
+  select count(*) into n from public.combat_units cu
+    join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
+   where cu.encounter_id = v_enc and msi.hp < msi.max_hp;
+  if n < 1 then raise exception 'TEAMHUNT FAIL: no member entered this fight damaged — hp and max_hp would be the same number and the assert above could not tell the 0317 rule apart from the defect it replaced'; end if;
   select count(*) into n from public.combat_units
     where encounter_id = v_enc and main_ship_id = c2 and hp_current = 350;
   if n <> 1 then raise exception 'TEAMHUNT FAIL: c2 pre-existing damage did not carry in (want hp_current 350)'; end if;
@@ -1554,10 +1568,27 @@ begin
       and player_power_start is not distinct from (t->'totals'->>'combat_power')::double precision
       and player_power_start is not distinct from ((s1->>'combat_power')::double precision + (s2->>'combat_power')::double precision);
   if n <> 1 then raise exception 'TEAMHUNT FAIL: player_power_start is distinct from (t->''totals''->>''combat_power'') (independent D0 totals)'; end if;
+  -- ★ 0317: MAX and CURRENT are two different sums now, because they are two different questions.
+  -- ★ This asserted player_integrity_max == sum(hp_current), which was self-consistent only while
+  -- ★ hp_max meant "hp at entry". MAX is capacity (and therefore equals 0310's live auto-exit
+  -- ★ denominator, sum(main_ship_instances.max_hp) — asserted here, because that identity is the
+  -- ★ whole point of the change); CURRENT is the live hull the tick keeps writing from tick 1 on.
+  select count(*) into n from public.combat_encounters ce
+    where ce.id = v_enc
+      and ce.player_integrity_max is not distinct from
+          (select sum(hp_max) from public.combat_units where encounter_id = v_enc)
+      and ce.player_integrity_current is not distinct from
+          (select sum(hp_current) from public.combat_units where encounter_id = v_enc);
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: the encounter''s integrity columns are not (max = summed capacity, current = summed live hull)'; end if;
   select count(*) into n from public.combat_encounters ce
     where ce.id = v_enc and ce.player_integrity_max is not distinct from
-      (select sum(hp_current) from public.combat_units where encounter_id = v_enc);
-  if n <> 1 then raise exception 'TEAMHUNT FAIL: player_integrity_max <> summed member hp'; end if;
+      (select sum(msi.max_hp)::double precision from public.combat_units u
+         join public.main_ship_instances msi on msi.main_ship_id = u.main_ship_id
+        where u.encounter_id = ce.id and u.side = 'player' and u.main_ship_id is not null);
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: player_integrity_max <> 0310''s auto-exit denominator — the bar and the safety line still measure different things'; end if;
+  select count(*) into n from public.combat_encounters ce
+    where ce.id = v_enc and ce.player_integrity_current < ce.player_integrity_max;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: a fleet with a damaged member opened its fight on a FULL bar — the pre-0317 defect'; end if;
 
   -- ── TICK 1: the member path's first live execution ────────────────────────────────────────────────
   select hp_current into v_hp1 from public.combat_units where encounter_id = v_enc and main_ship_id = c1;

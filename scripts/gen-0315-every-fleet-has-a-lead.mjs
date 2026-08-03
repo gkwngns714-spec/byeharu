@@ -58,7 +58,13 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // emits is frozen too. What the gate protects is "never cut a NEW slice from a head that has
   // moved", and 0315 cuts nothing new. Naming the one known later rewriter keeps the protection
   // live for 0317 and everything after it; raising the version floor would not.
-  const KNOWN_LATER_REWRITERS = new Set(['20260618000316']);
+  // 0331 IS EXEMPT ON EXACTLY THE SAME TERMS, and it is named for the same reason rather than the
+  // floor being moved: it rewrites this function after 0315 (the weapon-power normalisation, the
+  // hp_max seed, max_hp in the roster projection), but 0315 still cuts nothing new — its slices are
+  // 0301 and 0308, both frozen. NOTE the one real coupling: 0331 slices two lines out of the file
+  // 0315 EMITS (its declaration tail and its roster projection), so an edit to gen-0315 that changes
+  // either of those emitted lines will break gen-0331's --check, loudly, in the same CI run.
+  const KNOWN_LATER_REWRITERS = new Set(['20260618000316', '20260618000331']);
   const reHunkRow = /\(\s*\d+\s*,\s*'combat_create_group_encounter'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000308'
     && !KNOWN_LATER_REWRITERS.has(version(f))

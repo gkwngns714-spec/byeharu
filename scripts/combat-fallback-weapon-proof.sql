@@ -244,6 +244,7 @@ declare
   -- knobs the creator reads, the fitted entry must equal its catalog row.
   v_exp_range double precision; v_exp_pspeed double precision; v_exp_cd double precision;
   v_cat record;
+  v_attack_arm double precision;   -- 0317: the armed ship's own folded combat_power (see ARMED)
 begin
   v_exp_range  := coalesce(public.cfg_num('combat_player_fallback_weapon_range'), 150);
   v_exp_pspeed := coalesce(public.cfg_num('combat_player_fallback_weapon_projectile_speed'), 300);
@@ -290,8 +291,23 @@ begin
     from public.combat_units where encounter_id = v_enc and main_ship_id = s_arm;
   if v_wc <> 1 then raise exception 'ARMED FAIL: s_arm weapons_json has % entries (want exactly 1 real autocannon)', v_wc; end if;
   if v_mid <> 'autocannon_battery' then raise exception 'ARMED FAIL: s_arm weapon is % (want autocannon_battery — the fallback overwrote a fitted weapon!)', v_mid; end if;
-  if v_power <> v_cat.power or v_range <> v_cat.range then raise exception 'ARMED FAIL: s_arm autocannon power/range = %/% (want %/% — the catalog row, derived at assert time)', v_power, v_range, v_cat.power, v_cat.range; end if;
-  raise notice 'CFALLBACK_PASS_ARMED ok: s_arm keeps its real autocannon_battery (catalog power %, range %) — an already-armed ship''s weapons_json is unchanged by the fallback', v_power, v_range;
+  -- 0317 REPOINT — power is no longer a catalog COPY, so this stops comparing it to one. The gun's
+  -- RANGE is still pinned to the catalog row byte-for-byte (that is what a weapon decides), but its
+  -- power is the ship's own folded combat_power times its share, and with one gun fitted the share
+  -- is 1. Read s_arm's attack_snapshot and require the identity — plus the pin that the fold and the
+  -- catalog weight actually DIFFER, without which the pre-0317 flat copy would satisfy this line and
+  -- the repoint would have quietly thrown the property away.
+  select attack_snapshot into v_attack_arm from public.combat_units
+   where encounter_id = v_enc and main_ship_id = s_arm;
+  if v_attack_arm is null or v_attack_arm <= 0 then
+    raise exception 'ARMED FAIL: s_arm attack_snapshot is % — the power identity below would be vacuous', v_attack_arm; end if;
+  if v_attack_arm = v_cat.power then
+    raise exception 'ARMED FAIL: s_arm''s combat_power (%) equals the catalog share weight (%) — the identity below could be satisfied by the pre-0317 flat copy and would prove nothing', v_attack_arm, v_cat.power; end if;
+  if v_power is distinct from v_attack_arm then
+    raise exception 'ARMED FAIL: s_arm''s fitted autocannon fires % but the ship''s folded combat_power is % — the catalog is still deciding damage (0317: the fold decides HOW MUCH, the weapon decides HOW)', v_power, v_attack_arm; end if;
+  if v_range <> v_cat.range then
+    raise exception 'ARMED FAIL: s_arm autocannon range = % (want % — the catalog row, derived at assert time)', v_range, v_cat.range; end if;
+  raise notice 'CFALLBACK_PASS_ARMED ok: s_arm keeps its real autocannon_battery — the catalog RANGE % byte-for-byte, and power % = its own folded combat_power (0317), not the catalog share weight %', v_range, v_power, v_cat.power;
 end $$;
 
 -- ════════ BLOCK DAMAGE: tick 1 — the synthesized weapon deals REAL damage to the pirate ═══════════════

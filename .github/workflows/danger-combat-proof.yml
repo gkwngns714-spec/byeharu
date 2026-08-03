@@ -85,6 +85,9 @@ on:
       # `supabase start` that applies the chain INCLUDING 0320, so a knob branch that does not fire
       # it ships a DELETE against the live config table on text self-asserts alone.
       - 'slice-knobs**'
+      # 0317 rewrites BOTH calculate_expedition_stats and combat_create_group_encounter and repoints
+      # this proof's weapon-power assertions, so it must run on the branch that does it.
+      - 'slice-one-authority**'
 
 permissions:
   contents: read

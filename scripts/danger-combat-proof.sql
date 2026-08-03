@@ -62,10 +62,21 @@
 --                              ship still on the roster IS seeded; the re-ambush freeze REPLACED the
 --                              fleet's snapshot (stale row released, live membership frozen).
 --   DZCOMBAT_PASS_RIGFALLBACK — (0308) a ship whose ONLY fitted module is a mining rig gets the 0262
---                              fallback weapon derived from its own attack (power = attack x knob),
+--                              fallback weapon derived from its own attack (0317: power = its
+--                              combat_power EXACTLY — the knob that used to scale it is deleted),
 --                              never the rig's power-8 entry: a rig is not a gun.
 --   DZCOMBAT_PASS_FITTEDEXACT — (0308) a ship with a REAL weapon fitted carries exactly its catalog
 --                              weapon entry — alone, field-for-field — and no fallback entry.
+--                              (0317) …except `power`, which is its own folded combat_power, not the
+--                              catalog share weight. Every DELIVERY field is still pinned.
+--   DZCOMBAT_PASS_ONEPOWER   — (0317) ONE AUTHORITY FOR ATTACK. Five hulls in one fleet, one
+--                              encounter, no ticks: every hull's weapons_json totals to exactly its
+--                              folded combat_power; a ship TRAIT (a source that can never reach a
+--                              weapon row) raises the damage by exactly its own attack; two
+--                              identical guns SHARE the ship's power in equal parts summing to 1
+--                              rather than each carrying it; the no-weapon hull obeys the same
+--                              identity through the synthesized weapon; and the stronger gun
+--                              (mk2) never produces less damage than the weaker one.
 --   DZCOMBAT_PASS_REPOSITION — (0311) an ambushed fleet ordered to a point INSIDE the fight's own
 --                              zone REPOSITIONS: fleet parked at the destination, player units
 --                              translated by the exact delta, engagement_x/y restamped, encounter
@@ -1149,7 +1160,7 @@ declare
   s_m uuid; gM uuid; v_modinst uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
   mv record; w jsonb;
   v_attack double precision; v_wc int;
-  v_fb_id text; v_paf double precision; v_frange double precision;
+  v_fb_id text; v_frange double precision;
 begin
   -- ── a third ship for the second player, rigged (not armed), its own team ─────────────────────────
   r := pg_temp.call_as(uL, 'public.commission_additional_main_ship()');
@@ -1212,12 +1223,19 @@ begin
   if n <> 0 then
     raise exception 'RIGFALLBACK FAIL: the mining rig is in weapons_json — a rig still counts as a gun (the 0308 defect)'; end if;
   v_fb_id  := coalesce((select value #>> '{}' from public.game_config where key = 'combat_player_fallback_weapon_module_type_id'), 'basic_player_weapon');
-  v_paf    := coalesce(public.cfg_num('combat_player_fallback_weapon_power_from_attack'), 1);
   v_frange := coalesce(public.cfg_num('combat_player_fallback_weapon_range'), 150);
   if (w->>'module_type_id') is distinct from v_fb_id then
     raise exception 'RIGFALLBACK FAIL: the one weapon is % (want the fallback %) — the 0262 fallback did not fire', w->>'module_type_id', v_fb_id; end if;
-  if (w->>'power')::double precision is distinct from v_attack * v_paf then
-    raise exception 'RIGFALLBACK FAIL: fallback power % <> attack_snapshot % x knob % — the ship does not fire its own attack', w->>'power', v_attack, v_paf; end if;
+  -- 0317 REPOINT (the knob is GONE, not the property). The head multiplied the ship's attack by
+  -- combat_player_fallback_weapon_power_from_attack — a second, separately-settable rule that only
+  -- the UNFITTED path obeyed. 0317 deleted it and made the synthesized weapon carry a share WEIGHT
+  -- of 1 through the same normalisation the fitted path runs, so the one entry resolves to exactly
+  -- the ship's combat_power. The assertion is therefore STRONGER now, not weaker: an exact identity
+  -- with no free multiplier in it. Non-vacuity is the v_attack > 0 pin above.
+  if (w->>'power')::double precision is distinct from v_attack then
+    raise exception 'RIGFALLBACK FAIL: fallback power % <> attack_snapshot % — the ship does not fire its own attack (0317: the unfitted path must resolve to combat_power EXACTLY, through the same rule as the fitted one)', w->>'power', v_attack; end if;
+  if exists (select 1 from public.game_config where key = 'combat_player_fallback_weapon_power_from_attack') then
+    raise exception 'RIGFALLBACK FAIL: combat_player_fallback_weapon_power_from_attack is back — a second multiplier on one of the two paths is the drift 0317 removed'; end if;
   if (w->>'range')::double precision is distinct from v_frange then
     raise exception 'RIGFALLBACK FAIL: fallback range % <> the knob-derived %', w->>'range', v_frange; end if;
 
@@ -1225,8 +1243,8 @@ begin
   -- 'present' AT its site — exactly the not-in-open-space shape the typed refusal exists for.
   insert into dzc values ('rf_enc', v_enc), ('rf_fleet', v_fleet), ('rf_group', gM);
 
-  raise notice 'DZCOMBAT_PASS_RIGFALLBACK ok: a rig-only ship (the exact pre-0308 poisoned input: one range-bearing non-weapon fitted) was seeded with exactly ONE weapon — the % fallback at power %*% = %, range % — and the rig entry is gone: a mining rig is not a gun',
-    v_fb_id, v_attack, v_paf, v_attack * v_paf, v_frange;
+  raise notice 'DZCOMBAT_PASS_RIGFALLBACK ok: a rig-only ship (the exact pre-0308 poisoned input: one range-bearing non-weapon fitted) was seeded with exactly ONE weapon — the % fallback at power % (its own combat_power, EXACTLY, through the same 0317 rule the fitted path runs), range % — and the rig entry is gone: a mining rig is not a gun',
+    v_fb_id, v_attack, v_frange;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_FITTEDEXACT (0308): A REAL WEAPON RIDES THROUGH EXACTLY, AND ALONE ═══════════
@@ -1243,6 +1261,7 @@ declare
   v_enc uuid := (select v from dzc where k='ra_enc2');
   w jsonb; t record; v_wc int;
   v_fb_id text;
+  v_fe_attack double precision;
 begin
   if v_enc is null then raise exception 'FITTEDEXACT FAIL: the ROSTERAUTH encounter was not handed over'; end if;
 
@@ -1254,15 +1273,29 @@ begin
 
   select * into t from public.module_types where id = 'autocannon_battery';
   if t.id is null then raise exception 'FITTEDEXACT FAIL: autocannon_battery is not in the catalog'; end if;
+  -- 0317 REPOINT — power LEFT THE DELIVERY FIELDS. Every field a weapon DECIDES (its reach, its
+  -- muzzle velocity, its cadence, its ammo) is still pinned byte-for-byte to the catalog row: that
+  -- is what this block has always been for and it is unchanged. `power` is no longer one of them.
+  -- module_types.power is a SHARE WEIGHT from 0317 on, and the entry's power is the ship's folded
+  -- combat_power times its share — for a single-gun ship, exactly the ship's combat_power. It is
+  -- checked below, against attack_snapshot, together with the pin that the two numbers actually
+  -- DIFFER (otherwise this repoint would be satisfiable by the old flat copy and prove nothing).
   if (w->>'module_type_id') is distinct from t.id
      or (w->>'range')::numeric            is distinct from t.range
-     or (w->>'power')::numeric            is distinct from t.power
      or (w->>'projectile_speed')::numeric is distinct from t.projectile_speed
      or (w->>'cooldown_seconds')::numeric is distinct from t.cooldown_seconds
      or (w->>'ammo_type')                 is distinct from t.ammo_type
      or (w->>'ammo_per_shot')::integer    is distinct from t.ammo_per_shot then
-    raise exception 'FITTEDEXACT FAIL: the fitted weapon entry drifted from its catalog row: % vs (%, %, %, %, %, %, %)',
-      w, t.id, t.range, t.power, t.projectile_speed, t.cooldown_seconds, t.ammo_type, t.ammo_per_shot; end if;
+    raise exception 'FITTEDEXACT FAIL: the fitted weapon entry drifted from its catalog row: % vs (%, %, %, %, %, %)',
+      w, t.id, t.range, t.projectile_speed, t.cooldown_seconds, t.ammo_type, t.ammo_per_shot; end if;
+  select attack_snapshot into v_fe_attack from public.combat_units
+   where encounter_id = v_enc and main_ship_id = s_cmd;
+  if v_fe_attack is null or v_fe_attack <= 0 then
+    raise exception 'FITTEDEXACT FAIL: attack_snapshot is % — every power assertion below would be vacuous', v_fe_attack; end if;
+  if v_fe_attack = t.power then
+    raise exception 'FITTEDEXACT FAIL: this ship''s combat_power (%) HAPPENS to equal the catalog share weight (%) — the fitted-power assertion below could then be satisfied by the pre-0317 flat copy and would prove nothing. Re-engineer the fixture (fit a second gun, or change the hull) rather than weakening the assert.', v_fe_attack, t.power; end if;
+  if (w->>'power')::double precision is distinct from v_fe_attack then
+    raise exception 'FITTEDEXACT FAIL: the fitted weapon fires % but the ship''s folded combat_power is % — the catalog is still deciding damage (the pre-0317 defect: attack_snapshot is used for damage ZERO times on the spatial arm, so hull/captain/trait/buff contributed nothing)', w->>'power', v_fe_attack; end if;
   if w->>'next_ready_at' is not null or w->>'ammo_remaining' is not null then
     raise exception 'FITTEDEXACT FAIL: the fitted entry lost its frozen next_ready_at/ammo_remaining NULLs'; end if;
   -- and NO fallback entry beside it: a real gun must keep suppressing the synthesized weapon.
@@ -1272,7 +1305,7 @@ begin
   if n <> 0 then
     raise exception 'FITTEDEXACT FAIL: a fallback entry sits beside the real gun — the empty-array guard broke'; end if;
 
-  raise notice 'DZCOMBAT_PASS_FITTEDEXACT ok: the armed command ship''s weapons_json is exactly its catalog autocannon_battery entry (field-for-field, alone, frozen NULL clocks) and carries no fallback beside it';
+  raise notice 'DZCOMBAT_PASS_FITTEDEXACT ok: the armed command ship''s weapons_json carries exactly its catalog autocannon_battery DELIVERY profile (range / projectile speed / cooldown / ammo, field-for-field, alone, frozen NULL clocks), no fallback beside it, and it fires its ship''s OWN folded combat_power (% — not the catalog share weight %)', v_fe_attack, t.power;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_REPOSITION (0311): AN IN-ZONE ORDER MOVES THE FIGHT, NOT OUT OF IT ══════════
@@ -1325,7 +1358,11 @@ begin
    where z.status = 'active' and z.id <> z_small
      and ST_DWithin(z.boundary, ST_MakePoint(e0x, e0y), 1e-6);
   if n <> 0 then
-    raise exception 'REPOSITION FAIL fixture: % unrelated active zone(s) also hold the engagement point — move the fixture geometry', n; end if;
+    raise exception 'REPOSITION FAIL fixture: % unrelated active zone(s) also hold the engagement point (%) — move the fixture geometry. NAMED, not just counted (0317): the count alone told an author nothing about WHICH block had drawn into this fixture''s geometry, and a proof block inserted upstream of here reproduced exactly that.', n,
+      (select string_agg(z.id::text || ' ' || coalesce(z.name, '<unnamed>'), '; ')
+         from public.danger_zones z
+        where z.status = 'active' and z.id <> z_small
+          and ST_DWithin(z.boundary, ST_MakePoint(e0x, e0y), 1e-6)); end if;
 
   -- ── snapshot EVERY combat unit in the world: only ra_enc2's player rows may move. ───────────────
   create temp table dz_repo_u1 on commit drop as
@@ -1753,7 +1790,7 @@ declare
   v_srg_before double precision;
   v_thresh double precision; v_hp double precision;
   v_hp_a double precision; v_imax_a double precision;
-  v_cap double precision; v_cap3 double precision; v_imax3 double precision;
+  v_cap double precision; v_cap3 double precision; v_imax3 double precision; v_cur3 double precision;
   v_enc2 uuid; v_enc3 uuid; v_txt text;
   n_above int := 0;
   v_flipped boolean := false;
@@ -2039,18 +2076,36 @@ begin
   select id into v_enc3 from public.combat_encounters where player_id = uA and status = 'active';
   if v_enc3 is null then raise exception 'AUTOEXIT FAIL: the re-entry ambush opened no encounter'; end if;
 
-  -- THE DIVERGENCE, ASSERTED: entry integrity (seeded from the damaged hull) strictly under
-  -- capacity. Equal values would mean this scenario cannot tell the two denominators apart.
-  select player_integrity_max into v_imax3 from public.combat_encounters where id = v_enc3;
+  -- ★ REPOINTED BY 0317, AND THE PROPERTY IS STRICTLY STRONGER. This asserted that the encounter's
+  -- ★ player_integrity_max was strictly UNDER capacity — because it was seeded from the ship's
+  -- ★ CURRENT hp, which is exactly the defect 0317 removed: the bar opened full on a battered fleet
+  -- ★ while this safety line divided by real capacity, so the two could never agree. hp_max is
+  -- ★ capacity now, so those two numbers are EQUAL BY CONSTRUCTION and the old premise can never
+  -- ★ hold again. The regression it guarded (an auto-exit measuring the damaged entry hull instead
+  -- ★ of capacity) is therefore closed structurally rather than by assertion — and the identity that
+  -- ★ closes it is asserted HERE, so a future change that re-seeds hp_max from live hp fails on this
+  -- ★ line instead of quietly reopening the compounding denominator.
+  -- ★ The DIVERGENCE this scenario still needs has moved to the quantity that still varies: the
+  -- ★ fleet's LIVE hull (player_integrity_current) strictly under its capacity. Equal values would
+  -- ★ mean the fleet re-entered undamaged and could not possibly be under its line, which is what
+  -- ★ would make the first-tick exit prove nothing.
+  select player_integrity_max, player_integrity_current into v_imax3, v_cur3
+    from public.combat_encounters where id = v_enc3;
   select sum(msi.max_hp)::double precision into v_cap3
     from public.combat_units u
     join public.main_ship_instances msi on msi.main_ship_id = u.main_ship_id
    where u.encounter_id = v_enc3 and u.side = 'player' and u.main_ship_id is not null;
-  if v_cap3 is null or v_imax3 is null or v_imax3 >= v_cap3 then
-    raise exception 'AUTOEXIT FAIL: entry integrity % is not strictly below capacity % — the two denominators do not differ and the re-entry proves nothing', v_imax3, v_cap3;
+  if v_cap3 is null or v_imax3 is null or v_cur3 is null then
+    raise exception 'AUTOEXIT FAIL: the re-entry encounter carries no integrity numbers (max %, current %, capacity %) — every comparison below would be vacuous', v_imax3, v_cur3, v_cap3;
   end if;
-  if v_imax3 >= v_cap3 * 0.60 then
-    raise exception 'AUTOEXIT FAIL: the fleet re-entered at %/% — not below its 60%% line; the first-tick exit would be ambiguous', v_imax3, v_cap3;
+  if v_imax3 is distinct from v_cap3 then
+    raise exception 'AUTOEXIT FAIL: the encounter''s player_integrity_max (%) is not the auto-exit''s own denominator, sum(main_ship_instances.max_hp) (%) — the bar and the safety line are measuring different things again (the pre-0317 compounding denominator)', v_imax3, v_cap3;
+  end if;
+  if v_cur3 >= v_cap3 then
+    raise exception 'AUTOEXIT FAIL: the fleet re-entered at full hull (% of %) — it is not damaged, so a first-tick exit could not distinguish a capacity denominator from anything else and the re-entry proves nothing', v_cur3, v_cap3;
+  end if;
+  if v_cur3 >= v_cap3 * 0.60 then
+    raise exception 'AUTOEXIT FAIL: the fleet re-entered at %/% — not below its 60%% line; the first-tick exit would be ambiguous', v_cur3, v_cap3;
   end if;
 
   -- ONE tick. Below the capacity line from the first evaluation → the canonical retreat, now.
@@ -2127,7 +2182,7 @@ begin
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
   perform public.set_game_config('shield_regen_combat_pct', to_jsonb(v_srg_before));
 
-  raise notice 'DZCOMBAT_PASS_AUTOEXIT ok: default ON at 30 for fresh groups; the player set 50%% / toggled OFF through the one writer (bad pct, NaN, null toggle, cross-player all refused; the table CHECK refuses NaN/150 beneath it); group A fought % tick(s) above its CAPACITY-based threshold untouched, then auto-requested the canonical retreat the tick its hull hit %/% of capacity (presence retreating, retreat_started_at stamped, exactly 1 retreat_started event), a second tick did not re-request, and the retreat COMPLETED like a human press (escaped, fleet returning, origin-base arm); the DAMAGED RE-ENTRY (entry integrity % strictly under capacity %, threshold 60) auto-exited on its FIRST tick — the compounding-denominator regression, closed; group B — toggle OFF — fought on to %/% with zero retreat events: the pre-0310 world, reproduced as the control',
+  raise notice 'DZCOMBAT_PASS_AUTOEXIT ok: default ON at 30 for fresh groups; the player set 50%% / toggled OFF through the one writer (bad pct, NaN, null toggle, cross-player all refused; the table CHECK refuses NaN/150 beneath it); group A fought % tick(s) above its CAPACITY-based threshold untouched, then auto-requested the canonical retreat the tick its hull hit %/% of capacity (presence retreating, retreat_started_at stamped, exactly 1 retreat_started event), a second tick did not re-request, and the retreat COMPLETED like a human press (escaped, fleet returning, origin-base arm); the DAMAGED RE-ENTRY (0317: the encounter bar''s own max % IS the auto-exit denominator, capacity %, and the fleet re-entered with a LIVE hull strictly under its 60%% line) auto-exited on its FIRST tick — the compounding-denominator regression, now closed by construction and pinned by that identity; group B — toggle OFF — fought on to %/% with zero retreat events: the pre-0310 world, reproduced as the control',
     n_above, round(v_hp_a::numeric), round(v_imax_a::numeric), round(v_imax3::numeric), round(v_cap3::numeric), round(v_hp::numeric), round(v_imax::numeric);
 end $$;
 
@@ -3651,6 +3706,275 @@ begin
 
   raise notice 'DZCOMBAT_PASS_DEADFIRE ok: in a MUTUAL one-shot kill (hull power %, pirate power %, distance %, both inside range) the tick produced exactly ONE salvo, ONE landed hit and ONE destroyed unit — the loser (side %) emitted nothing and dealt nothing even though its own weapon would have dealt % against the survivor''s % hull+shield; and in a % -pirate wave exactly one pirate died while all % survivors still fired and BOTH hulls still fired at the pirate the FROZEN snapshot named, only one of those two shots landing — the corpse shot that proves targeting was not re-read; across both fights, zero attack events were emitted after the event that destroyed their firer',
     v_pwA, v_dead_pow, v_dist, (select side from public.combat_units where id = v_dead), v_would, v_live_eff, n_units, n_alive;
+end $$;
+
+-- ── WHY THIS BLOCK IS LAST IN THE FILE ─────────────────────────────────────────────────────────
+-- It builds its OWN player, five hulls, group, sortie and encounter, and asserts only on its own
+-- units — but the way it opens that encounter is the real, global path: rewind the leg, then
+-- process_fleet_movements(), which advances EVERY due movement in the database. Placed mid-file it
+-- sat between the ROSTERAUTH fixture and the 0311 REPOSITION block, whose first act is a
+-- fixture-ISOLATION guard (exactly one active zone may hold the engagement anchor), and that guard
+-- started failing the moment this block was inserted before it. Running last removes the coupling
+-- entirely: nothing after it inspects the world. The guard downstream now also NAMES the zone it
+-- objects to, so if that class of interference ever recurs the log says which zone rather than how
+-- many.
+-- ════════ DZCOMBAT_PASS_ONEPOWER (0317): THE FOLD DECIDES HOW MUCH, THE WEAPON DECIDES HOW ══════════
+-- THE DEFECT THIS IS RED ON. process_combat_ticks reads combat_units.weapons_json->'power' and
+-- NOTHING ELSE for damage (0299:568 -> :607/:609); attack_snapshot — the column holding the folded
+-- combat_power — is used for damage ZERO times on the spatial arm, which is the live arm. The
+-- builder copied module_types.power into weapons_json FLAT, so every hull attack, every captain,
+-- every ship trait and every command buff contributed nothing to damage for any ship with a gun
+-- fitted, and the two numbers were kept equal only by the hand-sync convention 0229:88-91 writes
+-- down in prose. 0317 makes the fold the source: a ship's weapons together deliver its combat_power
+-- per volley, split in proportion to their catalog power, which is now a unitless SHARE WEIGHT.
+--
+-- ON THE PRE-0317 BUILDER EVERY ASSERTION BELOW EXCEPT (5) FAILS AT ITS FIRST LINE: the armed ships
+-- carry the flat catalog 10 / 20 / 18 while their folded combat_power is strictly larger, and the
+-- trait ship fires exactly what the trait-less ship fires.
+--
+-- FIVE HULLS, ONE FLEET, ONE ENCOUNTER, NO TICKS (creation state IS the assertion — the tick
+-- legitimately rewrites next_ready_at, so a frozen-at-creation shape can only be read pre-tick):
+--   A  one autocannon_battery                    the base case
+--   B  one autocannon_battery + hungry_guns      identical to A except +6 attack that is NOT a module
+--   C  no weapon at all                          the 0262 fallback path — the SAME rule, share 1
+--   D  two autocannon_battery                    multi-weapon: the two entries SHARE, never each
+--   E  one autocannon_battery_mk2                a strictly stronger gun must never mean less damage
+-- All five sit in ONE fleet on purpose: the command-buff contribution is then identical across them
+-- and cancels out of every A-vs-B and A-vs-E comparison, so no assertion depends on which buff was
+-- rolled. Every expected value is DERIVED at assert time from the catalog and from the unit's own
+-- snapshot — nothing ambient is hard-coded, and each comparison carries its own non-vacuity pin.
+do $$
+declare
+  r jsonb; n int;
+  uP uuid;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  sA uuid; sB uuid; sC uuid; sD uuid; sE uuid; s_iter uuid;
+  gP uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
+  mv record;
+  t_bat public.module_types; t_mk2 public.module_types;
+  v_trait_atk numeric;
+  pA double precision; pB double precision; pC double precision; pD double precision; pE double precision;
+  wA double precision; wB double precision; wC double precision; wD double precision; wE double precision;
+  d0 jsonb; d1 jsonb;
+  v_tick_secs double precision;
+  v_share_sum double precision;
+begin
+  -- ── THE PRECONDITION THIS BLOCK OWNS (never an ambient seed): traits must be foldable, or hull B
+  --    is hull A and the whole "a trait raises damage" property is silently vacuous. ─────────────
+  update public.game_config set value = 'true'::jsonb where key = 'ship_traits_enabled';
+
+  select * into t_bat from public.module_types where id = 'autocannon_battery';
+  select * into t_mk2 from public.module_types where id = 'autocannon_battery_mk2';
+  if t_bat.id is null or t_mk2.id is null then
+    raise exception 'ONEPOWER FAIL: the two firing weapons this block compares are not both in the catalog'; end if;
+  if not public.module_is_firing_weapon(t_bat) or not public.module_is_firing_weapon(t_mk2) then
+    raise exception 'ONEPOWER FAIL: a comparison weapon no longer passes module_is_firing_weapon — it would never reach weapons_json and every assert below would be vacuous'; end if;
+  if coalesce((t_mk2.stats_json->>'attack')::numeric, 0) <= coalesce((t_bat.stats_json->>'attack')::numeric, 0) then
+    raise exception 'ONEPOWER FAIL: autocannon_battery_mk2 does not contribute MORE attack than autocannon_battery (% vs %) — "a stronger weapon never reduces damage" would have no stronger weapon to test',
+      t_mk2.stats_json->>'attack', t_bat.stats_json->>'attack'; end if;
+  select coalesce((stats_json->>'attack')::numeric, 0) into v_trait_atk
+    from public.ship_trait_types where trait_type_id = 'hungry_guns';
+  if coalesce(v_trait_atk, 0) <= 0 then
+    raise exception 'ONEPOWER FAIL: hungry_guns contributes % attack — a non-positive trait cannot demonstrate that a NON-MODULE source raises damage', v_trait_atk; end if;
+
+  -- ── five hulls for a fresh player, one fleet ────────────────────────────────────────────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.op.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uP;
+  insert into public.player_wallet (player_id, balance) values (uP, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+
+  r := pg_temp.call_as(uP, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: commission 1: %', r; end if;
+  for n in 2 .. 5 loop
+    r := pg_temp.call_as(uP, 'public.commission_additional_main_ship()');
+    if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: commission %: %', n, r; end if;
+  end loop;
+  select main_ship_id into sA from public.main_ship_instances where player_id = uP order by main_ship_id offset 0 limit 1;
+  select main_ship_id into sB from public.main_ship_instances where player_id = uP order by main_ship_id offset 1 limit 1;
+  select main_ship_id into sC from public.main_ship_instances where player_id = uP order by main_ship_id offset 2 limit 1;
+  select main_ship_id into sD from public.main_ship_instances where player_id = uP order by main_ship_id offset 3 limit 1;
+  select main_ship_id into sE from public.main_ship_instances where player_id = uP order by main_ship_id offset 4 limit 1;
+  if sA is null or sB is null or sC is null or sD is null or sE is null then
+    raise exception 'ONEPOWER FAIL: five hulls did not materialise'; end if;
+
+  -- Materials for FOUR autocannon_batteries and ONE mk2, DERIVED FROM module_recipe_ingredients
+  -- rather than written out. The first version of this block hard-coded crystal/ore/scrap (the
+  -- mining rig's recipe, copied from the RIGFALLBACK block above) and CI answered
+  -- insufficient_items: pirate_alloy — a gun is not a rig. Deriving it means a recipe retune can
+  -- never starve this fixture again, and the vacuity pin below means a recipe that VANISHED cannot
+  -- quietly leave the grant empty and the craft failing for a different reason.
+  select jsonb_build_object('items', jsonb_agg(jsonb_build_object('item_id', i.item_id, 'quantity', i.q)))
+    into r
+    from (select item_id, sum(qty * mult)::int as q from (
+            select item_id, qty, 4 as mult from public.module_recipe_ingredients where module_type_id = 'autocannon_battery'
+            union all
+            select item_id, qty, 1      from public.module_recipe_ingredients where module_type_id = 'autocannon_battery_mk2'
+          ) x group by item_id) i;
+  if r is null or jsonb_array_length(r->'items') < 1 then
+    raise exception 'ONEPOWER FAIL: module_recipe_ingredients carries no recipe for the two guns this block crafts — the grant would be empty and the failure would surface as a craft error rather than as this message'; end if;
+  perform public.reward_grant('combat', gen_random_uuid(), uP, null, r);
+
+  r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-a1'', ''autocannon_battery'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft A: %', r; end if;
+  r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-op-fa'')', (r->>'instance_id')::uuid, sA));
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit A: %', r; end if;
+
+  r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-b1'', ''autocannon_battery'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft B: %', r; end if;
+  r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-op-fb'')', (r->>'instance_id')::uuid, sB));
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit B: %', r; end if;
+
+  r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-d1'', ''autocannon_battery'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft D1: %', r; end if;
+  r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-op-fd1'')', (r->>'instance_id')::uuid, sD));
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit D1: %', r; end if;
+  r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-d2'', ''autocannon_battery'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft D2: %', r; end if;
+  r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-op-fd2'')', (r->>'instance_id')::uuid, sD));
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit D2: %', r; end if;
+
+  r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-e1'', ''autocannon_battery_mk2'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft E (mk2): %', r; end if;
+  r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-op-fe'')', (r->>'instance_id')::uuid, sE));
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: fit E: %', r; end if;
+
+  -- the ONE difference between B and A: a birthmark trait. NOT a module — that is the whole point,
+  -- because a module can reach weapons_json and a trait never could.
+  -- THE BLOCK OWNS THIS PRECONDITION RATHER THAN INHERITING IT (the lesson of every ambient-default
+  -- red in this suite). Commissioning ROLLS a random pair of traits onto every hull, so five fresh
+  -- hulls arrive carrying ten traits of unknown attack value — leaving them would make B differ from
+  -- A by an unknown amount and the exact +attack identity below would flake from run to run. The
+  -- rolled rows are cleared and B is given exactly one KNOWN trait. Written directly rather than
+  -- through soul_roll_traits_for_ship for the same reason: that writer is random by design, and it
+  -- could hand this block a zero-attack trait and make the property vacuous on some runs only. The
+  -- row is a FIXTURE; what is under test is whether the FOLD carries it into damage.
+  delete from public.main_ship_traits where main_ship_id in (sA, sB, sC, sD, sE);
+  insert into public.main_ship_traits (main_ship_id, slot, trait_type_id) values (sB, 1, 'hungry_guns');
+  select count(*) into n from public.main_ship_traits where main_ship_id in (sA, sC, sD, sE);
+  if n <> 0 then raise exception 'ONEPOWER FAIL: % trait(s) survive on the control hulls — B is not a controlled variant of A', n; end if;
+  select count(*) into n from public.main_ship_traits where main_ship_id = sB;
+  if n <> 1 then raise exception 'ONEPOWER FAIL: hull B carries % trait(s) (want exactly the one this block gave it)', n; end if;
+
+  -- ── fixture vacuity pins, BEFORE the fight: A and B differ by exactly the trait and nothing else,
+  --    and D really did take two guns. ─────────────────────────────────────────────────────────────
+  select count(*) into n from public.ship_module_fittings f
+    join public.module_instances i on i.id = f.module_instance_id
+    join public.module_types t on t.id = i.module_type_id
+   where f.main_ship_id = sD and public.module_is_firing_weapon(t);
+  if n <> 2 then raise exception 'ONEPOWER FAIL: hull D carries % firing weapon(s) (want 2) — the multi-weapon property has nothing to total', n; end if;
+  select count(*) into n from public.ship_module_fittings f
+    join public.module_instances i on i.id = f.module_instance_id
+    join public.module_types t on t.id = i.module_type_id
+   where f.main_ship_id = sC and public.module_is_firing_weapon(t);
+  if n <> 0 then raise exception 'ONEPOWER FAIL: hull C carries % firing weapon(s) (want 0) — the unfitted path would never be exercised', n; end if;
+
+  r := pg_temp.call_as(uP, 'public.upsert_ship_group(1, ''One Power'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: group: %', r; end if;
+  gP := (r->>'group_id')::uuid;
+  foreach s_iter in array array[sA, sB, sC, sD, sE] loop
+    r := pg_temp.call_as(uP, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s_iter, gP));
+    if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: assign %: %', s_iter, r; end if;
+  end loop;
+  r := pg_temp.call_as(uP, format('public.set_fleet_command_ship(%L::uuid, true)', sA));
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: designate command: %', r; end if;
+
+  -- ── a real sortie opens a real encounter; NO ticks are run. ─────────────────────────────────────
+  r := pg_temp.call_as(uP, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gP, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: hunt send: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
+  if v_enc is null then raise exception 'ONEPOWER FAIL: the hunt arrival opened no encounter'; end if;
+
+  -- ── read each hull's FOLD (attack_snapshot) and its VOLLEY (the sum over its weapons_json) ──────
+  select cu.attack_snapshot, coalesce((select sum(coalesce((e->>'power')::double precision, 0))
+                                         from jsonb_array_elements(cu.weapons_json) e), 0)
+    into pA, wA from public.combat_units cu where cu.encounter_id = v_enc and cu.main_ship_id = sA;
+  select cu.attack_snapshot, coalesce((select sum(coalesce((e->>'power')::double precision, 0))
+                                         from jsonb_array_elements(cu.weapons_json) e), 0)
+    into pB, wB from public.combat_units cu where cu.encounter_id = v_enc and cu.main_ship_id = sB;
+  select cu.attack_snapshot, coalesce((select sum(coalesce((e->>'power')::double precision, 0))
+                                         from jsonb_array_elements(cu.weapons_json) e), 0)
+    into pC, wC from public.combat_units cu where cu.encounter_id = v_enc and cu.main_ship_id = sC;
+  select cu.attack_snapshot, coalesce((select sum(coalesce((e->>'power')::double precision, 0))
+                                         from jsonb_array_elements(cu.weapons_json) e), 0)
+    into pD, wD from public.combat_units cu where cu.encounter_id = v_enc and cu.main_ship_id = sD;
+  select cu.attack_snapshot, coalesce((select sum(coalesce((e->>'power')::double precision, 0))
+                                         from jsonb_array_elements(cu.weapons_json) e), 0)
+    into pE, wE from public.combat_units cu where cu.encounter_id = v_enc and cu.main_ship_id = sE;
+  -- NULL-VACUITY PIN (the 0313 law): attack_snapshot is nullable and `x is distinct from NULL` is
+  -- TRUE for every real number, so a missing row would make some comparisons below pass while
+  -- proving nothing and others fire for the wrong reason. Absence is failure, explicitly.
+  if pA is null or pB is null or pC is null or pD is null or pE is null then
+    raise exception 'ONEPOWER FAIL: a hull has no attack_snapshot in this encounter (A=% B=% C=% D=% E=%) — every comparison below would be vacuous', pA, pB, pC, pD, pE; end if;
+  if pA <= 0 or pB <= 0 or pC <= 0 or pD <= 0 or pE <= 0 then
+    raise exception 'ONEPOWER FAIL: a hull folded to a non-positive combat_power (A=% B=% C=% D=% E=%) — the identities below would be trivially satisfiable by zero', pA, pB, pC, pD, pE; end if;
+
+  -- ── (0) THE PRE-0317 SHAPE MUST BE DISTINGUISHABLE. If a ship's fold happened to equal the sum of
+  --    its guns' catalog weights, "the volley is the fold" and "the volley is the flat catalog copy"
+  --    would be the same statement and the block would be green on the defect. Pin the difference.
+  if pA = t_bat.power then
+    raise exception 'ONEPOWER FAIL: hull A folds to % which EQUALS the catalog weight % — the pre-0317 flat copy would satisfy assertion (1) and this block would prove nothing', pA, t_bat.power; end if;
+  if pD = 2 * t_bat.power then
+    raise exception 'ONEPOWER FAIL: hull D folds to % which EQUALS its two catalog weights summed — assertion (3) would be satisfiable by the flat copy', pD; end if;
+
+  -- ── (1) THE RULE: a ship's weapons together deliver exactly its folded combat_power. ────────────
+  if abs(wA - pA) > 1e-9 then
+    raise exception 'ONEPOWER FAIL (1): hull A fires % but its card says % — the catalog is still deciding damage instead of the fold (pre-0317: weapons_json.power was module_types.power copied flat, and attack_snapshot was never read for damage)', wA, pA; end if;
+  if abs(wE - pE) > 1e-9 then
+    raise exception 'ONEPOWER FAIL (1): hull E fires % but its card says %', wE, pE; end if;
+
+  -- ── (2) A NON-MODULE SOURCE RAISES DAMAGE, PROPORTIONALLY. B is A plus one trait. ───────────────
+  if abs((pB - pA) - v_trait_atk) > 1e-9 then
+    raise exception 'ONEPOWER FAIL (2): B''s fold exceeds A''s by % but the trait contributes % — the fixture is not a controlled pair (something other than hungry_guns differs between the two hulls)', pB - pA, v_trait_atk; end if;
+  if abs((wB - wA) - v_trait_atk) > 1e-9 then
+    raise exception 'ONEPOWER FAIL (2): the trait ship fires % against the trait-less ship''s % — a difference of % where the trait is worth %. A ship trait (and by the same path every hull attack, captain and command buff) still contributes NOTHING to damage: this is the whole defect', wB, wA, wB - wA, v_trait_atk; end if;
+  if wB <= wA then
+    raise exception 'ONEPOWER FAIL (2): the trait did not raise damage at all (% vs %)', wB, wA; end if;
+
+  -- ── (3) MULTI-WEAPON: the two guns SHARE the ship's power; they do not each carry it. ───────────
+  if abs(wD - pD) > 1e-9 then
+    raise exception 'ONEPOWER FAIL (3): the two-gun hull fires % in total but its card says % — a multi-weapon ship must total to its own combat_power', wD, pD; end if;
+  select jsonb_array_length(weapons_json), weapons_json->0, weapons_json->1 into n, d0, d1
+    from public.combat_units where encounter_id = v_enc and main_ship_id = sD;
+  if n <> 2 then raise exception 'ONEPOWER FAIL (3): hull D carries % weapon entries (want 2)', n; end if;
+  if (d0->>'power')::double precision is distinct from (d1->>'power')::double precision then
+    raise exception 'ONEPOWER FAIL (3): two IDENTICAL guns took unequal shares (% vs %) — the split is not proportional to the catalog weight', d0->>'power', d1->>'power'; end if;
+  if abs((d0->>'power')::double precision - pD) <= 1e-9 then
+    raise exception 'ONEPOWER FAIL (3): each of the two guns carries the ship''s WHOLE combat_power (%) — that is "each", not "share", and a second gun would double a ship''s damage while its card moved by only that module''s own attack', pD; end if;
+  select coalesce(sum(coalesce((e->>'power')::double precision, 0)), 0) / nullif(pD, 0) into v_share_sum
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) e
+   where cu.encounter_id = v_enc and cu.main_ship_id = sD;
+  if v_share_sum is null or abs(v_share_sum - 1) > 1e-9 then
+    raise exception 'ONEPOWER FAIL (3): the shares sum to % of the ship''s power (want exactly 1)', v_share_sum; end if;
+
+  -- ── (4) THE FITTED AND UNFITTED PATHS ARE ONE RULE. C fitted nothing; its synthesized weapon must
+  --    satisfy the SAME identity A, D and E satisfy — volley equals fold — with no free multiplier.
+  if abs(wC - pC) > 1e-9 then
+    raise exception 'ONEPOWER FAIL (4): the no-weapon hull fires % against a card of % — the fitted and unfitted paths are not the same rule', wC, pC; end if;
+  if exists (select 1 from public.game_config where key = 'combat_player_fallback_weapon_power_from_attack') then
+    raise exception 'ONEPOWER FAIL (4): combat_player_fallback_weapon_power_from_attack still exists — a knob only the unfitted path obeys IS a second rule, however it is currently set'; end if;
+
+  -- ── (5) FITTING A STRICTLY STRONGER WEAPON CAN NEVER REDUCE DAMAGE. E out-guns A. ───────────────
+  --    Volley is damage per VOLLEY; the dps claim needs the cadences too, so they are derived and
+  --    compared against each other (never against a hard-coded tick length): while every weapon's
+  --    cooldown is at or under the tick, each fires once per tick and the volley ordering IS the dps
+  --    ordering. A future long-cooldown weapon fails here loudly rather than making this claim false.
+  v_tick_secs := coalesce(public.cfg_num('combat_tick_seconds'), 3);
+  if t_bat.cooldown_seconds > v_tick_secs or t_mk2.cooldown_seconds > v_tick_secs then
+    raise exception 'ONEPOWER FAIL (5): a compared weapon''s cooldown (% / %) exceeds the combat tick (%) — it no longer fires once per tick, so a volley comparison is not a dps comparison and this assertion must be re-derived rather than trusted',
+      t_bat.cooldown_seconds, t_mk2.cooldown_seconds, v_tick_secs; end if;
+  if pE <= pA then
+    raise exception 'ONEPOWER FAIL (5): the mk2 hull folds to % against the battery hull''s % — the stronger gun did not produce a stronger card and the ordering test has no direction', pE, pA; end if;
+  if wE <= wA then
+    raise exception 'ONEPOWER FAIL (5): fitting the STRONGER gun produced LESS OR EQUAL damage (% vs %) — the owner''s "a better module is simply a bigger number" does not hold', wE, wA; end if;
+
+  raise notice 'DZCOMBAT_PASS_ONEPOWER ok: every hull fires exactly the number on its card — A % = %, B (+trait) % = % (the trait is worth % and it moved the damage by %), C (no weapon, synthesized) % = %, D (two guns, equal shares summing to 1) % = %, E (mk2) % = % and strictly above A. module_types.power decided only WHICH gun carried WHICH slice.',
+    wA, pA, wB, pB, v_trait_atk, wB - wA, wC, pC, wD, pD, wE, pE;
 end $$;
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;
