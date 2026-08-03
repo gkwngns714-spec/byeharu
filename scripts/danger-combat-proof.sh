@@ -690,6 +690,24 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "it never had to close"                                 "$SQL" || fail "harness lacks the SHORTGUN starts-outside-both-ranges premise"
   grep -q "they must differ, with one strictly SHORTER"           "$SQL" || fail "harness lacks the SHORTGUN mixed-range fixture pin"
   grep -q "a ship that cannot move can never settle anywhere"     "$SQL" || fail "harness lacks the SHORTGUN move_speed vacuity guard"
+  # ── 0336: THE RING ONLY PUSHES ANYTHING OUT IF A SECOND HULL STANDS ON IT ──────────────────────
+  # SHORTGUN set the ring to 8 to stand the wave beyond both guns, but commissioned ONE hull — and a
+  # lone hull is its own lead, so it holds the anchor, the MEASURED extent is 0, the ring is inert and
+  # the wave landed at 1.1, inside both guns. Third block staged as if the ring set the wave radius
+  # (CLOSURE predicted from it, LEAD asserted against it). The fix makes the extent REAL rather than
+  # predicting differently, so these greps pin the escort, the extent and the derived opening gap.
+  grep -q "without a second hull the ring is inert"               "$SQL" \
+    || fail "harness lacks SHORTGUN's escort (a ring with nobody on it leaves the measured extent at 0 and the wave spawns on top of the fixture)"
+  grep -q "the ring is inert again, so the wave will spawn on top of the fixture" "$SQL" \
+    || fail "harness lacks SHORTGUN's measured-extent pin (the extent must BE the owned ring, or the wave is not where this block thinks it is)"
+  grep -q "the wave is no longer arriving where 0336 puts it"     "$SQL" \
+    || fail "harness lacks SHORTGUN's derived opening-gap pin (extent + the wave's OWN frozen reach + 1, never the knob this block wrote)"
+  grep -q "can jump the approach straight past the only ticks"    "$SQL" \
+    || fail "harness lacks SHORTGUN's step-under-the-band premise (a band guard that holds only for some starting gaps holds by arithmetic luck, which is the zero-margin disease in another form)"
+  grep -q "is the defect surviving, not the fix landing"          "$SQL" \
+    || fail "harness lacks SHORTGUN's settle MARGIN against the LONG gun (the head parks AT that edge, so a full band width inside it is the defect's own signature and the number must be printed)"
+  grep -q "the fitted hull seeded no combat unit"                 "$SQL" \
+    || fail "harness lacks SHORTGUN's fitted-hull scoping guard (the unscoped SELECT INTO would silently take the ESCORT's ranges once the fleet is two ships)"
   # RETREATCLEAR — every terminal arm consumes fleets.retreat_target_*.
   grep -q "the DEATH arm left the retreat destination behind"     "$SQL" || fail "harness lacks the RETREATCLEAR death-arm assert (the pre-0336 red: three of the four arms leaked the recording into the next sortie)"
   grep -q "the SETTLE arm left the retreat destination behind"    "$SQL" || fail "harness lacks the RETREATCLEAR settle-arm assert (not a regression test — it is what stops the shared leaf being dropped from the arm that always did this correctly)"

@@ -6537,6 +6537,11 @@ declare
   v_short double precision; v_long double precision; v_speed double precision;
   v_u_pl uuid; v_u_en uuid; v_dist double precision; n_units int;
   n_short int; n_long int; n_bandtick int;
+  sE uuid;                                          -- the escort that MAKES the ring an extent
+  v_ax double precision; v_ay double precision;
+  v_extent double precision; v_players int;
+  v_ren double precision; v_open double precision;  -- the wave's own reach, and the opening gap
+  v_band double precision;                          -- v_long - v_short: the band the head parks in
   k_ring double precision; k_ehp double precision; k_erb double precision; k_erp double precision;
   k_esb double precision; k_esp double precision; k_pss double precision;
 begin
@@ -6549,14 +6554,38 @@ begin
   select coalesce(public.cfg_num('combat_player_speed_scale'), 0.2)             into k_pss;
   -- The wave is a fixed marker post: no reach, no speed, and hull enough to outlast the approach.
   -- The ring is pushed OUT so the hull provably starts beyond BOTH of its guns, and the player's
-  -- combat speed is raised so the approach is a handful of ticks rather than dozens.
+  -- combat speed is set so the approach is a handful of ticks rather than dozens.
+  --
+  -- ── 0336: THE RING ONLY PUSHES ANYTHING OUT IF THERE IS A SECOND HULL ON IT ─────────────────────
+  -- THE BUG THIS PARAGRAPH REPLACES (CI): `the hull already stands 2.91999999999962 from the wave
+  -- after one tick, inside its LONGER 6 range`. This block set the ring to 8 to stand the wave beyond
+  -- both guns — which is the right intent and the wrong lever. 0336 does not read the ring when it
+  -- places a wave; it measures `max(distance from the anchor to each LIVING player unit)`. This
+  -- fixture commissioned exactly ONE hull, and a lone hull IS its own lead, so it stands ON the
+  -- anchor, the MEASURED extent is 0, THE RING IS INERT, and the wave landed at 0 + 0.1 + 1 = 1.1 —
+  -- inside both guns, with nothing to close. (The 2.92 in the log is that 1.1 after one tick of the
+  -- hull KITING outward, which is what a ship does when it out-ranges its target by 4.9.)
+  -- This is the THIRD block staged as if the ring set the wave radius — CLOSURE predicted from it and
+  -- LEAD asserted against it, both fixed the same way: the wave radius has ONE authority and it is
+  -- the measured extent. Here the fix is not to predict differently but to MAKE THE EXTENT REAL: a
+  -- second hull, which is what a ring means. sS is the designated command ship, so it is the lead and
+  -- keeps the anchor; the escort takes ring slot 0 and the extent becomes the 8 the author asked for,
+  -- putting the wave at 8 + 0.1 + 1 = 9.1 — beyond the Mk-II's 6 with real margin, asserted below.
   perform public.set_game_config('spatial_formation_ring_radius',        '8'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_base',           '0.1'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
   perform public.set_game_config('enemy_hp_base',                        '100000'::jsonb);
-  perform public.set_game_config('combat_player_speed_scale',            '2'::jsonb);
+  -- ── AND THE STEP MUST BE SMALLER THAN THE BAND, OR THE BAND CAN BE STEPPED OVER ─────────────────
+  -- The non-vacuity guard below requires a tick on which ONLY the longer gun reaches — the band
+  -- (v_short, v_long], one unit wide at the catalog ranges. At the old scale of 2 the hull moved ~1.82
+  -- per tick, WIDER than that band, so whether it ever landed inside was an accident of
+  -- (opening gap - v_short) mod step: it happened to at 9.1, and would have skipped it entirely from
+  -- 10.0. A guard whose success depends on arithmetic luck is the same disease as a zero-margin float
+  -- comparison. At 0.5 the step is ~0.46 and strictly under the band, so at least one pre-move
+  -- distance MUST land in it — structural, and asserted from the frozen row below rather than assumed.
+  perform public.set_game_config('combat_player_speed_scale',            '0.5'::jsonb);
 
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
@@ -6592,6 +6621,18 @@ begin
   gS := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uS, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sS, gS));
   if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: assign: %', r; end if;
+  -- THE ESCORT THAT MAKES THE RING AN EXTENT (0336). It carries no fitted weapon — the 0262
+  -- synthesized fallback is a THIRD module_type_id, so it can appear in neither gun's salvo count and
+  -- cannot contaminate a single assert below; its only job is to stand on ring slot 0 so that the
+  -- measured formation extent is the 8 this block owns. sS is designated command ship immediately
+  -- after, so the lead election keeps the FITTED hull on the anchor and this hull on the ring.
+  r := pg_temp.call_as(uS, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: commission escort: %', r; end if;
+  select main_ship_id into sE from public.main_ship_instances
+   where player_id = uS and main_ship_id <> sS limit 1;
+  if sE is null then raise exception 'SHORTGUN FAIL: no escort hull materialised — without a second hull the ring is inert, the measured extent is 0 and the wave spawns on top of the fixture'; end if;
+  r := pg_temp.call_as(uS, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sE, gS));
+  if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: assign escort: %', r; end if;
   r := pg_temp.call_as(uS, format('public.set_fleet_command_ship(%L::uuid, true)', sS));
   if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: command ship: %', r; end if;
   r := pg_temp.call_as(uS, format('public.set_group_auto_exit(%L::uuid, false, 30)', gS));
@@ -6616,8 +6657,34 @@ begin
   select id into v_enc from public.combat_encounters where player_id = uS and status = 'active';
   if v_enc is null then raise exception 'SHORTGUN FAIL: the ambush opened no encounter'; end if;
 
+  -- SCOPED TO THE FITTED HULL. This read carried no ship filter and no LIMIT, which was harmless
+  -- while the fleet was one ship and is a silent wrong-row pick now that it is two: plpgsql SELECT
+  -- INTO takes the FIRST row without complaint, so every range and speed below could have come from
+  -- the escort. The fixture is the MIXED-RANGE hull, by name.
   select id, move_speed into v_u_pl, v_speed from public.combat_units
-   where encounter_id = v_enc and side = 'player';
+   where encounter_id = v_enc and side = 'player' and main_ship_id = sS;
+  if v_u_pl is null then
+    raise exception 'SHORTGUN FAIL: the fitted hull seeded no combat unit — the whole measurement is about that one ship';
+  end if;
+  -- ── THE EXTENT IS REAL, AND THE WAVE IS WHERE THE MEASURED EXTENT PUTS IT (0336) ────────────────
+  -- The one authority for a wave radius is the MEASURED formation extent, never the ring knob. Both
+  -- are pinned here: the extent must BE the ring this block owns (so the escort really is on it), and
+  -- the opening hull-to-wave gap must be exactly (extent + the wave's own frozen reach + 1). If a
+  -- future change makes the ring inert again — a hull removed, a lead re-elected — this fails with
+  -- the numbers instead of quietly staging a fight that starts on top of the fixture.
+  select engagement_x, engagement_y into v_ax, v_ay from public.combat_encounters where id = v_enc;
+  select count(*), coalesce(max(public.osn_distance(v_ax, v_ay, u.pos_x, u.pos_y)), 0)
+    into v_players, v_extent
+    from public.combat_units u
+   where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0
+     and u.pos_x is not null and u.pos_y is not null;
+  if v_ax is null or v_ay is null or v_players <> 2 then
+    raise exception 'SHORTGUN FAIL: anchor (%,%) / % positioned living player row(s) — the fixture is a LEAD on the anchor plus ONE escort on the ring, and without both the measured extent is not the ring this block owns',
+      v_ax, v_ay, v_players;
+  end if;
+  if abs(v_extent - 8) > 1e-6 then
+    raise exception 'SHORTGUN FAIL: the measured formation extent is % (want the 8 ring this block owns) — the ring is inert again, so the wave will spawn on top of the fixture instead of beyond both of its guns', v_extent;
+  end if;
   select min((w->>'range')::double precision), max((w->>'range')::double precision)
     into v_short, v_long
     from public.combat_units cu9, jsonb_array_elements(cu9.weapons_json) w
@@ -6632,6 +6699,14 @@ begin
   if v_speed is null or v_speed <= 0 then
     raise exception 'SHORTGUN FAIL: the hull frozen move_speed is % — a ship that cannot move can never settle anywhere and the whole measurement is vacuous', v_speed;
   end if;
+  -- THE STEP MUST BE STRICTLY UNDER THE BAND, so the band-tick guard below cannot be stepped over.
+  -- Read off the hull's OWN frozen move_speed against its OWN two catalog ranges — derived, printed,
+  -- and the difference between a guard that holds by construction and one that holds by luck.
+  v_band := v_long - v_short;
+  if v_speed >= v_band then
+    raise exception 'SHORTGUN FAIL: the hull moves % per tick against a %-wide band between its two guns (% to %) — a step at or wider than the band can jump the approach straight past the only ticks that expose the defect, so whether the guard below fires would be an accident of arithmetic',
+      v_speed, v_band, v_short, v_long;
+  end if;
 
   perform pg_temp.ae_tick(v_enc);
   select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
@@ -6644,8 +6719,23 @@ begin
   if v_dist is null then
     raise exception 'SHORTGUN FAIL: the hull-to-wave distance is NULL after the opening tick — an unpositioned fight cannot prove where anything settled';
   end if;
+  -- THE WAVE IS WHERE THE MEASURED EXTENT PUTS IT — derived through the spawn arm's own expression,
+  -- from the wave's OWN frozen reach, not from the knob this block wrote.
+  select max((w->>'range')::double precision) into v_ren
+    from public.combat_units cu8, jsonb_array_elements(cu8.weapons_json) w where cu8.id = v_u_en;
+  if v_ren is null then
+    raise exception 'SHORTGUN FAIL: the spawned wave carries no weapon range — the spawn radius is DERIVED from that reach and cannot be checked';
+  end if;
+  v_open := v_dist + v_speed;   -- the gap at SPAWN: one tick of closing has already been applied
+  if abs(v_open - (v_extent + v_ren + 1)) > 1e-6 then
+    raise exception 'SHORTGUN FAIL: the wave opened % from the hull but the measured extent % plus its own reach % plus 1 is % — the wave is no longer arriving where 0336 puts it, so re-derive against the extent rather than loosening anything below',
+      v_open, v_extent, v_ren, v_extent + v_ren + 1;
+  end if;
+  -- THE FIRST THRESHOLD, WITH ITS MARGIN PRINTED: after one tick the hull must still be beyond its
+  -- LONGER gun, so the approach that exposes the short one is genuinely ahead of it.
   if v_dist <= v_long then
-    raise exception 'SHORTGUN FAIL: the hull already stands % from the wave after one tick, inside its LONGER % range — it never had to close, so the approach that exposes the short gun was never exercised', v_dist, v_long;
+    raise exception 'SHORTGUN FAIL: the hull already stands % from the wave after one tick, inside its LONGER % range (margin % — it needed to be positive) — it never had to close, so the approach that exposes the short gun was never exercised',
+      v_dist, v_long, v_dist - v_long;
   end if;
 
   -- ── DRIVE THE APPROACH TO ITS RESTING POINT. The hull is the only thing that moves. ─────────────
@@ -6689,6 +6779,19 @@ begin
     raise exception 'SHORTGUN FAIL: the hull settled % from its target, beyond its own SHORTEST gun (% range) — the kite cap is still the longest gun, so the ship holds where half its guns cannot reach',
       v_dist, v_short;
   end if;
+  -- ── THE SECOND THRESHOLD, WITH ITS MARGIN PRINTED — AND IT IS THE DEFECT'S OWN SIGNATURE ────────
+  -- The tolerance above is not a boundary being papered over: a ship that out-ranges its target takes
+  -- combat_unit_decide_move's KITE arm, which retreats to the edge of its own engagement range and
+  -- therefore lands on `my_min_range` EXACTLY, by construction. Comparing a computed sqrt against
+  -- that exact expected value is the same shape as CLOSURE's step pin, not a knife edge.
+  -- What IS a real margin is the distance from the LONG gun's edge, because that edge is where the
+  -- head parks: my_range = MAX(range) for both the close decision and the kite cap put the ship at 6
+  -- with the autocannon silently disabled. So the fixed engine must settle a FULL BAND WIDTH inside
+  -- the long gun, and that number is asserted and printed rather than left implicit in "<= short".
+  if v_long - v_dist < v_band - 1e-6 then
+    raise exception 'SHORTGUN FAIL: the hull settled % from its target — only % inside its LONGER % gun, against the % band between its two guns. The head parks AT the long edge, so a resting place that is not a whole band inside it is the defect surviving, not the fix landing',
+      v_dist, v_long - v_dist, v_long, v_band;
+  end if;
 
   perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
   perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
@@ -6698,8 +6801,9 @@ begin
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
   perform public.set_game_config('combat_player_speed_scale',            to_jsonb(k_pss));
 
-  raise notice 'DZCOMBAT_PASS_SHORTGUN ok: a hull carrying a % range autocannon beside a % range Mk-II closed from beyond both, passed through % tick(s) where only the Mk-II could reach (the head resting place), and came to rest % from its target — inside its SHORTEST gun, with BOTH module types on the record (% short salvo(s), % long)',
-    v_short, v_long, n_bandtick, round(v_dist::numeric, 4), n_short, n_long;
+  raise notice 'DZCOMBAT_PASS_SHORTGUN ok: a hull carrying a % range autocannon beside a % range Mk-II opened % from its target — the MEASURED formation extent % (a real escort on the owned ring, never the knob) plus the wave own reach % plus 1 — and closed at % per tick, strictly under the % band so the approach could not step over it; it passed through % tick(s) where only the Mk-II could reach (the head resting place) and came to rest % from its target: exactly its SHORTEST gun edge and a full % inside its LONGEST, with BOTH module types on the record (% short salvo(s), % long)',
+    v_short, v_long, round(v_open::numeric, 4), v_extent, v_ren, round(v_speed::numeric, 4), v_band,
+    n_bandtick, round(v_dist::numeric, 4), round((v_long - v_dist)::numeric, 4), n_short, n_long;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_RETREATCLEAR (0336): EVERY TERMINAL ARM CONSUMES THE RETREAT TARGET ═════════
