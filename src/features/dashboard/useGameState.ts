@@ -12,6 +12,7 @@ import {
   fetchFleets,
 } from '../fleets/fleetApi'
 import type { Fleet, FleetMovement, FleetUnit, LocationPresence } from '../fleets/fleetTypes'
+import { fetchInterceptMisses, type InterceptMissLite } from '../map/pirateApi'
 
 export interface GameState {
   loading: boolean
@@ -29,6 +30,12 @@ export interface GameState {
   // The active main-ship fleet + its movement are derived from `fleets`/`movements` in the panel.
   mainShip: MainShipView | null
   mainshipSendEnabled: boolean
+  // THE NEAR MISS (owner, 2026-08-03) — the player's own rolled-and-missed ambushes. Read HERE, on
+  // the wave that already carries `movements`, for two reasons that are the same reason: the notice
+  // is only announceable once its leg has LEFT that movements list (nearMissNotice rule 3), so the
+  // two facts must come from one cycle or the surface flickers between them; and a fact this quiet
+  // does not deserve a second poll of its own. [] on any read failure — silence, never a claim.
+  interceptMisses: InterceptMissLite[]
 }
 
 const EMPTY: GameState = {
@@ -45,6 +52,7 @@ const EMPTY: GameState = {
   locationStates: {},
   mainShip: null,
   mainshipSendEnabled: false,
+  interceptMisses: [],
 }
 
 /**
@@ -75,7 +83,7 @@ export function useGameState(pollMs = 3000) {
       }
 
       const base = await fetchBase()
-      const [fleets, fleetUnits, movements, presences, locationStates, mainShip] =
+      const [fleets, fleetUnits, movements, presences, locationStates, mainShip, interceptMisses] =
         await Promise.all([
           fetchFleets(),
           fetchFleetUnits(),
@@ -83,6 +91,8 @@ export function useGameState(pollMs = 3000) {
           fetchActivePresences(),
           fetchLocationStates(),
           fetchMyMainShip().catch(() => null), // non-fatal: a main-ship read hiccup must not break the Command Center
+          // Same wave as `movements` on purpose — see the interceptMisses field note above.
+          fetchInterceptMisses(),
         ])
 
       setState({
@@ -95,6 +105,7 @@ export function useGameState(pollMs = 3000) {
         presences,
         locationStates,
         mainShip,
+        interceptMisses,
         mainshipSendEnabled: staticRef.current.mainshipSendEnabled,
         unitTypes: staticRef.current.unitTypes,
         locations: staticRef.current.locations,

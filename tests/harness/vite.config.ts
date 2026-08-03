@@ -11,6 +11,8 @@ import { join } from 'node:path'
 //   fold.html   — the real <ReportsSection> (the Collapsible primitive through its consumer)
 //   repair.html — the real <RepairPanel> (THE ONE repair surface) with an injected server API
 //   fight.html  — the real <GalaxyMap> + <CombatMapCard> over a live battle, at a 390px phone width
+//   hunt.html   — the real <ZoneInfoPanel> + <NearMissSection>: the signpost out of the pirate-zone
+//                 dead end, and the near miss that used to be silence
 // The tailwind plugin is here for fight.html alone: that proof MEASURES the rendered readout, so it
 // has to load the app design system rather than approximate it. The CSS-free harnesses are
 // unaffected — none of them imports a stylesheet.

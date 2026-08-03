@@ -5,6 +5,62 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-03 — HUNTING IS FINDABLE, AND A NEAR MISS IS NOT SILENCE (client only)
+
+Branch `slice-hunting-is-findable` off `97447b3`. **No migration, no `game_config` write, no
+production write** — every fact below was READ from production (head `20260618000335`).
+
+### The complaint
+Owner, playing: *"i went to snare, zone, no fighting happens. why are you keep messing things up?
+spaghetti of course. do it properly"*
+
+### What actually happened (verified, not inferred)
+Their four trips that afternoon were `mission_type='rally'`, `target_type='space'`, aimed at
+**(-45,88), (-43,94), (-43,98), (-35,99)**. The Snare **site** is a `locations` row at
+**(-45,120)**. They were aiming at the Snare **danger zone** — a drawn blob that shares the site's
+name and covers 7.2× its declared area — and never targeted the site. Two of the four rolled an
+ambush and **missed** (risk 0.545 / roll 0.697; risk 0.240 / roll 0.336); two never rolled. No
+encounter was created. **The server was right the whole time.**
+
+The cause was ours, in two halves:
+1. **Three screens described combat three different ways**, and the one they read named the zone:
+   `MissionScreen.tsx:93` *"…or into a pirate zone to hunt"*; `zoneInfoModel.ts` *"A fleet crossing
+   this zone is almost always attacked"* (written against 0236's [0.98,1.0] pin, long gone from
+   prod); and the map's own idle prompt, which listed ports and open space and **never mentioned
+   hunting at all**.
+2. **The zone panel was a dead end.** "What's here" named the danger and never said what to do
+   about it, even though `danger_zones.location_id` already carries the site the zone wraps.
+
+### What changed
+- **`src/features/command/howAFightStarts.ts` — ONE description, composed everywhere.**
+  Six surfaces import it: MissionScreen, TeamRosterPanel, teamReasonMessage (the
+  `combat_destination` refusal, now actionable instead of flat), zoneInfoModel, FleetCommandPanel's
+  idle prompt, and the First Orders checklist. `tests/howAFightStarts.spec.ts` **scans all of
+  `src/`** and fails on any surface that re-invents the sentence or reintroduces the banned shapes.
+- **The signpost.** `buildZoneInfo` now resolves the zone's hunt site through
+  `teamDestinationKind` — *the same classifier the map uses to decide the hunt section renders* —
+  and `ZoneInfoPanel` offers **"Hunt at Snare"**, which hands the id to `MapScreen.handleSelect`:
+  the map's own marker-selection path, opening the **existing** hunt control. No second hunt path.
+- **The near miss.** A rolled-and-missed crossing used to leave no trace anywhere. With the
+  probabilistic ambush kept by owner decision, silence is indistinguishable from a broken game.
+  New: `nearMissNotice.ts` (pure) + `fetchInterceptMisses()` on the shell's existing 3s wave, a map
+  alert beside the ambush notice (expires after 10 min) and a "Close calls" record on Mission.
+  **Established, not assumed:** `pirate_intercepts` grants SELECT to `authenticated`, RLS is
+  `player_id = auth.uid()`, and **no existing function returns these rows to a client** — so no
+  server read is missing. Three rules pinned: never for a leg that had no roll (structural — the
+  deployed `pirate_intercept_plan_leg` inserts only for a zone actually crossed), no raw risk/roll
+  numbers, and nothing announced while the leg is still in flight.
+
+### Proofs
+`tsc -b` clean · `vite build` clean · eslint unchanged from baseline (27 problems, all
+pre-existing) · **1742 node specs** (baseline 1716 on `97447b3`, +26) · **55 rendered-UI proofs**
+(baseline 49, +6 in `huntDiscoverability.uispec.ts` over a new `hunt.html` harness).
+
+`tests/zoneInfoModel.spec.ts`'s warning pin was **repointed and strengthened** — it now composes
+the authority and asserts the absence of "almost always", instead of restating a literal.
+
+---
+
 ## 2026-08-03 — THE COMBAT AUDIT, AND THE WAVE AROUND IT (0334 → 0335, + client)
 
 Recorded after the fact: this covers ~15 merges the log skipped while the work was in flight.

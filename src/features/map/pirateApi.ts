@@ -89,3 +89,58 @@ export async function pirateZoneDelete(zoneId: string): Promise<PirateRpcResult>
   if (error) return { ok: false, reason: 'unavailable' }
   return data as PirateRpcResult
 }
+
+// ── pirate_intercepts (read) — THE NEAR MISS ────────────────────────────────────────────────────────
+// Owner, 2026-08-03, after four trips through the Snare that started no fight: "i went to snare,
+// zone, no fighting happens. why are you keep messing things up?"
+//
+// Every one of those crossings was rolled for and every one either missed or never rolled, and the
+// game said NOTHING either way. With the ambush kept probabilistic by owner decision (~55% for their
+// fleet, responsive to strength and crossing length), silence is indistinguishable from a broken
+// game — a 98% system could get away with saying nothing, a coin-flip cannot.
+//
+// ── WHY A PLAIN TABLE READ AND NOT A NEW RPC ────────────────────────────────────────────────────────
+// Established on PRODUCTION (head 20260618000335), not assumed:
+//   · `pirate_intercepts` grants SELECT to `authenticated`;
+//   · RLS is ON with exactly one policy, `pirate_intercepts_select_own` — `player_id = auth.uid()`;
+//   · NO existing function returns these rows to a client. The five that touch the table
+//     (movement_advance, pirate_intercept_plan_leg / _cancel_pending_for_movement /
+//     _resolve_due_for_movement, process_fleet_movements) are all writers on the mover's own path.
+// So the read a player needs already exists and is already scoped to them. No migration, no new
+// server surface. This is the house idiom anyway — 69 direct table reads live in src/.
+//
+// ── WHY `lifecycle_state = 'missed'` IS EXACTLY THE SILENT CASE ─────────────────────────────────────
+// Read from the deployed `pirate_intercept_plan_leg`: a row is inserted ONLY for a zone the leg
+// actually crosses (`pirate_intercept_leg_zone_hits`), with `lifecycle_state` =
+// `case when v_roll < v_risk then 'pending' else 'missed' end`. So:
+//   · no crossing  → NO ROW AT ALL, and this read can never invent a near miss for a leg that never
+//                    entered a zone (the coordinator's hard requirement, satisfied by construction);
+//   · rolled + hit → 'pending' → an encounter → a battle, a map card and a report. Never silent.
+//   · rolled + missed → 'missed', `trigger_at` NULL, and until now nothing anywhere. THIS one.
+// `created_at` is therefore the moment of the roll itself (the insert happens in the same statement
+// as `v_roll := random()`), which is what the notice ages against.
+//
+// Normalize-don't-throw, like every read in this file: a transport error yields [] and the surface
+// simply says nothing — a near miss that fails to load must never become a claim.
+export interface InterceptMissLite {
+  id: string
+  /** The leg this roll belongs to. Null-safe: the notice only needs it to know the trip is over. */
+  movement_id: string | null
+  /** The hunt site the crossed zone is wrapped around, when it has one — the name a player knows. */
+  location_id: string | null
+  /** The moment of the roll (see above), ISO-8601. */
+  created_at: string
+}
+
+export async function fetchInterceptMisses(limit = 10): Promise<InterceptMissLite[]> {
+  const { data, error } = await supabase
+    .from('pirate_intercepts')
+    .select('id, movement_id, location_id, created_at')
+    // The player scoping is RLS's, not this line's — a client-side player filter would be a second
+    // authority for "whose rows are these" and would read as security while providing none.
+    .eq('lifecycle_state', 'missed')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error || !Array.isArray(data)) return []
+  return data as InterceptMissLite[]
+}

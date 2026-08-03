@@ -13,6 +13,8 @@
 // too rather than in a map of its own: its first leg COMPOSES command_ship_group_go, so its rejects
 // are this vocabulary — a second map would have had to duplicate all of it.
 
+import { HOW_A_FIGHT_STARTS } from './howAFightStarts'
+
 const REASON_MESSAGES: Record<string, string> = {
   // shared prefix (every fleet RPC, 0161/0165/0166/0168/0204/0216/…)
   team_command_disabled: 'Fleet commands are not available right now.',
@@ -67,7 +69,12 @@ const REASON_MESSAGES: Record<string, string> = {
   no_origin: 'The fleet has nowhere to depart from yet.',
   invalid_origin: 'The fleet’s current port couldn’t be found — try again.',
   movement_settled_retry: 'The fleet just arrived — give the order again from where it is now.',
-  combat_destination: 'Fleets can’t be sent into a combat zone — use Hunt for that.',
+  // HOW-A-FIGHT-STARTS: the server's refusal is a RULE (command_ship_group_go's own comment: "A
+  // move is not a hunt: hunts go through send_ship_group_hunt"), so this copy does not argue with
+  // it — it says what to do instead, in the ONE wording every other surface uses. "use Hunt for
+  // that" named a control without saying where it is, which is the same dead end the zone panel
+  // had. Deliberately says "site", not "zone": conflating the two IS the defect.
+  combat_destination: `A pirate site can’t be travelled to. ${HOW_A_FIGHT_STARTS}`,
   target_out_of_bounds: 'That point lies outside charted space.',
   invalid_target_shape: 'Pick one destination — a port or a point in space, not both.',
   invalid_coordinate: 'That isn’t a usable point in space.',
