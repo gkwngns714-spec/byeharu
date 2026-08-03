@@ -10,7 +10,7 @@ import {
   projectFirstOrders,
 } from './firstOrders'
 
-// OB-1 (plan §C P10) — the "First Orders" checklist card, mounted at the TOP of CommandScreen's
+// OB-1 (plan §C P10) — the "First Orders" checklist card, mounted at the TOP of MissionScreen's
 // main rail (the first thing a new player sees). READ-ONLY: it renders deriveFirstOrders over the
 // shell's already-polled state — zero fetches of its own, zero writes, zero new server surface.
 // It self-hides when every visible step is done (nothing left to order) and can be dismissed.

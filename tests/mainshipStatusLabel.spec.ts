@@ -7,10 +7,13 @@ import { mainShipInstanceStatusLabel } from '../src/features/map/mainshipStatusL
 
 // TRADE-UI-1 — the raw main_ship_instances.status enum labeler consumed by the ship-switcher (migration 0043).
 test('instance status: every enum value maps to a non-raw human label', () => {
+  // ONE NAME PER STATE (2026-08-03): "Idle" / "In transit" / "Wrecked" are the same words the
+  // location resolver (shipLocation.ts) and the recovery copy (shipRecovery.ts) speak — a ship
+  // never wears two names for one state depending on the surface.
   const cases: Record<string, string> = {
-    home: 'Ready to launch', traveling: 'Traveling', hunting: 'Hunting', trading: 'Trading',
+    home: 'Idle', traveling: 'In transit', hunting: 'Hunting', trading: 'Trading',
     exploring: 'Exploring', mining: 'Mining', retreating: 'Retreating', returning: 'Returning',
-    repairing: 'Repairing', destroyed: 'Disabled',
+    repairing: 'Repairing', destroyed: 'Wrecked',
   }
   for (const [status, label] of Object.entries(cases)) {
     expect(mainShipInstanceStatusLabel(status)).toBe(label)

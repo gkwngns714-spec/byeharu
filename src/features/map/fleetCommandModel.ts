@@ -264,8 +264,10 @@ export function buildFleetCommandModel(input: FleetCommandModelInput): FleetComm
               readyHint:
                 members.length > 0 && !allReady
                   ? input.launchFromDock
-                    ? 'Every ship must be home, or the whole fleet docked together at one port, to hunt.'
-                    : 'Every ship must be home to hunt.'
+                    ? // "idle" is the one name for the unfleeted at-rest state (mainshipStatusLabel);
+                      // "home" named a base the NO-HOME law deleted.
+                      'Every ship must be idle, or the whole fleet docked together at one port, to hunt.'
+                    : 'Every ship must be idle to hunt.'
                   : null,
               returnPicker:
                 input.launchFromDock && dockedTogetherId !== null && allReady

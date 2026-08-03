@@ -331,33 +331,29 @@ export function MapScreen() {
                 shipStatus={mainShip?.status}
                 shipSpatialState={null}
               />
+              {/* COMBAT — the fight is a thing happening in SPACE, so its live standing belongs on
+                  the MAP, not only on the ops screen. Reads the shell's already-polled combat state
+                  (no new fetch); renders nothing when nothing is fighting (clean-map law #1). A
+                  SECOND VIEW of the same server rows — ActiveCombatPanel stays the Mission-side
+                  detail. CORNER OWNERSHIP (2026-08-03): this stack used to sit at right-3 top-3 —
+                  the EXACT anchor of GalaxyMap's zoom rail, so a 256px combat card buried the
+                  zoom/reset buttons for the whole fight. It now rides THIS rail: one container per
+                  corner, so it can never overlap the exploration panel either. Corner map: zoom
+                  top-right · legend bottom-left · hub bottom-right · alerts/features top-left. */}
+              {ambushEncounterNotices({ encounters: combat.encounters, locations }).map((n) => (
+                <OverlayPanel
+                  key={n.encounterId}
+                  tone="danger"
+                  data-testid={`map-ambush-notice-${n.encounterId}`}
+                  className="w-64"
+                >
+                  <p className="text-xs font-semibold text-danger">{n.text}</p>
+                </OverlayPanel>
+              ))}
+              <CombatMapCard encounters={combat.encounters} units={combat.units} />
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
-            {/* COMBAT — the fight is a thing happening in SPACE, so its live standing belongs on the
-                MAP, not only on the Command screen. Reads the shell's already-polled combat state, so
-                no new fetch; renders nothing when nothing is fighting (clean-map law #1). A SECOND VIEW
-                of the same server rows — ActiveCombatPanel is untouched and stays the Command-side
-                detail. Pure presentation: every number is the database's, none is derived here. */}
-            <div className="pointer-events-none absolute right-3 top-3 z-30 flex flex-col items-end gap-2">
-              {/* INTERCEPT DEFERRED ENTRY — the ambush notice. It rides in THIS slot, directly above
-                  the combat card, because this slot is already the map's ONE encounter-state surface:
-                  same rows (combat.encounters, polled once by useCombat), same fight, one line saying
-                  WHY that fight exists. Nothing new is fetched, polled or remembered — the pure model
-                  (ambushEncounterNotice.ts) derives it from rows already in hand, and the order RPC's
-                  response has no part in it. Its true final home is inside CombatMapCard's per-
-                  encounter card; that fold is a two-line move once that file is free to edit. */}
-              {ambushEncounterNotices({ encounters: combat.encounters, locations }).map((n) => (
-                <p
-                  key={n.encounterId}
-                  data-testid={`map-ambush-notice-${n.encounterId}`}
-                  className="pointer-events-auto w-64 rounded-card border border-danger/50 bg-surface/95 px-3 py-2 text-xs font-semibold text-danger shadow-overlay backdrop-blur"
-                >
-                  {n.text}
-                </p>
-              ))}
-              <CombatMapCard encounters={combat.encounters} units={combat.units} />
-            </div>
             {/* COMBAT-S2 TELEGRAPH — the pre-combat warning beat (top-center, urgent). Renders nothing
                 unless the caller has a telegraphed encounter; while combat_telegraph_enabled is dark the
                 pending table is empty so this is invisible (fail-closed by data). Flee withdraws the
@@ -469,7 +465,7 @@ export function MapScreen() {
                     data-testid="map-command-icons-close"
                     aria-label="Close"
                     title="Close"
-                    className="flex h-9 w-9 items-center justify-center rounded-full text-ink-faint transition hover:bg-edge/40 hover:text-ink active:bg-edge/60"
+                    className="flex h-11 w-11 items-center justify-center rounded-full text-ink-faint transition hover:bg-edge/40 hover:text-ink active:bg-edge/60"
                   >
                     ✕
                   </button>

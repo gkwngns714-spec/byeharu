@@ -33,7 +33,7 @@ import {
 import { shipyardReasonMessage } from './shipyardReasonMessage'
 import { salvageStickyLit, salvageWalletDisplay } from './salvageMarket'
 import { formatDateTime, formatDuration } from '../../lib/time'
-import { Badge, Button, Card, CardHeader, SectionLabel, Skeleton } from '../../components/ui'
+import { Badge, Button, CollapsibleCard, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemChip, titleCaseId } from '../../components/items'
 
 // SHIPYARD-3 — the dark shipyard ORDER surface: the port's hull build catalog (hull_build_recipes
@@ -211,8 +211,17 @@ export function ShipyardPanel({
   return (
     // The Card primitive owns the chrome (accent tone = the ship/production-family identity —
     // ShipStatusCard's register; the trade family keeps warning).
-    <Card tone="accent" data-testid="shipyard-panel">
-      <CardHeader title="Shipyard" subtitle="Order a new hull built from materials & credits." />
+    // HIERARCHY (2026-08-03): a big-ticket but RARE surface → folded CLOSED by default (persists
+    // per player). Hooks above still run; only the body unmounts while folded — no fetch change.
+    // PLAIN-WORDS: "ship", not "hull" — the nav says Ships and so does the rest of the app.
+    <CollapsibleCard
+      tone="accent"
+      data-testid="shipyard-panel"
+      title="Shipyard"
+      subtitle="Order a new ship built from materials & credits."
+      storageKey="port.shipyard"
+      defaultOpen={false}
+    >
 
       {/* Current credits — the getWalletBalance semantics verbatim, through the ONE wallet display
           helper (salvageWalletDisplay — reused, not re-folded: same sentinels, same seed honesty;
@@ -300,7 +309,7 @@ export function ShipyardPanel({
                     met/unmet only when the client could genuinely read the subject. */}
                 {hullGate !== 'none' && (
                   <p className="mt-1 text-[10px] text-ink-muted">
-                    Requires hull:{' '}
+                    Requires ship:{' '}
                     {hullNames[e.required_hull_type_id ?? ''] ?? titleCaseId(e.required_hull_type_id ?? '')}
                     {hullGate === 'met' ? ' — owned' : hullGate === 'unmet' ? ' — not owned' : ''}
                   </p>
@@ -374,6 +383,6 @@ export function ShipyardPanel({
           </ul>
         </>
       )}
-    </Card>
+    </CollapsibleCard>
   )
 }

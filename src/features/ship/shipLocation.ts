@@ -100,8 +100,10 @@ export function resolveShipLocationLabel(
 
   // ── kind + label for the dossier's location strip ──────────────────────────────────────────────
   if (movement) {
+    // "Returning" — never "Returning home": the NO-HOME law says ports are the only base, so a
+    // return leg names no home. One word, same as the roster badge (commandFleetState).
     return heading
-      ? { kind: 'returning', label: 'Returning home', etaText, destination, heading }
+      ? { kind: 'returning', label: 'Returning', etaText, destination, heading }
       : { kind: 'in-transit', label: `In transit to ${destination ?? 'its destination'}`, etaText, destination, heading }
   }
 
@@ -115,13 +117,15 @@ export function resolveShipLocationLabel(
   }
 
   if (status === 'returning') {
-    return { kind: 'returning', label: 'Returning home', etaText, destination, heading }
+    return { kind: 'returning', label: 'Returning', etaText, destination, heading }
   }
 
   // no active fleet → the ship is idle/undeployed. NO-HOME LAW: ports are the ONLY base — there is no
-  // "home port" — so the label must NOT claim one; a neutral "Idle" is the honest read (it also agrees
-  // with the sibling ShipStatusCard, which shows this same idle ship as "Ready to launch"). A fleet in
-  // an odd state with no movement row degrades to a plain "In transit" rather than a false place.
+  // "home port" — so the label must NOT claim one; a neutral "Idle" is the honest read, and since the
+  // 2026-08-03 one-name-per-state pass it is the SAME word every other surface uses for this state
+  // (mainshipStatusLabel maps the raw 'home' status to "Idle" too — the old "Ready to launch" clash
+  // this comment used to document is settled). A fleet in an odd state with no movement row degrades
+  // to a plain "In transit" rather than a false place.
   if (!fleet) return { kind: 'idle', label: 'Idle', etaText, destination, heading }
   return { kind: 'in-transit', label: 'In transit', etaText, destination, heading }
 }

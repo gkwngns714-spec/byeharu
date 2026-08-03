@@ -314,7 +314,9 @@ function RepairBody({
             </span>
           </div>
 
-          <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
+          {/* text-xs floor: this row spends the player's money — it must never be the smallest
+              text in the card (the old 10px here inverted the screen's weight hierarchy). */}
+          <div className="mt-2 flex items-center justify-between gap-2 text-xs">
             {/* Whole-hp stepper — buttons clamp to 1..missing; typed input floors to whole 1.. and may
                 exceed missing (server clamps to the actual missing hull, never over-charges). */}
             <span className="flex shrink-0 items-center gap-1">

@@ -7,7 +7,7 @@ import { AuthPage } from '../features/auth/AuthPage'
 import { MapScreen } from '../features/map/MapScreen'
 import { ShipScreen } from '../features/ship/ShipScreen'
 import { PortScreen } from '../features/port/PortScreen'
-import { CommandScreen } from '../features/command/CommandScreen'
+import { MissionScreen } from '../features/command/MissionScreen'
 import { FleetScreen } from '../features/command/FleetScreen'
 import { WorldEditor } from '../features/worldeditor/WorldEditor'
 
@@ -40,7 +40,8 @@ export function App() {
           <Route path="/ship" element={<ShipScreen />} />
           <Route path="/fleet" element={<FleetScreen />} />
           <Route path="/port" element={<PortScreen />} />
-          <Route path="/command" element={<CommandScreen />} />
+          {/* MISSION-TAB: the ops destination (renamed CommandScreen — one home per panel). */}
+          <Route path="/mission" element={<MissionScreen />} />
         </Route>
         {/* WORLD EDITOR — the ONE owner-only authoring surface (C1 retired the legacy standalone
             zone editor route; the World Editor's zones layer owns that job on the real map).
@@ -58,7 +59,9 @@ export function App() {
         {/* Root + legacy routes resolve into the new shell (bookmarks keep working). */}
         <Route path="/" element={<Navigate to="/map" replace />} />
         <Route path="/galaxy" element={<Navigate to="/map" replace />} />
-        <Route path="/reports" element={<Navigate to="/command" replace />} />
+        {/* /command's content lives on /mission now (MISSION-TAB) — old bookmarks follow it. */}
+        <Route path="/command" element={<Navigate to="/mission" replace />} />
+        <Route path="/reports" element={<Navigate to="/mission" replace />} />
         <Route path="*" element={<Navigate to="/map" replace />} />
       </Routes>
     </BrowserRouter>

@@ -94,11 +94,13 @@ export function repairGateNote(gate: RepairGate): string | null {
   switch (gate.kind) {
     case 'not_disabled':
       return null
+    // ONE NAME PER STATE: a destroyed ship is "wrecked" everywhere (badge, notes, errors) — never
+    // "disabled", which collided with the disabled buttons beside it. No emoji in copy (chrome law).
     case 'adrift':
-      return '🛠 This ship is wrecked and adrift. Ships are only repaired in port — tow it in first.'
+      return 'This ship is wrecked and adrift. Ships are only repaired in port — tow it in first.'
     case 'at_port':
     case 'unknown':
-      return '🛠 This ship is disabled. Repair it to get moving again.'
+      return 'This ship is wrecked. Repair it to get moving again.'
   }
 }
 
@@ -129,7 +131,7 @@ export function repairErrorMessage(err: unknown): string {
     return 'This ship is adrift. Tow it to a port, then repair it there.'
   }
   if (raw.includes('ship is not disabled')) {
-    return "This ship isn't disabled — there's nothing to repair."
+    return "This ship isn't wrecked — there's nothing to repair."
   }
   if (raw.includes('no main ship found')) {
     return 'That ship could not be found.'

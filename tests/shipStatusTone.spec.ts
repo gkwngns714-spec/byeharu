@@ -19,8 +19,10 @@ test('docked is the quiet default (neutral) — the resting state must not shout
   expect(mainShipInstanceStatusTone('stationary')).toBe('neutral')
 })
 
-test('ready to launch reads as success', () => {
-  expect(mainShipInstanceStatusTone('home')).toBe('success')
+test('idle is quiet (neutral) — a ship with no known position must not glow green', () => {
+  // ONE NAME PER STATE (2026-08-03): 'home' reads "Idle" now (was the green "Ready to launch",
+  // which could sit right above a "Location unavailable" line — a confident claim over ignorance).
+  expect(mainShipInstanceStatusTone('home')).toBe('neutral')
 })
 
 test('danger states are danger', () => {
@@ -47,7 +49,7 @@ test('an unknown/future status → neutral, never a wrong-colour claim', () => {
 // label map and this table fails until it is given a tone on purpose.
 test('the full status vocabulary maps to its intended tone', () => {
   const expected: Record<string, string> = {
-    home: 'success',
+    home: 'neutral', // deliberate: idle — quiet like docked (the one-name-per-state pass)
     stationary: 'neutral', // deliberate: docked/at rest
     traveling: 'warning',
     returning: 'accent',

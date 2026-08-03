@@ -384,16 +384,16 @@ export function ShipScreen() {
   if (!selection.loading && selection.ships.length === 0) {
     return (
       <Screen wide>
-        <PageHeader eyebrow="Ops · Vessel" title="Ships" subtitle="Your ships & their equipment" />
+        <PageHeader eyebrow="Ops · Ships" title="Ships" subtitle="Your ships & their equipment" />
         <EmptyState
           data-testid="fitting-no-ship"
           icon={<Icon name="ship" size={28} />}
           title="No ship yet"
-          body="Buy your first ship in Command — its equipment, captains, and cargo appear here."
+          body="Claim your first ship on the Mission tab — its equipment, captains, and cargo appear here."
           action={
             <span className="inline-flex items-center gap-2">
-              <Link to="/command" className={buttonClasses('primary', 'md')}>
-                Go to Command
+              <Link to="/mission" className={buttonClasses('primary', 'md')}>
+                Go to Mission
               </Link>
               <Button
                 variant="ghost"
@@ -411,7 +411,7 @@ export function ShipScreen() {
 
   return (
     <Screen wide>
-      <PageHeader eyebrow="Ops · Vessel" title="Ships" subtitle="Your ships, by fleet — select one to equip it" />
+      <PageHeader eyebrow="Ops · Ships" title="Ships" subtitle="Your ships, by fleet — select one to equip it" />
       <div className={screenSplitClass()}>
         <div className={screenRailClass('main')}>
           {/* THE ROSTER — grouped by fleet (read-only; composition lives on the Fleet tab). */}

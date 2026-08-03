@@ -112,7 +112,7 @@ export function RecruitCaptainPanel({
               <li key={rec.captain_type_id} data-testid={`recruit-recipe-${rec.captain_type_id}`} className="text-[10px]">
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-ink">{rec.name}</span>
-                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[9px] text-ink-muted">
+                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
                     {rec.specialization}
                   </span>
                 </div>

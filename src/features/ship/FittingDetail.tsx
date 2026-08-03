@@ -49,7 +49,7 @@ import { normalizeShipName, renameReasonMessage, shipNameProblem, SHIP_NAME_MAX 
 import { canRepair, canTow, freshestShipStatus, repairConcept, repairGateNote, REPAIR_LABEL, TOW_LABEL, type RepairGate } from './shipRecovery'
 import { RepairPanel } from './RepairPanel'
 import { repairDockState } from './repairEconomy'
-import { Badge, Button, Card, CardHeader, Notice, SectionLabel, Skeleton } from '../../components/ui'
+import { Badge, Button, Card, CardHeader, Collapsible, Notice, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 
 // S6 FITTING DETAIL — the per-ship outfitting surface (retires ShipDossier + ShipStatusCard; this
@@ -542,7 +542,8 @@ export function FittingDetail({
       {/* SHIP-POWER — the per-ship stats strip (server truth; hidden while dark/no-ship). */}
       {shipStats.kind !== 'hidden' && (
         <div data-testid="ship-stats-strip" className="mt-3 rounded-lg border border-edge bg-surface-2/50 px-3 py-2">
-          <p className="text-[10px] text-ink-faint">Ship stats · server truth</p>
+          {/* plain label — "server truth" was engineering vocabulary rendered to players */}
+          <p className="text-[11px] text-ink-faint">Ship stats</p>
           {shipStats.kind === 'invalid' ? (
             <p data-testid="ship-stats-error" className="mt-1 text-[10px] text-warning">
               {shipStatsErrorMessage(shipStats.error)}
@@ -559,10 +560,26 @@ export function FittingDetail({
         </div>
       )}
 
-      {/* TRAITS (SOUL-2) — identity before loadout; dark/error → nothing (byte-identical). */}
+      {/* ── HIERARCHY (visual pass 2026-08-03): Traits and Command buff are read-once identity
+          content that used to sit OPEN between condition and the fitting surface (this screen's
+          job), pushing Equip/Remove below the fold on a phone. Both are now Collapsible folds,
+          CLOSED by default — two quiet header rows — and the player's choice persists per
+          section (collapsibleState). ── */}
+
+      {/* TRAITS (SOUL-2) — dark/error → nothing (byte-identical). */}
       {traitCards && (
-        <>
-          <SectionLabel className="mt-4">Traits</SectionLabel>
+        <Collapsible
+          storageKey="ship.traits"
+          defaultOpen={false}
+          data-testid="soul-traits-fold"
+          headerClassName="mt-4"
+          header={
+            <span className="flex min-w-0 flex-1 items-baseline justify-between gap-2">
+              <span className="font-mono text-xs uppercase tracking-wider text-ink-faint">Traits</span>
+              <span className="font-mono text-xs tabular-nums text-ink-faint">{traitCards.length}</span>
+            </span>
+          }
+        >
           <ul data-testid="soul-traits" className="mt-2 space-y-1.5">
             {traitCards.map((t) =>
               t.kind === 'trait' ? (
@@ -599,13 +616,21 @@ export function FittingDetail({
               ),
             )}
           </ul>
-        </>
+        </Collapsible>
       )}
 
-      {/* COMMAND BUFF (0205) — dormant until this ship is its fleet's command ship. */}
+      {/* COMMAND BUFF (0205) — dormant until this ship is its fleet's command ship; read-once →
+          folded closed like Traits. */}
       {commandBuffCard && (
-        <>
-          <SectionLabel className="mt-4">Command buff</SectionLabel>
+        <Collapsible
+          storageKey="ship.commandBuff"
+          defaultOpen={false}
+          data-testid="command-buff-fold"
+          headerClassName="mt-4"
+          header={
+            <span className="font-mono text-xs uppercase tracking-wider text-ink-faint">Command buff</span>
+          }
+        >
           {commandBuffCard.kind === 'buff' ? (
             <div
               data-testid="command-buff"
@@ -641,7 +666,7 @@ export function FittingDetail({
               Unknown command buff
             </div>
           )}
-        </>
+        </Collapsible>
       )}
 
       {/* ── THE FITTING SURFACE — the ONE fit/unfit edit surface in the app (Workshop rows retired
@@ -748,7 +773,7 @@ export function FittingDetail({
                             >
                               <ItemGlyph id={m.module_type_id} kind="module" size={14} className="shrink-0 text-accent" />
                               <span className="truncate text-ink">{m.name}</span>
-                              <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">
+                              <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">
                                 {m.slot_type}
                               </span>
                               <span
@@ -764,7 +789,7 @@ export function FittingDetail({
                             <span className="flex min-w-0 items-center gap-1.5">
                               <ItemGlyph id={m.module_type_id} kind="module" size={14} className="shrink-0 text-accent" />
                               <span className="truncate text-ink">{m.name}</span>
-                              <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">
+                              <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">
                                 {m.slot_type}
                               </span>
                             </span>
@@ -902,31 +927,42 @@ export function FittingDetail({
         </>
       )}
 
-      {/* CARGO HOLD — plain owner-read data (works undocked; the MarketPanel lot-sum formula). */}
-      <div className="mt-4 flex items-baseline justify-between gap-2">
-        <SectionLabel className="mb-0">Cargo hold</SectionLabel>
-        <span data-testid="fitting-cargo-m3" className="font-mono text-xs tabular-nums text-ink-muted">
-          {formatM3(usedM3)} / {formatM3(ship.cargo_capacity_m3)} m³
-        </span>
-      </div>
-      {stacks.length > 0 ? (
-        <div data-testid="fitting-cargo" className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {stacks.map((s) => (
-            <ItemTile
-              key={s.good_id}
-              data-testid={`fitting-cargo-${s.good_id}`}
-              id={s.good_id}
-              kind="good"
-              qty={s.qty}
-              hint={`${formatM3(s.m3)} m³`}
-            />
-          ))}
-        </div>
-      ) : (
-        <p data-testid="fitting-cargo-empty" className="mt-2 text-sm text-ink-faint">
-          Hold empty.
-        </p>
-      )}
+      {/* CARGO HOLD — plain owner-read data (works undocked; the MarketPanel lot-sum formula).
+          Folded CLOSED by default: the header row still carries the one number a glance needs
+          (used / capacity m³), so opening is only for seeing WHAT is aboard. */}
+      <Collapsible
+        storageKey="ship.cargo"
+        defaultOpen={false}
+        data-testid="fitting-cargo-fold"
+        headerClassName="mt-4"
+        header={
+          <span className="flex min-w-0 flex-1 items-baseline justify-between gap-2">
+            <span className="font-mono text-xs uppercase tracking-wider text-ink-faint">Cargo hold</span>
+            <span data-testid="fitting-cargo-m3" className="font-mono text-xs tabular-nums text-ink-muted">
+              {formatM3(usedM3)} / {formatM3(ship.cargo_capacity_m3)} m³
+            </span>
+          </span>
+        }
+      >
+        {stacks.length > 0 ? (
+          <div data-testid="fitting-cargo" className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {stacks.map((s) => (
+              <ItemTile
+                key={s.good_id}
+                data-testid={`fitting-cargo-${s.good_id}`}
+                id={s.good_id}
+                kind="good"
+                qty={s.qty}
+                hint={`${formatM3(s.m3)} m³`}
+              />
+            ))}
+          </div>
+        ) : (
+          <p data-testid="fitting-cargo-empty" className="mt-2 text-sm text-ink-faint">
+            Hold empty — goods you buy or salvage ride here.
+          </p>
+        )}
+      </Collapsible>
     </Card>
   )
 }

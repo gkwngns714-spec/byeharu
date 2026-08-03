@@ -13,7 +13,7 @@ import {
 import { foldStartingCredits, salvageWalletDisplay } from '../port/salvageMarket'
 import { tradeReasonMessage } from './tradeReasonMessage'
 import type { SelectableShip } from './useMainShipSelection'
-import { Button, Skeleton } from '../../components/ui'
+import { Button, Card, CardHeader, Skeleton } from '../../components/ui'
 import { ItemGlyph, itemLabel } from '../../components/items'
 
 // TRADE-UI-1 — trade surface for the SELECTED ship. Shows the ship's name, wallet balance, occupied cargo
@@ -147,12 +147,13 @@ export function MarketPanel({
   const capM3 = selectedShip.cargo_capacity_m3
 
   return (
-    <div
-      data-testid="market-panel"
-      // UX-CLEANUP item 5: design-system tokens (warning tone = the trade identity), the overlay-block idiom.
-      className="mt-3 rounded-lg border border-warning/25 bg-surface-2/50 p-4 text-sm text-ink"
-    >
-      <h3 className="font-medium text-ink">🪙 Market — {selectedShip.name}</h3>
+    // WEIGHT = USAGE (2026-08-03): this is the highest-frequency panel on the Port screen and it
+    // was the only one NOT wearing the Card/CardHeader chrome — it read as lighter than the dark
+    // panels around it. Promoted to the shared primitives (warning tone = the trade family), the
+    // stray mt-3 (which double-spaced against Screen's space-y-4) dropped, and the emoji removed
+    // (no emoji in chrome — the Icon set is the one glyph system).
+    <Card tone="warning" data-testid="market-panel">
+      <CardHeader title="Market" subtitle={`Buy & sell goods — ${selectedShip.name}`} />
 
       {loading && (
         // UI R4: design-system Skeleton rows instead of bare loading text (same condition).
@@ -244,7 +245,8 @@ export function MarketPanel({
                             <td
                               colSpan={4}
                               data-testid={`trade-error-${o.good_id}`}
-                              className="pb-1 text-right text-[10px] text-danger"
+                              // text-xs floor: this is the one line a FAILING trade must read.
+                              className="pb-1 text-right text-xs text-danger"
                             >
                               {err}
                             </td>
@@ -255,6 +257,12 @@ export function MarketPanel({
                   })}
                 </tbody>
               </table>
+              {/* EMPTY STATE: a lit market with zero offers used to render a bare header row. */}
+              {offers.offers.length === 0 && (
+                <p data-testid="market-offers-empty" className="mt-2 text-center text-xs text-ink-faint">
+                  No goods traded at this port right now.
+                </p>
+              )}
             </div>
           ) : (
             <p className="mt-3 border-t border-edge pt-3 text-center text-xs text-ink-faint">
@@ -263,6 +271,6 @@ export function MarketPanel({
           )}
         </>
       )}
-    </div>
+    </Card>
   )
 }
