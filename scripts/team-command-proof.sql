@@ -344,13 +344,13 @@ begin
 end $$;
 
 -- ★ THE THIRD LIGHTS-ON FIXTURE HELPER (added 2026-08-03) ────────────────────────────────────────
--- wipe_tick — spatial_combat_enabled (0234, lit by 0300:79).
+-- wipe_tick — spatial_combat_enabled (0234, lit by 0300:78).
 --
 -- UNDER THE SPATIAL ENGINE, `enemy_attack_base` IS HONOURED AT WAVE SPAWN AND ONLY THERE. The
 -- aggregate arm recomputes `v_enemy_attack` from the live knob on EVERY tick (0299:1037). The spatial
 -- arm computes it ONCE, when the wave spawns, and freezes it into each enemy unit's
--- `combat_units.weapons_json -> 'power'` (0299:747-763 synthetic, :703-707 resolved); the fire loop
--- then reads that frozen value (0299:867). 0300:79 lit `spatial_combat_enabled`, so every encounter
+-- `combat_units.weapons_json -> 'power'` (0299:748-777 synthetic, :707-720 resolved); the fire loop
+-- then reads that frozen value (0299:867). 0300:78 lit `spatial_combat_enabled`, so every encounter
 -- this file creates takes the spatial arm.
 --
 -- THAT SPLIT THE FILE'S "one-step wipe" IDIOM IN TWO, AND NOTHING SAID SO:
@@ -3449,7 +3449,7 @@ begin
   v_pre := v_sh;   -- the pool entering the defeat tick (> 0 by the guard; regen even tops it to 40)
   if v_pre <= 0 then raise exception 'SHIELD1 FAIL guard: the defeat-arm pool is not positive (the pin would be vacuous)'; end if;
   -- ★ REPOINTED 2026-08-03. This raised enemy_attack_base and ticked once. Under the SPATIAL engine
-  -- ★ (0234, lit by 0300:79 — the arm every encounter this file creates now takes) that knob is read
+  -- ★ (0234, lit by 0300:78 — the arm every encounter this file creates now takes) that knob is read
   -- ★ ONLY at wave spawn and frozen into the enemy's weapons_json, so the raise was INERT: the tick
   -- ★ delivered the same ordinary damage, the full 40 pool absorbed all of it, the hull never reached
   -- ★ 0 and this assert has been red on every branch since. pg_temp.wipe_tick SPENDS the wave first,
@@ -3931,7 +3931,7 @@ declare
 begin
   -- ── (0) structural: this block OWNS its dark precondition; the surface deployed ─────────────────────
   -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults). This asserted the COMMITTED seed was
-  -- ★ 'false'. 0300:71 lit fleet_control_enabled, so the assert was testing the WORLD, not the gate —
+  -- ★ 'false'. 0300:68 lit fleet_control_enabled, so the assert was testing the WORLD, not the gate —
   -- ★ and it never fired, because SHIELD1's defeat assert aborted the file ahead of it on every branch.
   -- ★ The block now CAPTURES the committed value, SETS its own dark precondition in-txn, and restores
   -- ★ exactly what it captured. Strictly stronger than the old form: the dark arm below is now
@@ -4084,7 +4084,7 @@ declare
 begin
   -- ── (0) structural: the 0199 surface is deployed and this block OWNS its dark precondition ───────
   -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults) — same shape as FLEETCTRL above.
-  -- ★ 0300:78 lit launch_from_dock_enabled, so asserting the committed seed was 'false' asserted a
+  -- ★ 0300:73 lit launch_from_dock_enabled, so asserting the committed seed was 'false' asserted a
   -- ★ world, not the gate. Capture, set the dark precondition in-txn, restore what was captured.
   select value into v_seed_lfd from public.game_config where key='launch_from_dock_enabled';
   if v_seed_lfd is null then
@@ -4131,7 +4131,7 @@ begin
   gNT := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uNT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sNT, gNT));
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: assign team member: %', r; end if;
-  -- ★ ADDED 2026-08-03. 0300:71 lit fleet_control_enabled, and send_ship_group_hunt then rejects a
+  -- ★ ADDED 2026-08-03. 0300:68 lit fleet_control_enabled, and send_ship_group_hunt then rejects a
   -- ★ group with no designated command ship BEFORE any destination/readiness read (0231:483-490 —
   -- ★ the gate is GROUP-scoped, so one arming covers both sends below). The five other sortie
   -- ★ fixtures in this file were armed on 2026-07-27; NOHOME was missed because SHIELD1 had already
@@ -4208,7 +4208,7 @@ declare
 begin
   -- ── (0) structural: this block OWNS its dark precondition; the catalog/column/tier deployed ───────
   -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults) — same shape as FLEETCTRL/NOHOME.
-  -- ★ 0300:68 lit command_buffs_enabled. Capture both gates this block moves, set the dark
+  -- ★ 0300:60 lit command_buffs_enabled. Capture both gates this block moves, set the dark
   -- ★ precondition the INERT arm at (4) actually needs, and restore exactly what was captured.
   select value into v_seed_cb from public.game_config where key='command_buffs_enabled';
   select value into v_seed_fc from public.game_config where key='fleet_control_enabled';

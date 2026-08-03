@@ -775,7 +775,7 @@ if [ "$MODE" = "selftest" ]; then
   #    RPCs by 0232 — send_ship_group_hunt carries the identical gate); the activation (designate →
   #    reject disappears + is_command_ship persistence); the exact 8th-OK / 9th-fleet_full boundary held
   #    at 8; and the designation guard (ungrouped → ship_not_in_fleet) + the stand-down round-trip. ──
-  # ★ REPOINTED 2026-08-03: the block no longer ASSERTS an ambient 'false' seed (0300:71 lit this gate)
+  # ★ REPOINTED 2026-08-03: the block no longer ASSERTS an ambient 'false' seed (0300:68 lit this gate)
   #   — it CAPTURES the committed value, sets its own dark precondition in-txn, and restores what it
   #   captured. The selftest pins that idiom instead; it is the stronger property, because it holds
   #   whichever way the gate is seeded.
