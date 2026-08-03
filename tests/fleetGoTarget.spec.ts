@@ -107,6 +107,7 @@ test('RAW-coords law: 3.5/-3.5 reach the RPC args as 3.5/-3.5 — never the roun
 // ── classifyFleetCoordinateGo — what a go to this point IS ───────────────────────────────────────
 
 const fleetRow = (patch: Partial<UnifiedGroupFleetLite>): UnifiedGroupFleetLite => ({
+  id: 'fleet-1',
   group_id: 'group-1',
   status: 'idle',
   location_mode: 'base',

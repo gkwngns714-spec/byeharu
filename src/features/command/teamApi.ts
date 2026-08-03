@@ -107,6 +107,11 @@ export async function fetchMyPresentShipFleets(): Promise<PresentShipFleetLite[]
 // unified mover refuses combat destinations (0208 combat_destination), so a group-shaped fleet
 // present at a hunt site can only be a sortie, never a dock.
 export interface UnifiedGroupFleetLite {
+  /** fleets.id — the row identity `combat_encounters.fleet_id` points at (0014:13, NOT NULL FK).
+   *  The map's in-combat badge joins on it to find THIS fleet's own fight, so it can draw itself at
+   *  the ENGAGEMENT ANCHOR instead of the site centre (map/teamMarkers + combat/encounterAnchor).
+   *  Without it the badge cannot tell its fleet's encounter from another fleet's. */
+  id: string
   group_id: string
   status: string
   location_mode: string
@@ -118,7 +123,7 @@ export interface UnifiedGroupFleetLite {
 export async function fetchMyUnifiedGroupFleets(): Promise<UnifiedGroupFleetLite[]> {
   const { data, error } = await supabase
     .from('fleets')
-    .select('group_id, status, location_mode, current_location_id, space_x, space_y')
+    .select('id, group_id, status, location_mode, current_location_id, space_x, space_y')
     .is('main_ship_id', null)
     .not('group_id', 'is', null)
     .in('status', ['idle', 'moving', 'present', 'returning'])

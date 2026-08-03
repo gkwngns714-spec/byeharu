@@ -63,6 +63,7 @@ const mov = (gid: string): FleetMovement => ({
 })
 
 const parked = (gid: string, x: number, y: number, over: Partial<UnifiedGroupFleetLite> = {}): UnifiedGroupFleetLite => ({
+  id: `fleet-${gid}`,
   group_id: gid,
   status: 'idle',
   location_mode: 'space',

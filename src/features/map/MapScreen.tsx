@@ -307,6 +307,9 @@ export function MapScreen() {
               selectedDangerZoneId={zoneInfoId}
               combatUnits={combat.units}
               combatEvents={combat.events}
+              // The encounters those units belong to — they carry the engagement anchor that says
+              // WHERE each fight is, which the in-combat fleet badge stands on.
+              combatEncounters={combat.encounters}
               pirateMode={pirateMode}
               pirateDraftPoints={pirateDraftPoints}
               onPirateTap={handlePirateTap}

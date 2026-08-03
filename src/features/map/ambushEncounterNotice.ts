@@ -19,6 +19,12 @@
 // intercept then restates the ambush point on the row it created (0293 hunk [A2]), so both halves
 // agree. This module mirrors that server rule and derives nothing of its own.
 //
+// THE PLACEMENT MATH IS NOT THIS MODULE'S. `combat/encounterAnchor` owns the ONE answer to "where is
+// this fight" — the coalesce, the finiteness rule, the same-point epsilon and the live-status set —
+// and the map's in-combat fleet badge (map/teamMarkers.resolveFleetCombatBadges) reads that SAME
+// leaf so the notice and the badge can never disagree about which fights are off-centre. This module
+// contributes only the player-facing sentence and which encounters are eligible for it.
+//
 // FAIL CLOSED, ALWAYS. Anything that leaves the comparison unprovable — no engagement point, a
 // non-finite coordinate, no location_id, a location the map has not loaded — yields NO notice. A
 // missing fact must never become a claim; the worst outcome here is silence, and the second worst is
@@ -26,17 +32,20 @@
 //
 // Pure — no React/DOM/fetch/clock. Proven in tests/ambushEncounterNotice.spec.ts.
 
+import {
+  isLiveEncounter,
+  resolveEncounterAnchor,
+  type EncounterAnchorLite,
+} from '../combat/encounterAnchor'
+
 /** The ONE player-facing sentence. Plain language, no jargon, no codes (the map-UX rules). */
 export const AMBUSH_NOTICE_TEXT = 'Ambushed at the zone boundary.'
 
 /** The structural slice of a combat_encounters row this decision needs (CombatEncounter satisfies it). */
-export interface AmbushEncounterLite {
+export interface AmbushEncounterLite extends EncounterAnchorLite {
   id: string
   status: string
   location_id: string | null
-  /** 0293's engagement anchor. Absent when read from a server that predates the column. */
-  engagement_x?: number | null
-  engagement_y?: number | null
 }
 
 /** The structural slice of a map location this decision needs (MapLocation satisfies it). */
@@ -51,18 +60,6 @@ export interface AmbushNotice {
   text: string
 }
 
-// A fight is LIVE in exactly the two states CombatMapCard already treats as live — a retreating fleet
-// is still being shot at. Reusing the same pair keeps the notice and the card in step by definition.
-const LIVE_STATUSES = new Set(['active', 'retreating'])
-
-// Both coordinates originate as the SAME stored doubles (the intercept stamps locations-derived or
-// path-derived values; a hunt copies locations.x/y verbatim) and cross the wire as JSON numbers, so
-// equality is genuinely exact. The epsilon exists only to absorb JSON round-tripping, never to make a
-// nearby ambush read as a hunt: a real ambush point sits at the zone boundary, world units away.
-const SAME_POINT_EPSILON = 1e-6
-
-const isFinite_ = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
-
 /**
  * The live encounters that the fleet was AMBUSHED into, in the order given.
  *
@@ -75,18 +72,17 @@ export function ambushEncounterNotices(input: {
 }): AmbushNotice[] {
   const notices: AmbushNotice[] = []
   for (const e of input.encounters) {
-    if (!LIVE_STATUSES.has(e.status)) continue
-    // No engagement anchor → the server cannot tell us where this fight is. Say nothing.
-    if (!isFinite_(e.engagement_x) || !isFinite_(e.engagement_y)) continue
+    if (!isLiveEncounter(e)) continue
     // No linked location → nothing to compare the anchor against. Say nothing. (0293's standalone
     // drawn-zone ambush creates no encounter at all, so this is not the ambush case going silent.)
     if (e.location_id === null) continue
     const loc = input.locations.find((l) => l.id === e.location_id)
-    if (!loc || !isFinite_(loc.x) || !isFinite_(loc.y)) continue
-    const offCentre =
-      Math.abs(e.engagement_x - loc.x) > SAME_POINT_EPSILON ||
-      Math.abs(e.engagement_y - loc.y) > SAME_POINT_EPSILON
-    if (offCentre) notices.push({ encounterId: e.id, text: AMBUSH_NOTICE_TEXT })
+    if (!loc) continue
+    // `offSite` is true ONLY for a finite engagement anchor sitting away from the centre: a missing/
+    // NULL/non-finite anchor resolves to the centre itself (source 'site', offSite false), and an
+    // unusable site resolves to null. So every silent case above stays silent, by the leaf's rule.
+    const anchor = resolveEncounterAnchor(e, loc)
+    if (anchor?.offSite) notices.push({ encounterId: e.id, text: AMBUSH_NOTICE_TEXT })
   }
   return notices
 }
