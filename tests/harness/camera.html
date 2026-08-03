@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Camera wiring harness (test only)</title>
+    <style>
+      /* The map host is deliberately OFFSET from the viewport origin and deliberately NON-SQUARE.
+         Both matter: `rect.left/top` is only load-bearing when the element is not at 0,0, and the
+         `min(width,height)` letterbox is only load-bearing when the box is not square. A harness that
+         sat at the origin in a square box would render the two most consequential wiring mutants
+         invisible, which is exactly the hole this proof exists to close.
+         These rules stand in for the Tailwind utilities the app supplies (`h-full w-full`); the harness
+         intentionally loads no app CSS, so the geometry here is explicit and deterministic. */
+      body { margin: 0; height: 2400px; }
+      #map-host { position: absolute; left: 137px; top: 91px; width: 760px; height: 430px; }
+      #map-host > div { width: 100%; height: 100%; }
+      #map-host > div > svg { display: block; width: 100%; height: 100%; }
+      #controls { position: absolute; left: 940px; top: 20px; }
+      #probe-svg { display: block; width: 120px; height: 120px; background: #222; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./cameraHarness.tsx"></script>
+  </body>
+</html>
