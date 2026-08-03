@@ -38,3 +38,4 @@ supabase/.secrets.env
 
 # agent worktrees (isolation:worktree) — never part of the repo
 .claude/worktrees/
+scratchpad/
