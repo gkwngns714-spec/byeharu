@@ -3992,16 +3992,29 @@ end $$;
 -- unrepairable, untowable AND invisible to the recovery UI. 0310's auto-exit made this the COMMON
 -- ending rather than a rare one: its whole job is to end fights by retreating.
 --
--- THE STAGING, on the REAL ambush chain, with no hand-write of combat_units anywhere:
---   * two hulls, sW1 designated COMMAND so 0315 anchors it at the engagement point at aggro 100 and
---     the volley concentrates on it (sW2 is screened at 0);
---   * sW1 is pre-damaged through the tick's OWN hp writer so it enters the fight nearly dead and is
---     certain to be the first to fall — the ordering is engineered, never hoped for;
---   * auto-exit is left ON at 30% of CAPACITY, which is the production default and the very feature
---     that routes fights into the unreconciled arm. With one of two equal hulls gone the fleet sits
---     at ~50% of capacity, so the retreat cannot fire until the SURVIVOR has also been worn down —
---     which is exactly the window this block needs and why it is reachable at all;
---   * the retreat then COMPLETES through the settle arm (clock rewound, one real tick).
+-- ── THE STAGING, and the two things it must engineer rather than hope for ────────────────────────
+-- Everything runs on the REAL ambush chain and the REAL tick; combat_units is never hand-written.
+--
+--   (i) WHICH HULL DIES. The tick targets the LOWEST aggro tier, not the highest: its own comment
+--       reads "while any escort, aggro 0, is alive, only escorts are targetable", and the query is
+--       `tier as (select min(aggro_priority) …) … where c.aggro_priority = tier.m`. 0315 anchors the
+--       COMMAND ship at priority 100 and screens every escort at 0 — so the escort absorbs the whole
+--       wave and the command ship is the one that CANNOT be hit while it lives. This block therefore
+--       pre-damages the ESCORT (through the tick's own hp writer, so the engine still deals every
+--       point of damage) and designates the other hull as command. That is the ONLY reason the
+--       casualty is predictable. The block does not rely on that prediction: it RESOLVES the
+--       casualty and the survivor from combat_units after the fact, and asserts the identity
+--       separately, so an aggro model that changed under it fails with a diagnosis instead of a
+--       vacuous pass.
+--
+--  (ii) THAT THE FIGHT DOES NOT END BEFORE ANYONE DIES. The auto-exit's denominator is CAPACITY
+--       (sum of max_hp, 0310 rev.2), so with two full hulls the 30% line sits at 30% of BOTH — which
+--       a single escort's death cannot reach. Left on, the fleet simply retreats intact and this
+--       block would have nothing to reconcile (the first CI run of this file did exactly that, and
+--       said so). So the auto-exit is held OFF for the erosion, then re-armed through its own real
+--       writer at a threshold the wounded fleet is already under, which arms the canonical retreat
+--       on the very next tick. The exit path under test is unchanged: it is 0310's arm, then the
+--       settle arm, exactly as in production.
 --
 -- PROPERTIES, in order. (1) is the pre-0332 RED; the rest exist so it cannot pass for a wrong reason:
 --   1. THE WRECK IS RECONCILED. The member that died ends status='destroyed'. On the pre-0332 body
@@ -4026,17 +4039,19 @@ declare
   uW uuid; gW uuid; sW1 uuid; sW2 uuid; sW3 uuid;
   uZ uuid := (select v from dzc where k='uZ');
   v_hunt uuid := (select v from dzc where k='v_hunt');
-  v_port uuid; v_mv uuid; v_enc uuid; v_fleet uuid; v_zone uuid;
+  v_port uuid; v_mv uuid; v_enc uuid; v_fleet uuid;
+  v_wreck uuid; v_surv uuid;
   pi record; mv record; enc record;
   o_x double precision; o_y double precision; v_verts jsonb;
   v_imax double precision; v_def double precision; v_bd double precision;
   v_eab numeric; v_eab_before double precision; v_srg_before double precision;
   n_dead integer; n_alive integer; i integer;
-  v_hp integer; v_max integer; v_max1 integer; v_status text; v_group uuid; v_berth uuid;
+  v_hp integer; v_max integer; v_max2 integer; v_wreck_max integer;
+  v_status text; v_group uuid; v_berth uuid;
   v_pre_status text; v_pre_hp integer; v_listed jsonb; v_n integer;
-  v_flipped boolean := false; v_window boolean := false;
+  v_flipped boolean := false;
 begin
-  -- ── a fresh, funded fixture player and TWO hulls. 100% real RPCs. ──────────────────────────────
+  -- ── a fresh, funded fixture player and THREE hulls. 100% real RPCs. ────────────────────────────
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
             'dzc.wh.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -4068,13 +4083,13 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'WRECKHOME FAIL: assign 1: %', r; end if;
   r := pg_temp.call_as(uW, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sW2, gW));
   if (r->>'ok')::boolean is not true then raise exception 'WRECKHOME FAIL: assign 2: %', r; end if;
-  -- sW1 COMMANDS, so 0315 puts it on the anchor at aggro 100 and the wave concentrates on it.
+  -- sW1 COMMANDS. Per the tick's targeting tier that makes it the SCREENED one (priority 100) and
+  -- leaves sW2, the escort at 0, as the only targetable hull while it lives — see staging note (i).
   r := pg_temp.call_as(uW, format('public.set_fleet_command_ship(%L::uuid, true)', sW1));
   if (r->>'ok')::boolean is not true then raise exception 'WRECKHOME FAIL: command ship: %', r; end if;
-  -- the production default, restated explicitly through the real writer: this is the feature that
-  -- routes fights into the arm under test.
-  r := pg_temp.call_as(uW, format('public.set_group_auto_exit(%L::uuid, true, 30)', gW));
-  if (r->>'ok')::boolean is not true then raise exception 'WRECKHOME FAIL: auto-exit: %', r; end if;
+  -- HELD OFF for the erosion — staging note (ii). Re-armed below through the same real writer.
+  r := pg_temp.call_as(uW, format('public.set_group_auto_exit(%L::uuid, false, 30)', gW));
+  if (r->>'ok')::boolean is not true then raise exception 'WRECKHOME FAIL: auto-exit off: %', r; end if;
 
   -- ── PROPERTY 6's BYSTANDER: sW3 is wrecked WHILE BERTHED and never leaves port — the exact shape
   --    the three real destroyed ships in production carry (status destroyed + a berth). It must be
@@ -4085,21 +4100,22 @@ begin
     raise exception 'WRECKHOME FAIL: the bystander is not a berthed wreck (status %, berth %) — property 6 would prove nothing', v_status, v_berth;
   end if;
 
-  -- ── PRE-DAMAGE sW1 through the tick's OWN hp writer so it enters nearly dead. The encounter seeds
-  --    each member's combat hull from its CURRENT instance hp, so this makes sW1 certain to be the
-  --    first to fall — the block engineers the ordering instead of hoping the aggro model delivers
-  --    it. It is NOT a hand-write of combat_units: the engine still does every point of damage. ────
-  select max_hp into v_max1 from public.main_ship_instances where main_ship_id = sW1;
-  if v_max1 is null or v_max1 <= 20 then
-    raise exception 'WRECKHOME FAIL: sW1 max_hp is % — too small to pre-damage meaningfully', v_max1;
+  -- ── PRE-DAMAGE THE ESCORT through the tick's OWN hp writer so it enters nearly dead. The
+  --    encounter seeds each member's combat hull from its CURRENT instance hp, so the hull the wave
+  --    is allowed to shoot is also the one that falls first — see staging note (i). This is NOT a
+  --    hand-write of combat_units: the engine still deals every point of damage. ───────────────────
+  select max_hp into v_max2 from public.main_ship_instances where main_ship_id = sW2;
+  if v_max2 is null or v_max2 <= 20 then
+    raise exception 'WRECKHOME FAIL: the escort max_hp is % — too small to pre-damage meaningfully', v_max2;
   end if;
-  perform public.mainship_sync_combat_hp(sW1, greatest(1, round(v_max1 * 0.05)::integer));
-  select hp, status into v_hp, v_status from public.main_ship_instances where main_ship_id = sW1;
-  if v_status = 'destroyed' or v_hp <= 0 or v_hp >= v_max1 then
-    raise exception 'WRECKHOME FAIL: pre-damage staging drifted (status %, hp % of %) — sW1 must be ALIVE and hurt', v_status, v_hp, v_max1;
+  perform public.mainship_sync_combat_hp(sW2, greatest(1, round(v_max2 * 0.05)::integer));
+  select hp, status into v_hp, v_status from public.main_ship_instances where main_ship_id = sW2;
+  if v_status = 'destroyed' or v_hp <= 0 or v_hp >= v_max2 then
+    raise exception 'WRECKHOME FAIL: pre-damage staging drifted (status %, hp % of %) — the escort must be ALIVE and hurt', v_status, v_hp, v_max2;
   end if;
 
-  -- ── A REAL AMBUSH. Zone drawn on its own corridor so no earlier scenario's zone is crossed. ─────
+  -- ── A REAL AMBUSH. Zone drawn on its own WESTWARD corridor: every other zone in this file sits
+  --    north or south of the shared origin, so this leg crosses exactly one zone — this block's. ───
   select l.x, l.y into o_x, o_y
     from public.main_ship_instances s
     join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uW and f.status = 'present'
@@ -4116,7 +4132,6 @@ begin
   r := pg_temp.call_as(uW, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
                                   'DZC Wreck Home Zone', v_verts::text, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'WRECKHOME FAIL: zone: %', r; end if;
-  v_zone := (r->>'zone_id')::uuid;
 
   r := pg_temp.call_as(uW, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
                                   gW, round(o_x - 1000), round(o_y)));
@@ -4155,62 +4170,87 @@ begin
   select coalesce(public.cfg_num('shield_regen_combat_pct'), 0) into v_srg_before;
   perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);
 
-  -- ── EROSION: the REAL tick does every point of damage. Stop the moment the auto-exit arms. ──────
+  -- ── EROSION: the REAL tick does every point of damage. Stop the INSTANT one hull has fallen and
+  --    another still stands — the window this block owns. ──────────────────────────────────────────
   for i in 1..60 loop
     perform pg_temp.ae_tick(v_enc);
     select * into enc from public.combat_encounters where id = v_enc;
     select count(*) filter (where alive_count <= 0), count(*) filter (where alive_count > 0)
       into n_dead, n_alive
       from public.combat_units where encounter_id = v_enc and side = 'player' and main_ship_id is not null;
-    if n_dead >= 1 and n_alive >= 1 then
-      v_window := true;
-    end if;
-    if enc.status = 'retreating' then v_flipped := true; exit; end if;
+    if n_dead >= 1 and n_alive >= 1 then v_flipped := true; exit; end if;
     if enc.status <> 'active' then
       raise exception 'WRECKHOME FAIL: the encounter reached % on tick % (% dead / % alive) — the fleet was wiped before the auto-exit could arm, so the settle arm under test was never reached. The whole point is a fight the fleet SURVIVES with a casualty; re-derive the erosion knob',
         enc.status, i, n_dead, n_alive;
     end if;
   end loop;
-  perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
-  perform public.set_game_config('shield_regen_combat_pct', to_jsonb(v_srg_before));
-  if not v_flipped then
-    raise exception 'WRECKHOME FAIL: 60 ticks never armed the auto-exit (% dead / % alive) — the derived attack knob is wrong, not the feature', n_dead, n_alive;
-  end if;
 
   -- ── THE WINDOW THIS BLOCK OWNS: exactly one hull dead, at least one alive. Absence is failure. ──
-  if not v_window or n_dead <> 1 or n_alive < 1 then
-    raise exception 'WRECKHOME FAIL: at the retreat the fleet held % dead / % alive player hull(s) — this block needs EXACTLY ONE casualty beside a survivor. With 0 dead the settle has no wreck to reconcile and property 1 is vacuous; with both dead the DEFEAT arm (which always reconciled) would be doing the work instead of the settle arm under test',
+  if not v_flipped or n_dead <> 1 or n_alive < 1 then
+    perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
+    perform public.set_game_config('shield_regen_combat_pct', to_jsonb(v_srg_before));
+    raise exception 'WRECKHOME FAIL: after 60 ticks the fleet held % dead / % alive player hull(s) — this block needs EXACTLY ONE casualty beside a survivor. With 0 dead the settle has no wreck to reconcile and property 1 is vacuous; with both dead the DEFEAT arm (which always reconciled) would be doing the work instead of the settle arm under test',
       n_dead, n_alive;
   end if;
-  -- and the casualty is the pre-damaged command hull, as the staging intended.
-  select count(*) into v_n from public.combat_units
-   where encounter_id = v_enc and main_ship_id = sW1 and alive_count <= 0;
-  if v_n <> 1 then
-    raise exception 'WRECKHOME FAIL: the casualty is not sW1 — the aggro concentration this block relies on did not hold, so the fight it staged is not the fight it describes';
+
+  -- RESOLVE the casualty and the survivor from the fight itself, never from the staging's intent.
+  select main_ship_id into v_wreck from public.combat_units
+   where encounter_id = v_enc and side = 'player' and main_ship_id is not null and alive_count <= 0 limit 1;
+  select main_ship_id into v_surv from public.combat_units
+   where encounter_id = v_enc and side = 'player' and main_ship_id is not null and alive_count > 0 limit 1;
+  if v_wreck is null or v_surv is null or v_wreck = v_surv then
+    raise exception 'WRECKHOME FAIL: could not resolve a distinct casualty (%) and survivor (%)', v_wreck, v_surv;
   end if;
+  -- …and the casualty is the hull the targeting tier says it must be: the pre-damaged ESCORT, never
+  -- the screened command ship. A model change here must fail loudly, not silently restage the fight.
+  if v_wreck is distinct from sW2 then
+    raise exception 'WRECKHOME FAIL: the casualty is % but the escort this block pre-damaged is % — the aggro concentration this block relies on did not hold (the tick targets the MINIMUM aggro tier, so while the escort at 0 lives the command ship at 100 cannot be hit), so the fight it staged is not the fight it describes',
+      v_wreck, sW2;
+  end if;
+  select max_hp into v_wreck_max from public.main_ship_instances where main_ship_id = v_wreck;
 
   -- ── ⭐ THE RED, CAPTURED LIVE: the wreck's own row BEFORE the settle runs. On every body, at this
   --    instant, its unit is dead and its instance still says 'home' with hp 0 — the split state the
   --    owner could not recover from. Property 1 below asserts the settle closes it. ────────────────
-  select status, hp into v_pre_status, v_pre_hp from public.main_ship_instances where main_ship_id = sW1;
+  select status, hp into v_pre_status, v_pre_hp from public.main_ship_instances where main_ship_id = v_wreck;
   if v_pre_status = 'destroyed' then
-    raise exception 'WRECKHOME FAIL: sW1 was ALREADY destroyed before the settle ran — something other than the settle arm reconciled it, so this block cannot attribute property 1 to the arm under test';
+    raise exception 'WRECKHOME FAIL: the casualty was ALREADY destroyed before the settle ran — something other than the settle arm reconciled it, so this block cannot attribute property 1 to the arm under test';
   end if;
   if v_pre_hp > 0 then
-    raise exception 'WRECKHOME FAIL: sW1 reads hp % before the settle (want 0 — the tick''s hp writer should already have zeroed it, and without that the split state this block exists for was never created)', v_pre_hp;
+    raise exception 'WRECKHOME FAIL: the casualty reads hp % before the settle (want 0 — the tick''s hp writer should already have zeroed it, and without that the split state this block exists for was never created)', v_pre_hp;
+  end if;
+
+  -- ── ARM THE EXIT: the real 0310 writer, at a line the wounded fleet is already under, so the very
+  --    next tick arms the canonical retreat. Same arm, same event, same path as production. ────────
+  r := pg_temp.call_as(uW, format('public.set_group_auto_exit(%L::uuid, true, 95)', gW));
+  if (r->>'ok')::boolean is not true then raise exception 'WRECKHOME FAIL: auto-exit re-arm: %', r; end if;
+  perform pg_temp.ae_tick(v_enc);
+  perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
+  perform public.set_game_config('shield_regen_combat_pct', to_jsonb(v_srg_before));
+  select * into enc from public.combat_encounters where id = v_enc;
+  if enc.status is distinct from 'retreating' then
+    raise exception 'WRECKHOME FAIL: the wounded fleet did not auto-exit (encounter %) — the settle arm under test is only reachable through a completed retreat', enc.status;
+  end if;
+  -- the casualty must STILL be the only one, or the exit tick changed the scenario under us.
+  select count(*) filter (where alive_count <= 0), count(*) filter (where alive_count > 0)
+    into n_dead, n_alive
+    from public.combat_units where encounter_id = v_enc and side = 'player' and main_ship_id is not null;
+  if n_dead <> 1 or n_alive < 1 then
+    raise exception 'WRECKHOME FAIL: the exit tick left % dead / % alive — the one-casualty window closed before the settle ran', n_dead, n_alive;
   end if;
 
   -- ── ⭐ PROPERTY 2's TRAP, ARMED: drive the SURVIVOR's instance row to hp 0 through the tick's own
   --    writer while its unit is still ALIVE. This is the legal fractional-hull state 0312:16-30
   --    proves is real. A reconciliation keyed on hp<=0 instead of on unit liveness wrecks this ship
-  --    and fails below; the one keyed on alive_count leaves it alone. ───────────────────────────────
-  perform public.mainship_sync_combat_hp(sW2, 0);
-  select hp, status into v_hp, v_status from public.main_ship_instances where main_ship_id = sW2;
+  --    and fails below; the one keyed on alive_count leaves it alone. The settle arm runs no combat
+  --    step, so nothing re-syncs this row before the assert. ─────────────────────────────────────────
+  perform public.mainship_sync_combat_hp(v_surv, 0);
+  select hp, status into v_hp, v_status from public.main_ship_instances where main_ship_id = v_surv;
   if v_hp <> 0 or v_status = 'destroyed' then
     raise exception 'WRECKHOME FAIL: could not arm the damaged-but-alive survivor (hp %, status %) — property 2 would be vacuous', v_hp, v_status;
   end if;
   select count(*) into v_n from public.combat_units
-   where encounter_id = v_enc and main_ship_id = sW2 and alive_count > 0;
+   where encounter_id = v_enc and main_ship_id = v_surv and alive_count > 0;
   if v_n <> 1 then
     raise exception 'WRECKHOME FAIL: the survivor''s unit is not alive — the hp-predicate trap is not armed and property 2 proves nothing';
   end if;
@@ -4224,7 +4264,7 @@ begin
   end if;
 
   -- ── 1. THE WRECK IS RECONCILED. RED on the pre-0332 body: it stays exactly as v_pre_status. ─────
-  select status, hp, max_hp into v_status, v_hp, v_max from public.main_ship_instances where main_ship_id = sW1;
+  select status, hp, max_hp into v_status, v_hp, v_max from public.main_ship_instances where main_ship_id = v_wreck;
   if v_status <> 'destroyed' then
     raise exception 'WRECKHOME FAIL: the fleet escaped and its casualty came out status=% (it was % before the settle) — a hull at 0 that the settle arm never marked is exactly the owner''s unrecoverable ship: repair_main_ship answers "ship is not disabled", mainship_emergency_tow answers ship_not_disabled, and get_my_disabled_ships never lists it',
       v_status, v_pre_status;
@@ -4234,12 +4274,12 @@ begin
   end if;
 
   -- ── 5. THE HULL CAPACITY SURVIVES (checked here because the wreck is in hand). ──────────────────
-  if v_max is distinct from v_max1 then
-    raise exception 'WRECKHOME FAIL: the wreck''s max_hp moved % -> % — a wreck must keep the capacity its owner paid for, and max_hp<=0 would make repair_main_ship raise invalid max_hp forever', v_max1, v_max;
+  if v_max is distinct from v_wreck_max then
+    raise exception 'WRECKHOME FAIL: the wreck''s max_hp moved % -> % — a wreck must keep the capacity its owner paid for, and max_hp<=0 would make repair_main_ship raise invalid max_hp forever', v_wreck_max, v_max;
   end if;
 
   -- ── 2. THE SURVIVOR IS UNTOUCHED, AND hp IS NOT THE PREDICATE. ─────────────────────────────────
-  select status, hp into v_status, v_hp from public.main_ship_instances where main_ship_id = sW2;
+  select status, hp into v_status, v_hp from public.main_ship_instances where main_ship_id = v_surv;
   if v_status = 'destroyed' then
     raise exception 'WRECKHOME FAIL: a merely damaged ship was wrecked by the settle — the survivor is ALIVE (its unit still holds alive_count > 0) and reads instance hp 0 only because the tick rounds a fractional hull down (0312:16-30). Reconciling on hp instead of on unit liveness is the damaged-is-dead trap';
   end if;
@@ -4257,30 +4297,30 @@ begin
   -- ── 3. RECOVERY WORKS END TO END on the reconciled wreck. ──────────────────────────────────────
   -- it is LISTED now — before the fix the client had nothing to render a button against.
   v_listed := pg_temp.call_as(uW, 'public.get_my_disabled_ships()');
-  if not exists (select 1 from jsonb_array_elements(v_listed) e where (e->>'main_ship_id')::uuid = sW1) then
+  if not exists (select 1 from jsonb_array_elements(v_listed) el where (el->>'main_ship_id')::uuid = v_wreck) then
     raise exception 'WRECKHOME FAIL: the reconciled wreck is not listed by get_my_disabled_ships (%) — the recovery UI 0297 shipped keys on exactly this read, so an unlisted wreck has no button and the player is stuck however good the server verbs are',
       v_listed;
   end if;
   -- the tow hauls it in (the 0216 XOR write: it leaves the group and gains a berth)
-  r := pg_temp.call_as(uW, format('public.mainship_emergency_tow(%L::uuid)', sW1));
+  r := pg_temp.call_as(uW, format('public.mainship_emergency_tow(%L::uuid)', v_wreck));
   if (r->>'ok')::boolean is not true then
     raise exception 'WRECKHOME FAIL: the tow refused the reconciled wreck: % — the escape hatch 0297 promised must accept exactly the ships the position gate rejects', r;
   end if;
-  select berth_location_id, group_id into v_berth, v_group from public.main_ship_instances where main_ship_id = sW1;
+  select berth_location_id, group_id into v_berth, v_group from public.main_ship_instances where main_ship_id = v_wreck;
   if v_berth is null or v_group is not null then
     raise exception 'WRECKHOME FAIL: the tow left the wreck half-berthed (berth %, group %) — the 0216 XOR admits no intermediate', v_berth, v_group;
   end if;
   -- and the free repair brings it all the way back, at that port
-  r := pg_temp.call_as(uW, format('public.repair_main_ship(%L::uuid)', sW1));
+  r := pg_temp.call_as(uW, format('public.repair_main_ship(%L::uuid)', v_wreck));
   if (r->>'status') is distinct from 'home' then
     raise exception 'WRECKHOME FAIL: repair did not revive the towed wreck: %', r;
   end if;
-  select hp, max_hp, status into v_hp, v_max, v_status from public.main_ship_instances where main_ship_id = sW1;
+  select hp, max_hp, status into v_hp, v_max, v_status from public.main_ship_instances where main_ship_id = v_wreck;
   if v_hp is distinct from v_max or v_status is distinct from 'home' then
     raise exception 'WRECKHOME FAIL: the recovered ship is hp %/% status % — the owner''s ship must come back whole', v_hp, v_max, v_status;
   end if;
-  if v_max is distinct from v_max1 then
-    raise exception 'WRECKHOME FAIL: recovery changed max_hp % -> %', v_max1, v_max;
+  if v_max is distinct from v_wreck_max then
+    raise exception 'WRECKHOME FAIL: recovery changed max_hp % -> %', v_wreck_max, v_max;
   end if;
 
   -- ── 6 (continued). THE BYSTANDER STILL REPAIRS EXACTLY AS BEFORE. ──────────────────────────────
@@ -4291,26 +4331,26 @@ begin
     raise exception 'WRECKHOME FAIL: the already-destroyed berthed ship no longer repairs: % — this slice must not have touched the recovery path that already worked', r;
   end if;
 
-  -- ── 4. RECOVERY IS OWNER-SCOPED. Re-wreck sW1 through the terminal leaf, then let a STRANGER try. ──
-  perform public.mainship_mark_combat_destroyed(sW1);
-  r := pg_temp.call_as(uZ, format('public.mainship_emergency_tow(%L::uuid)', sW1));
+  -- ── 4. RECOVERY IS OWNER-SCOPED. Re-wreck it through the terminal leaf, then let a STRANGER try. ──
+  perform public.mainship_mark_combat_destroyed(v_wreck);
+  r := pg_temp.call_as(uZ, format('public.mainship_emergency_tow(%L::uuid)', v_wreck));
   if (r->>'ok')::boolean is not false then
     raise exception 'WRECKHOME FAIL: another player towed a wreck they do not own: % — recovery must be owner-scoped and fail closed', r;
   end if;
   begin
-    r := pg_temp.call_as(uZ, format('public.repair_main_ship(%L::uuid)', sW1));
+    r := pg_temp.call_as(uZ, format('public.repair_main_ship(%L::uuid)', v_wreck));
     raise exception 'WRECKHOME FAIL: another player repaired a wreck they do not own: %', r;
   exception
     when sqlstate 'P0001' then
       if position('WRECKHOME FAIL' in SQLERRM) > 0 then raise; end if;
   end;
-  select status into v_status from public.main_ship_instances where main_ship_id = sW1;
+  select status into v_status from public.main_ship_instances where main_ship_id = v_wreck;
   if v_status is distinct from 'destroyed' then
     raise exception 'WRECKHOME FAIL: a stranger''s refused recovery still moved the ship to % — a refusal must write nothing', v_status;
   end if;
 
-  raise notice 'DZCOMBAT_PASS_WRECKHOME ok: a 2-hull fleet was ambushed, lost its command hull (unit alive_count 0) and AUTO-EXITED at 30%% of capacity with a survivor aboard — the escape/completed settle arm, not the defeat arm. Before the settle the casualty read status=% hp=%; after it, status=destroyed hp=0 with max_hp still % — while the survivor, holding a LIVE unit and an instance row driven to hp 0, came out ''returning'' and NOT destroyed (the 0312 fractional-hull law, which an hp-shaped reconciliation would have broken). The wreck is then LISTED by get_my_disabled_ships, towed to a port and repaired to %/% — and a stranger''s tow and repair on it are both refused, writing nothing. A ship that was already destroyed and berthed, and never in this fight, is byte-unchanged and still repairs',
-    v_pre_status, v_pre_hp, v_max1, v_max, v_max;
+  raise notice 'DZCOMBAT_PASS_WRECKHOME ok: a 2-hull fleet was ambushed and lost its screened escort (unit alive_count 0) while its command hull lived, then AUTO-EXITED and completed the retreat — the escape/completed settle arm, not the defeat arm. Before the settle the casualty read status=% hp=%; after it, status=destroyed hp=0 with max_hp still % — while the survivor, holding a LIVE unit and an instance row driven to hp 0, came out ''returning'' and NOT destroyed (the 0312 fractional-hull law, which an hp-shaped reconciliation would have broken). The wreck is then LISTED by get_my_disabled_ships, towed to a port and repaired to %/% — and a stranger''s tow and repair on it are both refused, writing nothing. A ship that was already destroyed and berthed, and never in this fight, is byte-unchanged and still repairs',
+    v_pre_status, v_pre_hp, v_wreck_max, v_max, v_max;
 end $$;
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;
