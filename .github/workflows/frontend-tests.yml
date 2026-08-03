@@ -81,8 +81,9 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       # playwright.osnui.config.ts matches **/*.uispec.ts and starts the tests/harness Vite server
-      # itself. Today: dockServicesUi.uispec.ts (the real docked-port surface) and
-      # cameraWiring.uispec.ts (the real <GalaxyMap> + useWheelZoom under a real pointer).
+      # itself. Today: dockServicesUi.uispec.ts (the real docked-port surface),
+      # cameraWiring.uispec.ts (the real <GalaxyMap> + useWheelZoom under a real pointer) and
+      # collapsibleUi.uispec.ts (the real <ReportsSection> — the Collapsible fold contract).
       - name: Rendered UI proofs (tests/*.uispec.ts)
         run: npx playwright test --config playwright.osnui.config.ts
 

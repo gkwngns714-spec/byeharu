@@ -8,6 +8,7 @@ export const ICON_NAMES = [
   'ship',
   'anchor',
   'command',
+  'fleet',
   'combat',
   'repair',
   'compass',
@@ -44,6 +45,8 @@ export const ICON_PATHS: Record<IconName, readonly string[]> = {
   ],
   // Radar sweep — the Command destination (ops console).
   command: ['M12 3a9 9 0 1 0 9 9', 'M12 7.5A4.5 4.5 0 1 0 16.5 12', 'M18.4 5.6 12 12'],
+  // Three deltas in formation — the Fleet destination (ships flying together).
+  fleet: ['M12 3l3.2 5.5H8.8L12 3Z', 'M6.2 13l3.2 5.5H3L6.2 13Z', 'M17.8 13l3.2 5.5h-6.4L17.8 13Z'],
   // Crosshair — combat / targeting.
   combat: [
     'M12 5.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Z',
