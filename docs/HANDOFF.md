@@ -1,26 +1,35 @@
-# Session Handoff — historical snapshot 2026-07-12, **current state refreshed 2026-07-31**
+# Session Handoff — historical snapshot 2026-07-12, **current state refreshed 2026-08-04**
 
-> # ⚠ READ **§0 — CURRENT STATE (2026-07-31)** FIRST. Everything from §1 onward is the 2026-07-12 snapshot.
+> # ⚠ READ **§0 — CURRENT STATE (2026-08-04)** FIRST. Everything from §1 onward is the 2026-07-12 snapshot.
 >
 > §0 is the live handoff. §1 (machine setup) and §4–§5 (dev-method laws, process) are still accurate and
-> still worth reading. **§2, §3 and §0.1 are historical** — superseded, kept so the record survives.
+> still worth reading. **§2, §3, §0.05 and §0.1 are historical** — superseded, kept so the record survives.
 >
 > **The newest truth is always `docs/DEV_LOG.md` (top entry), not this file.** §0 is refreshed at the
 > end of a session; the dev log is written as the work lands.
 
 ---
 
-## 0. CURRENT STATE (verified 2026-07-31)
+## 0. CURRENT STATE (verified 2026-08-04)
 
 ### Repo
 
 | | |
 |---|---|
-| `main` head | **`2464694`** (merge of PR **#338**) |
-| Highest migration on `main` | **`0306`** (`20260618000306_empty_fleet_dock_authority.sql`), 300 migration files |
-| **Production migration head** | **`0306`** — `main` and production are IN SYNC |
-| Nothing is waiting to ship | Every commit on `main` is pushed; migrations are deployed through `0306`; the frontend is deployed to GitHub Pages. **There is no built-but-unmerged and no merged-but-undeployed work.** |
-| Open PRs | **1** — #163 only, and it is open by design. The backlog is gone. |
+| `main` head | **`5fd74ec`** (*"DEV_LOG: record the five slices of 2026-08-04"*) |
+| Highest migration on `main` | **`0338`** (`20260618000338_enemies_come_from_the_zones_city.sql`), **323** migration files |
+| **Production migration head** | **`0338`** — `main` and production are IN SYNC |
+| Frontend on GitHub Pages | **Current with `main`.** Last `pages.yml` run was PR #384; **no commit since then touches `src/`** (verified: `git log c862c03..HEAD -- src/` is empty), so nothing is merged-but-undeployed. |
+| CI on `main` head | **All green** — including `TEAM-COMMAND`, whose long-standing `SHIELD1` red is **gone**. |
+| Open PRs | **1** — #163 only, and it is open by design. |
+
+**Verified on target 2026-08-04, not taken from CI green:** production was probed over anon REST for
+`combat_wave_arrival_phase` — 0338's new leaf — using the malformed-argument technique (PostgREST
+fails at argument coercion, so no function body can execute). It answers **`42501 permission denied
+for function`**, raised only for a function that **exists**, while a control name answers
+`404 PGRST202`. *Note the trap: the probe must use the function's **real parameter names**. A probe
+with a made-up `p` argument returns `404 PGRST202` for a function that is perfectly present, because
+PostgREST resolves overloads by argument name — that 404 is "no matching signature", NOT "absent".*
 
 **Open-PR disposition — verified at the blob level, then ACTED ON. 14 PRs closed 2026-07-31.**
 Every file of every open PR was compared against `main` blob-by-blob first; nothing was closed on a
@@ -49,6 +58,10 @@ guess.
 | Fleet Stop | `0305` — the brake answers **every** press: it halts ordinary travel and pre-contact sorties (releasing the aborted roster), and composes with the retreat authority in a real fight. It can no longer return `group_on_sortie` at all. |
 | Empty fleets | `0306` — an emptied fleet no longer bricks itself. One docked authority (`fleet_docked_location`) replaced eleven hand-copied predicates; the last ship out retires the fleet, assign self-heals a ghost, and a backfill retired every already-orphaned fleet. **Live.** |
 | Map | Danger zones name themselves on hover; **zone info lives on the double-tap command hub** ("What's here"), not on a click — the zone fill declares `data-map-passthrough` so it can hover-test without swallowing the map's gestures (PR **#336**, fixing the regression PR #334 introduced) |
+| **Combat engine (0336)** | Eight defects fixed in the fight itself: multi-gun ships no longer discard guns on kill ticks; a wave spawns **spread on a ring**, not stacked on one point; retreating no longer spawns a wave that shoots a fleet which cannot shoot back (**this was destroying the whole haul**); the four terminal arms are confined and all four consume the retreat target; the actor loop is ordered; the kite is capped by the **shortest** gun; The Furnace is no longer a mathematically unwinnable standoff. **No knob moved.** |
+| **Reposition (0337)** | In-combat movement is a **journey, not a teleport**. 0311's three instant writes are gone; the fleet translates rigidly toward `combat_encounters.reposition_x/y` at `combat_fleet_move_speed` (min over living hulls). **Consequence, stated:** at live speeds (0.2–1.0 units/3 s tick against zone spans of 29–79) crossing a zone under fire takes **minutes**, and a repositioning fleet **cannot outrun its pursuers**. If it plays too slowly the fix is one knob — `combat_player_speed_scale` — deliberately NOT changed in that slice. |
+| **Enemy origin (0338)** | Enemies **come out of the zone's own city**. `combat_wave_arrival_phase` is the one authority for a wave's arrival bearing; the wave opens as a compact arc centred on the owning settlement (6 pirates span 112.5°) instead of encircling. The origin is a **bearing, never a position** — a distant city must not become a forty-tick walk. It is DATA: re-pointing a zone's raiders at another city is one row. |
+| Client (2026-08-03/04) | Combat **animates** between ticks (one lerp authority, `smoothCombatUnits` moves the rows so glyph and badge cannot disagree); the fleet renders as **one actor**, not four ships; real ordnance is drawn from the gun's share of its ship's volley. A fleet **always** has a map marker (four existence resolvers deleted for one presence-per-group; the badge is honest about partial placement, e.g. "Fleet 1 1/4"). New **`/assets`** destination — what you own, where, and what that city pays. **One** repair surface. Hunting is signposted from the zone panel, and a near-missed ambush is no longer silence. |
 
 **Verified on target 2026-07-31** (not from CI green): `0306`'s `group_retire_empty_fleet` and
 `group_fleet_retire` probed on production over anon REST with a **deliberately malformed uuid**, so
@@ -59,16 +72,24 @@ denied for function` — raised only for a function that **exists** — while a 
 
 ### Known red / debt
 
-- **`TEAM-COMMAND` disposable proof fails at `SHIELD1`** (`team-command-proof.sql:3359`). **Pre-existing** — the identical failure is on the `0303`/`0304` branch from 07-28, before any of this session's work. Harness debt from `0300`'s lights-on, no gameplay impact. *(Careful: two `TEAM-COMMAND` runs went green on 07-28 on a branch cut 07-19 whose chain stops at `0234` — a green on an old chain is not evidence.)*
+- ~~**`TEAM-COMMAND` disposable proof fails at `SHIELD1`**~~ — **RESOLVED.** The workflow runs green on the current chain (runs `30839137155`, `30838218555`, 2026-08-03).
+- **The ECONOMY findings of the four-domain audit are still open, and they are deferred by the owner** until combat is playable (RS3 is the stated target). Measured, not guessed: Reaver and Blackden declare `min_power_required = 0` but actually need ~16 and ~26, so **a starter fleet is guaranteed a zero-reward loss**; the reward curve is **inverted** (Snare pays ~10× Blackden for identical hull cost, because loot gates on wave DEPTH); **metal is a dead currency** — 179,599 banked and `build_orders` empty since launch.
+- **`repair_credits_per_hp` is `0` (repair is FREE) — the owner's call, and explicitly TEMPORARY**, pending the loot economy. Restoring a price is one `npm run knob:set` call; 0335 made `0` mean free, while null/negative still fail closed.
+- **A DEV_LOG entry can be flatly wrong, not just stale.** The `0336` entry shipped carrying a **verbatim copy of the `slice-hunting-is-findable` body** — it described a client-only slice and said *"no migration"* about a migration. Rewritten 2026-08-04 from the deployed migration header. When recording several slices at once, the copy-paste risk is the entry BODY, not just the deploy line.
 - **`docs/DEV_LOG.md` has no entries for migrations `0273`–`0302`** — the typed-zone platform and the combat overhaul. Detail lives in the migration headers and PR bodies.
 - **A log entry can outlive the state it describes.** The `0306` entry sat at the top of `DEV_LOG.md` reading *"NOT DEPLOYED — PR open"* for a day **after** it was merged and applied to production, and PR #336 shipped with no entry at all. Both corrected 2026-07-31. The entry is written when the work lands; **the deploy line has to be revisited when it actually deploys**, or the newest doc in the repo becomes the most misleading one. *(This bites fast: the first version of this very §0 said the 14 PR closes were "blocked, not performed" — true when written, false twenty minutes later. **Re-read §0 against reality before trusting it**, and it is cheap to re-verify: `gh pr list`, `git rev-parse origin/main`, and the malformed-uuid prod probe.)*
-- **`tools/projectmap` drifts silently and nothing warns you.** On 2026-07-31 `feat-project-map` was 54 commits / **34 migrations** behind `main` — it was drawing a codebase that no longer existed (`266→300` migrations, `743→817` nodes after the refresh). Nothing in CI checks this. Refresh it after any game change: merge `origin/main` in, then `npm run scan` + `npm run wip` in `tools/projectmap`, commit `public/graph.json` + `public/wip.json`, push. `npm run live` is the third leg but writes gitignored `public/live.json`, so it never ships.
+- **`tools/projectmap` drifts silently and nothing warns you.** As of **2026-08-04 it is 215 commits behind `main`** — it is drawing a codebase that no longer exists. (For scale: on 2026-07-31 it was 54 commits / **34 migrations** behind `main` — it was drawing a codebase that no longer existed (`266→300` migrations, `743→817` nodes after the refresh).) Nothing in CI checks this. Refresh it after any game change: merge `origin/main` in, then `npm run scan` + `npm run wip` in `tools/projectmap`, commit `public/graph.json` + `public/wip.json`, push. `npm run live` is the third leg but writes gitignored `public/live.json`, so it never ships.
 - **Six docked-test copies remain** (`0210:178-186`, `0210:299-303`, `0231:1069-1073`, `0231:1486-1501`, `0297:126-131`) — all read-side projections, named as an explicit non-goal by `0306` rather than silently skipped. They now have `fleet_docked_location` to fold onto.
 
-### ⚠ Fleet 1 was destroyed 2026-07-29T05:37:22Z
+### ⚠ Fleet 1 was destroyed 2026-07-29T05:37:22Z — **and its wrecks are now recoverable**
 
 Encounter `d16f308d` ran to tick 130 (player power 60 → 0 vs 872). All four ships `destroyed`; only
 Sparrow II (Fleet 2) survives. The Stop refusal that `0305` fixes is what denied the escape.
+
+**Since then:** `0334` gave a wreck a port (a grouped ship's port is the single port its group's live
+fleets are docked at) — Sparrow IV/V went `null` → **Haven** on production — and `0335` made repair one
+action at `repair_credits_per_hp = 0`. **So Fleet 1 can be restored, free, at Haven.** It had not been
+done as of this refresh.
 
 ---
 

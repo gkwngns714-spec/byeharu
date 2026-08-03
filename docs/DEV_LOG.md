@@ -343,57 +343,94 @@ the authority and asserts the absence of "almost always", instead of restating a
 
 ## 2026-08-03 — COMBAT ENGINE REPAIRS (`slice-combat-engine-repairs`, migration 0336)
 
-Branch `slice-hunting-is-findable` off `97447b3`. **No migration, no `game_config` write, no
-production write** — every fact below was READ from production (head `20260618000335`).
+> **Record repaired 2026-08-04.** This entry previously carried a verbatim copy of the
+> `slice-hunting-is-findable` body — it described a client-only slice, and said *"no migration"*
+> about a migration. Rewritten from the deployed migration header
+> (`20260618000336_combat_engine_repairs.sql:1-100`) and the merge history of PR **#383**.
 
-### The complaint
-Owner, playing: *"i went to snare, zone, no fighting happens. why are you keep messing things up?
-spaghetti of course. do it properly"*
+Eight defects **in the fight itself**, every one read off the **deployed** `pg_get_functiondef` text
+(73,160 chars — no migration file holds the tick whole) and confirmed against live production rows,
+read-only, at prod head `0335`.
 
-### What actually happened (verified, not inferred)
-Their four trips that afternoon were `mission_type='rally'`, `target_type='space'`, aimed at
-**(-45,88), (-43,94), (-43,98), (-35,99)**. The Snare **site** is a `locations` row at
-**(-45,120)**. They were aiming at the Snare **danger zone** — a drawn blob that shares the site's
-name and covers 7.2× its declared area — and never targeted the site. Two of the four rolled an
-ambush and **missed** (risk 0.545 / roll 0.697; risk 0.240 / roll 0.336); two never rolled. No
-encounter was created. **The server was right the whole time.**
+### The eight, ranked by live harm
 
-The cause was ours, in two halves:
-1. **Three screens described combat three different ways**, and the one they read named the zone:
-   `MissionScreen.tsx:93` *"…or into a pirate zone to hunt"*; `zoneInfoModel.ts` *"A fleet crossing
-   this zone is almost always attacked"* (written against 0236's [0.98,1.0] pin, long gone from
-   prod); and the map's own idle prompt, which listed ports and open space and **never mentioned
-   hunting at all**.
-2. **The zone panel was a dead end.** "What's here" named the danger and never said what to do
-   about it, even though `danger_zones.location_id` already carries the site the zone wraps.
+1. **A multi-gun ship threw away its extra guns on kill ticks.** The target is resolved ONCE, before
+   the per-weapon loop; when gun 1 destroyed it, the found-guard **dropped** guns 2 and 3 instead of
+   re-aiming. Production holds a ship with three fitted autocannons, and 0331 had just split its
+   `combat_power` three ways to feed them — **two thirds of its damage vanished on every kill tick.**
+2. **Every enemy in a wave spawned on ONE identical point** (both spawn arms inserted at the
+   engagement anchor; measured: every encounter that ever held enemies holds them at exactly one
+   distinct position). Distance became a constant, the id tiebreak absolute, every gun converged on
+   one row — compounding (1) — and the fight drew as a single pixel.
+3. **Retreating spawned a fresh wave that shot at a fleet which could not shoot back.** The offense
+   gate silences only the player; the wave-spawn block carried **no status guard at all**. Four
+   production encounters died inside the retreat window (3.4 / 4.6 / 4.8 / 5.8 s in), each becoming a
+   `defeat`, which zeroes `total_rewards_json`. **The entire haul, destroyed by pressing Retreat.**
+4. **The four terminal arms were unconfined raise sites.** `fleet_destroy` and `presence_complete`
+   both raise on a status mismatch and both ran *before* their arm's own status write — so a mismatch
+   rolled back the whole tick **including `last_resolved_at`**, and the encounter retried identically,
+   every tick, forever, silently.
+5. **Three of the four leaked `fleets.retreat_target_*`** — only the settle arm cleared it, against
+   that arm's own stated invariant that the recording is always consumed.
+6. **The actor loop order was heap order.** The population freeze had no `ORDER BY`, so *who fires
+   first* was nondeterministic — and with sequential damage that decides whose shots are wasted.
+7. **A longer gun silently disabled a shorter one on the same ship.** The freeze carried
+   `my_range = max(range)` for both the close decision and the kite cap while the fire gate is
+   per-weapon, so an Mk-II (range 6) beside an autocannon (range 5) holds the hull at ~6 and the
+   autocannon never fires. Latent today (no production ship carries two weapon types); the Mk-II is
+   craftable.
+8. **The highest-difficulty site was a mathematically unwinnable standoff.** Executed against the
+   deployed mover at live knobs: at **The Furnace** (base_difficulty 60, hidden) enemy range = 6.0 and
+   the formation ring = 6.0, so the wave spawned **inside its own range**, immediately kited, and
+   settled at `enemy_range − player_speed` = 5.8. The player's gun reaches 5. It never fired.
 
-### What changed
-- **`src/features/command/howAFightStarts.ts` — ONE description, composed everywhere.**
-  Six surfaces import it: MissionScreen, TeamRosterPanel, teamReasonMessage (the
-  `combat_destination` refusal, now actionable instead of flat), zoneInfoModel, FleetCommandPanel's
-  idle prompt, and the First Orders checklist. `tests/howAFightStarts.spec.ts` **scans all of
-  `src/`** and fails on any surface that re-invents the sentence or reintroduces the banned shapes.
-- **The signpost.** `buildZoneInfo` now resolves the zone's hunt site through
-  `teamDestinationKind` — *the same classifier the map uses to decide the hunt section renders* —
-  and `ZoneInfoPanel` offers **"Hunt at Snare"**, which hands the id to `MapScreen.handleSelect`:
-  the map's own marker-selection path, opening the **existing** hunt control. No second hunt path.
-- **The near miss.** A rolled-and-missed crossing used to leave no trace anywhere. With the
-  probabilistic ambush kept by owner decision, silence is indistinguishable from a broken game.
-  New: `nearMissNotice.ts` (pure) + `fetchInterceptMisses()` on the shell's existing 3s wave, a map
-  alert beside the ambush notice (expires after 10 min) and a "Close calls" record on Mission.
-  **Established, not assumed:** `pirate_intercepts` grants SELECT to `authenticated`, RLS is
-  `player_id = auth.uid()`, and **no existing function returns these rows to a client** — so no
-  server read is missing. Three rules pinned: never for a leg that had no roll (structural — the
-  deployed `pirate_intercept_plan_leg` inserts only for a zone actually crossed), no raw risk/roll
-  numbers, and nothing announced while the leg is still in flight.
+### What the migration does
 
-### Proofs
-`tsc -b` clean · `vite build` clean · eslint unchanged from baseline (27 problems, all
-pre-existing) · **1742 node specs** (baseline 1716 on `97447b3`, +26) · **55 rendered-UI proofs**
-(baseline 49, +6 in `huntDiscoverability.uispec.ts` over a new `hunt.html` harness).
+**Four new leaves**, each the single authority for one concept, each **composed rather than copied**:
+`combat_formation_point` (where slot k of a ring sits — composed by both wave-spawn arms *and* the
+encounter creator's escort ring) · `combat_acquire_target` (nearest live opposite-side unit; the
+head's own CTE lifted whole plus one liveness predicate, composed at first acquisition *and* at
+per-weapon re-acquisition) · `fleet_consume_retreat_target` (read-and-clear, composed by all four
+terminal arms) · `combat_encounter_release` (the confined world-state release, all four arms).
 
-`tests/zoneInfoModel.spec.ts`'s warning pin was **repointed and strengthened** — it now composes
-the authority and asserts the absence of "almost always", instead of restating a literal.
+**Seventeen hunks** in `process_combat_ticks` and one in `combat_create_group_encounter` — every
+`old_t` sliced **verbatim** from the migration that owns its deployed text (0299 and 0315), every
+`new_t` derived from that slice. **Nothing retyped.**
+
+### No knob is moved, and that is the point
+
+An earlier draft raised `spatial_formation_ring_radius` 6.0 → 7.0. **Adversarial review killed it,
+correctly:** spawning the wave on the *escort ring* does not establish the invariant, because the
+escorts sit on that same circle — the nearest escort is a **chord** away (`2R·sin(π/16)` = 0.39R,
+i.e. 2.73 against a reach of 6.0). The property held only for the lead hull at the anchor, and
+papering over it would have needed `R > 2.56 × enemy_range` — a ring of 16, not 7.
+
+Instead the wave spawns at **(player ring + its own range + 1)**. Every player ship sits at radius
+≤ the ring, so the minimum distance from ANY player ship to ANY enemy is that range + 1 — **outside
+the wave's reach by construction**, at every difficulty, with no tuning that can drift and no balance
+change riding along on a bug fix.
+
+### Blast radius, stated
+
+`CREATE OR REPLACE` of two functions plus four new ones — an atomic catalog swap. **The tick body is
+re-read every 3 s, so the very next tick of every running fight runs the new body**; no per-fight
+opt-in, no drain (production held **zero** `active`/`retreating` encounters at generation time). No
+`game_config` write, no schema change, no grant widening (the four leaves are revoked from every
+client role), no reward/drop/threshold/range/speed/difficulty value moved. **Not one row written
+outside `pg_proc`.** The visible consequence: the wave stands further out, so a fleet takes one to two
+more silent closing ticks before the first shot — the player fires on tick 1 at difficulty 40–60 and
+tick 2 at 10–25 — **except at The Furnace, where before this migration the player never fired at all.**
+
+### Proof
+
+Nine self-assert blocks prove the emitted **text**; behaviour is proven by exactly one layer — the
+disposable apply-proof driving the **real** tick (danger-combat-proof's eight 0336 blocks). The
+DANGER-ZONE fixture guard that had been failing at random was fixed **at the root** here: seeded zones
+were rebuilt with `random()` per fresh DB, i.e. a randomly-shaped world tested against a fixed
+coordinate.
+
+**DEPLOYED & verified on target** — PR #383, `deploy-migrations` run `30836659346`, prod head
+`20260618000336`.
 
 ---
 
