@@ -301,14 +301,32 @@ begin
   r := pg_temp.call_as(uD, format('public.repair_ship_hull(%L::uuid, %s, %L::uuid)', v_shipD, 10, gen_random_uuid()));
   if (r->>'reason') is distinct from 'nothing_to_repair' then raise exception 'P5 FAIL full-hull not nothing_to_repair: %', r; end if;
 
-  -- not_at_port: uD departs toward Slagworks → in transit → the ONE position authority answers null.
+  -- not_at_port: uD is put UNDERWAY IN OPEN SPACE → the ONE position authority answers null.
   -- (Damage it first so nothing_to_repair cannot mask not_at_port.)
+  --
+  -- FIXTURE SURGERY, DELIBERATELY, over driving a mover RPC. This block used to call
+  -- command_main_ship_space_move_to_location(uuid,uuid,uuid) — a per-ship mover the movement
+  -- unification RETIRED, so the call was dead and took this proof down with it (the same way the
+  -- dropped dev_set_main_ship_destroyed did; see the header). The live mover is group-shaped
+  -- (command_ship_group_go), and dragging the whole ship_group machinery into a REPAIR proof would
+  -- re-couple it to the domain that has now broken it twice. So the fixture writes the exact two
+  -- fleet columns fleet_docked_location reads — status and location_mode — plus the coordinates the
+  -- fleets_space_mode_requires_coords CHECK demands, i.e. the state a real journey leaves behind.
+  -- The PREMISE IS THEN PROVEN rather than assumed: if the position authority still answers a port,
+  -- this phase fails loudly instead of asserting a reject for the wrong reason.
   update public.main_ship_instances set hp = max_hp - 50 where player_id = uD;
-  r := pg_temp.call_as(uD, format('public.command_main_ship_space_move_to_location(%L::uuid, %L::uuid, %L::uuid)',
-                                   (select v from re1 where k='slag'), gen_random_uuid(), v_shipD));
-  if (r->>'ok')::boolean is not true then raise exception 'P5 FAIL move uD: %', r; end if;
+  update public.fleets
+     set status = 'moving', location_mode = 'space',
+         space_x = coalesce(space_x, 4200), space_y = coalesce(space_y, -3100)
+   where main_ship_id = v_shipD;
+  if public.mainship_port_of_ship(v_shipD) is not null then
+    raise exception 'P5 PREMISE FAIL: a ship underway in open space still resolves port % — the not_at_port assert below would prove nothing',
+      public.mainship_port_of_ship(v_shipD);
+  end if;
   r := pg_temp.call_as(uD, format('public.repair_ship_hull(%L::uuid, %s, %L::uuid)', v_shipD, 50, gen_random_uuid()));
-  if (r->>'reason') is distinct from 'not_at_port' then raise exception 'P5 FAIL in-transit not rejected: %', r; end if;
+  if (r->>'reason') is distinct from 'not_at_port' then raise exception 'P5 FAIL underway ship not rejected: %', r; end if;
+  if (select hp from public.main_ship_instances where player_id=uD) <> (select max_hp-50 from public.main_ship_instances where player_id=uD) then
+    raise exception 'P5 FAIL not_at_port still healed the hull'; end if;
 
   -- insufficient_credits: uP is docked at Haven, damaged, wallet 0, price 0.5 → can't afford → NOTHING
   -- healed/charged. (P7 re-runs this exact player at a 0 knob and it SUCCEEDS — that pair is the proof

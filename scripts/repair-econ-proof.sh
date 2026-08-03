@@ -85,6 +85,12 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not wreck a ship via the tick's own terminal leaf"
   grep -qE 'public\.dev_set_main_ship_destroyed\(' "$SQL" \
     && fail "harness calls dev_set_main_ship_destroyed, which migration 0232 DROPPED — the proof cannot run on the real chain" || true
+  # ...and the RETIRED per-ship movers, for the same reason: this proof's not_at_port phase drove
+  # command_main_ship_space_move_to_location until 0335, the movement unification had already
+  # removed it, and the proof died at that line. A repair proof must not be coupled to whichever
+  # mover is current — it writes the two fleet columns the position authority actually reads.
+  grep -qE 'public\.(command_main_ship_space_move|command_main_ship_space_move_to_location|command_main_ship_space_stop|move_main_ship_to_location|send_main_ship_expedition|command_main_ship_settle_arrival_legacy)\(' "$SQL" \
+    && fail "harness calls a RETIRED per-ship mover — the movement unification dropped them; set the fleet columns the position authority reads instead" || true
   grep -q "the economy flag gated a WRECK recovery" "$SQL" \
     || fail "harness does not prove recovery survives a DARK economy flag (a gated recovery is a permanently lost ship)"
   grep -q "recovery was PRICED" "$SQL" \
