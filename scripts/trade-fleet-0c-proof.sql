@@ -88,7 +88,13 @@ begin
   r := pg_temp.call_as(uM, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'P FAIL first-ship: %', r; end if;
 
-  -- (a) DARK: with the flag still FALSE, the server REJECTS an additional ship and writes nothing.
+  -- (a) DARK: the server REJECTS an additional ship and writes nothing.
+  -- THE PRECONDITION IS OURS, NOT THE SEED'S. This block used to trust the ambient seed to still be
+  -- false; migration 0300 (lights_on) lights mainship_additional_commission_enabled IN THE CHAIN, so
+  -- the proof was asserting a WORLD rather than a property and went red on a correct system. Set the
+  -- dark state under test — in-txn, rolled back with everything else, exactly like the enable below.
+  -- The dark coverage is unchanged; only its precondition is now owned.
+  update public.game_config set value='false'::jsonb where key='mainship_additional_commission_enabled';
   r := pg_temp.call_as(uM, 'public.commission_additional_main_ship()');
   if (r->>'reason') is distinct from 'additional_commission_disabled' then raise exception 'P FAIL dark-reject: %', r; end if;
   select count(*) into n from public.main_ship_instances where player_id=uM;

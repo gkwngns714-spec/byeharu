@@ -56,7 +56,16 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
       're-point the slice at the new head before generating.');
   }
 
-  const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314']);
+  // 0332 JOINS THE EXEMPTION — by name, never by widening the window. It rewrites the settle arm's
+  // member-repatriation loop, sliced from 0299:622-624, so a dead member of a fight the fleet
+  // SURVIVED finally gets the terminal write the defeat arm always gave it. That site is statically
+  // DISJOINT from this migration's (0299:822-826, the top of the spatial per-unit loop): different
+  // branch of the tick, ~200 lines apart, and 0332 neither reads nor writes the actor-liveness guard
+  // — it only turns a `for … and alive_count > 0 loop` into a `for … loop` with an if/else inside,
+  // which is why this file's own slice and every assert count in it are unaffected (0332 keeps the
+  // alive_count > 0 site count at the 7 assert (d) pins, by MOVING one site rather than adding one).
+  // Naming it here keeps this gate live for 0333 and everything after it.
+  const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000332']);
   const reHunkRow = /\(\s*\d+\s*,\s*'process_combat_ticks'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000299'
     && !KNOWN_LATER_REWRITERS.has(version(f))
