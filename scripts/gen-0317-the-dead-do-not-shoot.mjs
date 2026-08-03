@@ -229,20 +229,29 @@ const sql = `-- ═════════════════════�
 --     state a later tick depends on. A fight that is mid-wave when this lands simply has one fewer
 --     class of shot from the next tick on; wave counters, next_wave_at, retreat clocks, the
 --     auto-exit arm and the reward path are all untouched.
---   * HOW MANY SHOTS DISAPPEAR: exactly the shots a unit would have fired in the tick it died,
---     after its death. With an arbitrary firing order that is, in expectation, HALF the units
---     destroyed in that tick, times their weapons in range (every live unit carries exactly one
---     weapon — the fitted gun, the 0262 fallback, or the synthetic pirate gun). Nothing changes in
---     a tick where nobody dies, which is most ticks of most fights. It concentrates on kill ticks:
---     a wave of N pirates wiped in one tick loses about N/2 posthumous pirate shots, i.e. roughly
---     half of that wave's incoming damage for that one tick.
---   * WHO IT FAVOURS: the side that lands the killing blow first stops eating a return shot. In the
---     live game the player is the side that repeatedly lands killing blows — a hunt combat is an
---     endless escalating wave ladder, so the player destroys many pirate units per fight and the
---     pirates destroy the player's hulls once, at the end. SO THIS FAVOURS THE PLAYER, mildly and
---     mostly on wave-clearing ticks. The pirates gain the mirror benefit only on the tick that ends
---     the fight, which the player was losing anyway. It makes fights slightly more survivable; it
---     changes no reward, no drop, no threshold and no config value.
+--   * HOW MANY SHOTS DISAPPEAR — against LIVE production config, read read-only on 2026-08-03:
+--     combat_tick_seconds 3, enemy_synthetic_max_units 6, enemy_hp_base 14,
+--     enemy_hp_danger_scale 0.6, danger_time_divisor_seconds 180, and the three ACTIVE hunt
+--     grounds carry base_difficulty 10 / 15 / 25.
+--     What is removed is exactly the shots a unit would have fired in the tick it died, AFTER its
+--     death. With an arbitrary firing order that is, in expectation, HALF the units destroyed in
+--     that tick, times one weapon each (every live unit carries exactly one — the fitted gun, the
+--     0262 fallback, or the synthetic pirate gun). So: about 0.5 shots per DESTROYED unit, and
+--     nothing at all in a tick where nobody dies, which is most ticks.
+--     Per fight: a wave is min(6, danger) pirates, and danger rises by one per wave cleared plus
+--     one per 180s, so from the sixth wave on every wave is six. A 14-wave fight — the length the
+--     2026-07-22 canary actually reached before dying — destroys on the order of 65-70 pirate
+--     units, so ROUGHLY 30-35 PIRATE SHOTS VANISH ACROSS THE WHOLE FIGHT. As a fraction it is 0.5
+--     divided by the average number of ticks a unit survives: a wave one-shotted on the tick it
+--     spawns loses up to half its fire, a wave that lives three ticks about a sixth. Call it
+--     10-20% of incoming pirate fire in a heavy fight, concentrated entirely on kill ticks.
+--   * WHO IT FAVOURS: the side that lands the killing blow first stops eating a return shot. At
+--     live difficulties the player is that side by a wide margin — a hunt combat is an endless
+--     escalating wave ladder, so ONE fight destroys those 65-70 pirate units while the pirates
+--     destroy the player's 1-4 hulls once, on the tick the fight ends. SO THIS FAVOURS THE PLAYER:
+--     fights get modestly more survivable, entirely on wave-clearing ticks. The pirates gain the
+--     mirror benefit only on that final tick, which the player was losing anyway. It changes no
+--     reward, no drop, no threshold and no config value.
 --
 -- ── ROLLBACK ─────────────────────────────────────────────────────────────────────────────────────
 -- Re-apply the deployed tick with the guard removed (0299's text at :822-826). No state to unwind:
