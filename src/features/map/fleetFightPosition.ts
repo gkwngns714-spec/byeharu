@@ -22,23 +22,66 @@
 // the ships, so the badge floated in the gap while the shooting happened at the enemy stack. The
 // centroid was the wrong KIND of answer, not a mistuned one.
 //
-// ── THE RULE ───────────────────────────────────────────────────────────────────────────────────────
-// THE BADGE SITS ON A REAL SHIP. Never a mean, never a midpoint, never a synthesised point.
-// Specifically: the fleet's own living, positioned player unit that is NEAREST THE ENEMY — the point
-// of attack, which is what "where is my fleet fighting" actually asks. Priority, one order, ONE place:
+// ── THE SECOND BUG: "I TELEPORT WHEN AN ENEMY DIES" ────────────────────────────────────────────────
+// The owner, playing: "When enemy ship is destroyed, i teleport to some random place inside the zone.
+// This should not happen."
 //
-//   1. nearest (by min distance to ANY living positioned enemy unit of this same encounter)
-//   2. no living positioned enemy → nearest the ENGAGEMENT ANCHOR (where the fight started)
+// It was deterministic, it was client-side, and it was this file. The rule below USED to be "our own
+// living hull NEAREST THE ENEMY", i.e. an ARGMIN OVER THE LIVING ENEMY SET. `resolveSpatialUnits`
+// drops a unit the instant `alive_count` hits 0, so a kill CHANGES THE TARGET SET; a changed target
+// set re-runs the argmin; a different hull wins; and the fleet's point is suddenly hull B's
+// coordinates instead of hull A's. Nothing tweens across that, because `combatMotion.smoothCombatUnits`
+// keyframes PER UNIT ID — swapping row A for row B reads B's position directly. One frame, a whole
+// formation away.
+//
+// MEASURED against live production config (`spatial_formation_ring_radius = 6`):
+//     lead ↔ escort           6.00 world units
+//     adjacent escorts        4.59
+//     opposite ring slots     8.49
+// instantly, against a legitimate maximum of `min(move_speed)` = 0.2-1.0 units per 3 s tick. A 5x-40x
+// overshoot, so it does not read as movement at all — it reads as a teleport, which is the word the
+// owner used. WORST CASE IS THE LAST KILL OF A WAVE: with `foes.length === 0` the target used to flip
+// to the ENGAGEMENT ANCHOR, i.e. from "the hull furthest forward" to "the hull nearest where the
+// fight started" — a guaranteed maximal jump, fired exactly on the kill that clears the wave.
+//
+// WHY IT ONLY *LOOKED* LIKE A TELEPORT AFTER THE FOLD, and why the old justification is dead:
+// `map/combatActors.ts` folds the four player rows into ONE glyph. Before that fold, a hull-swap put
+// the marker on a ship the player could SEE, so it read as "the badge moved to that ship". The fold
+// deleted the other hulls from the screen, so the same swap now lands on apparently empty space. The
+// header above rejects the centroid because "the badge floats in the gap between THE VISIBLE SHIPS" —
+// that argument was about a gap between things on screen, AND THE FOLD DELETED THE VISIBLE SHIPS, so
+// the justification for aiming at the enemy died with them, exactly as 0311's teleport justification
+// died with 0316. What is left is the category error: this function answers "WHERE IS THE POINT OF
+// ATTACK" and both its callers ask it "WHERE IS THE FLEET". Before the fold those were the same
+// visible thing. They are not any more.
+//
+// ── THE RULE ───────────────────────────────────────────────────────────────────────────────────────
+// THE BADGE SITS ON A REAL SHIP. Never a mean, never a midpoint, never a synthesised point. And
+// WHERE THE FLEET IS IS A FUNCTION OF THE FLEET — never of its enemies. Priority, one order, ONE place:
+//
+//   1. THE FLEET'S ELECTED LEAD — 0315's own decision, read off `aggro_priority` through the ONE lead
+//      authority `combatMotion.resolveEncounterLead` (100 on exactly one player hull per formation,
+//      verified on production). Nothing about the enemy is an input to this arm, so killing one
+//      CANNOT move the fleet: the answer changes only when the fleet's own lead moves, dies, or is
+//      re-elected by the server.
+//   2. lead dead / unpositioned → nearest (by min distance to ANY living positioned enemy unit of
+//      this same encounter), then nearest the ENGAGEMENT ANCHOR when no enemy is left. This is the
+//      OLD rule, kept ONLY as a fallback: it still answers a real hull, and a fleet whose lead is
+//      gone has no better claim to a particular hull than "the one in contact".
 //   3. no living positioned player unit at all → the caller's own resting point, unchanged
 //
-// Enemies never contribute a coordinate. They are the distance TARGET and nothing else; the answer
-// is always one of OUR hulls. Because the returned point is copied off a unit row, it is a MEMBER of
-// the input set — the spec asserts exactly that, which is the invariant that makes "an average"
-// structurally impossible to reintroduce.
+// Enemies never contribute a coordinate. On the fallback arm they are the distance TARGET and nothing
+// else; on the primary arm they are not consulted at all. The answer is always one of OUR hulls, and
+// because the returned point is copied off a unit row it is a MEMBER of the input set — the spec
+// asserts exactly that, which is the invariant that makes "an average" structurally impossible to
+// reintroduce.
 //
 // ── STABILITY: WHAT THE BADGE DOES BETWEEN TWO 1.5s POLLS ──────────────────────────────────────────
-// "Nearest" can change tick to tick, and a label that teleports between hulls every poll is its own
-// bug. Two properties handle it, both PURE — the answer stays a function of the current rows alone:
+// The lead arm is stable BY CONSTRUCTION: 0315 elects the lead once per encounter and writes the
+// decision onto the row, so it is a server fact that survives every kill, every wave and every poll.
+// Everything below is about the FALLBACK arm, where "nearest" can still change tick to tick and a
+// label that teleports between hulls every poll is its own bug. Two properties handle it, both PURE —
+// the answer stays a function of the current rows alone:
 //
 //   • DETERMINISTIC ORDER. Candidates arrive id-sorted from resolveSpatialUnits, so array order is
 //     never an input; the same rows always answer the same hull, at any re-render.
@@ -71,7 +114,19 @@
 //   • which units are drawable and alive → map/spatialCombatLayer.resolveSpatialUnits — the SAME
 //     filter that decides which glyphs exist. The badge therefore cannot sit on a ship the player
 //     cannot see, and cannot ignore one they can.
-// Nothing here re-derives liveness, positional validity, encounter selection or the anchor.
+//   • WHICH HULL LEADS THIS FLEET        → map/combatMotion.resolveEncounterLead, which already reads
+//     0315's `aggro_priority` for the ordnance fallback. There is ONE lead election in the client and
+//     it is the server's; this adds a second CALLER, not a second rule. It is imported from
+//     combatMotion rather than copied, and combatMotion imports neither this file nor the layer, so
+//     no cycle is created.
+// Nothing here re-derives liveness, positional validity, encounter selection, the anchor or the lead.
+//
+// ── ONE POSITION, TWO CALLERS, MOVING TOGETHER BY CONSTRUCTION ─────────────────────────────────────
+// The fleet's combat GLYPH (map/combatActors.ts) and the fleet's named BADGE (map/fleetPresence.ts)
+// both get their point from this function and from nowhere else. That is not a convention to be
+// remembered — it is pinned in tests/fleetFightPosition.spec.ts, which drives both callers over the
+// same rows and asserts they answer the identical coordinate. Two places drawing one fleet is the
+// original defect at the top of this file; it cannot come back while that spec is green.
 //
 // ── FAIL CLOSED ────────────────────────────────────────────────────────────────────────────────────
 // No live encounter, or no positioned living player unit → the caller's own fallback, unchanged. A
@@ -83,11 +138,13 @@ import {
   resolveEncounterAnchor,
   type FleetEncounterLite,
 } from '../combat/encounterAnchor'
+import { resolveEncounterLead } from './combatMotion'
 import { resolveSpatialUnits, type SpatialUnitView } from './spatialCombatLayer'
 
-/** World units within which two hulls count as the SAME distance from the target, so the badge does
- *  not change ship on server jitter. See the STABILITY section of the header for why this exists,
- *  why it is not cross-tick hysteresis, and why 0316's five-times-tighter arena divided it by 5. */
+/** FALLBACK ARM ONLY (the lead is dead or unpositioned): world units within which two hulls count as
+ *  the SAME distance from the target, so the badge does not change ship on server jitter. See the
+ *  STABILITY section of the header for why this exists, why it is not cross-tick hysteresis, and why
+ *  0316's five-times-tighter arena divided it by 5. */
 export const NEAREST_SHIP_MARGIN = 0.2
 
 export interface FleetFightPosition {
@@ -96,7 +153,8 @@ export interface FleetFightPosition {
    *  position, not a value derived from several. */
   x: number
   y: number
-  /** 'unit'     = a real living, positioned ship of this fleet — the one at the point of attack.
+  /** 'unit'     = a real living, positioned ship of this fleet — its elected LEAD, or (only once the
+   *               lead is gone) the hull in contact.
    *  'fallback' = the caller's own resting position (no live fight, or no positioned ships). */
   source: 'unit' | 'fallback'
   /** combat_units.id of the ship the badge stands on; null on the fallback arm. The primary key of
@@ -164,6 +222,25 @@ export function resolveFleetFightPosition(input: {
   const ours = spatial.filter((u) => u.side === 'player')
   if (ours.length === 0) return rest(true) // fighting, but aggregate/dark — nothing to stand on
 
+  // ── WHERE THE FLEET IS: ON ITS OWN ELECTED LEAD ────────────────────────────────────────────────
+  // "When enemy ship is destroyed, i teleport to some random place inside the zone." This branch is
+  // the answer to that: the enemy rows are not read at all here, so no kill — not the first of a
+  // wave and not the last — can change which hull the fleet is drawn on. 0315 elected this hull once,
+  // server-side, and wrote the decision onto the row; the client composes that decision and never
+  // re-derives one. `mine` is already this encounter's rows, and the elected lead is only USED if it
+  // is still in `ours` (living AND positioned), so the fleet is never pinned to a wreck or to a row
+  // with no coordinates.
+  const lead = resolveEncounterLead(mine, encounter.id)
+  const standing = lead ? ours.find((u) => u.id === lead.id) : undefined
+  if (standing) {
+    return { x: standing.x, y: standing.y, source: 'unit', unitId: standing.id, fighting: true }
+  }
+
+  // ── FALLBACK ONLY: the lead is dead or unpositioned ────────────────────────────────────────────
+  // Everything below is the pre-fold rule, demoted. It still answers a REAL hull of ours, which is
+  // why it is a defensible last resort — but it is reached only when the fleet has no lead left to
+  // stand on, so its enemy-set dependency (the teleport above) can no longer fire on a live formation.
+  //
   // THE TARGET — never the answer. Living positioned enemies when the fight has any (the point of
   // attack); otherwise where the fight started, resolved by the SAME rule the server uses.
   const foes = spatial.filter((u) => u.side === 'enemy')

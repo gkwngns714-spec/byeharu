@@ -1,7 +1,11 @@
 import { test, expect } from '@playwright/test'
 import { resolveFleetFightPosition } from '../src/features/map/fleetFightPosition'
+import { resolveCombatActors } from '../src/features/map/combatActors'
+import { resolveFleetPresence } from '../src/features/map/fleetPresence'
 import type { CombatUnit } from '../src/features/combat/combatTypes'
 import type { FleetEncounterLite } from '../src/features/combat/encounterAnchor'
+import type { GroupRow, ShipGroupMapEntry } from '../src/features/command/teamRoster'
+import type { FleetPosition } from '../src/features/map/mainshipApi'
 
 // WHERE IS THIS FLEET WHILE IT FIGHTS — pure specs for the ONE shared rule. No I/O, no clock.
 //
@@ -350,4 +354,198 @@ test('every non-null answer is finite and never silently the origin', () => {
     expect(Number.isFinite(p!.x) && Number.isFinite(p!.y)).toBe(true)
     expect(p!.x === 0 && p!.y === 0).toBe(false)
   }
+})
+
+// ██ "WHEN ENEMY SHIP IS DESTROYED, I TELEPORT TO SOME RANDOM PLACE INSIDE THE ZONE." ██████████████
+//
+// The owner, playing. It was this file, and it was deterministic: the answer used to be an ARGMIN
+// OVER THE LIVING ENEMY SET, and `resolveSpatialUnits` drops a unit the instant `alive_count` hits 0.
+// So a kill CHANGED THE TARGET SET, the argmin re-ran, a different hull won, and the fleet's point
+// became that other hull's coordinates — in one frame, with nothing tweening across it (combatMotion
+// keyframes per unit id, so swapping row A for row B reads B's position directly).
+//
+// The geometry below is production's: `spatial_formation_ring_radius = 6`, four hulls on the 0336
+// ring, `aggro_priority` 100 on exactly ONE of them (0315's elected lead) and 0 on the escorts, with
+// two pirates closing on the ring. On that formation the old rule jumped 8.49 world units — an
+// opposite ring slot — on a single kill, and again on the kill that cleared the wave.
+const RING = 6 // world units — production's spatial_formation_ring_radius, post-0316
+const WAVE_ANCHOR = { x: 0, y: 0 } // combat_encounters.engagement_x/y — where the fight started
+const LEAD = { x: -RING, y: 0 } // 0315's elected lead, ring slot 2
+const RESTING = { x: -100, y: -100 } // the caller's own parked point: never the answer while positioned
+
+/** The largest distance ONE poll may legitimately move a fleet. Production `move_speed` runs 0.2-1.0
+ *  world units per 3 s tick and combatMotion plays that step over the tick, so anything beyond this
+ *  in a single observation is not motion — it is the badge changing hull, which is the defect. */
+const LEGIT_TICK_STEP = 1
+
+const hull = (id: string, x: number, y: number, o: Partial<CombatUnit> = {}): CombatUnit =>
+  unit({ id, pos_x: x, pos_y: y, aggro_priority: 0, move_speed: 1, ...o })
+
+/** The four-hull formation: p1 is the elected LEAD, the other three are escorts on the same ring. */
+const formation = (o: Partial<CombatUnit> = {}): CombatUnit[] => [
+  hull('p1-lead', LEAD.x, LEAD.y, { aggro_priority: 100, ...o }),
+  hull('p2-escort', 0, -RING),
+  hull('p3-escort', RING, 0),
+  hull('p4-escort', 0, RING),
+]
+
+/** The pirates, closing on the ring. `alive` names the ones still standing; a killed row KEEPS its
+ *  position and drops to alive_count 0, which is exactly the row state production writes. */
+const wave = (alive: readonly string[]): CombatUnit[] => [
+  unit({ id: 'foe-1', side: 'enemy', aggro_priority: null, pos_x: 2, pos_y: -3, alive_count: alive.includes('foe-1') ? 1 : 0 }),
+  unit({ id: 'foe-2', side: 'enemy', aggro_priority: null, pos_x: 3, pos_y: -1, alive_count: alive.includes('foe-2') ? 1 : 0 }),
+]
+
+const fightAt = (units: CombatUnit[]) =>
+  resolveFleetFightPosition({
+    fleetId: 'fleet-1',
+    encounters: [enc({ engagement_x: WAVE_ANCHOR.x, engagement_y: WAVE_ANCHOR.y })],
+    units,
+    fallback: RESTING,
+  })!
+
+const step = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y)
+
+// ── THE REPRODUCTION ─────────────────────────────────────────────────────────────────────────────
+test('THE TELEPORT: killing an enemy does not move the fleet — not the first kill, not the last', () => {
+  // One wave, killed one pirate at a time, exactly as a fight plays out.
+  const both = fightAt([...formation(), ...wave(['foe-1', 'foe-2'])])
+  const oneLeft = fightAt([...formation(), ...wave(['foe-1'])]) // foe-2 destroyed
+  const cleared = fightAt([...formation(), ...wave([])]) // THE LAST KILL OF THE WAVE
+
+  // Under the old rule these were p3-escort (6,0) → p2-escort (0,-6) → p1-lead (-6,0): two 8.49-unit
+  // jumps, one of them fired by the kill that cleared the wave.
+  expect(step(both, oneLeft)).toBeLessThanOrEqual(LEGIT_TICK_STEP)
+  expect(step(oneLeft, cleared)).toBeLessThanOrEqual(LEGIT_TICK_STEP)
+  expect(step(both, cleared)).toBeLessThanOrEqual(LEGIT_TICK_STEP)
+
+  // …because all three answers are the SAME hull: the fleet's own elected lead.
+  expect([both.unitId, oneLeft.unitId, cleared.unitId]).toEqual(['p1-lead', 'p1-lead', 'p1-lead'])
+  for (const p of [both, oneLeft, cleared]) expect({ x: p.x, y: p.y }).toEqual(LEAD)
+})
+
+test('THE LAST KILL OF A WAVE (foes.length === 0) was the worst case — it moves nothing now', () => {
+  // With no living enemy the old rule switched its TARGET to the engagement anchor, flipping the
+  // badge from the hull furthest forward to the hull nearest where the fight started. Every hull here
+  // is exactly RING from that anchor, so the old tie-break handed it to a different ship outright.
+  const before = fightAt([...formation(), ...wave(['foe-1'])])
+  const after = fightAt([...formation(), ...wave([])])
+  expect(step(before, after)).toBe(0)
+  expect(after.unitId).toBe('p1-lead')
+  expect(after.source).toBe('unit')
+  expect(after.fighting).toBe(true)
+})
+
+test('THE ENEMY SET IS NOT AN INPUT: move the pirates anywhere, the fleet does not follow', () => {
+  const anchored = fightAt([...formation(), ...wave(['foe-1', 'foe-2'])])
+  // the same fight with the pirates on the far side of the formation, and with none at all
+  const flipped = [
+    unit({ id: 'foe-1', side: 'enemy', aggro_priority: null, pos_x: -2, pos_y: 300 }),
+    unit({ id: 'foe-2', side: 'enemy', aggro_priority: null, pos_x: 3, pos_y: 301 }),
+  ]
+  expect(fightAt([...formation(), ...flipped])).toEqual(anchored)
+  expect(fightAt([...formation()])).toEqual(anchored)
+})
+
+// ── THE FALLBACK ARM: the lead is gone ───────────────────────────────────────────────────────────
+test('LEAD IS DEAD → the old nearest-the-enemy rule, still a REAL hull of ours', () => {
+  const rows = [...formation({ alive_count: 0, hp_current: 0 }), ...wave(['foe-1', 'foe-2'])]
+  const p = fightAt(rows)
+  expect(p.unitId).toBe('p3-escort') // 3.16 from foe-2; p2-escort is 3.61 from foe-1
+  expect({ x: p.x, y: p.y }).toEqual({ x: RING, y: 0 })
+  // MEMBERSHIP survives on the fallback arm: it is one of the input rows, not a point between them.
+  expect(positionsOf(rows.filter((r) => r.side === 'player' && r.alive_count > 0))).toContain(`${p.x},${p.y}`)
+})
+
+test('LEAD IS UNPOSITIONED → the fallback arm too (never a NaN, never a guessed point)', () => {
+  const p = fightAt([...formation({ pos_x: null, pos_y: null }), ...wave(['foe-1', 'foe-2'])])
+  expect(p.unitId).toBe('p3-escort')
+  expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true)
+})
+
+test('NO LEAD ELECTED AT ALL (aggro_priority null on every hull) → the fallback arm', () => {
+  const p = fightAt([
+    ...formation().map((u) => ({ ...u, aggro_priority: null })),
+    ...wave(['foe-1', 'foe-2']),
+  ])
+  expect(p.unitId).toBe('p3-escort')
+})
+
+test('the lead is the SERVER’s election, not a client-side guess at the biggest or nearest hull', () => {
+  // The elected lead is the SMALLEST hull and the one FURTHEST from the enemy. Neither fact moves the
+  // badge: only `aggro_priority` does, because only the server writes it (0315).
+  const rows = [
+    hull('a-huge-and-nearest', 3, -2, { hp_max: 9000, aggro_priority: 0 }),
+    hull('z-the-lead', 400, 400, { hp_max: 10, aggro_priority: 100 }),
+    ...wave(['foe-1', 'foe-2']),
+  ]
+  const p = fightAt(rows)
+  expect(p.unitId).toBe('z-the-lead')
+  expect({ x: p.x, y: p.y }).toEqual({ x: 400, y: 400 })
+})
+
+test('STABILITY: the lead arm is a pure function of the rows, and order is not an input', () => {
+  const rows = [...formation(), ...wave(['foe-1', 'foe-2'])]
+  const first = fightAt(rows)
+  for (let i = 0; i < 20; i++) expect(fightAt(rows)).toEqual(first)
+  expect(fightAt([...rows].reverse())).toEqual(first)
+})
+
+// ── ONE POSITION, TWO CALLERS — THEY MOVE TOGETHER BY CONSTRUCTION ───────────────────────────────
+// The fleet's combat GLYPH (combatActors) and its named BADGE (fleetPresence) both ask this one
+// authority. "The same fleet, rendered twice, in two places" is the defect at the top of this file;
+// this spec is what stops a future change giving either caller a rule of its own.
+const G1: GroupRow = { group_id: 'g1', group_index: 1, name: 'Alpha' }
+const MEMBERSHIP: Record<string, Pick<ShipGroupMapEntry, 'group_id'>> = { s1: { group_id: 'g1' } }
+const PARKED: Pick<FleetPosition, 'main_ship_id' | 'place' | 'location_id' | 'segment' | 'space_x' | 'space_y'> = {
+  main_ship_id: 's1',
+  place: 'in_space',
+  location_id: null,
+  segment: null,
+  space_x: RESTING.x,
+  space_y: RESTING.y,
+}
+
+const badgeAt = (units: CombatUnit[]) => {
+  const out = resolveFleetPresence({
+    groups: [G1],
+    membership: MEMBERSHIP,
+    positions: [PARKED],
+    fleets: [{ id: 'fleet-1', group_id: 'g1' }],
+    encounters: [enc({ engagement_x: WAVE_ANCHOR.x, engagement_y: WAVE_ANCHOR.y })],
+    units,
+    nowMs: 0,
+  })
+  expect(out).toHaveLength(1)
+  expect(out[0].state).toBe('in-combat')
+  return out[0].at!
+}
+
+const glyphAt = (units: CombatUnit[]) => {
+  const fleet = resolveCombatActors(units, [enc({ engagement_x: WAVE_ANCHOR.x, engagement_y: WAVE_ANCHOR.y })]).find(
+    (a) => a.side === 'player',
+  )!
+  return { x: fleet.x, y: fleet.y }
+}
+
+test('the GLYPH and the BADGE stand on the same point, through every state of the wave', () => {
+  for (const alive of [['foe-1', 'foe-2'], ['foe-1'], ['foe-2'], []]) {
+    const rows = [...formation(), ...wave(alive)]
+    const authority = fightAt(rows)
+    expect(glyphAt(rows)).toEqual({ x: authority.x, y: authority.y })
+    expect(badgeAt(rows)).toEqual({ x: authority.x, y: authority.y })
+    // and neither of them teleported as the wave was cleared
+    expect({ x: authority.x, y: authority.y }).toEqual(LEAD)
+  }
+})
+
+test('the GLYPH and the BADGE follow the fleet together when the LEAD itself moves', () => {
+  // The one motion that MAY move the marker: the lead's own row moving, by one legitimate step.
+  const moved = formation().map((u) => (u.id === 'p1-lead' ? { ...u, pos_x: LEAD.x + 0.4, pos_y: LEAD.y } : u))
+  const rows = [...moved, ...wave(['foe-1', 'foe-2'])]
+  const authority = fightAt(rows)
+  expect(step(authority, LEAD)).toBeCloseTo(0.4, 12)
+  expect(step(authority, LEAD)).toBeLessThanOrEqual(LEGIT_TICK_STEP)
+  expect(glyphAt(rows)).toEqual({ x: authority.x, y: authority.y })
+  expect(badgeAt(rows)).toEqual({ x: authority.x, y: authority.y })
 })

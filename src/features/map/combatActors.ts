@@ -24,11 +24,16 @@ import { resolvePositionedUnits } from './spatialCombatLayer'
 // player's fleet is ONE actor, drawn ONCE.
 //
 // WHERE THE ONE GLYPH STANDS — composed, not re-derived. map/fleetFightPosition is already the ONE
-// authority for "where is this fleet while it fights" (its own living ship NEAREST THE ENEMY, with a
-// stability margin so the answer does not flap between hulls). The fleet glyph asks it, so the glyph
-// and the fleet BADGE that authority also places are the same point by construction — they cannot
-// separate. Its documented jitter behaviour is inherited along with its answer, which is the price of
-// having one authority instead of two.
+// authority for "where is this fleet while it fights" (the fleet's own 0315-ELECTED LEAD; the
+// nearest-the-enemy rule survives only as its fallback, for a fleet whose lead is dead). The fleet
+// glyph asks it, so the glyph and the fleet BADGE that authority also places are the same point by
+// construction — they cannot separate. Everything it documents is inherited along with its answer,
+// which is the price of having one authority instead of two.
+//
+// THIS FOLD IS WHY THE LEAD RULE EXISTS. While each hull drew its own glyph, a marker that hopped
+// between hulls landed on a ship the player could see. Folding the hulls away made the same hop land
+// on empty space — "when enemy ship is destroyed, i teleport to some random place inside the zone" —
+// so the position rule had to stop being a function of the ENEMY set. See fleetFightPosition's header.
 //
 // THE ENEMY SIDE IS NOT FOLDED, deliberately. A pirate pack is not a fleet: the rows carry no
 // fleet_id, elect no lead (`aggro_priority` is NULL on every enemy row — verified on production), and
