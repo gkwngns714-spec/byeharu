@@ -5,22 +5,22 @@ import { FirstOrdersCard } from '../onboarding/FirstOrdersCard'
 import { ActiveCombatPanel } from '../combat/ActiveCombatPanel'
 import { ReportsSection } from '../combat/ReportsSection'
 import { RankingPanel } from '../ranking/RankingPanel'
-import { TeamRosterPanel } from './TeamRosterPanel'
-import { CommissionShipPanel } from '../ship/CommissionShipPanel'
-import { MAINSHIP_ADDITIONAL_ENABLED, TEAM_COMMAND_ENABLED } from '../map/osnReleaseGates'
 import { PageHeader, Notice, Screen, SectionLabel, Skeleton, buttonClasses, screenRailClass, screenSplitClass } from '../../components/ui'
 
-// UI-REBUILD (2b, Command interior) — the home-base destination in the shared design language.
+// UI-REBUILD (2b, Command interior) — the ops destination in the shared design language.
 // ONE focus per state, top-down: pending onboarding first (PortEntryPanel — server-authoritative
 // self-hide, prominent accent card when an action is needed), then any LIVE battle
-// (ActiveCombatPanel), then the base card (identity → quiet all-clear line → resources/garrison —
-// the all-clear is suppressed while a battle holds the focus). Secondary sections follow: the ONE
-// merged Reports history and the dark Ranking board (server-lit gate verbatim — omitted while
-// dark, never a placeholder). Sign-out is a quiet account footer, not a primary action.
+// (ActiveCombatPanel). Secondary sections follow: the ONE merged Reports history (now foldable —
+// see ReportsSection) and the dark Ranking board (server-lit gate verbatim — omitted while dark,
+// never a placeholder). Sign-out is a quiet account footer, not a primary action.
 // Presentation only: every panel keeps its wiring/gating exactly; shared polled data from the shell.
+//
+// FLEET-TAB (2026-08-03): TeamRosterPanel + CommissionShipPanel MOVED to the /fleet destination
+// (FleetScreen — one home per panel, never two mounts). Command is now purely "what is happening /
+// what happened": onboarding, live battles, reports, standings, account.
 
 export function CommandScreen() {
-  const { game, combat, map, selection } = useShellState()
+  const { game, combat } = useShellState()
   const user = useAuthStore((s) => s.user)
   const signOut = useAuthStore((s) => s.signOut)
   const locName = (id: string | null) =>
@@ -75,23 +75,8 @@ export function CommandScreen() {
                 }}
               />
             ))}
-            {/* Resources & garrison now live in the docked port's Hangar (Port tab). */}
-            {/* TEAM-COMMAND Slice A (dark): read-only team roster. Not mounted while TEAM_COMMAND_ENABLED is
-                false, so it never renders and its owner-reads never run — CommandScreen is visually unchanged
-                for players until a human lights the gate. */}
-            {TEAM_COMMAND_ENABLED && <TeamRosterPanel />}
-            {/* S6 re-home: ship ACQUISITION lives with fleet COMPOSITION (the Fitting tab's no-ship
-                empty state points here). Compile-gated + server-rejected while the commission flag
-                is dark; await→refetch — the new ship must appear in the ONE shell selection list +
-                the game/map state, never optimistically. */}
-            {MAINSHIP_ADDITIONAL_ENABLED && (
-              <CommissionShipPanel
-                ships={selection.ships}
-                onCommissioned={async () => {
-                  await Promise.all([selection.refresh(), game.refresh(), map.refresh()])
-                }}
-              />
-            )}
+            {/* Resources & garrison live in the docked port's Hangar (Port tab); fleet composition
+                + ship acquisition live on the Fleet tab (FleetScreen). */}
             {/* The ONE reports surface (merged /reports page + inline dashboard list) — always lit,
                 so the main rail is never empty (even "No battles fought yet" renders the card). */}
             <ReportsSection reports={combat.reports} locations={game.locations} unitTypes={game.unitTypes} />

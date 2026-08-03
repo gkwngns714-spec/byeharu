@@ -7,8 +7,9 @@ import { defineConfig, devices } from '@playwright/test'
 // .github/workflows/frontend-tests.yml, on every PR and slice push.
 //
 // Harness entries (the root has no index.html): /dock.html — the real docked-port surface;
-// /camera.html — the real <GalaxyMap> + useWheelZoom under a real pointer. Readiness polls
-// /dock.html because ONE entry is enough to prove the server is up; both are served by it.
+// /camera.html — the real <GalaxyMap> + useWheelZoom under a real pointer; /fold.html — the real
+// <ReportsSection> (the Collapsible fold contract). Readiness polls /dock.html because ONE entry
+// is enough to prove the server is up; all are served by it.
 export default defineConfig({
   testDir: './tests',
   testMatch: '**/*.uispec.ts',

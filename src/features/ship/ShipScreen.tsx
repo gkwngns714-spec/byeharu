@@ -59,8 +59,9 @@ import {
 // where is it" — ships grouped BY FLEET plus the "Berthed — not in a fleet" bucket, each row
 // showing location / condition / captains, and a per-ship fitting detail on selection.
 //
-// BOUNDARY (charter §2a): Command owns fleet COMPOSITION (create/rename/delete fleet, add/remove
-// ship, command-ship toggle — TeamRosterPanel); this screen renders the grouping READ-ONLY through
+// BOUNDARY (charter §2a; FLEET-TAB moved the composition home): the FLEET tab owns fleet
+// COMPOSITION (create/rename/delete fleet, add/remove ship, command-ship toggle —
+// TeamRosterPanel); this screen renders the grouping READ-ONLY through
 // the SAME pure fold (buildTeamRoster — never a second grouping implementation) with ZERO
 // membership and ZERO movement controls. Fitting owns per-ship EQUIPMENT + CONDITION (modules,
 // rename, repair, rooms, captains-at-the-ship, cargo, traits/buffs).
@@ -413,11 +414,11 @@ export function ShipScreen() {
       <PageHeader eyebrow="Ops · Vessel" title="Ships" subtitle="Your ships, by fleet — select one to equip it" />
       <div className={screenSplitClass()}>
         <div className={screenRailClass('main')}>
-          {/* THE ROSTER — grouped by fleet (read-only; composition lives in Command). */}
+          {/* THE ROSTER — grouped by fleet (read-only; composition lives on the Fleet tab). */}
           <Card data-testid="fitting-roster">
             <CardHeader
               title="Ships"
-              subtitle="Grouped by fleet. Manage fleet membership in Command."
+              subtitle="Grouped by fleet. Manage fleet membership on the Fleet tab."
               className="mb-2"
             />
             {ships === null || selection.loading ? (
