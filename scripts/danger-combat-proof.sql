@@ -2046,7 +2046,7 @@ declare
   v_fleet uuid := (select v from dzc where k='ra_fleet');
   v_enc uuid := (select v from dzc where k='ra_enc2');
   v_speed double precision;
-  bx double precision; by double precision;
+  b_x double precision; b_y double precision;
   rpx double precision; rpy double precision;
   e record; fl record;
 begin
@@ -2056,12 +2056,12 @@ begin
   if e.reposition_x is null or e.reposition_y is null then
     raise exception 'REPOHOLD FAIL precondition: no course is standing, so "it did not follow the course" is vacuous'; end if;
   rpx := e.reposition_x; rpy := e.reposition_y;
-  bx := e.engagement_x; by := e.engagement_y;
+  b_x := e.engagement_x; b_y := e.engagement_y;
   v_speed := public.combat_fleet_move_speed(v_enc);
   if v_speed is null or v_speed <= 0 then
     raise exception 'REPOHOLD FAIL precondition: the fleet''s combat speed is % — it could not move under any circumstances and this block would pass vacuously', v_speed; end if;
-  if public.osn_distance(bx, by, rpx, rpy) <= v_speed then
-    raise exception 'REPOHOLD FAIL precondition: the standing course is within a single step (% units at speed %) — a hold and an arrival would be indistinguishable', public.osn_distance(bx, by, rpx, rpy), v_speed; end if;
+  if public.osn_distance(b_x, b_y, rpx, rpy) <= v_speed then
+    raise exception 'REPOHOLD FAIL precondition: the standing course is within a single step (% units at speed %) — a hold and an arrival would be indistinguishable', public.osn_distance(b_x, b_y, rpx, rpy), v_speed; end if;
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'player' and alive_count > 0;
   if n < 1 then raise exception 'REPOHOLD FAIL precondition: no living player unit — nothing could have moved'; end if;
 
@@ -2072,10 +2072,10 @@ begin
   select * into e from public.combat_encounters where id = v_enc;
   if e.status <> 'retreating' then
     raise exception 'REPOHOLD FAIL: the encounter went % on the tick (want retreating — the retreat window has not expired), so the hold below would be proving the wrong thing', e.status; end if;
-  if abs(e.engagement_x - bx) > 1e-9 or abs(e.engagement_y - by) > 1e-9 then
-    raise exception 'REPOHOLD FAIL: a RETREATING fight walked from (%,%) to (%,%) toward a course ordered before the retreat — a stale destination is steering a fleet that is trying to leave', bx, by, e.engagement_x, e.engagement_y; end if;
+  if abs(e.engagement_x - b_x) > 1e-9 or abs(e.engagement_y - b_y) > 1e-9 then
+    raise exception 'REPOHOLD FAIL: a RETREATING fight walked from (%,%) to (%,%) toward a course ordered before the retreat — a stale destination is steering a fleet that is trying to leave', b_x, b_y, e.engagement_x, e.engagement_y; end if;
   select * into fl from public.fleets where id = v_fleet;
-  if abs(fl.space_x - bx) > 1e-9 or abs(fl.space_y - by) > 1e-9 then
+  if abs(fl.space_x - b_x) > 1e-9 or abs(fl.space_y - b_y) > 1e-9 then
     raise exception 'REPOHOLD FAIL: the retreating fleet''s marker moved to (%,%) — the retreat leg must depart from where the fleet actually stands', fl.space_x, fl.space_y; end if;
   -- and the FORMATION did not creep either: every PLAYER row is exactly where the snapshot taken
   -- before REPOOUTSIDE's orders left it (dz_repo_u2, which that block already proved unmoved). The
@@ -2093,7 +2093,7 @@ begin
     raise exception 'REPOHOLD FAIL: the course changed to (%,%) across a tick that must not touch it — the fence is the reader, not a writer', e.reposition_x, e.reposition_y; end if;
 
   raise notice 'DZCOMBAT_PASS_REPOHOLD ok: a RETREATING fight carrying a course to (%,%) — with a living fleet, a positive speed of % and % units still to run — moved NOT ONE unit across a real tick; the destination is fenced by the step''s own fresh status read, and nothing had to remember to clear it',
-    rpx, rpy, v_speed, public.osn_distance(bx, by, rpx, rpy);
+    rpx, rpy, v_speed, public.osn_distance(b_x, b_y, rpx, rpy);
 end $$;
 
 -- ════════ DZCOMBAT_PASS_REPOMODE (0311): A SITE FIGHT FALLS THROUGH TO THE RETREAT — NEVER REFUSED ═══
