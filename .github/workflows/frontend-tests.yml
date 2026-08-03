@@ -90,7 +90,13 @@ jobs:
       # real <GalaxyMap> + <CombatMapCard> over a live battle at a 390px phone width — it MEASURES
       # the rendered fight, which is the only way to see a battle that occupies fewer pixels than
       # the damage number drawn over it, two hits collapsed into one splat, or a killing blow that
-      # renders nothing).
+      # renders nothing), navFits.uispec.ts (the real <NavBar> MEASURED at the 320px floor — every
+      # cell ≥ 44px, no label clipped, no sideways scroll; it REPLACED an unrendered width estimate
+      # in a comment that turned out to be wrong, and it is the gate on adding a destination), and
+      # assetsLedger.uispec.ts (the real <AssetsLedgerView> across every price-coverage state,
+      # proving an item no port buys reaches the SCREEN as "No price here" and never as a 0 — a
+      # fabricated valuation is the worst thing an assets screen can render, and only a DOM proof
+      # can catch a null becoming a zero on its way out of the model).
       - name: Rendered UI proofs (tests/*.uispec.ts)
         run: npx playwright test --config playwright.osnui.config.ts
 

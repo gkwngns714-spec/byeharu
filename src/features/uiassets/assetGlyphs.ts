@@ -1,4 +1,6 @@
-// PHASE20-POLISH — the CLIENT "files" side of the UI asset split.
+// PHASE20-POLISH — the CLIENT "files" side of the UI asset split. (Lives in features/uiassets/, NOT
+// features/assets/: "assets" in this game means the PLAYER'S assets — what they own, where, and what
+// it is worth. These are UI ICON keys. One name, one meaning.)
 //
 // ARCHITECTURE (STEP 4 decision, not duplication): the SERVER owns the icon VOCABULARY — the
 // `ui_asset_catalog` keys + display metadata + the stable `asset_ref` (migration 0142). This file owns

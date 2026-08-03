@@ -9,12 +9,15 @@ import { ShipScreen } from '../features/ship/ShipScreen'
 import { PortScreen } from '../features/port/PortScreen'
 import { MissionScreen } from '../features/command/MissionScreen'
 import { FleetScreen } from '../features/command/FleetScreen'
+import { AssetsScreen } from '../features/assets/AssetsScreen'
 import { WorldEditor } from '../features/worldeditor/WorldEditor'
 
 // UI-REBUILD (2b) — the destinations under the ONE persistent shell (AppShell). `/` lands on the
 // Map (the primary play surface); the legacy `/galaxy` and `/reports` routes redirect so old
 // bookmarks resolve into the new navigation. FLEET-TAB added /fleet (fleet composition +
-// acquisition, moved off Command — see FleetScreen).
+// acquisition, moved off Command — see FleetScreen). ASSETS-TAB added /assets (the ledger of what
+// you own, grouped by city — the new HOME of "where is my cargo", which used to be reachable only
+// by opening Ships and picking a ship first).
 
 export function App() {
   const init = useAuthStore((s) => s.init)
@@ -39,6 +42,8 @@ export function App() {
           <Route path="/map" element={<MapScreen />} />
           <Route path="/ship" element={<ShipScreen />} />
           <Route path="/fleet" element={<FleetScreen />} />
+          {/* ASSETS-TAB: the ledger — what you own, which city it is in, what it is worth there. */}
+          <Route path="/assets" element={<AssetsScreen />} />
           <Route path="/port" element={<PortScreen />} />
           {/* MISSION-TAB: the ops destination (renamed CommandScreen — one home per panel). */}
           <Route path="/mission" element={<MissionScreen />} />

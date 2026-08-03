@@ -25,20 +25,47 @@ export async function getSalvageConfigRows(): Promise<Array<{ key: string; value
   return (data ?? []) as Array<{ key: string; value: unknown }>
 }
 
-/** Read this port's ACTIVE item buy-list (direct select on public-read `port_item_demand` —
- *  no read RPC exists, 0174). numeric arrives as string → coerced. Error → null (fail-closed;
- *  the panel degrades to an honest unavailable line, never a silent empty). */
-export async function getPortItemDemand(locationId: string): Promise<PortItemDemandRow[] | null> {
+/**
+ * Read the ACTIVE item buy-list for a SET of ports (direct select on public-read
+ * `port_item_demand` — no read RPC exists, 0174). THE ONE read of item prices in the client:
+ * `getPortItemDemand` below is the single-port caller, the Assets ledger is the many-port one.
+ * Two callers of one query, not two queries for one fact.
+ *
+ * ASSETS-TAB widened this from one location to many rather than adding a second select beside it.
+ * The row carries `location_id` back BECAUSE the many-port caller must keep the answers apart:
+ * prices are per-port, and flattening them into one price per item would be exactly the
+ * extrapolation the asset ledger refuses to make.
+ *
+ * numeric arrives as string → coerced. An EMPTY id list short-circuits to `[]` with no round trip.
+ * Error → null (fail-closed; callers degrade to an honest unavailable line, never a silent empty —
+ * which would read as "this port buys nothing", a different and wrong claim).
+ */
+export async function getPortItemDemandFor(
+  locationIds: readonly string[],
+): Promise<Array<PortItemDemandRow & { location_id: string }> | null> {
+  if (locationIds.length === 0) return []
   const { data, error } = await supabase
     .from('port_item_demand')
-    .select('item_id, unit_price')
-    .eq('location_id', locationId)
+    .select('location_id, item_id, unit_price')
+    .in('location_id', [...locationIds])
     .eq('active', true)
   if (error) return null
-  return ((data ?? []) as Array<{ item_id: string; unit_price: number | string }>).map((r) => ({
+  return (
+    (data ?? []) as Array<{ location_id: string; item_id: string; unit_price: number | string }>
+  ).map((r) => ({
+    location_id: r.location_id,
     item_id: r.item_id,
     unit_price: Number(r.unit_price) || 0,
   }))
+}
+
+/** Read ONE port's ACTIVE item buy-list — the salvage panel's shape, composed from the one read
+ *  above. numeric already coerced there. Error → null (fail-closed; the panel degrades to an
+ *  honest unavailable line, never a silent empty). */
+export async function getPortItemDemand(locationId: string): Promise<PortItemDemandRow[] | null> {
+  const rows = await getPortItemDemandFor([locationId])
+  if (rows === null) return null
+  return rows.map((r) => ({ item_id: r.item_id, unit_price: r.unit_price }))
 }
 
 // sell_item_at_port envelope (0174): success carries the receipted sale (+ idempotent_replay on a

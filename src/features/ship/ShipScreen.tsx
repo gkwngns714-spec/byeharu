@@ -24,7 +24,6 @@ import { freshestShipStatus, type DisabledShipRow } from './shipRecovery'
 import { fetchMyDisabledShips } from './shipRecoveryApi'
 import { CaptainsPanel } from '../captains/CaptainsPanel'
 import { RecruitCaptainPanel } from '../captains/RecruitCaptainPanel'
-import { InventoryPanel } from '../inventory/InventoryPanel'
 import {
   Badge,
   Button,
@@ -51,7 +50,8 @@ import {
 // TeamRosterPanel); this screen renders the grouping READ-ONLY through
 // the SAME pure fold (buildTeamRoster — never a second grouping implementation) with ZERO
 // membership and ZERO movement controls. Fitting owns per-ship EQUIPMENT + CONDITION (modules,
-// rename, repair, rooms, captains-at-the-ship, cargo, traits/buffs).
+// rename, repair, rooms, captains-at-the-ship, trade cargo, traits/buffs); the fleet HOLD moved to
+// the Assets tab (ASSETS-TAB), because it was never per-ship and reaching it via a ship said it was.
 //
 // ONE READ PER FACT:
 //   · LOCATION — solely map.fleetPositions (the shell's already-polled get_my_fleet_positions
@@ -377,9 +377,13 @@ export function ShipScreen() {
           )}
         </div>
         <div className={screenRailClass('aside')}>
-          {/* The SELECTED SHIP'S FLEET HOLD — what it is carrying right now (0333). Items LIVE in
-              port storage; this is the transient half. Live data, always lit. */}
-          <InventoryPanel refreshKey={readRefreshKey} mainShipId={selection.selectedShipId} />
+          {/* ASSETS-TAB (2026-08-04) REMOVED the fleet-hold panel from this rail. It was the only
+              way to see what you were carrying, and reaching it meant opening Ships and picking a
+              ship first — the per-ship framing the owner rejected ("make inventory not per ship,
+              but for total fleet"), and the reason they asked "where is my ship's cargo?" and
+              could not answer it. The hold now lives on the /assets destination beside the port
+              storage it moves to and from, for EVERY fleet at once. One home per panel: it moved,
+              it was not copied. */}
           {/* CAPTAIN-P15 (dark, server-lit only): assign/unassign captains to the SELECTED ship.
               REVIEW FIX (S6 major 2): the target is the shell selection DIRECTLY — the same source
               the detail uses — never the polled map.mainShip, which lags a roster click and would
