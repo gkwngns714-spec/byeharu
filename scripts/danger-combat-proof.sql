@@ -2748,6 +2748,7 @@ declare
   v_danger int; v_scale double precision;
   v_eab_before double precision; v_eab numeric;
   v_cd_before double precision; v_hv_before double precision; v_ps_before double precision;
+  v_esb_before double precision; v_esp_before double precision;  -- (0338) the wave's own closing speed
   v_t0 int; v_t1 int; v_t2 int;
 begin
   -- ── a fresh, funded fixture player; one ship, one group, command designated — real RPCs. ───────
@@ -2782,6 +2783,26 @@ begin
   -- Captured, never assumed, and restored with the other two below.
   select coalesce(public.cfg_num('combat_player_speed_scale'), 0.2) into v_ps_before;
   perform public.set_game_config('combat_player_speed_scale',       '0'::jsonb);
+  -- ██ (0338) OWN THE CLOSING SPEED, because the arrival lands EXACTLY ON THE RANGE BOUNDARY ██
+  -- 0336 stands a wave at (measured extent + its own range + 1). The hull holds the anchor here, so
+  -- the extent is 0 and every pirate spawns at exactly range + 1. At the SEEDED speed that is one
+  -- close of exactly 1.0, which lands the whole wave at exactly range — the knife edge of its own
+  -- fire gate, where `dist <= range` is decided by floating-point dust from six DIFFERENT cos/sin
+  -- evaluations. This block was never testing that: it is about the attack INTERVAL and the per-hit
+  -- roll, and it needs the volley to land on one tick for either to be measurable.
+  -- MEASURED, NOT ARGUED: at the seeded speed the wave came to rest at d_hull = 3, 3, 4, 3, 4, 3 —
+  -- two pirates a hair outside the gate, four a hair inside — and only 2 of 6 fired. It was a
+  -- coincidence of symmetry that the seeded phase used to make all six land on the same side of the
+  -- boundary, and 0338's arrival bearing is not that phase. A block must not depend on which way the
+  -- dust falls, at any bearing.
+  -- SO THE MARGIN IS OWNED: a closing step of 2 puts the wave a full unit INSIDE its own range after
+  -- one close, while range + 1 still keeps the spawn tick silent by construction. The pinned
+  -- properties are untouched — the arrival is still silent, the volley is still one tick, and the
+  -- 3600s cooldown still proves the interval is real.
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into v_esb_before;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into v_esp_before;
+  perform public.set_game_config('enemy_synthetic_speed_base',           '2'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
 
   -- ── a REAL ambush through a drawn zone (the AUTOEXIT staging, verbatim in shape). ───────────────
   select l.x, l.y into o_x, o_y
@@ -2968,6 +2989,8 @@ begin
   perform public.set_game_config('enemy_synthetic_cooldown_seconds', to_jsonb(v_cd_before));
   perform public.set_game_config('combat_hit_variance_pct',          to_jsonb(v_hv_before));
   perform public.set_game_config('combat_player_speed_scale',        to_jsonb(v_ps_before));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(v_esb_before));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(v_esp_before));
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
 
   raise notice 'DZCOMBAT_PASS_RSFEEL ok: % pirates spawned at danger %, the wave arrived SILENT on its spawn tick (0336 stands it outside its own reach by construction) and CLOSED, and on the volley tick % every landed hit emitted its own hull_damage with a positive amount under EVENT logging (debug pinned dark), % distinct damage values across one volley of identical guns, the player''s own hit visible too; every fired weapon armed now()+3600s exactly, and tick % was pirate-silent (fight active, wave alive) while the zero-cooldown fallback kept firing (% player salvo(s)): attack interval real, every hit its own roll, every hit visible',
