@@ -1,8 +1,12 @@
 // Phase 8 verification — calculate_expedition_stats().  node scripts/verify-phase8.mjs
 //
-// The deterministic stat adapter: reads main_ship_instances (+ hull) + support_craft_types,
-// validates a support loadout, enforces support_capacity, returns normalized stats. It is
-// read/compute only — these tests prove it never mutates the ship or inventory. Regression
+// The deterministic stat adapter: reads main_ship_instances (+ hull, ship traits, command buffs,
+// fitted modules, assigned captains) and returns normalized stats. It is read/compute only — these
+// tests prove it never mutates the ship or inventory.
+// 0317 — the SUPPORT-CRAFT path this file was originally written against is DELETED (it was
+// unreachable: p_loadout is '[]' at every call site). Tests 3–15 exercised it and are retired with
+// it; what replaces them is the one property that now holds — a non-empty loadout is REFUSED. The
+// output no longer carries warnings / support_capacity_used / support_capacity_limit. Regression
 // (verify-phase7 → … → m2/m3/m4) proves the engine is untouched, unless PHASE8_SKIP_REGRESS=1.
 
 import { createClient } from '@supabase/supabase-js'
@@ -35,8 +39,10 @@ const bad = (n, d) => { console.log('  ✗', n, d ? `— ${d}` : ''); fail++ }
 class Abort extends Error {}
 const die = (m) => { throw new Abort(m) }
 
+// 0317 — support_capacity_used / support_capacity_limit left the adapter's output together with the
+// support-craft path that computed them (nothing in the database or the client ever read either).
 const NUM_FIELDS = ['speed', 'cargo_capacity', 'combat_power', 'survival', 'retreat_safety',
-  'scouting', 'mining_yield', 'repair', 'pirate_attention', 'support_capacity_used', 'support_capacity_limit']
+  'scouting', 'mining_yield', 'repair', 'pirate_attention']
 
 async function calc(player, shipId, loadout, activity = 'pirate_hunt') {
   return admin.rpc('calculate_expedition_stats', { p_player: player, p_main_ship_id: shipId, p_loadout: loadout, p_activity_type: activity })
@@ -58,69 +64,38 @@ async function main() {
   if (!ship) die(`no main ship created — ensure.data=${JSON.stringify(ens.data)} ensure.error=${JSON.stringify(ens.error)}`)
   ok(`set up player + main ship (support_capacity ${ship.support_capacity}, cargo ${ship.cargo_capacity})`)
 
-  // 1/2. starter ship, empty loadout → base stats, 0/10 capacity. Since migration 0170 the hull
+  // 1/2. starter ship, empty loadout → base stats. Since migration 0170 the hull
   // carries base combat stats (starter_frigate {attack 15, defense 10}) folded by the adapter, so
   // a bare ship's combat_power/survival equal the HULL seed (read live, never hardcoded), not 0.
   const hull = (await admin.from('main_ship_hull_types').select('base_stats_json').eq('hull_type_id', ship.hull_type_id).single()).data
   const hullAtk = Number(hull?.base_stats_json?.attack ?? 0)
   const hullDef = Number(hull?.base_stats_json?.defense ?? 0)
   const base = (await calc(userId, ship.main_ship_id, [])).data
-  base && base.support_capacity_used === 0 && base.support_capacity_limit === 10 &&
-    base.combat_power === hullAtk && base.survival === hullDef && Number(base.speed) === 1 && base.cargo_capacity === ship.cargo_capacity
-    ? ok(`1/2. empty loadout → base stats (speed 1, cargo ${base.cargo_capacity}, combat ${hullAtk}/survival ${hullDef} = the hull seed, used 0/10)`) : bad('1/2. base stats', JSON.stringify(base))
+  base && base.combat_power === hullAtk && base.survival === hullDef && Number(base.speed) === 1 && base.cargo_capacity === ship.cargo_capacity
+    ? ok(`1/2. empty loadout → base stats (speed 1, cargo ${base.cargo_capacity}, combat ${hullAtk}/survival ${hullDef} = the hull seed)`) : bad('1/2. base stats', JSON.stringify(base))
 
   // 16. no NaN, all numeric fields present & finite.
   NUM_FIELDS.every((f) => typeof base[f] === 'number' && Number.isFinite(base[f]))
     ? ok('16. every numeric field is a finite number (no NaN/null)') : bad('16. NaN check', JSON.stringify(base))
 
-  // 3. valid mixed loadout → expected capacity used (2×1 + 1×3 + 1×2 = 7).
-  const mixed = (await calc(userId, ship.main_ship_id, [
-    { support_craft_type_id: 'scout_escort', quantity: 2 },
-    { support_craft_type_id: 'missile_boat', quantity: 1 },
-    { support_craft_type_id: 'repair_drone', quantity: 1 },
-  ])).data
-  mixed && mixed.support_capacity_used === 7 ? ok('3. valid mixed loadout → support_capacity_used 7/10') : bad('3. capacity used', JSON.stringify(mixed))
-
-  // 4. over-capacity rejected (trade_barge ×3 = 15 > 10).
-  ;(await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'trade_barge', quantity: 3 }])).error
-    ? ok('4. over-capacity loadout rejected (15 > 10)') : bad('4. over-capacity', 'accepted')
-
-  // 5/6/7/8. unknown type, zero, negative, non-integer all rejected.
-  ;(await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'does_not_exist', quantity: 1 }])).error ? ok('5. unknown support craft type rejected') : bad('5. unknown', 'accepted')
-  ;(await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'scout_escort', quantity: 0 }])).error ? ok('6. zero quantity rejected') : bad('6. zero', 'accepted')
-  ;(await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'scout_escort', quantity: -2 }])).error ? ok('7. negative quantity rejected') : bad('7. negative', 'accepted')
-  ;(await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'scout_escort', quantity: 1.5 }])).error ? ok('8. non-integer quantity rejected') : bad('8. non-integer', 'accepted')
-
-  // 9. duplicate entries combined deterministically (scout_escort 1 + 1 → used 2).
-  const dup = (await calc(userId, ship.main_ship_id, [
-    { support_craft_type_id: 'scout_escort', quantity: 1 },
-    { support_craft_type_id: 'scout_escort', quantity: 1 },
-  ])).data
-  dup && dup.support_capacity_used === 2 ? ok('9. duplicate entries combined (scout_escort 1+1 → used 2)') : bad('9. dedup', JSON.stringify(dup))
-
-  // 10. missile_boat: combat_power up AND (pirate_attention up OR speed penalty).
-  const mb = (await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'missile_boat', quantity: 1 }])).data
-  mb.combat_power > base.combat_power && (mb.pirate_attention > base.pirate_attention || Number(mb.speed) < Number(base.speed))
-    ? ok(`10. missile_boat → combat_power ${mb.combat_power}, pirate_attention ${mb.pirate_attention}, speed ${mb.speed}`) : bad('10. missile_boat', JSON.stringify(mb))
-
-  // 11. cargo_drone: cargo_capacity up AND pirate_attention up.
-  const cd = (await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'cargo_drone', quantity: 1 }], 'trade_run')).data
-  cd.cargo_capacity > base.cargo_capacity && cd.pirate_attention > base.pirate_attention
-    ? ok(`11. cargo_drone → cargo_capacity ${cd.cargo_capacity}, pirate_attention ${cd.pirate_attention}`) : bad('11. cargo_drone', JSON.stringify(cd))
-
-  // 12/13/14/15. survey/mining/decoy/repair effects.
-  const sv = (await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'survey_drone', quantity: 1 }], 'exploration')).data
-  sv.scouting > base.scouting ? ok(`12. survey_drone → scouting ${sv.scouting}`) : bad('12. survey', JSON.stringify(sv))
-  const md = (await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'mining_drone', quantity: 1 }], 'mining')).data
-  md.mining_yield > base.mining_yield ? ok(`13. mining_drone → mining_yield ${md.mining_yield}`) : bad('13. mining', JSON.stringify(md))
-  const dd = (await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'decoy_drone', quantity: 1 }])).data
-  dd.retreat_safety > base.retreat_safety ? ok(`14. decoy_drone → retreat_safety ${dd.retreat_safety}`) : bad('14. decoy', JSON.stringify(dd))
-  const rd = (await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'repair_drone', quantity: 1 }])).data
-  rd.repair > base.repair && rd.survival > base.survival ? ok(`15. repair_drone → repair ${rd.repair}, survival ${rd.survival}`) : bad('15. repair', JSON.stringify(rd))
+  // 0317 REPOINT — TESTS 3–15 ARE RETIRED WITH THE PATH THEY TESTED. They exercised the
+  // support-craft loadout: capacity accounting, per-craft stat effects, the over-capacity cap and the
+  // quantity validations. That whole path was unreachable in production — p_loadout is a literal
+  // '[]' at every call site in the database and the one client caller hard-codes [] — and 0317
+  // deleted it. The parameter survives (dropping it would re-create five live functions and change a
+  // client-granted signature) and is now FAIL-CLOSED, so the property that replaces fifteen tests is
+  // a single one: a non-empty loadout is REFUSED, never silently ignored.
+  const refused = await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'scout_escort', quantity: 1 }])
+  refused.error ? ok('3. a non-empty p_loadout is REFUSED (support craft retired, 0317 — fail-closed, never silently ignored)')
+                : bad('3. retired loadout', `accepted: ${JSON.stringify(refused.data)}`)
+  const stillGone = (await calc(userId, ship.main_ship_id, [])).data
+  stillGone && !('warnings' in stillGone) && !('support_capacity_used' in stillGone) && !('support_capacity_limit' in stillGone)
+    ? ok('4. the retired output fields (warnings / support_capacity_used / support_capacity_limit) are gone')
+    : bad('4. retired fields', JSON.stringify(stillGone))
 
   // 17. deterministic — same input twice → identical output.
-  const a = (await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'missile_boat', quantity: 2 }])).data
-  const b = (await calc(userId, ship.main_ship_id, [{ support_craft_type_id: 'missile_boat', quantity: 2 }])).data
+  const a = (await calc(userId, ship.main_ship_id, [])).data
+  const b = (await calc(userId, ship.main_ship_id, [])).data
   JSON.stringify(a) === JSON.stringify(b) ? ok('17. deterministic output for identical input') : bad('17. determinism', `${JSON.stringify(a)} vs ${JSON.stringify(b)}`)
 
   // 18/19. read/compute only — ship + inventory unchanged after many calls.

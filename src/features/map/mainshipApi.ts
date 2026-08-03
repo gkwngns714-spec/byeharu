@@ -236,9 +236,12 @@ export async function fetchActiveMainShipPresence(fleetId: string): Promise<Main
 
 // SHIP-POWER §2.5 — thin read wrapper over the LIVE per-ship stats preview (get_my_expedition_preview,
 // 0049 → resolver-swapped 0159). FIRST client caller: until SHIP-POWER no shipped UI read this RPC at
-// all (only the group twin, teamApi). Sends an EMPTY loadout (support craft is deprecated — see
-// MAINSHIP_TRANSITION.md), the NEUTRAL activity 'none' (accepted by the 0122 adapter; no activity-tag
-// warnings folded in) and the EXPLICIT selected/sole main-ship id (p_main_ship_id; null → server
+// all (only the group twin, teamApi). Sends an EMPTY loadout — support craft is RETIRED, and since
+// 0317 the adapter REFUSES a non-empty one rather than silently ignoring it, so this argument must
+// stay [] (0317 also removed the adapter's 'warnings' / 'support_capacity_*' output fields, which
+// nothing here ever read) — the NEUTRAL activity 'none' (accepted by the adapter; it validates the
+// activity and echoes it, and influences no number) and the EXPLICIT selected/sole main-ship id
+// (p_main_ship_id; null → server
 // sole-ship shim). Returns the RAW jsonb envelope for the PURE parser (shipDossierView's
 // parseShipStatsPreview) to interpret; a transport error collapses to null (→ parsed 'hidden') —
 // normalize-don't-throw, the file's dark-RPC style.

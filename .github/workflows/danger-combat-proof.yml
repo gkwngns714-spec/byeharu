@@ -64,6 +64,9 @@ on:
       # block, which 0316 turned into a pinned tick-count property — a five-times-tighter branch
       # that does not fire this gate ships the whole geometry on text self-asserts alone.
       - 'slice-combat-five-times**'
+      # 0317 rewrites BOTH calculate_expedition_stats and combat_create_group_encounter and repoints
+      # this proof's weapon-power assertions, so it must run on the branch that does it.
+      - 'slice-one-authority**'
 
 permissions:
   contents: read

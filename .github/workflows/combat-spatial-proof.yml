@@ -35,6 +35,9 @@ on:
       # 0316 divides the catalog gun again (25 -> 5) and this proof's engineered ring/pirate
       # geometry was re-sized against it in the same slice — tighter-combat branches must run it.
       - 'slice-combat-five-times**'
+      # 0317 rewrites BOTH calculate_expedition_stats and combat_create_group_encounter and repoints
+      # this proof's weapon-power assertions, so it must run on the branch that does it.
+      - 'slice-one-authority**'
 
 permissions:
   contents: read
