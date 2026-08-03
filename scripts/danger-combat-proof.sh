@@ -36,11 +36,15 @@ SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 # UNION of this one string, and every one of them was a merge where two branches each appended a
 # single marker. Taking either side whole drops the other's block from the local run while the
 # suite still prints OVERALL_PASS. Union, always.
+# 0334 appends DOCKWRECK — TWENTY-FIVE markers now, from nine slices. It is the only runtime
+# check that a wreck standing in a DOCKED fleet resolves that dock and repairs without a tow, and
+# the only one that pins that a fleet's living ships and its wrecks cannot disagree about where
+# they are. Union, always — the sixth hand-resolved merge of this one string.
 # 0332 appends WRECKHOME — TWENTY-FOUR markers now, from eight slices. Same law, fifth time: this
 # block is the ONLY runtime check that a fight the fleet SURVIVES still reconciles its casualties,
 # and dropping the marker in a merge would leave that entirely unverified while the suite prints
 # ALL PASSED. Union, always.
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME"
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -483,6 +487,39 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks the WRECKHOME erosion premise (a wipe routes through the DEFEAT arm and the settle arm under test would never run)"
   grep -q "public.get_my_disabled_ships("                         "$SQL" \
     || fail "harness does not read the client's own wreck list (0297 §4) — the seam where a reconciled wreck becomes a button the player can press"
+  # 0334 — A WRECK IS WHERE ITS FLEET IS, in assert-form. The first is the pre-0334 RED (a ship that
+  # owns no per-ship fleet resolves none, and being grouped can hold no berth, so the two-arm body
+  # had NO position for it and demanded a tow to a port its fleet was already at). The rest stop the
+  # block passing for the wrong reason: the group must have no unified fleet (a group that has one
+  # was never broken), the fleetmate's fleet must not be group-tagged (or the member-ownership
+  # clause — the load-bearing half of the fix — goes untested), no tow may have occurred, and the
+  # tow must still be required and still work for a wreck that is genuinely nowhere.
+  # NOTE: matched on an apostrophe-free phrase on purpose — the assert text lives inside a SQL
+  # string literal, so every apostrophe in it is DOUBLED and a natural-English pattern will not hit.
+  grep -q "as a fleet we have arrived at a dock already"          "$SQL" \
+    || fail "harness lacks the wreck-is-at-its-fleets-dock assert (the pre-0334 red: a docked fleet's wreck had no position at all)"
+  grep -q "a group with a unified fleet was NEVER broken"         "$SQL" \
+    || fail "harness lacks the DOCKWRECK staging premise (a group that owns a unified fleet resolves through branch 1 and proves nothing about the defect)"
+  grep -q "then a tagged-only implementation would pass"          "$SQL" \
+    || fail "harness lacks the member-ownership pin (the fleetmate's commission fleet must carry no group_id, or the clause the fix turns on is never exercised)"
+  grep -q "the pre-0334 dead end is not staged"                   "$SQL" \
+    || fail "harness lacks the DOCKWRECK red premise (the wreck must resolve NO fleet, or the old body could have answered)"
+  grep -q "the old berth arm would already have answered"         "$SQL" \
+    || fail "harness lacks the no-berth premise (a berthed wreck was never the broken case)"
+  grep -q "disagreeing about where they are"                      "$SQL" \
+    || fail "harness lacks the living-and-wrecked-agree assert (the invariant whose absence produced this defect)"
+  grep -qF 'the client shows "Tow to the nearest port" and disables Repair' "$SQL" \
+    || fail "harness lacks the at_port-is-what-the-client-reads assert (a server fix the Ships tab cannot see is half a slice)"
+  grep -q "the signature of a tow the owner said should not be needed" "$SQL" \
+    || fail "harness lacks the no-tow-occurred assert (the ship must keep its place in the fleet — an un-grouped berthed ship means it was hauled)"
+  grep -q "must answer only from a dock the fleet actually holds" "$SQL" \
+    || fail "harness lacks the never-invent-a-dock assert (a wreck whose group holds no docked fleet must still resolve nothing)"
+  grep -q "must not have broken the escape hatch"                 "$SQL" \
+    || fail "harness lacks the tow-still-works assert (0297's escape hatch must survive for the case it was built for)"
+  grep -q "the position gate must still be the thing that answers" "$SQL" \
+    || fail "harness lacks the nowhere-wreck reject-code assert (repair must still refuse with ship_not_at_port, not some other reason)"
+  grep -q "public.fleet_docked_location("                         "$SQL" \
+    || fail "harness does not compose the 0306 docked authority when asserting the nowhere premise — it would be re-stating the docked test instead of using the one the fix uses"
 
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
