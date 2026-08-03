@@ -144,8 +144,9 @@ export function FleetCommandPanel({
     switch (s.kind) {
       case 'guidance':
         // MAP-INTEGRATION M2 — the groupless-player guidance (model-decided: ships + a live target +
-        // zero fleets). Read-only pointer to Command (charter §2a: composition is Command's — this
-        // panel gains NO create/assign controls); the link is the only affordance.
+        // zero fleets). Read-only pointer to the Fleet tab (charter §2a: composition is the Fleet
+        // tab's since FLEET-TAB — this panel gains NO create/assign controls); the link is the only
+        // affordance.
         return (
           <div key="guidance" data-testid="fleet-command-guidance">
             <SectionLabel>No fleet yet</SectionLabel>
@@ -153,11 +154,11 @@ export function FleetCommandPanel({
               Ships travel as fleets — yours wait at port until they join one.
             </p>
             <p className="mt-1 text-sm text-ink-muted">
-              Create a fleet in <span className="text-ink">Command</span> and add your ships, then pick a
-              destination here to send it.
+              Create a fleet on the <span className="text-ink">Fleet</span> tab and add your ships, then
+              pick a destination here to send it.
             </p>
-            <Link to="/command" className={`${buttonClasses('secondary', 'sm')} mt-2 w-full`}>
-              Create a fleet in Command
+            <Link to="/fleet" className={`${buttonClasses('secondary', 'sm')} mt-2 w-full`}>
+              Create a fleet
             </Link>
           </div>
         )

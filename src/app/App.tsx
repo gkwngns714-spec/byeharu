@@ -8,11 +8,13 @@ import { MapScreen } from '../features/map/MapScreen'
 import { ShipScreen } from '../features/ship/ShipScreen'
 import { PortScreen } from '../features/port/PortScreen'
 import { CommandScreen } from '../features/command/CommandScreen'
+import { FleetScreen } from '../features/command/FleetScreen'
 import { WorldEditor } from '../features/worldeditor/WorldEditor'
 
-// UI-REBUILD (2b) — four destinations under the ONE persistent shell (AppShell). `/` lands on the
+// UI-REBUILD (2b) — the destinations under the ONE persistent shell (AppShell). `/` lands on the
 // Map (the primary play surface); the legacy `/galaxy` and `/reports` routes redirect so old
-// bookmarks resolve into the new navigation.
+// bookmarks resolve into the new navigation. FLEET-TAB added /fleet (fleet composition +
+// acquisition, moved off Command — see FleetScreen).
 
 export function App() {
   const init = useAuthStore((s) => s.init)
@@ -36,6 +38,7 @@ export function App() {
         >
           <Route path="/map" element={<MapScreen />} />
           <Route path="/ship" element={<ShipScreen />} />
+          <Route path="/fleet" element={<FleetScreen />} />
           <Route path="/port" element={<PortScreen />} />
           <Route path="/command" element={<CommandScreen />} />
         </Route>

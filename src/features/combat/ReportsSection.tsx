@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Badge, Button, Card, CardHeader, Notice, Skeleton, StatRow } from '../../components/ui'
+import { Badge, Collapsible, CollapsibleCard, Notice, Skeleton, StatRow } from '../../components/ui'
 import type { UnitType } from '../../lib/catalog'
 import type { MapLocation } from '../map/mapTypes'
 import { formatDateTime, formatDuration } from '../../lib/time'
@@ -8,12 +8,29 @@ import { RoundLog } from './RoundLog'
 import type { CombatReport, CombatTick } from './combatTypes'
 import { combatUnitLabel } from './combatLabels'
 import { ItemChip } from '../../components/items'
+import { newestReportId, reportRowOpen } from './reportFold'
 
 // UI-REBUILD (2b) — the ONE combat-reports surface, mounted in the Command destination. Merges the
 // old /reports page (CombatReportPage) and the inline dashboard list (CombatReportsView): the M6
 // report list + on-expand real combat_ticks RoundLog, presented as a section. Reports/locations/
 // unit types come from the shell's already-polled state (no own polling); only the expanded
 // encounter's ticks are fetched on demand, exactly as the old page did.
+//
+// FOLDABLE (owner order 2026-08-03: "combat report, mission report, … separate them and make it
+// foldable") — three fold layers, ALL through the one design-system Collapsible (never a
+// hand-rolled show/hide):
+//   · the SECTION — CollapsibleCard, persisted under storageKey 'command.reports' (default open:
+//     a fresh report should be visible without a tap; the player's choice is remembered).
+//   · each REPORT row — controlled Collapsible; the newest report defaults open, older ones
+//     collapsed (reportFold.ts carries the policy + why row state is session-local, not stored).
+//     The old layout rendered EVERY report fully expanded, which is the run-together wall the
+//     owner called out.
+//   · the ROUND LOG — controlled Collapsible whose opening triggers the on-demand tick fetch
+//     (the one fold that is also a fetch trigger, so its state stays with the fetch bookkeeping).
+//
+// HONESTY NOTE — there is no separate "mission report" surface or table in the game: every
+// expedition/hunt outcome lands in combat_reports and renders here. This card IS the whole report
+// archive; a combat/mission SPLIT would be invented structure over one dataset.
 
 export function ReportsSection({
   reports,
@@ -25,9 +42,13 @@ export function ReportsSection({
   unitTypes: UnitType[]
 }) {
   const [error, setError] = useState<string | null>(null)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(null) // round-log open (its fetch trigger)
   const [ticks, setTicks] = useState<CombatTick[]>([])
   const [ticksLoading, setTicksLoading] = useState(false)
+  // Per-row fold overrides (the player's explicit taps this session); the default is the
+  // reportFold policy — newest open, older collapsed.
+  const [rowOverrides, setRowOverrides] = useState<Record<string, boolean>>({})
+  const newestId = newestReportId(reports)
 
   async function toggle(r: CombatReport) {
     if (openId === r.encounter_id) {
@@ -75,32 +96,41 @@ export function ReportsSection({
     (id && locations.find((l) => l.id === id)?.name) || 'unknown'
 
   return (
-    <section data-testid="combat-reports-section">
-      <Card>
-        <CardHeader title="Combat reports" subtitle="Battle history" className="mb-2" />
-        {error && (
-          <Notice tone="danger" className="mb-3">{error}</Notice>
-        )}
-        {reports.length === 0 && !error && (
-          <p className="text-sm text-ink-muted">No battles fought yet.</p>
-        )}
+    <CollapsibleCard
+      title="Combat reports"
+      subtitle="Battle history"
+      storageKey="command.reports"
+      data-testid="combat-reports-section"
+    >
+      {error && (
+        <Notice tone="danger" className="mb-3">{error}</Notice>
+      )}
+      {reports.length === 0 && !error && (
+        <p className="text-sm text-ink-muted">No battles fought yet.</p>
+      )}
 
-        <ul className="space-y-3">
-          {reports.map((r) => {
-            const won = r.result === 'escaped' || r.result === 'completed'
-            const open = openId === r.encounter_id
-            return (
-              <li key={r.id} className="rounded-lg border border-edge bg-surface-2/50 p-3">
-                <button
-                  onClick={() => toggle(r)}
-                  className="flex w-full items-center justify-between gap-3 text-left"
-                >
-                  <span className="text-sm text-ink">{locName(r.location_id)}</span>
-                  <Badge tone={won ? 'success' : 'danger'}>
-                    {won ? 'Battle complete' : 'Fleet destroyed'}
-                  </Badge>
-                </button>
-
+      <ul className="space-y-3">
+        {reports.map((r) => {
+          const won = r.result === 'escaped' || r.result === 'completed'
+          const rowOpen = reportRowOpen(rowOverrides, r.encounter_id, newestId)
+          const logOpen = openId === r.encounter_id
+          return (
+            <li key={r.id} className="rounded-lg border border-edge bg-surface-2/50 p-3">
+              <Collapsible
+                data-testid={`report-row-${r.encounter_id}`}
+                open={rowOpen}
+                onToggle={(next) =>
+                  setRowOverrides((o) => ({ ...o, [r.encounter_id]: next }))
+                }
+                header={
+                  <span className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                    <span className="truncate text-sm text-ink">{locName(r.location_id)}</span>
+                    <Badge tone={won ? 'success' : 'danger'}>
+                      {won ? 'Battle complete' : 'Fleet destroyed'}
+                    </Badge>
+                  </span>
+                }
+              >
                 <div className="mt-3 border-t border-edge pt-3 text-xs text-ink-muted">
                   <dl className="space-y-1">
                     <StatRow label="Reported" value={formatDateTime(r.created_at)} />
@@ -117,11 +147,15 @@ export function ReportsSection({
                   </dl>
                   {!won && <div className="mt-1 text-danger">Rewards forfeited — lost with the fleet.</div>}
 
-                  <Button variant="ghost" size="sm" className="mt-2" onClick={() => toggle(r)}>
-                    {open ? 'Hide round log' : 'Show round log'}
-                  </Button>
-
-                  {open && (
+                  {/* The round log — the one fold that is also a FETCH trigger (ticks load on
+                      open, exactly as before); state stays with the fetch bookkeeping above. */}
+                  <Collapsible
+                    data-testid={`report-roundlog-${r.encounter_id}`}
+                    open={logOpen}
+                    onToggle={() => void toggle(r)}
+                    headerClassName="mt-2"
+                    header={<span className="text-xs font-medium text-ink">Round log</span>}
+                  >
                     <div className="mt-2 rounded-lg border border-edge bg-surface-2 p-3">
                       {ticksLoading ? (
                         // R3: design-system placeholder instead of bare loading text (same state).
@@ -134,13 +168,13 @@ export function ReportsSection({
                         <RoundLog ticks={ticks} unitTypes={unitTypes} limit={100} />
                       )}
                     </div>
-                  )}
+                  </Collapsible>
                 </div>
-              </li>
-            )
-          })}
-        </ul>
-      </Card>
-    </section>
+              </Collapsible>
+            </li>
+          )
+        })}
+      </ul>
+    </CollapsibleCard>
   )
 }

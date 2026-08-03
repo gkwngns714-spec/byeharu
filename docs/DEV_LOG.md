@@ -5,6 +5,58 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-03 — Foldable reports + the Fleet tab (`slice-reports-fold-fleet-tab`, client-only)
+
+**The owner's ask:** *"combat report, mission report, and so on, i want you to separate them and
+make it foldable, so is fleet info, i want fleet tab separately."*
+
+**Honesty note recorded during the audit:** there is no separate "mission report" surface or table —
+every expedition/hunt outcome lands in `combat_reports` and renders in the ONE ReportsSection. So
+"separate + foldable" was delivered as per-report folds inside the one honest archive, not an
+invented combat/mission split over one dataset.
+
+### Foldable (one primitive, three layers)
+
+- **`Collapsible` / `CollapsibleCard`** (`src/components/ui/Collapsible.tsx`) — THE disclosure
+  implementation: real `<button>` header (keyboard-native), `aria-expanded` + `aria-controls`,
+  rotating chevron; uncontrolled (+ optional localStorage persistence via
+  `src/components/ui/collapsibleState.ts`, key `byeharu.fold.v1:<section-id>`) or controlled.
+- **ReportsSection** now folds at three layers, all through the primitive: the section card
+  (persisted, `command.reports`, default open), each report row (NEWEST open by default, older
+  collapsed — policy in `src/features/combat/reportFold.ts`; session-local by design, per-row
+  uuid keys would grow storage forever), and the round log (the fetch-on-open fold). The old
+  layout rendered every report fully expanded — the run-together wall the owner called out.
+
+### The Fleet tab
+
+- Bottom nav is now **Map · Ships · Fleet · Port · Command** (`src/app/navTabs.ts` — the pure,
+  spec-pinned tab table; `/fleet` gated on `TEAM_COMMAND_ENABLED`, so a dark gate removes the tab
+  rather than leading to an empty screen). Five fits a phone: 64px cells at the 320px floor,
+  ≥44px touch targets; five is the ceiling — a sixth destination must merge, not extend.
+- **`FleetScreen`** (`src/features/command/FleetScreen.tsx`, route `/fleet`): `TeamRosterPanel`
+  (composition, auto-retreat, dossier, previews) + `CommissionShipPanel` (acquisition rides with
+  composition — the S6 principle) — both MOVED off Command, one home per panel, gates verbatim.
+- **Command** is now purely "what is happening / what happened": onboarding, live battles,
+  foldable reports, standings, account.
+- Pointer copy repointed with the move: `FleetCommandPanel` guidance link → `/fleet`,
+  `PirateInterceptPanel` hint, `repairEconomy` berthed line, `firstOrders` second-ship hint,
+  `ShipScreen` roster subtitle. `repairEconomy.spec` repointed with the copy (follow the game,
+  never weaken).
+
+### Proofs
+
+`tests/collapsible.spec.ts` (storage contract) · `tests/reportFold.spec.ts` (newest-open policy) ·
+`tests/navTabs.spec.ts` (nav contract) · `tests/collapsibleUi.uispec.ts` + `tests/harness/fold.html`
+(the REAL ReportsSection rendered: default folds, mouse + keyboard toggling, reload persistence,
+aria wiring). Local: `tsc -b` clean, vite build green, **1636/1636** pure specs (baseline 1618),
+**19/19** rendered (baseline 13).
+
+**Not changed (found, deliberately left):** `TeamDossier`'s Breakdown and `TeamPreviewSection`'s
+show/hide are fetch-on-open Button toggles predating the primitive — candidates for a later
+compose-over; `GalaxyMap`'s `<details>` map key is a native disclosure and fine as is.
+
+---
+
 ## 2026-08-02 — An eight-domain audit, and the three things it found that were costing players (`#339` `#340` `#341` `#342`, **ALL DEPLOYED & verified on target**)
 
 > **DEPLOY STATE — read the head trap first.** `main` **`5105c6c`**. Migrations `0307`, `0308` and
