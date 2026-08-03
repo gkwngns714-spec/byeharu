@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useShellState } from '../../app/shellState'
 import { DockedPortCard } from './DockedPortCard'
 import { HaulBoardPanel } from './HaulBoardPanel'
@@ -69,8 +69,16 @@ export function PortScreen() {
   const chosenPos = map.fleetPositions.find((p) => p.main_ship_id === chosenShipId)
   const chosenBerthPort = chosenPos?.place === 'berthed' ? portOfShip(ports, chosenShipId) : null
   const chosenBerthShipName = chosenBerthPort?.ships.find((s) => s.mainShipId === chosenShipId)?.name ?? 'This ship'
-  // STATION-STORAGE — the docked port's own hangar (dark by default; server returns empty while the flag is off).
-  const store = useDockStore(lifecycleKey)
+  // STATION-STORAGE — the docked port's own hangar.
+  // ITEMS-HAVE-A-PLACE (0332): the read now carries the CHOSEN ship, the same way the dock-services
+  // read above always has. Without it the server's sole-ship shim resolved to NULL for anyone with
+  // two or more ships and this card never rendered at all. `storageRevision` re-reads THIS port's
+  // storage after a move; it is deliberately NOT folded into `lifecycleKey`, so moving an item does
+  // not make every other panel on the screen refetch.
+  const [storageRevision, setStorageRevision] = useState(0)
+  const storageKey = `${lifecycleKey}|s${storageRevision}`
+  const store = useDockStore(storageKey, { mainShipId: chosenShipId })
+  const onStorageChanged = useCallback(() => setStorageRevision((r) => r + 1), [])
   // TRADE-UI-1 — selected-ship model for the DARK MarketPanel, now the ONE shell instance (A0 lifted it; Ship
   // reads the SAME selection). Compile-gated false + server-rejected today.
 
@@ -201,9 +209,16 @@ export function PortScreen() {
             />
           </div>
           <div className={screenRailClass('aside')}>
-            {/* STATION-STORAGE — this port's own hangar (per-port, per-player storage). Dark by default:
-                get_my_docked_store returns empty while station_storage_enabled is off → renders null. */}
-            <StationHangar store={store} />
+            {/* STATION-STORAGE + ITEMS-HAVE-A-PLACE (0332) — this port's own storage AND the one
+                surface that moves items between it and the ship's hold. Both halves live in one
+                card because the verb is a move BETWEEN them. Renders null unless the ship is
+                docked at a storable port (get_my_docked_store returns empty otherwise). */}
+            <StationHangar
+              store={store}
+              mainShipId={chosenShipId}
+              refreshKey={storageKey}
+              onChanged={onStorageChanged}
+            />
             {/* LOCATION-INVEST-P18 (dark, server-lit only): docked-port investment. Renders null
                 unless the server lit get_location_development, so production is byte-unchanged. */}
             <InvestmentPanel

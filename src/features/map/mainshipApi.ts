@@ -265,11 +265,16 @@ export async function fetchMyCurrentDockServices(mainShipId?: string | null): Pr
   return parseDockServices(data)
 }
 
-// STATION-STORAGE — the per-port hangar for the docked port (get_my_docked_store(); no args, server derives the
-// ship + validated dock). Any error collapses to the empty store default (panel hidden), like the dock-services
-// read above. Dark by default (server gates on station_storage_enabled).
-export async function fetchMyDockedStore(): Promise<DockedStore> {
-  const { data, error } = await supabase.rpc('get_my_docked_store')
+// STATION-STORAGE — the per-port hangar for the docked port. Any error collapses to the empty store default
+// (panel hidden), like the dock-services read above.
+//
+// ITEMS-HAVE-A-PLACE (0332): now passes the EXPLICIT selected ship, exactly as the dock-services read above
+// already did. Calling with NO argument fell back to the server's sole-ship shim, and
+// mainship_resolve_owned_ship (0159) returns NULL at N>1 — so for every player owning two or more ships this
+// read answered 'no_main_ship' and the Storage card silently rendered nothing at all. The owner has five
+// ships. Wiring a transfer to a card that never appears would have been half a slice.
+export async function fetchMyDockedStore(mainShipId?: string | null): Promise<DockedStore> {
+  const { data, error } = await supabase.rpc('get_my_docked_store', { p_main_ship_id: mainShipId ?? null })
   if (error) return DOCK_STORE_EMPTY
   return parseDockedStore(data)
 }
