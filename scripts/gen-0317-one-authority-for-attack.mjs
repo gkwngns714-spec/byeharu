@@ -389,16 +389,41 @@ const B8_NEW = B8_OLD + '\n' +
               from jsonb_array_elements(v_weapons_json) with ordinality as z(w, ord);
           end if;`;
 
+// ══════════════════════════════════════════════════════════════════════════════════════════════════
+// HUNK ORDER IS A CORRECTNESS CONSTRAINT, NOT A PRESENTATION CHOICE.
+//
+// The migration applies these one at a time, each with its own CREATE OR REPLACE, and Postgres runs
+// the PL/pgSQL validator on EVERY one of them (check_function_bodies is on by default). So EVERY
+// INTERMEDIATE STATE OF THE FUNCTION MUST COMPILE — not just the final one. The first version of
+// this generator ordered the fold's hunks by their position in the source file, which put the
+// DECLARE cleanup (F1) before the deletion of the code that USES those variables (F5/F8/F9).
+// Applying F1 first left a body that still contained `for r in …` with no `r` declared, and the
+// whole migration aborted at apply time with 42601 "loop variable of loop over rows must be a record
+// variable or list of scalar variables". No static check in this repo could have caught it; the
+// disposable apply-proof did, on the first CI round, which is precisely what that gate exists for.
+//
+// THE RULE for anyone adding a hunk here: a hunk that REMOVES a declaration must run AFTER every
+// hunk that removes a USE of it, and a hunk that ADDS a declaration must run BEFORE every hunk that
+// uses it. The order below encodes both, and the assertion under it enforces the first half so a
+// future reorder fails in this script instead of on a live database.
+//   1  F5  delete the support-craft loop + cap   (the only user of `r`, and a user of v_used)
+//   2  F8  drop support_capacity_* from the return  (the last user of v_used)
+//   3  F9  drop warnings from the return            (the last user of v_warnings)
+//   4  F1  …only NOW may the declarations go
+//   5-9    the independent fold hunks (hull vocabulary, trait/buff keys, the two attention CASEs)
+//   10 B1  ADD the builder's three declarations FIRST …
+//   11-17  … then every hunk that uses them (max_hp projection → v_hp_max → roster → insert →
+//          v_hull_cur → the fallback weight → v_weight_total).
 const HUNKS = [
-  [1, 'calculate_expedition_stats', F1_OLD, F1_NEW],
-  [2, 'calculate_expedition_stats', F2_OLD, F2_NEW],
-  [3, 'calculate_expedition_stats', F3_OLD, F3_NEW],
-  [4, 'calculate_expedition_stats', F4_OLD, F4_NEW],
-  [5, 'calculate_expedition_stats', F5_OLD, F5_NEW],
-  [6, 'calculate_expedition_stats', F6_OLD, F6_NEW],
-  [7, 'calculate_expedition_stats', F7_OLD, F7_NEW],
-  [8, 'calculate_expedition_stats', F8_OLD, F8_NEW],
-  [9, 'calculate_expedition_stats', F9_OLD, F9_NEW],
+  [1, 'calculate_expedition_stats', F5_OLD, F5_NEW],
+  [2, 'calculate_expedition_stats', F8_OLD, F8_NEW],
+  [3, 'calculate_expedition_stats', F9_OLD, F9_NEW],
+  [4, 'calculate_expedition_stats', F1_OLD, F1_NEW],
+  [5, 'calculate_expedition_stats', F2_OLD, F2_NEW],
+  [6, 'calculate_expedition_stats', F3_OLD, F3_NEW],
+  [7, 'calculate_expedition_stats', F4_OLD, F4_NEW],
+  [8, 'calculate_expedition_stats', F6_OLD, F6_NEW],
+  [9, 'calculate_expedition_stats', F7_OLD, F7_NEW],
   [10, 'combat_create_group_encounter', B1_OLD, B1_NEW],
   [11, 'combat_create_group_encounter', B2_OLD, B2_NEW],
   [12, 'combat_create_group_encounter', B3_OLD, B3_NEW],
@@ -408,6 +433,60 @@ const HUNKS = [
   [16, 'combat_create_group_encounter', B7_OLD, B7_NEW],
   [17, 'combat_create_group_encounter', B8_OLD, B8_NEW],
 ];
+
+// THE INTERMEDIATE-STATE GUARD, executed rather than trusted. For every local this migration removes
+// from the fold, find the hunk that drops its DECLARATION and every hunk that drops a USE of it, and
+// require the declaration to go last. A reorder that reopens the 42601 above now fails here — in
+// this script, in the selftest, on the author's machine — instead of at apply time on a live game.
+// PROSE IS NOT CODE: both old and new text are stripped of `--` comments before the reference test,
+// otherwise a single-letter local like `r` matches half the English in every explanatory comment.
+const code = (t) => t.replace(/--[^\n]*/g, '');
+for (const name of ['r', 'v_used', 'v_warnings']) {
+  const declRe = new RegExp(`^\\s{2}${name}\\s`, 'm');
+  const refRe = new RegExp(`\\b${name}\\b`);
+  const decl = HUNKS.filter(([, fn, o, n]) => fn === 'calculate_expedition_stats'
+    && declRe.test(o) && !declRe.test(n)).map(([i]) => i);
+  if (decl.length !== 1) {
+    throw new Error(`expected exactly ONE hunk to drop the declaration of ${name}, found ${decl.length} — the guard cannot order what it cannot identify`);
+  }
+  const uses = HUNKS.filter(([i, fn, o, n]) => fn === 'calculate_expedition_stats' && i !== decl[0]
+    && refRe.test(code(o)) && !refRe.test(code(n))).map(([i]) => i);
+  if (uses.length === 0) {
+    throw new Error(`no hunk removes a USE of ${name} — either it is still referenced after this migration (and its declaration must not be dropped), or this detection is wrong`);
+  }
+  for (const u of uses) {
+    if (u > decl[0]) {
+      throw new Error(
+        `hunk ${u} removes a use of ${name}, but hunk ${decl[0]} removes its DECLARATION first — the ` +
+        'intermediate CREATE OR REPLACE would fail the PL/pgSQL validator at apply time (42601). ' +
+        'Reorder so the declaration is dropped last.');
+    }
+  }
+}
+// …and the same law in the other direction, for the three locals this migration ADDS to the builder:
+// the hunk that declares them must run BEFORE every hunk that references them, or the intermediate
+// body uses an undeclared variable and fails the validator exactly as above.
+for (const name of ['v_weight_total', 'v_hp_max', 'v_hull_cur']) {
+  const declRe = new RegExp(`^\\s{2}${name}\\s`, 'm');
+  const refRe = new RegExp(`\\b${name}\\b`);
+  const decl = HUNKS.filter(([, fn, o, n]) => fn === 'combat_create_group_encounter'
+    && !declRe.test(o) && declRe.test(n)).map(([i]) => i);
+  if (decl.length !== 1) {
+    throw new Error(`expected exactly ONE hunk to declare ${name}, found ${decl.length}`);
+  }
+  const uses = HUNKS.filter(([i, fn, o, n]) => fn === 'combat_create_group_encounter' && i !== decl[0]
+    && refRe.test(code(n))).map(([i]) => i);
+  if (uses.length === 0) {
+    throw new Error(`nothing uses ${name} — an unread local is dead weight in a live function`);
+  }
+  for (const u of uses) {
+    if (u < decl[0]) {
+      throw new Error(
+        `hunk ${u} references ${name} but hunk ${decl[0]} only declares it later — the intermediate ` +
+        'CREATE OR REPLACE would use an undeclared variable. Declare first.');
+    }
+  }
+}
 
 // Dollar-quote tags must not collide with anything inside the hunk text.
 const rows = HUNKS.map(([idx, fname, oldT, newT]) => {

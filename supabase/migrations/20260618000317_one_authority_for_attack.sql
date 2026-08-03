@@ -291,104 +291,7 @@ begin
   for r in
     select * from (values
     (1, 'calculate_expedition_stats',
-     $h1o$  r        record;
-  v_used   integer := 0;
-  -- accumulated support contributions
-  a_combat    numeric := 0;
-  a_survival  numeric := 0;
-  a_repair    numeric := 0;
-  a_cargo     numeric := 0;
-  a_scout     numeric := 0;
-  a_mining    numeric := 0;
-  a_retreat   numeric := 0;
-  a_attention numeric := 0;
-  a_spd_pen   numeric := 0;
-  v_warnings  jsonb := '[]'::jsonb;$h1o$,
-     $h1n$  -- 0317: r / v_used / v_warnings are GONE with the support-craft loop that was their only
-  -- reader. What survives is the accumulator SET — every source (hull, traits, command buffs,
-  -- modules, captains) folds into these and nothing else.
-  a_combat    numeric := 0;
-  a_survival  numeric := 0;
-  a_repair    numeric := 0;
-  a_cargo     numeric := 0;
-  a_scout     numeric := 0;
-  a_mining    numeric := 0;
-  a_retreat   numeric := 0;
-  a_attention numeric := 0;
-  a_spd_pen   numeric := 0;$h1n$),
-    (2, 'calculate_expedition_stats',
-     $h2o$  select coalesce(base_stats_json, '{}'::jsonb) into v_hull_stats
-    from main_ship_hull_types where hull_type_id = v_ship.hull_type_id;
-  a_combat   := a_combat   + coalesce((v_hull_stats->>'attack')::numeric, 0);
-  a_survival := a_survival + coalesce((v_hull_stats->>'defense')::numeric, 0);$h2o$,
-     $h2n$  select coalesce(base_stats_json, '{}'::jsonb) into v_hull_stats
-    from main_ship_hull_types where hull_type_id = v_ship.hull_type_id;
-  -- 0317: THE HULL SPEAKS THE SHARED VOCABULARY. The head read exactly two keys — attack and
-  -- defense — while the trait loop below, the command-buff loop, the module loop and the captain
-  -- loop all read eight. A hull could therefore declare repair/cargo/scan/mining/evasion or a
-  -- pirate_attention in its base_stats_json and the fold would silently drop them: the same class
-  -- of "the catalog can say it and nothing listens" defect this migration exists to remove.
-  -- BYTE-INERT TODAY, verified on production: all three live hulls carry exactly {attack,defense}
-  -- (starter_frigate 15/10, bulk_hauler 5/15, strike_corvette 30/10), so every added coalesce
-  -- resolves to +0 and no live number moves.
-  -- speed_mult_bonus is DELIBERATELY NOT read here, and that is not an oversight: the hull
-  -- already owns the speed authority as main_ship_hull_types.base_speed — the multiplicand of the
-  -- one speed expression — so a hull-level speed_mult_bonus would be a SECOND hull speed knob,
-  -- the exact duplication this slice is removing elsewhere. A hull changes its speed by changing
-  -- base_speed.
-  a_combat   := a_combat   + coalesce((v_hull_stats->>'attack')::numeric, 0);
-  a_survival := a_survival + coalesce((v_hull_stats->>'defense')::numeric, 0);
-  a_repair    := a_repair    + coalesce((v_hull_stats->>'repair')::numeric, 0);
-  a_cargo     := a_cargo     + coalesce((v_hull_stats->>'cargo')::numeric, 0);
-  a_scout     := a_scout     + coalesce((v_hull_stats->>'scan')::numeric, 0);
-  a_mining    := a_mining    + coalesce((v_hull_stats->>'mining')::numeric, 0);
-  a_retreat   := a_retreat   + coalesce((v_hull_stats->>'evasion')::numeric, 0);
-  a_attention := a_attention + coalesce((v_hull_stats->>'pirate_attention')::numeric, 0);$h2n$),
-    (3, 'calculate_expedition_stats',
-     $h3o$      a_combat    := a_combat    + coalesce((tr.stats_json->>'attack')::numeric, 0);
-      a_survival  := a_survival  + coalesce((tr.stats_json->>'defense')::numeric, 0);
-      a_repair    := a_repair    + coalesce((tr.stats_json->>'repair')::numeric, 0);
-      a_cargo     := a_cargo     + coalesce((tr.stats_json->>'cargo')::numeric, 0);
-      a_scout     := a_scout     + coalesce((tr.stats_json->>'scan')::numeric, 0);
-      a_mining    := a_mining    + coalesce((tr.stats_json->>'mining')::numeric, 0);
-      a_retreat   := a_retreat   + coalesce((tr.stats_json->>'evasion')::numeric, 0);
-      v_trait_speed_bonus := v_trait_speed_bonus + coalesce((tr.stats_json->>'speed_mult_bonus')::numeric, 0);$h3o$,
-     $h3n$      a_combat    := a_combat    + coalesce((tr.stats_json->>'attack')::numeric, 0);
-      a_survival  := a_survival  + coalesce((tr.stats_json->>'defense')::numeric, 0);
-      a_repair    := a_repair    + coalesce((tr.stats_json->>'repair')::numeric, 0);
-      a_cargo     := a_cargo     + coalesce((tr.stats_json->>'cargo')::numeric, 0);
-      a_scout     := a_scout     + coalesce((tr.stats_json->>'scan')::numeric, 0);
-      a_mining    := a_mining    + coalesce((tr.stats_json->>'mining')::numeric, 0);
-      a_retreat   := a_retreat   + coalesce((tr.stats_json->>'evasion')::numeric, 0);
-      -- 0317: pirate_attention joins the shared vocabulary. A trait had NO way to say it before —
-      -- the only sources of attention were three hardcoded CASEs over role/slot_type/specialization,
-      -- so no catalog row could ever set it. Absent key = +0, so this is byte-inert for all eight
-      -- seeded traits.
-      a_attention := a_attention + coalesce((tr.stats_json->>'pirate_attention')::numeric, 0);
-      v_trait_speed_bonus := v_trait_speed_bonus + coalesce((tr.stats_json->>'speed_mult_bonus')::numeric, 0);$h3n$),
-    (4, 'calculate_expedition_stats',
-     $h4o$      a_combat    := a_combat    + coalesce((cb.stats_json->>'attack')::numeric, 0);
-      a_survival  := a_survival  + coalesce((cb.stats_json->>'defense')::numeric, 0);
-      a_repair    := a_repair    + coalesce((cb.stats_json->>'repair')::numeric, 0);
-      a_cargo     := a_cargo     + coalesce((cb.stats_json->>'cargo')::numeric, 0);
-      a_scout     := a_scout     + coalesce((cb.stats_json->>'scan')::numeric, 0);
-      a_mining    := a_mining    + coalesce((cb.stats_json->>'mining')::numeric, 0);
-      a_retreat   := a_retreat   + coalesce((cb.stats_json->>'evasion')::numeric, 0);
-      v_cmdbuff_speed_bonus := v_cmdbuff_speed_bonus + coalesce((cb.stats_json->>'speed_mult_bonus')::numeric, 0);$h4o$,
-     $h4n$      a_combat    := a_combat    + coalesce((cb.stats_json->>'attack')::numeric, 0);
-      a_survival  := a_survival  + coalesce((cb.stats_json->>'defense')::numeric, 0);
-      a_repair    := a_repair    + coalesce((cb.stats_json->>'repair')::numeric, 0);
-      a_cargo     := a_cargo     + coalesce((cb.stats_json->>'cargo')::numeric, 0);
-      a_scout     := a_scout     + coalesce((cb.stats_json->>'scan')::numeric, 0);
-      a_mining    := a_mining    + coalesce((cb.stats_json->>'mining')::numeric, 0);
-      a_retreat   := a_retreat   + coalesce((cb.stats_json->>'evasion')::numeric, 0);
-      -- 0317: pirate_attention joins the shared vocabulary here too — a command buff is a fleet
-      -- identity and 'this doctrine makes you conspicuous' is exactly the kind of thing it should
-      -- be able to say. Absent key = +0: byte-inert for all twenty seeded buffs.
-      a_attention := a_attention + coalesce((cb.stats_json->>'pirate_attention')::numeric, 0);
-      v_cmdbuff_speed_bonus := v_cmdbuff_speed_bonus + coalesce((cb.stats_json->>'speed_mult_bonus')::numeric, 0);$h4n$),
-    (5, 'calculate_expedition_stats',
-     $h5o$  -- (3)(4)(5)(6)(8) Normalize + validate the loadout, accumulate capacity + effects.
+     $h1o$  -- (3)(4)(5)(6)(8) Normalize + validate the loadout, accumulate capacity + effects.
   -- Duplicates are COMBINED (summed) deterministically. Invalid entries are REJECTED.
   for r in
     with norm as (
@@ -438,8 +341,8 @@ begin
   -- (7) capacity is a HARD cap — reject over-capacity loadouts.
   if v_used > v_ship.support_capacity then
     raise exception 'calculate_expedition_stats: loadout uses % support capacity, ship limit is %', v_used, v_ship.support_capacity;
-  end if;$h5o$,
-     $h5n$  -- 0317 THE SUPPORT-CRAFT PATH IS DELETED (51 lines of unreachable code, not disabled — removed).
+  end if;$h1o$,
+     $h1n$  -- 0317 THE SUPPORT-CRAFT PATH IS DELETED (51 lines of unreachable code, not disabled — removed).
   -- p_loadout is a literal '[]' at every call site in the database: calculate_group_expedition_stats,
   -- combat_create_group_encounter, get_my_group_expedition_preview and send_ship_group_hunt all pass
   -- an empty array, and get_my_expedition_preview merely FORWARDS its own argument, whose only
@@ -455,38 +358,16 @@ begin
   if coalesce(jsonb_array_length(coalesce(p_loadout, '[]'::jsonb)), 0) <> 0 then
     raise exception 'calculate_expedition_stats: support craft are retired — p_loadout must be empty (got % entries)',
       jsonb_array_length(p_loadout);
-  end if;$h5n$),
-    (6, 'calculate_expedition_stats',
-     $h6o$    a_attention := a_attention + (case m.slot_type when 'weapon' then 2 when 'cargo' then 2 when 'sensor' then 1 else 0 end) * m.slot_cost;$h6o$,
-     $h6n$    -- 0317: pirate_attention IS NOW A CATALOG KEY, and the CASE below is its DEFAULT — used only
-    -- when the row does not state a value. Before this, attention could be produced by exactly three
-    -- hardcoded CASEs and by nothing else, so "this module draws pirates" was a fact no module could
-    -- state about itself. Byte-inert for the nine seeded module types (none carries the key).
-    a_attention := a_attention +
-      case when m.stats_json ? 'pirate_attention'
-           then coalesce((m.stats_json->>'pirate_attention')::numeric, 0)
-           else (case m.slot_type when 'weapon' then 2 when 'cargo' then 2 when 'sensor' then 1 else 0 end) * m.slot_cost
-      end;$h6n$),
-    (7, 'calculate_expedition_stats',
-     $h7o$    a_attention := a_attention + (case c.specialization when 'combat' then 2 when 'trade' then 1 when 'exploration' then 1 when 'mining' then 1 else 0 end);$h7o$,
-     $h7n$    -- 0317: pirate_attention IS NOW A CATALOG KEY here too, with the CASE as its default. It is
-    -- NOT multiplied by v_lvl_mult / v_aff_mult — the head keeps the attention tradeoff level-flat
-    -- and station-flat on purpose ("growth is never a stealth cost raise"), and a stated value must
-    -- follow the same law as the default it replaces. Byte-inert for the five seeded captain types.
-    a_attention := a_attention +
-      case when c.stats_json ? 'pirate_attention'
-           then coalesce((c.stats_json->>'pirate_attention')::numeric, 0)
-           else (case c.specialization when 'combat' then 2 when 'trade' then 1 when 'exploration' then 1 when 'mining' then 1 else 0 end)
-      end;$h7n$),
-    (8, 'calculate_expedition_stats',
-     $h8o$  return jsonb_build_object(
+  end if;$h1n$),
+    (2, 'calculate_expedition_stats',
+     $h2o$  return jsonb_build_object(
     'main_ship_id',           v_ship.main_ship_id,
     'activity_type',          p_activity_type,
     'support_capacity_used',  v_used,
     'support_capacity_limit', v_ship.support_capacity,
     'module_slots_used',      v_mod_used,
-    'module_slots_limit',     v_ship.module_slots,$h8o$,
-     $h8n$  return jsonb_build_object(
+    'module_slots_limit',     v_ship.module_slots,$h2o$,
+     $h2n$  return jsonb_build_object(
     'main_ship_id',           v_ship.main_ship_id,
     'activity_type',          p_activity_type,
     -- 0317: support_capacity_used / support_capacity_limit are GONE with the loop that computed
@@ -495,16 +376,135 @@ begin
     -- and the ship's own support_capacity column is still reported by get_my_expedition_preview's
     -- ship object, so the number itself has not become unreachable — only its duplicate here.
     'module_slots_used',      v_mod_used,
-    'module_slots_limit',     v_ship.module_slots,$h8n$),
-    (9, 'calculate_expedition_stats',
-     $h9o$    'pirate_attention', greatest(0, round(a_attention, 2)),
+    'module_slots_limit',     v_ship.module_slots,$h2n$),
+    (3, 'calculate_expedition_stats',
+     $h3o$    'pirate_attention', greatest(0, round(a_attention, 2)),
     'warnings',         v_warnings
-  );$h9o$,
-     $h9n$    -- 0317: 'warnings' is GONE. The deleted support-craft loop was its only writer, so after this
+  );$h3o$,
+     $h3n$    -- 0317: 'warnings' is GONE. The deleted support-craft loop was its only writer, so after this
     -- slice it could only ever be [] — a field that exists to say nothing. No in-database reader and
     -- no client reader (grep-verified across src/).
     'pirate_attention', greatest(0, round(a_attention, 2))
-  );$h9n$),
+  );$h3n$),
+    (4, 'calculate_expedition_stats',
+     $h4o$  r        record;
+  v_used   integer := 0;
+  -- accumulated support contributions
+  a_combat    numeric := 0;
+  a_survival  numeric := 0;
+  a_repair    numeric := 0;
+  a_cargo     numeric := 0;
+  a_scout     numeric := 0;
+  a_mining    numeric := 0;
+  a_retreat   numeric := 0;
+  a_attention numeric := 0;
+  a_spd_pen   numeric := 0;
+  v_warnings  jsonb := '[]'::jsonb;$h4o$,
+     $h4n$  -- 0317: r / v_used / v_warnings are GONE with the support-craft loop that was their only
+  -- reader. What survives is the accumulator SET — every source (hull, traits, command buffs,
+  -- modules, captains) folds into these and nothing else.
+  a_combat    numeric := 0;
+  a_survival  numeric := 0;
+  a_repair    numeric := 0;
+  a_cargo     numeric := 0;
+  a_scout     numeric := 0;
+  a_mining    numeric := 0;
+  a_retreat   numeric := 0;
+  a_attention numeric := 0;
+  a_spd_pen   numeric := 0;$h4n$),
+    (5, 'calculate_expedition_stats',
+     $h5o$  select coalesce(base_stats_json, '{}'::jsonb) into v_hull_stats
+    from main_ship_hull_types where hull_type_id = v_ship.hull_type_id;
+  a_combat   := a_combat   + coalesce((v_hull_stats->>'attack')::numeric, 0);
+  a_survival := a_survival + coalesce((v_hull_stats->>'defense')::numeric, 0);$h5o$,
+     $h5n$  select coalesce(base_stats_json, '{}'::jsonb) into v_hull_stats
+    from main_ship_hull_types where hull_type_id = v_ship.hull_type_id;
+  -- 0317: THE HULL SPEAKS THE SHARED VOCABULARY. The head read exactly two keys — attack and
+  -- defense — while the trait loop below, the command-buff loop, the module loop and the captain
+  -- loop all read eight. A hull could therefore declare repair/cargo/scan/mining/evasion or a
+  -- pirate_attention in its base_stats_json and the fold would silently drop them: the same class
+  -- of "the catalog can say it and nothing listens" defect this migration exists to remove.
+  -- BYTE-INERT TODAY, verified on production: all three live hulls carry exactly {attack,defense}
+  -- (starter_frigate 15/10, bulk_hauler 5/15, strike_corvette 30/10), so every added coalesce
+  -- resolves to +0 and no live number moves.
+  -- speed_mult_bonus is DELIBERATELY NOT read here, and that is not an oversight: the hull
+  -- already owns the speed authority as main_ship_hull_types.base_speed — the multiplicand of the
+  -- one speed expression — so a hull-level speed_mult_bonus would be a SECOND hull speed knob,
+  -- the exact duplication this slice is removing elsewhere. A hull changes its speed by changing
+  -- base_speed.
+  a_combat   := a_combat   + coalesce((v_hull_stats->>'attack')::numeric, 0);
+  a_survival := a_survival + coalesce((v_hull_stats->>'defense')::numeric, 0);
+  a_repair    := a_repair    + coalesce((v_hull_stats->>'repair')::numeric, 0);
+  a_cargo     := a_cargo     + coalesce((v_hull_stats->>'cargo')::numeric, 0);
+  a_scout     := a_scout     + coalesce((v_hull_stats->>'scan')::numeric, 0);
+  a_mining    := a_mining    + coalesce((v_hull_stats->>'mining')::numeric, 0);
+  a_retreat   := a_retreat   + coalesce((v_hull_stats->>'evasion')::numeric, 0);
+  a_attention := a_attention + coalesce((v_hull_stats->>'pirate_attention')::numeric, 0);$h5n$),
+    (6, 'calculate_expedition_stats',
+     $h6o$      a_combat    := a_combat    + coalesce((tr.stats_json->>'attack')::numeric, 0);
+      a_survival  := a_survival  + coalesce((tr.stats_json->>'defense')::numeric, 0);
+      a_repair    := a_repair    + coalesce((tr.stats_json->>'repair')::numeric, 0);
+      a_cargo     := a_cargo     + coalesce((tr.stats_json->>'cargo')::numeric, 0);
+      a_scout     := a_scout     + coalesce((tr.stats_json->>'scan')::numeric, 0);
+      a_mining    := a_mining    + coalesce((tr.stats_json->>'mining')::numeric, 0);
+      a_retreat   := a_retreat   + coalesce((tr.stats_json->>'evasion')::numeric, 0);
+      v_trait_speed_bonus := v_trait_speed_bonus + coalesce((tr.stats_json->>'speed_mult_bonus')::numeric, 0);$h6o$,
+     $h6n$      a_combat    := a_combat    + coalesce((tr.stats_json->>'attack')::numeric, 0);
+      a_survival  := a_survival  + coalesce((tr.stats_json->>'defense')::numeric, 0);
+      a_repair    := a_repair    + coalesce((tr.stats_json->>'repair')::numeric, 0);
+      a_cargo     := a_cargo     + coalesce((tr.stats_json->>'cargo')::numeric, 0);
+      a_scout     := a_scout     + coalesce((tr.stats_json->>'scan')::numeric, 0);
+      a_mining    := a_mining    + coalesce((tr.stats_json->>'mining')::numeric, 0);
+      a_retreat   := a_retreat   + coalesce((tr.stats_json->>'evasion')::numeric, 0);
+      -- 0317: pirate_attention joins the shared vocabulary. A trait had NO way to say it before —
+      -- the only sources of attention were three hardcoded CASEs over role/slot_type/specialization,
+      -- so no catalog row could ever set it. Absent key = +0, so this is byte-inert for all eight
+      -- seeded traits.
+      a_attention := a_attention + coalesce((tr.stats_json->>'pirate_attention')::numeric, 0);
+      v_trait_speed_bonus := v_trait_speed_bonus + coalesce((tr.stats_json->>'speed_mult_bonus')::numeric, 0);$h6n$),
+    (7, 'calculate_expedition_stats',
+     $h7o$      a_combat    := a_combat    + coalesce((cb.stats_json->>'attack')::numeric, 0);
+      a_survival  := a_survival  + coalesce((cb.stats_json->>'defense')::numeric, 0);
+      a_repair    := a_repair    + coalesce((cb.stats_json->>'repair')::numeric, 0);
+      a_cargo     := a_cargo     + coalesce((cb.stats_json->>'cargo')::numeric, 0);
+      a_scout     := a_scout     + coalesce((cb.stats_json->>'scan')::numeric, 0);
+      a_mining    := a_mining    + coalesce((cb.stats_json->>'mining')::numeric, 0);
+      a_retreat   := a_retreat   + coalesce((cb.stats_json->>'evasion')::numeric, 0);
+      v_cmdbuff_speed_bonus := v_cmdbuff_speed_bonus + coalesce((cb.stats_json->>'speed_mult_bonus')::numeric, 0);$h7o$,
+     $h7n$      a_combat    := a_combat    + coalesce((cb.stats_json->>'attack')::numeric, 0);
+      a_survival  := a_survival  + coalesce((cb.stats_json->>'defense')::numeric, 0);
+      a_repair    := a_repair    + coalesce((cb.stats_json->>'repair')::numeric, 0);
+      a_cargo     := a_cargo     + coalesce((cb.stats_json->>'cargo')::numeric, 0);
+      a_scout     := a_scout     + coalesce((cb.stats_json->>'scan')::numeric, 0);
+      a_mining    := a_mining    + coalesce((cb.stats_json->>'mining')::numeric, 0);
+      a_retreat   := a_retreat   + coalesce((cb.stats_json->>'evasion')::numeric, 0);
+      -- 0317: pirate_attention joins the shared vocabulary here too — a command buff is a fleet
+      -- identity and 'this doctrine makes you conspicuous' is exactly the kind of thing it should
+      -- be able to say. Absent key = +0: byte-inert for all twenty seeded buffs.
+      a_attention := a_attention + coalesce((cb.stats_json->>'pirate_attention')::numeric, 0);
+      v_cmdbuff_speed_bonus := v_cmdbuff_speed_bonus + coalesce((cb.stats_json->>'speed_mult_bonus')::numeric, 0);$h7n$),
+    (8, 'calculate_expedition_stats',
+     $h8o$    a_attention := a_attention + (case m.slot_type when 'weapon' then 2 when 'cargo' then 2 when 'sensor' then 1 else 0 end) * m.slot_cost;$h8o$,
+     $h8n$    -- 0317: pirate_attention IS NOW A CATALOG KEY, and the CASE below is its DEFAULT — used only
+    -- when the row does not state a value. Before this, attention could be produced by exactly three
+    -- hardcoded CASEs and by nothing else, so "this module draws pirates" was a fact no module could
+    -- state about itself. Byte-inert for the nine seeded module types (none carries the key).
+    a_attention := a_attention +
+      case when m.stats_json ? 'pirate_attention'
+           then coalesce((m.stats_json->>'pirate_attention')::numeric, 0)
+           else (case m.slot_type when 'weapon' then 2 when 'cargo' then 2 when 'sensor' then 1 else 0 end) * m.slot_cost
+      end;$h8n$),
+    (9, 'calculate_expedition_stats',
+     $h9o$    a_attention := a_attention + (case c.specialization when 'combat' then 2 when 'trade' then 1 when 'exploration' then 1 when 'mining' then 1 else 0 end);$h9o$,
+     $h9n$    -- 0317: pirate_attention IS NOW A CATALOG KEY here too, with the CASE as its default. It is
+    -- NOT multiplied by v_lvl_mult / v_aff_mult — the head keeps the attention tradeoff level-flat
+    -- and station-flat on purpose ("growth is never a stealth cost raise"), and a stated value must
+    -- follow the same law as the default it replaces. Byte-inert for the five seeded captain types.
+    a_attention := a_attention +
+      case when c.stats_json ? 'pirate_attention'
+           then coalesce((c.stats_json->>'pirate_attention')::numeric, 0)
+           else (case c.specialization when 'combat' then 2 when 'trade' then 1 when 'exploration' then 1 when 'mining' then 1 else 0 end)
+      end;$h9n$),
     (10, 'combat_create_group_encounter',
      $h10o$  v_is_lead         boolean;$h10o$,
      $h10n$  v_is_lead         boolean;
