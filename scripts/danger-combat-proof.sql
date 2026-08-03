@@ -2401,9 +2401,41 @@ end $$;
 -- processors, pg_temp.ae_tick as the one cadence driver. The only clock moved beyond ae_tick is
 -- started_at (rewound 930s so the wave's danger derives a MULTI-UNIT spawn — same clock-only law
 -- as every other rewind here; forced-extract needs 1800s, untouched).
+--
+-- ── 0336 RE-PREMISED: THE VOLLEY IS NOT ON TICK 1 ANY MORE, AND THAT IS A NEW PROPERTY ───────────
+-- WHAT THIS BLOCK ASSERTED BEFORE: on TICK 1 the wave spawned AND fired — >= 3 pirate salvos, one
+-- hull_damage per landed hit with its own amount, >= 2 distinct damage values across the volley, the
+-- player's own hit visible, every fired weapon armed now()+3600s exactly — and TICK 2 was silent
+-- while the player's zero-cooldown fallback kept firing.
+-- WHAT IT ASSERTS NOW: EVERY ONE OF THOSE CLAUSES, VERBATIM, plus two the old form could not state.
+-- Only the tick they are read from moved, and it moved because the geometry did: 0336 spawns each
+-- unit of a wave at (the MEASURED player-formation extent + THAT wave's own weapon range + 1) from
+-- the engagement anchor, so the wave arrives strictly outside its own reach of every player ship and
+-- CANNOT fire on the tick it arrives. "on tick 1" was a statement about the pre-0336 world, where
+-- every enemy was inserted ON the anchor — on top of the lead, at distance 0 — and therefore shot the
+-- instant it existed. Asserting it now is asserting a world that no longer exists.
+--   NEW (1) THE SPAWN TICK IS SILENT — zero pirate salvos on it. A body that ever lets a freshly
+--           spawned wave shoot across its own structural clearance fails HERE.
+--   NEW (2) THE VOLLEY TICK IS OBSERVED, NEVER PINNED — ticks are driven until a pirate salvo
+--           actually exists, bounded, with a loud failure naming the encounter status, and a
+--           `v_t1 > 1` vacuity pin so the loop cannot silently have done nothing. How many closing
+--           ticks a wave needs is a function of the site's difficulty and the fleet's own combat
+--           speed; pinning a number would re-introduce exactly the ambient assumption 0336 removed.
+-- AND THE BLOCK OWNS THE ONE PRECONDITION ITS VOLLEY CLAUSE NEEDS. "Six identical guns roll distinct
+-- damage IN ONE TICK" requires the whole wave to arrive together. The wave is laid out on a ring
+-- around the anchor, so it IS equidistant from a lone hull standing on that anchor — but only while
+-- the hull stays there. A player that out-ranges the wave KITES (combat_unit_decide_move's middle
+-- arm) and every step it takes makes one arc of the ring nearer than another, which staggers the
+-- arrival and would split the volley across two ticks. So combat_player_speed_scale is captured and
+-- pinned to 0 BEFORE the encounter is created (the creator freezes each player row's move_speed from
+-- it), the hull holds on the anchor, and the ring closes in perfect symmetry. This changes the
+-- FIXTURE, never a property: nothing below is about approach geometry — this block is about the
+-- CLOCK, the ROLL and the HITSPLAT — and every clause is asserted at full strength. Restored with
+-- the other two knobs at the end.
 do $$
 declare
   r jsonb; n int; n_units int; n_exp int; n_hits int; n_distinct int;
+  i int; v_tk int; v_status text;
   uR uuid;
   v_hunt uuid := (select v from dzc where k='v_hunt');
   sR uuid; gR uuid;
@@ -2414,8 +2446,8 @@ declare
   v_imax double precision; v_def double precision; v_bd double precision;
   v_danger int; v_scale double precision;
   v_eab_before double precision; v_eab numeric;
-  v_cd_before double precision; v_hv_before double precision;
-  v_t1 int; v_t2 int;
+  v_cd_before double precision; v_hv_before double precision; v_ps_before double precision;
+  v_t0 int; v_t1 int; v_t2 int;
 begin
   -- ── a fresh, funded fixture player; one ship, one group, command designated — real RPCs. ───────
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -2443,6 +2475,12 @@ begin
   select coalesce(public.cfg_num('combat_hit_variance_pct'), 0)         into v_hv_before;
   perform public.set_game_config('enemy_synthetic_cooldown_seconds', '3600'::jsonb);
   perform public.set_game_config('combat_hit_variance_pct',          '0.5'::jsonb);
+  -- 0336: THE HULL HOLDS THE ANCHOR, so the ring arrives all at once (see the header). The creator
+  -- freezes every player row's combat move_speed as hull speed x this knob, so it has to be pinned
+  -- BEFORE the ambush opens the encounter — after that the frozen column is what the tick reads.
+  -- Captured, never assumed, and restored with the other two below.
+  select coalesce(public.cfg_num('combat_player_speed_scale'), 0.2) into v_ps_before;
+  perform public.set_game_config('combat_player_speed_scale',       '0'::jsonb);
 
   -- ── a REAL ambush through a drawn zone (the AUTOEXIT staging, verbatim in shape). ───────────────
   select l.x, l.y into o_x, o_y
@@ -2498,17 +2536,51 @@ begin
   v_eab := round(((0.24 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * v_scale))::numeric, 6);
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
 
-  -- ── TICK 1: the wave spawns AND fires the same tick. ────────────────────────────────────────────
+  -- ── THE SPAWN TICK: the wave arrives, and (0336) it arrives SILENT. ─────────────────────────────
   perform pg_temp.ae_tick(v_enc);
-  select tick_number into v_t1 from public.combat_encounters where id = v_enc;
+  select tick_number into v_t0 from public.combat_encounters where id = v_enc;
+  if v_t0 is distinct from 1 then
+    raise exception 'RSFEEL FAIL: the arrival tick is numbered % (want 1) — the silence pin below would be reading a tick the wave did not arrive on', v_t0;
+  end if;
   select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
   if n_units <> n_exp then
     raise exception 'RSFEEL FAIL: % enemy unit(s) spawned (want the danger-derived %) — the wave is too small to exercise the roll spread', n_units, n_exp;
   end if;
-  -- vacuity for tick-2 silence: tick 1 really was a full pirate volley.
+  -- (0) 0336's NEW PROPERTY: a wave stands at (measured player extent + its own range + 1) from the
+  --     anchor, i.e. strictly outside its own reach of every player ship, so it CANNOT shoot on the
+  --     tick it arrives. The pre-0336 body fired here, so this clause is red on it by construction.
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and tick_number = v_t0 and event_type = 'missile_salvo' and source = 'pirate';
+  if n <> 0 then
+    raise exception 'RSFEEL FAIL: % pirate salvo(s) on the tick the wave arrived on — 0336 stands a wave outside its own reach by construction, so it MUST close before it can fire', n;
+  end if;
+
+  -- ── DRIVE TICKS UNTIL THE WAVE HAS CLOSED AND FIRED. The exit condition is the OBSERVATION, ────
+  --    never a tick count. Bounded, and a wave that never fires fails loudly with the status.
+  for i in 1 .. 12 loop
+    exit when v_t1 is not null;
+    select status into v_status from public.combat_encounters where id = v_enc;
+    if v_status is distinct from 'active' then
+      raise exception 'RSFEEL FAIL: the encounter went % while the wave was closing — the volley this block exists to measure never happened', v_status;
+    end if;
+    perform pg_temp.ae_tick(v_enc);
+    select tick_number into v_tk from public.combat_encounters where id = v_enc;
+    select count(*) into n from public.combat_events
+     where encounter_id = v_enc and tick_number = v_tk and event_type = 'missile_salvo' and source = 'pirate';
+    if n > 0 then v_t1 := v_tk; end if;
+  end loop;
+  if v_t1 is null then
+    raise exception 'RSFEEL FAIL: no pirate volley in 12 ticks after the spawn — the wave never closed into its own range, so there is no volley to measure';
+  end if;
+  -- NON-VACUITY: the spawn tick is pinned silent above, so a volley recorded ON it would mean the two
+  -- asserts contradict each other rather than that this loop observed a closing approach.
+  if v_t1 <= 1 then
+    raise exception 'RSFEEL FAIL: the first pirate volley is recorded on tick % — the arrival tick was pinned SILENT, so the volley loop observed nothing', v_t1;
+  end if;
+  -- vacuity for the silence pin below: the volley tick really was a full pirate volley.
   select count(*) into n from public.combat_events
    where encounter_id = v_enc and tick_number = v_t1 and event_type = 'missile_salvo' and source = 'pirate';
-  if n < 3 then raise exception 'RSFEEL FAIL: only % pirate salvo(s) on tick 1 — no volley to measure', n; end if;
+  if n < 3 then raise exception 'RSFEEL FAIL: only % pirate salvo(s) on the volley tick % — no volley to measure', n, v_t1; end if;
 
   -- (3) THE VISIBLE HIT: one hull_damage per landed hit, WITH its amount, under EVENT logging
   --     (combat_debug_logging is pinned false in setup — the promotion is the thing under test).
@@ -2543,38 +2615,41 @@ begin
     raise exception 'RSFEEL FAIL: % of % fired pirate weapons carry now()+3600s — a weapon was armed with bare now() and the cooldown never reached the clock', n, n_units;
   end if;
 
-  -- ── TICK 2: the cooldown is unelapsed (frozen now()), so the pirates hold fire. ────────────────
+  -- ── THE TICK AFTER THE VOLLEY: the cooldown is unelapsed (frozen now()), so the pirates hold ───
+  --    fire. This is the SAME statement as the old "tick 2", read off the volley tick + 1 instead of
+  --    off a number that only held while the wave spawned already inside its own range.
   perform pg_temp.ae_tick(v_enc);
   select tick_number into v_t2 from public.combat_encounters where id = v_enc;
-  if v_t2 <> v_t1 + 1 then raise exception 'RSFEEL FAIL: tick 2 did not advance (% -> %)', v_t1, v_t2; end if;
+  if v_t2 <> v_t1 + 1 then raise exception 'RSFEEL FAIL: the tick after the volley did not advance (% -> %)', v_t1, v_t2; end if;
   -- vacuity: the silence must not be an ended fight or a dead wave.
   select count(*) into n from public.combat_units
    where encounter_id = v_enc and side = 'enemy' and alive_count > 0 and hp_current > 0;
-  if n < 3 then raise exception 'RSFEEL FAIL: only % live pirate(s) at tick 2 — silence would be vacuous', n; end if;
+  if n < 3 then raise exception 'RSFEEL FAIL: only % live pirate(s) on the tick after the volley — silence would be vacuous', n; end if;
   if (select status from public.combat_encounters where id = v_enc) <> 'active' then
-    raise exception 'RSFEEL FAIL: the encounter is not active at tick 2 — silence would be vacuous';
+    raise exception 'RSFEEL FAIL: the encounter is not active on the tick after the volley — silence would be vacuous';
   end if;
   select count(*) into n from public.combat_events
    where encounter_id = v_enc and tick_number = v_t2 and source = 'pirate'
      and event_type in ('missile_salvo', 'hull_damage');
   if n <> 0 then
-    raise exception 'RSFEEL FAIL: % pirate fire event(s) on tick 2 — the pirates fired again through an unelapsed 3600s cooldown (the pre-0314 world: attack speed was fake)', n;
+    raise exception 'RSFEEL FAIL: % pirate fire event(s) on tick % — the pirates fired again through an unelapsed 3600s cooldown (the pre-0314 world: attack speed was fake)', n, v_t2;
   end if;
   -- and the FAIL-OPEN arm: the player''s fallback weapon (cooldown knob 0 in setup) must still fire
   -- every tick — a zero-cooldown weapon must stay ready every tick, byte-equal to the old cadence.
   select count(*) into n from public.combat_events
    where encounter_id = v_enc and tick_number = v_t2 and source = 'player' and event_type = 'missile_salvo';
   if n < 1 then
-    raise exception 'RSFEEL FAIL: the player''s zero-cooldown weapon went silent on tick 2 — a zero-cooldown weapon must stay ready every tick';
+    raise exception 'RSFEEL FAIL: the player''s zero-cooldown weapon went silent on the tick after the volley — a zero-cooldown weapon must stay ready every tick';
   end if;
 
   -- ── restore every knob this block owned (captured above; the setup values are 0/0). ────────────
   perform public.set_game_config('enemy_synthetic_cooldown_seconds', to_jsonb(v_cd_before));
   perform public.set_game_config('combat_hit_variance_pct',          to_jsonb(v_hv_before));
+  perform public.set_game_config('combat_player_speed_scale',        to_jsonb(v_ps_before));
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
 
-  raise notice 'DZCOMBAT_PASS_RSFEEL ok: % pirates spawned at danger % and every landed hit emitted its own hull_damage with a positive amount under EVENT logging (debug pinned dark), % distinct damage values across one volley of identical guns, the player''s own hit visible too; every fired weapon armed now()+3600s exactly, and tick 2 was pirate-silent (fight active, wave alive) while the zero-cooldown fallback kept firing (% player salvo(s)): attack interval real, every hit its own roll, every hit visible',
-    n_units, v_danger, n_distinct, n;
+  raise notice 'DZCOMBAT_PASS_RSFEEL ok: % pirates spawned at danger %, the wave arrived SILENT on its spawn tick (0336 stands it outside its own reach by construction) and CLOSED, and on the volley tick % every landed hit emitted its own hull_damage with a positive amount under EVENT logging (debug pinned dark), % distinct damage values across one volley of identical guns, the player''s own hit visible too; every fired weapon armed now()+3600s exactly, and tick % was pirate-silent (fight active, wave alive) while the zero-cooldown fallback kept firing (% player salvo(s)): attack interval real, every hit its own roll, every hit visible',
+    n_units, v_danger, v_t1, n_distinct, v_t2, n;
 end $$;
 
 -- ^ RSFEEL's OWN terminator, added at the 0313/0314 merge. Both sides of this conflict appended a
