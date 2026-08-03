@@ -18,10 +18,11 @@ import {
 //
 // ⚑ THE ANCHOR IS WHERE A FIGHT STARTED — NOT WHERE THE FLEET IS. Since 0313/0314 the seeded units
 // then move, so the formation walks 20-30 units off the anchor within a tick or two. "Where is this
-// fleet now" is map/fleetFightPosition's question (the formation centroid), and NO badge positions
-// itself from this leaf. What remains here: the ambush-vs-hunt ORIGIN test (an anchor off the linked
-// location's centre means the fleet was dragged into the fight en route — 0293's own rule), read by
-// map/ambushEncounterNotice, plus the shared live-encounter selection both readers compose.
+// fleet now" is map/fleetFightPosition's question (the fleet's own ship nearest the enemy), and NO
+// badge is ever DRAWN on this leaf's point. What remains here: the ambush-vs-hunt ORIGIN test (an
+// anchor off the linked location's centre means the fleet was dragged into the fight en route —
+// 0293's own rule), read by map/ambushEncounterNotice; the anchor as fleetFightPosition's distance
+// TARGET when no living enemy is left to aim at; plus the shared live-encounter selection.
 //
 // The coordinates below are REAL: the owner's production encounters at Snare, site centre (-45,120),
 // fights measured at (-27.37, 97.04) and (-63, 96) — gaps of 28.95 and 30.00 world units.

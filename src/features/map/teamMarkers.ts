@@ -119,14 +119,16 @@ export function resolveTeamDockBadges(rollups: readonly DockedTeamRollup[]): Tea
 // invisible to resolveFleetCombatBadges and lands HERE — verified against production: all eight of
 // the owner's off-centre encounters are idle/space/no-location. So the parked point this badge used
 // to draw is a STALE start-of-fight position, while the fleet's own ships (spatialCombatLayer, from
-// combat_units.pos_x/pos_y) march 21.5-28.7 units away from it. Same fleet, drawn twice, two places.
-// Position now comes from the ONE shared rule — fleetFightPosition, the formation centroid — with the
-// parked coordinate as its fallback, so a fleet that is NOT fighting is byte-identical to before.
+// combat_units.pos_x/pos_y) march 20-30 units away from it. Same fleet, drawn twice, two places.
+// Position now comes from the ONE shared rule — fleetFightPosition: THE HULL NEAREST THE ENEMY, a
+// real ship, never an average of several — with the parked coordinate as its fallback, so a fleet
+// that is NOT fighting is byte-identical to before.
 export interface FleetSpaceBadgeDescriptor {
   groupId: string
   label: string
   /** WORLD coordinates in the legacy movement domain (project through the map's `norm`). While the
-   *  fleet is in a positioned fight this is its formation's centroid, not its parked point. */
+   *  fleet is in a positioned fight this is the position of one of its OWN SHIPS — the one nearest
+   *  the enemy — not its parked point. */
   x: number
   y: number
 }
@@ -156,8 +158,9 @@ export function resolveFleetSpaceBadges(
     if (f.space_x == null || f.space_y == null || !Number.isFinite(f.space_x) || !Number.isFinite(f.space_y)) continue
     if (!nameById.has(f.group_id)) continue // fail closed: unknown/foreign tag → no badge, never a guessed name
     if (seen.has(f.group_id)) continue // one fleet per group; duplicates are a broken invariant — first wins
-    // WHERE the fleet is: its formation's centroid while it fights, its parked point otherwise —
-    // the ONE shared rule. The parked coordinate is finite (guarded above), so this cannot be null.
+    // WHERE the fleet is: the ship of its own at the point of attack while it fights, its parked
+    // point otherwise — the ONE shared rule. The parked coordinate is finite (guarded above), so
+    // this cannot be null.
     const at = resolveFleetFightPosition({
       fleetId: f.id,
       encounters,
@@ -203,17 +206,17 @@ export function resolveFleetSpaceBadges(
 // badge. Fail closed like every sibling: unknown/foreign group tag, or a combat
 // site not in the visible world read → NO badge (never a guessed name/position, no hidden-site leak).
 //
-// ⚑ THE BADGE FOLLOWS THE FORMATION, NOT THE SITE'S CENTRE — the SAME rule the in-space badge above
-// obeys, so "where is this fleet" has ONE answer no matter which arm draws it. The deliberate-hunt
-// path needs it just as badly as the ambush path: 0234 seeds this fight's units at the site centre
-// and the tick then MOVES them (0234/0294/0311/0314 are the writers of pos_x; 0313 writes none — it
-// cut the ranges that make the mover's close/kite arms fire at all, which is why the drift only became
-// visible now, but crediting it with the movement is wrong), so within a couple of ticks the ships have
-// walked 20-30 world units off the centre this badge used to be pinned to — the identical
-// drawn-twice-in-two-places defect, differing only in where the drift starts. Position therefore
-// comes from map/fleetFightPosition (the centroid of this fleet's own living, positioned units),
-// with the site centre as its fallback: no live encounter, or an aggregate fight with no positioned
-// unit, and the badge is exactly where it has always been.
+// ⚑ THE BADGE STANDS ON A SHIP, NOT ON THE SITE'S CENTRE AND NOT ON AN AVERAGE — the SAME rule the
+// in-space badge above obeys, so "where is this fleet" has ONE answer no matter which arm draws it.
+// The deliberate-hunt path needs it just as badly as the ambush path: 0234 seeds this fight's units at
+// the site centre and the tick then MOVES them (0234/0294/0311/0314 are the writers of pos_x; 0313
+// writes none — it cut the ranges that make the mover's close/kite arms fire at all, which is why the
+// drift only became visible now, but crediting it with the movement is wrong), so within a couple of
+// ticks the ships have walked 20-30 world units off the centre this badge used to be pinned to — the
+// identical drawn-twice-in-two-places defect, differing only in where the drift starts. Position
+// therefore comes from map/fleetFightPosition (this fleet's own living, positioned ship NEAREST THE
+// ENEMY), with the site centre as its fallback: no live encounter, or an aggregate fight with no
+// positioned unit, and the badge is exactly where it has always been.
 // The LABEL is unchanged: the fleet really is fighting at that site, it is simply not standing on
 // the site's centre pixel.
 export interface FleetCombatBadgeDescriptor {
@@ -221,8 +224,9 @@ export interface FleetCombatBadgeDescriptor {
   label: string
   /** The combat SITE — the fight's owning location. Drives per-site badge stacking, not position. */
   locationId: string
-  /** WORLD coordinates — this fleet's formation centroid while it fights, the site centre when it
-   *  has no positioned fight. Always finite (a site with unusable coordinates yields no badge). */
+  /** WORLD coordinates — the position of this fleet's own ship nearest the enemy while it fights,
+   *  the site centre when it has no positioned fight. Always finite (a site with unusable
+   *  coordinates yields no badge). */
   x: number
   y: number
 }
@@ -508,8 +512,8 @@ export function teamMarkersLayer(args: {
     )
   }
   // MAP-INTEGRATION M1 — in-combat fleet badges (the hunt sortie's combat phase), rendered on the
-  // fleet's FORMATION (see the resolver's header) with the danger tint, and so moving with it as the
-  // poll advances. Shares the per-location stack counter with the dock badges so co-located badge
+  // fleet's own LEAD SHIP (see the resolver's header) with the danger tint, and so moving with it as
+  // the poll advances. Shares the per-location stack counter with the dock badges so co-located badge
   // text never overlaps (a combat site can never carry a dock badge — the fold excludes it — but
   // co-fighting teams stack). Stacking stays keyed on the SITE, which is what they share.
   for (const b of resolveFleetCombatBadges(
