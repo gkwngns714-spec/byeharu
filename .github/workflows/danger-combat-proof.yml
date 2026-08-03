@@ -69,6 +69,15 @@ on:
       # (DZCOMBAT_PASS_DEADFIRE), which is RED by construction on the pre-0317 body. A branch that
       # changes who is allowed to act inside a tick and does not fire this gate ships on text alone.
       - 'slice-the-dead**'
+      # 0332 rewrites the combat tick's SETTLE arm — the escape/completed exit now gives a member
+      # that died in a fight the fleet SURVIVED the same terminal write the defeat arm always gave
+      # it, so hp and status cannot end a fight disagreeing. This proof carries its behaviour block
+      # (DZCOMBAT_PASS_WRECKHOME), RED by construction on the pre-0332 body: it is the only runtime
+      # check anywhere that a SURVIVING fleet reconciles its casualties, and the only one that drives
+      # tow + repair end to end on a wreck the old arm stranded. The same `supabase start` also
+      # applies 0332's guarded backfill against the real chain. A branch that changes what a fight
+      # leaves behind and does not fire this gate ships on text self-asserts alone.
+      - 'slice-a-wreck**'
       # UNION at the 0317/0318/0319 merges — BOTH globs stay. 0319 (drawn zones stay drawn) was
       # authored as 0317 against the pre-#361 main, renumbered to 0318 when the-dead-do-not-shoot took
       # that number and DEPLOYED it, then to 0319 when hidden-stays-hidden took THAT one and deployed
