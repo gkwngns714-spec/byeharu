@@ -3743,9 +3743,12 @@ begin
 end $$;
 
 -- ════════ BLOCK TERRITORY_PASS_MAPREAD (0217): get_world_map carries territory_radius, ADDITIVELY ═
--- Three pins: (1) STRUCTURAL — the DEPLOYED body still filters all three levels on status='active';
--- the 0175 hidden-port pin ran BEFORE the 0217 re-create on this chain, so it cannot vouch for the
--- new body — re-pin it here. (2) VALUE — slag's JSON element carries territory_radius = 10 (0289's
+-- Three pins: (1) STRUCTURAL — the DEPLOYED body still filters all three levels on the visibility
+-- authority (0318 repoint: it composes world_{sector,zone,location}_is_visible instead of carrying
+-- its own status='active' literals, and 1b refuses a re-inlined literal while 1c proves a hidden
+-- location is behaviourally absent); the 0175 hidden-port pin ran BEFORE the 0217 re-create on this
+-- chain, so it cannot vouch for the new body — re-pin it here. (2) VALUE — slag's JSON element
+-- carries territory_radius = 10 (0289's
 -- retune of 10, tripled by the 0227 world-geometry rebalance — the map read must serve the
 -- REBALANCED value, not 0217's 25 or 0220's un-rebalanced 10).
 -- (3) NULL-KEY — a NULL-territory ACTIVE location still returns the KEY (json null), never a
@@ -3757,14 +3760,47 @@ declare n int; v_map jsonb; v_src text;
   slag uuid := (select v from fg where k='slag');
   v_fix uuid := gen_random_uuid();
 begin
-  -- (1) structural: the three status='active' filters survive in the DEPLOYED 0217 body.
+  -- (1) structural: the deployed body still filters all three levels on the VISIBILITY AUTHORITY.
+  --     0318 REPOINT — the property is unchanged; the place it is written down moved. Those three
+  --     status='active' literals WERE the second copy of the visibility rule: this function said
+  --     active-only while the RLS policy said USING (true), and the permissive one is the one
+  --     PostgREST enforces — so `GET /rest/v1/locations?status=eq.hidden` returned the unreleased
+  --     Ember rows, by name and coordinate, to an anonymous caller. 0318 makes
+  --     world_{sector,zone,location}_is_visible THE definition and has the policy AND this function
+  --     compose it. The pin follows the rule to where it now lives, and is STRENGTHENED below.
   select prosrc into v_src from pg_proc where oid = to_regprocedure('public.get_world_map()')::oid;
   if v_src is null then raise exception 'TERRITORY_MAPREAD FAIL: public.get_world_map() does not exist'; end if;
-  if position('l.zone_id = z.id and l.status = ''active''' in v_src) = 0
-     or position('z.sector_id = se.id and z.status = ''active''' in v_src) = 0
-     or position('se.status = ''active''' in v_src) = 0 then
-    raise exception 'TERRITORY_MAPREAD FAIL: the deployed get_world_map lost a status=''active'' filter — hidden ports would leak';
+  if position('public.world_location_is_visible(l.status, l.zone_id)' in v_src) = 0
+     or position('public.world_zone_is_visible(z.status, z.sector_id)' in v_src) = 0
+     or position('public.world_sector_is_visible(se.status)' in v_src) = 0 then
+    raise exception 'TERRITORY_MAPREAD FAIL: the deployed get_world_map no longer composes the visibility authority at all three levels — hidden ports would leak';
   end if;
+  -- (1b) and it must hold NO copy of its own. `a.status = ''active''` is the space_anchors join and
+  --      correctly stays; the three ALIASED ones below are the visibility rule, and a status literal
+  --      reappearing here IS the two-authority defect coming back.
+  if position('l.status = ''active''' in v_src) > 0
+     or position('z.status = ''active''' in v_src) > 0
+     or position('se.status = ''active''' in v_src) > 0 then
+    raise exception 'TERRITORY_MAPREAD FAIL: get_world_map carries its OWN copy of the visibility rule again — a policy plus a filter that must agree is the defect 0318 removed';
+  end if;
+  -- (1c) BEHAVIOURAL, which the text pins above can only gesture at: a HIDDEN location is actually
+  --      absent from the map read. Owns its precondition — the fixture is inserted here, never
+  --      assumed from the chain seed — and is removed again so the later map-wide probes are
+  --      unaffected.
+  insert into public.locations (id, zone_id, name, location_type, x, y, activity_type, status)
+  values ('facade00-0318-4a00-8a00-00000000fade',
+          (select zone_id from public.locations where id = slag),
+          'Territory Hidden Probe', 'pirate_den', 73, -13, 'hunt_pirates', 'hidden');
+  insert into public.space_anchors (kind, location_id, space_x, space_y, status)
+    values ('location', 'facade00-0318-4a00-8a00-00000000fade', 73, -13, 'active');
+  select count(*) into n
+    from jsonb_array_elements(public.get_world_map()->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where lc->>'id' = 'facade00-0318-4a00-8a00-00000000fade';
+  if n <> 0 then raise exception 'TERRITORY_MAPREAD FAIL: a HIDDEN location appears in get_world_map output'; end if;
+  delete from public.space_anchors where location_id = 'facade00-0318-4a00-8a00-00000000fade';
+  delete from public.locations      where id          = 'facade00-0318-4a00-8a00-00000000fade';
 
   -- (2) value: slag's location JSON carries the rebalanced 30. Vacuity: slag must be IN the read at all.
   v_map := public.get_world_map();
@@ -3812,7 +3848,7 @@ begin
    where not (lc ? 'territory_radius');
   if n <> 0 then raise exception 'TERRITORY_MAPREAD FAIL: % map location(s) MISSING the territory_radius key — additive means every element', n; end if;
 
-  raise notice 'TERRITORY_PASS_MAPREAD: three-level active filter re-pinned on the 0217 body; slag carries the rebalanced territory_radius=10; a NULL-territory location returns the key as json null; every map element carries the key';
+  raise notice 'TERRITORY_PASS_MAPREAD: all three levels compose the 0318 visibility authority with NO second copy of the rule left in the body, and a hidden location is behaviourally absent from the read; slag carries the rebalanced territory_radius=10; a NULL-territory location returns the key as json null; every map element carries the key';
 end $$;
 
 -- ════════ BLOCK S3 POSLEAF (0218): the position leaves — MIDPOINT / AGREEMENT / PARKED / DOCKED ═══

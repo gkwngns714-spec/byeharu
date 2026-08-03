@@ -1,46 +1,19 @@
-// Client-side travel PREVIEW math only. This mirrors the server's movement_create
-// formula so the UI can show an estimated ETA before dispatch. It is NEVER the
-// source of truth — once a fleet is sent, the UI renders the server-returned
-// arrive_at / status, not this estimate.
-
-export const DEFAULT_TRAVEL_SCALE = 1.0
-export const DEFAULT_MIN_TRAVEL_SECONDS = 5
+// THE ONE Euclidean distance helper on the client.
+//
+// This file used to be a second travel-time authority. Alongside `distance` it exported a client
+// mirror of the server's movement formula — `previewTravelSeconds`, `slowestSpeed`,
+// `countdownClock`, and its OWN hardcoded `DEFAULT_TRAVEL_SCALE = 1.0` /
+// `DEFAULT_MIN_TRAVEL_SECONDS = 5`. Production runs `travel_scale` and `min_travel_seconds` out of
+// `game_config`, so those constants were the server's numbers copied into TypeScript and then left
+// behind. Nothing imported any of it: the legacy send UI those exports served was retired, and every
+// surface has rendered the server-returned `arrive_at` ever since (`docs/OSN3_S6B_PRES0_AUDIT.md:121`
+// already listed them as uncalled). They are deleted rather than kept "in case" — a dormant second
+// formula with stale defaults is exactly what the no-spaghetti rule forbids, and reading this file
+// was enough to believe the client still computed ETAs.
+//
+// If a preview ETA is ever wanted again, it must come from the server (an RPC that resolves the same
+// speed the mover will use), never from arithmetic re-implemented here.
 
 export function distance(ax: number, ay: number, bx: number, by: number): number {
   return Math.hypot(bx - ax, by - ay)
-}
-
-/** Slowest unit speed governs the fleet (matches fleet_speed() on the server). */
-export function slowestSpeed(selected: Array<{ speed: number; quantity: number }>): number {
-  const active = selected.filter((s) => s.quantity > 0 && s.speed > 0)
-  if (active.length === 0) return 0
-  return Math.min(...active.map((s) => s.speed))
-}
-
-export function previewTravelSeconds(
-  dist: number,
-  fleetSpeed: number,
-  scale: number = DEFAULT_TRAVEL_SCALE,
-  minSeconds: number = DEFAULT_MIN_TRAVEL_SECONDS,
-): number {
-  if (!fleetSpeed || fleetSpeed <= 0) return 0
-  return Math.max(minSeconds, (dist / fleetSpeed) * scale)
-}
-
-/**
- * "m:ss" while time remains; null once the clock reaches zero or there's no
- * target. Callers decide the wording (e.g. "arriving in {clock}" vs an
- * "awaiting server confirmation" state), so we never compose a stray fallback.
- */
-export function countdownClock(
-  targetIso: string | null | undefined,
-  now: number = Date.now(),
-): string | null {
-  if (!targetIso) return null
-  const ms = new Date(targetIso).getTime() - now
-  if (ms <= 0) return null
-  const total = Math.ceil(ms / 1000)
-  const m = Math.floor(total / 60)
-  const s = total % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
 }
