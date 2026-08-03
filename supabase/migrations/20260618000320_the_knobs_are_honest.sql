@@ -166,16 +166,42 @@
 -- `exploration_scan_radius` is 750, so it already agrees and was left alone.
 --
 -- ── KNOWN CONSEQUENCES OF THE DELETES, STATED RATHER THAN DISCOVERED ────────────────────────────
--- Four dormant harnesses reference `max_coordinate_travel_seconds` /
--- `mainship_coordinate_travel_enabled`: scripts/osn3-anchor1a-realchain-fixtures.sql:283-287,
--- scripts/osn3-s3-realchain-fixtures.sql:315/328/375-378, scripts/osn3-legacy-send-live-check.sh:92,
--- .github/workflows/osn-postenable-verify-proof.yml:79. They are ALREADY dead on this chain: each
--- one drives `mainship_space_begin_move` or `command_main_ship_space_move`, dropped at
--- 0018000232:241, and the osn-postenable check asserts the coordinate flag is `false` when 0300 has
--- set it `true`. Their workflows fire only on `osn3-**` / `osn-coord-verify-proof-**` pushes or
--- manual dispatch, so nothing gating this branch or `main` touches them. Retiring that whole dead
--- OSN-3 per-ship harness (4 workflows + 5 scripts + scripts/activate-coordinate-travel.sql) is its
--- own slice and is NOT smuggled in here.
+-- Two of the eight keys are still NAMED by a dormant harness. The full list, so the next person
+-- inherits the truth rather than re-derives it:
+--
+--   `max_coordinate_travel_seconds` — asserted to be 86400 by
+--     scripts/osn3-anchor1a-realchain-fixtures.sql:283-287, osn3-s3-realchain-fixtures.sql:315/328/
+--     375-379, osn3-s3-realchain-perm.sql:100-104, osn3-s3-live-inspect.sql:104-107,
+--     osn3-s4-realchain-{fixtures:267-271,perm:89-92}, osn3-s5-realchain-{fixtures:271-275,perm:82-84},
+--     osn3-s6a-realchain-{fixtures:287-291,perm:82-84}, osn3-legacy-send-live-check.sh:92-95,
+--     osn3-s3-live-spotcheck.sh:67-71.
+--   `mainship_coordinate_travel_enabled` — asserted to be false, or written, by
+--     scripts/activate-coordinate-travel.sql:146-205, activate-unified-movement.sql:162/249/268/282,
+--     osn-coord-enable-1b-readiness-proof.sql:25/111/123/132/238-240, osn-postenable-verify.sql:48-67,
+--     port-entry-1-proof.sql:261, port-entry-1-production-verify.sql:133-136,
+--     verify-0272-postdeploy.sql:312, and .github/workflows/osn-postenable-verify-proof.yml:79.
+--
+-- EVERY ONE OF THEM IS ALREADY DEAD OR ALREADY WRONG, before this migration touches anything:
+--   • the osn3-* set drives `mainship_space_begin_move`, DROPPED at 0018000232:241, so those proofs
+--     cannot run to completion on this chain regardless of any config row;
+--   • every check that asserts `mainship_coordinate_travel_enabled = false` contradicts production,
+--     where 0018000300 set it TRUE — verified against the live database 2026-08-03.
+--
+-- AND NONE OF THEM GATES ANYTHING. Their workflows were enumerated: osn3-*-realchain-proof.yml fire
+-- on `osn3-**`, osn-postenable-verify-proof.yml on `osn-coord-verify-proof-**`,
+-- osn-coord-enable-1b-readiness-proof.yml on `osn-coord-enable-**`, port-entry-1-*.yml on
+-- `port-entry-1-**`, verify-0272-postdeploy-proof.yml on `slice-0272-postdeploy**`, and the rest are
+-- workflow_dispatch only. Not one fires on `main`, on `pull_request`, or on `slice-**`.
+-- scripts/activate-coordinate-travel.sql and activate-unified-movement.sql are hand-run and named by
+-- no workflow at all.
+--
+-- `typed_zone_{mining,exploration}_runtime_enabled` are read once more, at
+-- scripts/activate-typed-zone-authoring.sql:79-80, through `coalesce(cfg_bool(...), false)`.
+-- `cfg_bool` already answers false for a key that does not exist, so deletion gives that guard the
+-- SAME answer it gets today from a false row — the safe branch. No change there.
+--
+-- Retiring that whole dead OSN-3 per-ship harness — 9 workflows, ~14 scripts, and the two activate-*
+-- scripts — is its own slice with its own blast radius, and is NOT smuggled in here.
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 
 begin;
