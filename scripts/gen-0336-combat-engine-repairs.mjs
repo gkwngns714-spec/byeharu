@@ -703,10 +703,29 @@ begin
     into target_location_id, target_x, target_y
     from public.fleets f where f.id = p_fleet;
   if target_location_id is not null or target_x is not null or target_y is not null then
-    update public.fleets
-       set retreat_target_location_id = null, retreat_target_x = null, retreat_target_y = null,
-           updated_at = now()
-     where id = p_fleet;
+    -- CONFINED, for the same reason the release leaf is. This leaf sits on EVERY terminal path — all
+    -- four arms compose it — so an unguarded raise here would reintroduce exactly the wedge this
+    -- migration exists to close: in three of the four arms the status write has not happened yet, so
+    -- a rollback would take last_resolved_at with it and the encounter would retry, identically,
+    -- forever. A write to fleets can raise for reasons that have nothing to do with combat (a lock
+    -- timeout, a serialization failure, a trigger), and none of them should be able to strand a fight.
+    -- WHAT A FAILURE COSTS, STATED PLAINLY: the values are still RETURNED, so the settle arm still
+    -- flies to the destination the player ordered; only the CLEARING is skipped, which means the
+    -- recording can survive into the next sortie — the very leak this leaf exists to stop. That is
+    -- strictly the lesser evil against wedging an encounter forever, it is loud in the log, and the
+    -- next terminal arm on that fleet consumes it. query_canceled re-raises, exactly as every other
+    -- guard in this migration treats it: a cancellation must kill the run, never be eaten.
+    begin
+      update public.fleets
+         set retreat_target_location_id = null, retreat_target_x = null, retreat_target_y = null,
+             updated_at = now()
+       where id = p_fleet;
+    exception
+      when query_canceled then raise;
+      when others then
+        raise warning 'fleet_consume_retreat_target: fleet % kept its recorded retreat destination (the encounter still concludes; the next terminal arm consumes it): %',
+          p_fleet, sqlerrm;
+    end;
   end if;
   return next;
 end;
@@ -1052,6 +1071,20 @@ begin
          / length('when query_canceled then raise;');
   if v_n <> 2 then
     raise exception '0336 ASSERT (f) FAIL: the release leaf carries % query_canceled re-raise(s) (want 2, one per confined call — a cancellation must kill the run, never be eaten)', v_n;
+  end if;
+  -- THE CONSUME LEAF IS CONFINED TOO. It sits on every terminal path, and in three of the four arms
+  -- the status write has not happened yet — so an unguarded raise in its UPDATE would wedge the
+  -- encounter exactly as the unconfined release calls used to.
+  select ${STRIP} into v_code
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'fleet_consume_retreat_target';
+  v_n := (length(v_code) - length(replace(v_code, 'when query_canceled then raise;', '')))
+         / length('when query_canceled then raise;');
+  if v_n <> 1 then
+    raise exception '0336 ASSERT (f) FAIL: the retreat-target consume leaf carries % query_canceled re-raise(s) (want exactly 1 — its write is on every terminal path and must never be able to strand a fight)', v_n;
+  end if;
+  if position('return next;' in v_code) = 0 then
+    raise exception '0336 ASSERT (f) FAIL: the consume leaf does not return a row — the settle arm would read no destination and every ordered retreat would fall back home';
   end if;
 end $f$;
 
