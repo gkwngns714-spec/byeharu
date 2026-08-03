@@ -4112,21 +4112,6 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL provision team: %', r; end if;
   select main_ship_id into sNT from public.main_ship_instances where player_id = uNT;
 
-  -- FIXTURE SURGERY (replaces the dropped the legacy single-ship send (retired 0232) relocation): place sNT's commission
-  -- present fleet at Slagworks so it is DOCKED at the launch-from-dock port. "Docked" = status='home'
-  -- (the lifecycle signal only, 0221) PLUS a real 'present' fleet at the port (fleet truth).
-  update public.main_ship_instances set status='home', updated_at=now() where main_ship_id=sNT;
-  update public.fleets
-     set current_location_id=slag, location_mode='location', current_base_id=null,
-         active_movement_id=null, updated_at=now()
-   where main_ship_id=sNT and status='present';
-  update public.location_presence set location_id=slag, status='active', updated_at=now()
-   where fleet_id in (select id from public.fleets where main_ship_id=sNT and status='present');
-  select count(*) into n from public.main_ship_instances s
-    where s.main_ship_id=sNT and s.status='home'
-      and exists (select 1 from public.fleets f where f.main_ship_id=s.main_ship_id and f.status='present' and f.current_location_id=slag);
-  if n <> 1 then raise exception 'NOHOME FAIL: docked fixture not placed at Slagworks'; end if;
-
   r := pg_temp.call_as(uNT, 'public.upsert_ship_group(1, ''DockWing'')');
   gNT := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uNT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sNT, gNT));
@@ -4137,6 +4122,39 @@ begin
   -- ★ fixtures in this file were armed on 2026-07-27; NOHOME was missed because SHIELD1 had already
   -- ★ made it unreachable, so nothing ever surfaced it.
   perform pg_temp.arm_group(uNT, gNT);
+
+  -- FIXTURE SURGERY (replaces the dropped the legacy single-ship send (retired 0232) relocation): place
+  -- the team at Slagworks so it is DOCKED at the launch-from-dock port. "Docked" = status='home'
+  -- (the lifecycle signal only, 0221) PLUS a real 'present' fleet at the port (fleet truth).
+  --
+  -- ★ REPOINTED 2026-08-03. This ran BEFORE the group existed and scoped both updates to
+  -- ★ `main_ship_id = sNT`. 0300:69 lit fleet_movement_unified_enabled, so the hunt now takes 0214's
+  -- ★ CONSUME arm (0231:519-560): it resolves the group's OWN fleet via ship_group_resolve_fleet and
+  -- ★ reads the launch origin off THAT fleet (0231:626-634), not off a per-ship dock join. A team
+  -- ★ fleet carries main_ship_id NULL, so the old surgery could never touch it — the group fleet sat
+  -- ★ at the commission port and the leg departed from there. Measured, not guessed: the leg landed
+  -- ★ origin_type=location origin_location_id=b1a00001-…0001 (the commission port) with the team
+  -- ★ fleet carrying a group_id, which is the unified arm's signature.
+  -- ★ THE FIX FOLLOWS THE GAME: dock EVERY live fleet the player owns, after the group exists, so the
+  -- ★ fixture places whichever fleet the resolver actually reads. Mode-agnostic — it is equally
+  -- ★ correct for the 0199 head branch, which joins the per-ship fleet.
+  update public.main_ship_instances set status='home', updated_at=now() where main_ship_id=sNT;
+  update public.fleets
+     set current_location_id=slag, location_mode='location', current_base_id=null,
+         active_movement_id=null, updated_at=now()
+   where player_id=uNT and status='present';
+  update public.location_presence set location_id=slag, status='active', updated_at=now()
+   where fleet_id in (select id from public.fleets where player_id=uNT and status='present');
+  select count(*) into n from public.main_ship_instances s
+    where s.main_ship_id=sNT and s.status='home'
+      and exists (select 1 from public.fleets f where f.main_ship_id=s.main_ship_id and f.status='present' and f.current_location_id=slag);
+  if n <> 1 then raise exception 'NOHOME FAIL: docked fixture not placed at Slagworks'; end if;
+  -- and NO live fleet of this player is anywhere else — the placement is total, so whichever fleet the
+  -- send resolves, it departs from Slagworks. (Without this the old fixture false-passed its own
+  -- placement check while the fleet that actually mattered sat at another port.)
+  select count(*) into n from public.fleets
+    where player_id=uNT and status='present' and current_location_id is distinct from slag;
+  if n <> 0 then raise exception 'NOHOME FAIL: % live fleet(s) are docked somewhere other than Slagworks (the fixture must place every fleet the send could resolve)', n; end if;
 
   -- ── (2) LIT: flip launch_from_dock_enabled (raw update — the gate convention); the docked TEAM hunt
   --         launches ONE fleet FROM the port ─────────────────────────────────────────────────────────
