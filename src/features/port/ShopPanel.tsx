@@ -95,7 +95,7 @@ export function ShopPanel({
       exec: () => buyShopOfferAtPort(mainShipId, offer.ref_id, quantity, crypto.randomUUID()),
       successNote: (res) =>
         res.kind === 'module'
-          ? `Bought ${offer.name ?? offer.ref_id} — −${res.total_price.toLocaleString('en-US')} credits. Fit it from the Fitting tab.`
+          ? `Bought ${offer.name ?? offer.ref_id} — −${res.total_price.toLocaleString('en-US')} credits. Equip it from the Ships tab.`
           : `Bought ${res.quantity}× ${offer.name ?? offer.ref_id} — −${res.total_price.toLocaleString('en-US')} credits.`,
       errorNote: (res) => portShopReasonMessage(res.reason ?? 'unavailable'),
       refresh,
@@ -110,7 +110,9 @@ export function ShopPanel({
 
   return (
     <Card tone="accent" data-testid="shop-panel">
-      <CardHeader title="Outfitter" subtitle="Buy entry-level fitting modules and ammo for your ship." />
+      {/* PLAIN-WORDS: "Outfitter" → "Shop" — the owner's named ask. This is the buy side; the sell
+          side is SalvageMarketPanel ("Sell Items"). */}
+      <CardHeader title="Shop" subtitle="Buy modules and ammo for your ship." />
 
       <div className="mt-1 flex items-center justify-between gap-2 text-xs">
         <span className="text-ink-faint">Credits</span>
@@ -121,7 +123,7 @@ export function ShopPanel({
 
       {loadError && (
         <p data-testid="shop-unavailable" className="mt-1 text-[10px] text-ink-muted">
-          Some prices may be out of date — the outfitter is briefly unavailable.
+          Some prices may be out of date — the shop is briefly unavailable.
         </p>
       )}
 

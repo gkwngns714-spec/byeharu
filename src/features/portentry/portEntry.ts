@@ -147,12 +147,12 @@ export function derivePortEntryAffordance(state: PortEntryShipState | null): Por
 // ── Player-facing copy (stable client strings; the server also returns a message we never rely on) ─────
 export const COMMISSION_REASON_COPY: Record<CommissionReason, string> = {
   not_authenticated: 'You must be signed in to claim a ship.',
-  commission_unavailable: 'Could not commission your ship right now. Please try again in a moment.',
+  commission_unavailable: 'Could not claim your ship right now. Please try again in a moment.',
   // 4C-CLIENT: the "Finish Docking" button this copy used to point at is deleted (the legacy state
   // it served is extinct); the reason stays parsed for the server contract, with honest copy.
   needs_normalization: 'Your ship is already at a port but its docking is incomplete. Please try again later.',
   needs_compat_route: 'Your ship has not docked yet. Travel to a port before it can be docked.',
-  not_provisionable: 'Your ship is not in a state where it can be commissioned.',
+  not_provisionable: 'Your ship is not in a state where it can be claimed.',
   malformed: 'Received an unexpected response. Please try again.',
 }
 

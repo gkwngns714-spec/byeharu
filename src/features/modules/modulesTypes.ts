@@ -146,17 +146,19 @@ export type FittingCommandResult =
 
 // Player-facing copy for the code set the 0113/0114 wrappers can return, same tone as the craft
 // map above. The server's message is preferred when present; this map is the client-side fallback.
+// PLAIN-WORDS: the player verb is "equip/remove" (the Ships tab's buttons) — "fit/unfit" was EVE
+// jargon. Code KEYS stay the server contract, never shown.
 const FITTING_ERROR_COPY: Record<string, string> = {
-  feature_disabled: 'Module fitting is not available yet.',
+  feature_disabled: 'Equipping modules is not available yet.',
   invalid_request: 'Invalid command request.',
-  ship_not_settled: 'The ship must be settled at home or docked at a location to change its module loadout.',
+  ship_not_settled: 'The ship must be settled at a port to change its equipment — not in transit or open space.',
   module_not_owned: 'That module is not in your possession.',
   ship_not_owned: 'That ship is not yours.',
-  already_fitted: 'That module is already fitted to a ship. Unfit it first.',
-  not_fitted: 'That module is not fitted to any ship.',
+  already_fitted: 'That module is already equipped on a ship. Remove it there first.',
+  not_fitted: 'That module is not equipped on any ship.',
   insufficient_slots: 'Not enough free module slots on this ship.',
   not_authenticated: 'You must be signed in.',
-  unavailable: 'Module fitting is unavailable right now.',
+  unavailable: 'Equipping modules is unavailable right now.',
 }
 export function fittingErrorMessage(code: string): string {
   return FITTING_ERROR_COPY[code] ?? FITTING_ERROR_COPY.unavailable

@@ -37,8 +37,9 @@ export function fittingEditability(pos: FleetPosition | undefined): FitEditabili
 
 /** Short player copy for a disabled fit gate (the teamReasonMessage tone; never a raw code). */
 export function fitGateMessage(reason: FitGateReason): string {
-  if (reason === 'position_unknown') return 'Ship position unavailable right now — loadout editing is paused.'
-  return 'The ship must be docked or berthed at a port to change its loadout.'
+  if (reason === 'position_unknown') return 'Ship position unavailable right now — equipment editing is paused.'
+  // PLAIN-WORDS: "berthed" is dockside jargon — to the player both places read "Docked at <port>".
+  return 'The ship must be docked at a port to change its equipment.'
 }
 
 /**

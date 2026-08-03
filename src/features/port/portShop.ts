@@ -131,7 +131,7 @@ export function buyTotal(qty: number, unitPrice: number): number {
 
 // ── the ONE reason → player message mapper (the repairReasonMessage/salvageReasonMessage idiom) ──
 const MESSAGES: Record<string, string> = {
-  port_shop_disabled: 'The outfitter is not open yet.',
+  port_shop_disabled: 'The shop is not open here yet.',
   not_authenticated: 'You must be signed in.',
   invalid_request: 'Invalid purchase request.',
   invalid_ref: 'Unknown item.',
@@ -143,7 +143,7 @@ const MESSAGES: Record<string, string> = {
   insufficient_credits: 'Not enough credits for this purchase.',
   // get_port_shop's own argument guard (0235:340-341) — the offers READ was asked for no port at all.
   invalid_location: 'No port to shop at — open a port first.',
-  unavailable: 'The outfitter is unavailable right now.',
+  unavailable: 'The shop is unavailable right now.',
 }
 
 export function portShopReasonMessage(reason: string): string {

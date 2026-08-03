@@ -118,5 +118,6 @@ test('reasons: the client availability mirror (gate_dark / cap_reached) maps to 
 })
 
 test('reasons: unknown → generic line, never a throw or a raw code', () => {
-  expect(commissionReasonMessage('some_future_reason')).toBe('Commissioning unavailable.')
+  // PLAIN-WORDS: the player-facing verb is "buy/purchase" — "Commissioning" was navy jargon.
+  expect(commissionReasonMessage('some_future_reason')).toBe('Ship purchase unavailable.')
 })

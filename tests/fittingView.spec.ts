@@ -87,7 +87,8 @@ test('fittingEditability: no projection row (dark gates / destroyed ship) → cl
 
 test('fitGateMessage: every reason maps to player copy (never a raw code)', () => {
   expect(fitGateMessage('position_unknown')).toMatch(/position unavailable/i)
-  expect(fitGateMessage('not_settled')).toMatch(/docked or berthed at a port/i)
+  // PLAIN-WORDS: the gate copy dropped the "berthed" jargon — both places read "docked" to a player.
+  expect(fitGateMessage('not_settled')).toBe('The ship must be docked at a port to change its equipment.')
 })
 
 // ── unfittedModuleInstances — the fit-candidate pool ─────────────────────────────────────────────

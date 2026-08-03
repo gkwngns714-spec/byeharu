@@ -98,17 +98,19 @@ export function PortScreen() {
             data-testid="port-berthed-ship"
             className="mx-auto w-full max-w-3xl"
             icon={<Icon name="anchor" size={28} />}
-            title={`Berthed at ${chosenBerthPort.locationName}`}
+            title={`Docked at ${chosenBerthPort.locationName}`}
             body={
               <>
+                {/* PLAIN-WORDS: "berthed"/"moored" was dockside jargon — say docked, and keep the
+                    honest limit (a solo ship can't use paid port services until it joins a fleet). */}
                 <p>
-                  {chosenBerthShipName} is berthed at {chosenBerthPort.locationName} — moored on its own,
-                  not docked with a fleet.
+                  {chosenBerthShipName} is docked at {chosenBerthPort.locationName} on its own — it
+                  isn&apos;t part of a fleet.
                 </p>
                 <p className="mt-2 text-xs text-ink-faint">
-                  Berthed ships can't use paid dock services yet. Assign the ship to a fleet in{' '}
-                  <span className="text-ink">Command</span>, or dock a fleet at this port, to put its
-                  services to work.
+                  Ships docked on their own can't use paid port services yet. Add the ship to a fleet
+                  in <span className="text-ink">Command</span>, or dock a fleet at this port, to use
+                  them.
                 </p>
               </>
             }
