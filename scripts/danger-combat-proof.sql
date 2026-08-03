@@ -1559,6 +1559,7 @@ declare
   e0x double precision; e0y double precision;
   dx double precision; dy double precision;
   v_speed double precision;
+  v_offset int; v_dist double precision; v_ticks int;
   v_step double precision; v_travelled double precision;
   prev_x double precision; prev_y double precision;
   off_x double precision; off_y double precision;
@@ -1610,11 +1611,24 @@ begin
   r := pg_temp.call_as(uL, format('public.set_group_auto_exit(%L::uuid, false, 30)', gL));
   if (r->>'ok')::boolean is not true then raise exception 'REPOSITION FAIL precondition: could not disable auto-exit: %', r; end if;
 
-  -- ── THE OWNER'S ACTION: redirect INSIDE the zone, 2.5 steps away — deeper into the zone the fleet
-  -- ── was ambushed on the edge of. Derived from the measured speed, so "three ticks" is arithmetic.
-  dx := e0x; dy := e0y + 2.5 * v_speed;
+  -- ── THE OWNER'S ACTION: redirect INSIDE the zone, a few steps deeper than the edge the fleet was
+  -- ── ambushed on. THE DESTINATION MUST BE AN INTEGER POINT: step 3 of command_ship_group_go
+  -- ── canonicalizes every ordered coordinate onto the integer world grid before anything reads it,
+  -- ── so a fractional target is NOT the point the admission is tested against. The first cut of this
+  -- ── block asked for e0y + 2.5*speed, which at this fixture's speed canonicalized straight back ONTO
+  -- ── the boundary the fleet was ambushed on — and the admission demands STRICTLY inside, so the
+  -- ── order came back 'retreat_started' and the journey was untestable. Integer offset, integer
+  -- ── anchor, nothing left for the server to round.
+  v_offset := greatest(2, ceil(2.5 * v_speed))::int;
+  dx := round(e0x); dy := round(e0y) + v_offset;
   if not public.danger_zone_contains_point(z_small, dx, dy) then
-    raise exception 'REPOSITION FAIL fixture: the destination (%,%) is not inside the fight''s zone — 2.5 steps at speed % leaves it; move the fixture geometry', dx, dy, v_speed; end if;
+    raise exception 'REPOSITION FAIL fixture: the destination (%,%) is not inside the fight''s zone — % unit(s) in from the ambush edge (%,%) leaves it; move the fixture geometry', dx, dy, v_offset, e0x, e0y; end if;
+  -- THE JOURNEY LENGTH, SOLVED FROM THE FIXTURE'S OWN NUMBERS rather than assumed. The tick covers a
+  -- full step every pass and lands on the last one, so the count is ceil(distance / speed) exactly.
+  v_dist  := public.osn_distance(e0x, e0y, dx, dy);
+  v_ticks := ceil(v_dist / v_speed)::int;
+  if v_ticks < 3 then
+    raise exception 'REPOSITION FAIL fixture: the journey is % tick(s) (% units at speed %) — fewer than three cannot distinguish a MOVE from a teleport, which is the entire property this block exists to prove', v_ticks, v_dist, v_speed; end if;
   r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, dx, dy));
   if (r->>'ok')::boolean is not true then raise exception 'REPOSITION FAIL: the in-zone order was refused: %', r; end if;
   if (r->>'order_outcome') is distinct from 'repositioning' then
@@ -1650,7 +1664,7 @@ begin
   if pr.status <> 'active' or pr.retreat_requested_at is not null then
     raise exception 'REPOSITION FAIL: the presence is %/retreat_requested % — the reposition armed a retreat', pr.status, pr.retreat_requested_at; end if;
 
-  -- ── 3-6. THE JOURNEY. Three ticks: two full steps and an arrival, each one MEASURED. ────────────
+  -- ── 3-6. THE JOURNEY. v_ticks passes: full steps, then an arrival — each one MEASURED. ──────────
   -- The rigid-body offset is captured from the pre-order world and re-checked after every step, so a
   -- formation that slid relative to its own anchor fails here even if the anchor's path is perfect.
   select cu.pos_x - e0x, cu.pos_y - e0y into off_x, off_y
@@ -1658,7 +1672,7 @@ begin
    order by cu.id limit 1;
   if off_x is null then raise exception 'REPOSITION FAIL: the fixture''s player unit has no position — every rigidity assert would be vacuous'; end if;
   prev_x := e0x; prev_y := e0y;
-  for i in 1 .. 3 loop
+  for i in 1 .. v_ticks loop
     perform pg_temp.ae_tick(v_enc);
     select * into e from public.combat_encounters where id = v_enc;
     if e.status <> 'active' then
@@ -1667,12 +1681,12 @@ begin
     -- THE PER-TICK BOUND. An endpoint-only assert passes a teleport; this one does not.
     if v_step > v_speed + 1e-9 then
       raise exception 'REPOSITION FAIL: step % covered % world units against a fleet speed of % — the fleet is moving faster than its own slowest hull, i.e. it is still jumping', i, v_step, v_speed; end if;
-    if i < 3 then
+    if i < v_ticks then
       -- a FULL step, and the order still standing: this is what makes the journey longer than one tick
       if abs(v_step - v_speed) > 1e-9 then
-        raise exception 'REPOSITION FAIL: step % covered % world units, want a full step of % — the fleet is dawdling or the mover is not being asked for a full step', i, v_step, v_speed; end if;
+        raise exception 'REPOSITION FAIL: step % of % covered % world units, want a full step of % — the fleet is dawdling or the mover is not being asked for a full step', i, v_ticks, v_step, v_speed; end if;
       if e.reposition_x is null then
-        raise exception 'REPOSITION FAIL: the order was consumed on step % of 3 — it arrived early, which at this distance means it jumped', i; end if;
+        raise exception 'REPOSITION FAIL: the order was consumed on step % of % — it arrived early, which at this distance means it jumped', i, v_ticks; end if;
     end if;
     -- the fleet marker tracks the fight the whole way (not only at the end)
     select * into fl from public.fleets where id = v_fleet;
@@ -1692,12 +1706,12 @@ begin
 
   -- ── 5. ARRIVED, EXACTLY, AND THE ORDER IS CONSUMED. ────────────────────────────────────────────
   if abs(e.engagement_x - dx) > 1e-6 or abs(e.engagement_y - dy) > 1e-6 then
-    raise exception 'REPOSITION FAIL: after 3 steps the fight is at (%,%), not the ordered (%,%) — 2.5 steps at speed % must land on tick 3', e.engagement_x, e.engagement_y, dx, dy, v_speed; end if;
+    raise exception 'REPOSITION FAIL: after % step(s) the fight is at (%,%), not the ordered (%,%) — % units at speed % must land on tick %', v_ticks, e.engagement_x, e.engagement_y, dx, dy, v_dist, v_speed, v_ticks; end if;
   if e.reposition_x is not null or e.reposition_y is not null then
     raise exception 'REPOSITION FAIL: the fleet arrived and the order (%,%) still stands — arrival must consume it, or the tick keeps re-translating a fleet that is already there', e.reposition_x, e.reposition_y; end if;
   v_travelled := public.osn_distance(e0x, e0y, e.engagement_x, e.engagement_y);
-  if abs(v_travelled - 2.5 * v_speed) > 1e-6 then
-    raise exception 'REPOSITION FAIL: the fleet covered % world units, want % (2.5 x its own speed)', v_travelled, 2.5 * v_speed; end if;
+  if abs(v_travelled - v_dist) > 1e-6 then
+    raise exception 'REPOSITION FAIL: the fleet covered % world units, want the whole ordered distance %', v_travelled, v_dist; end if;
   if e.status <> 'active' then
     raise exception 'REPOSITION FAIL: the encounter is % — the in-zone order broke the combat', e.status; end if;
   select * into fl from public.fleets where id = v_fleet;
@@ -1731,8 +1745,8 @@ begin
    where m.fleet_id = v_fleet and pi.lifecycle_state = 'pending';
   if n <> 0 then raise exception 'REPOSITION FAIL: % pending ambush(es) exist after a reposition — the move was rolled like a journey', n; end if;
 
-  raise notice 'DZCOMBAT_PASS_REPOSITION ok: the in-zone order MOVED NOTHING and recorded a course to (%,%); the tick then walked the fleet there over THREE ticks at exactly % world units per tick (its own slowest hull), the formation held one rigid offset at every step, % enemy row(s) moved to follow, arrival consumed the order, and the fight never broke — no retreat write, no leg, no new roll',
-    dx, dy, v_speed, n_enemy_moved;
+  raise notice 'DZCOMBAT_PASS_REPOSITION ok: the in-zone order MOVED NOTHING and recorded a course to (%,%); the tick then walked the fleet % world units there over % ticks at exactly % per tick (its own slowest hull), the formation held one rigid offset at every step, % enemy row(s) moved to follow, arrival consumed the order, and the fight never broke — no retreat write, no leg, no new roll',
+    dx, dy, v_dist, v_ticks, v_speed, n_enemy_moved;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_REPOOVERLAP (0311): QUANTIFY OVER OVERLAPPING ZONES — NEVER CHOOSE ONE ═══════
