@@ -10,17 +10,8 @@ import { buildTeamRoster, type GroupRow, type RosterShip } from '../command/team
 import type { FleetPosition } from '../map/mainshipApi'
 import type { MapLocation } from '../map/mapTypes'
 import { fetchMyPortStock, type PortStockRow } from './assetsApi'
-import {
-  buildLedger,
-  buildPriceIndex,
-  makeHolding,
-  priceAt,
-  valueStack,
-  type AssetLedger,
-  type Holding,
-  type PriceRow,
-  type ValuedStack,
-} from './assetLedger'
+import type { AssetLedger, PriceRow } from './assetLedger'
+import { assembleLedger, type CargoTarget, type HoldTarget } from './assembleLedger'
 
 // ASSETS-TAB — the React adapter that ASSEMBLES the ledger out of reads that already exist.
 //
@@ -64,16 +55,9 @@ export interface AssetLedgerState {
   fleetCount: number
 }
 
-/** A fleet (or lone ship) whose hold we intend to read, and where it stands. */
-interface HoldTarget {
-  /** Fleet id for a grouped fleet, ship id for a lone one — the ledger row's stable key. */
-  id: string
-  title: string
-  /** The ship the hold read is addressed to (any member; the server resolves the fleet). */
-  probeShipId: string
-  locationId: string | null
-  locationName: string
-}
+/** A HoldTarget plus the ship the READ is addressed to (any member; the server resolves the
+ *  fleet from it). The probe is this hook's business only — the pure assembler never needs it. */
+type HoldProbe = HoldTarget & { probeShipId: string }
 
 /** Where a ship is, as a (port id, port name) pair the ledger can group and price by. NOT docked
  *  (in transit / deep space / hidden / unknown) → a null port, which is unpriceable BY TYPE. */
@@ -146,7 +130,7 @@ export function useAssetLedger(
   }, [shipKey, refreshKey])
 
   // ── the fleets, and where each stands (pure — no read of its own) ─────────────────────────────
-  const holdTargets = useMemo<HoldTarget[]>(() => {
+  const holdTargets = useMemo<HoldProbe[]>(() => {
     const rosterShips: RosterShip[] = ships.map((s) => ({
       main_ship_id: s.main_ship_id,
       name: s.name,
@@ -154,7 +138,7 @@ export function useAssetLedger(
       group_id: groupMap[s.main_ship_id]?.group_id ?? null,
     }))
     const { teams, ungrouped } = buildTeamRoster(groups, rosterShips)
-    const targets: HoldTarget[] = []
+    const targets: HoldProbe[] = []
     for (const t of teams) {
       // A fleet with no ships has no hold to read and no place to stand.
       const probe = t.ships[0]
@@ -249,6 +233,29 @@ export function useAssetLedger(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portKey, refreshKey])
 
+  // ── trade cargo, grouped by the SHIP carrying it and placed where that ship stands ────────────
+  // A lot belongs to a ship, and a ship is somewhere; that somewhere is the only port whose prices
+  // may be applied to it. The grouping happens HERE because it needs posByShip — this hook's
+  // already-polled input — so the pure assembler is handed a finished per-ship shape.
+  const cargoTargets = useMemo<CargoTarget[]>(() => {
+    const byShip = new Map<string, CargoTarget>()
+    for (const l of lots) {
+      let entry = byShip.get(l.main_ship_id)
+      if (!entry) {
+        const ship = ships.find((s) => s.main_ship_id === l.main_ship_id)
+        entry = {
+          shipId: l.main_ship_id,
+          shipName: ship?.name ?? 'Ship',
+          lots: [],
+          ...placeOfShip(posByShip.get(l.main_ship_id), locationsById),
+        }
+        byShip.set(l.main_ship_id, entry)
+      }
+      entry.lots.push({ goodId: l.good_id, qty: l.qty, unitVolumeM3: l.unit_volume_m3 })
+    }
+    return [...byShip.values()]
+  }, [lots, ships, posByShip, locationsById])
+
   // ── the fold ──────────────────────────────────────────────────────────────────────────────────
   return useMemo<AssetLedgerState>(() => {
     const stockRows = stock === 'error' || stock === null ? null : stock
@@ -267,101 +274,26 @@ export function useAssetLedger(
       }
     }
 
-    // A price catalogue that failed to READ is an empty index, which makes every stack render
-    // "No price here" — the honest answer. It must never fall back to a stale or invented number,
-    // and `pricesUnavailable` tells the screen to say WHY the prices are missing.
-    const itemIndex = buildPriceIndex(itemRows ?? [])
-    const goodsIndex = buildPriceIndex(goodsRows ?? [])
-    const volumeOf = new Map((catalog ?? []).map((c) => [c.item_id, c.volume_m3]))
-
-    const placed: Array<Holding & { locationId: string | null; locationName: string }> = []
-
-    // ── port storage, one holding per port ──────────────────────────────────────────────────────
-    const byPort = new Map<string, PortStockRow[]>()
-    for (const r of stockRows) {
-      const list = byPort.get(r.locationId) ?? []
-      list.push(r)
-      byPort.set(r.locationId, list)
-    }
-    for (const [locationId, rows] of byPort) {
-      // One base per port is the normal shape, but a player with two bases at one port would
-      // otherwise show two piles of the same thing: sum the quantities per item first.
-      const qtyByItem = new Map<string, number>()
-      for (const r of rows) qtyByItem.set(r.itemId, (qtyByItem.get(r.itemId) ?? 0) + r.quantity)
-      const stacks: ValuedStack[] = [...qtyByItem].map(([itemId, quantity]) =>
-        valueStack({
-          refId: itemId,
-          quantity,
-          volumeM3: volumeOf.get(itemId) ?? 0,
-          unitPrice: priceAt(itemIndex, locationId, itemId),
-        }),
-      )
-      placed.push({
-        ...makeHolding('storage', `storage-${locationId}`, 'Port storage', stacks),
-        locationId,
-        locationName: locationsById.get(locationId)?.name ?? UNNAMED_PORT,
-      })
-    }
-
-    // ── fleet holds, one holding per fleet, priced where the fleet stands ───────────────────────
-    for (const t of holdTargets) {
-      const hold = holds.get(t.id)
-      if (!hold || !hold.ok || hold.items.length === 0) continue
-      const stacks = hold.items.map((i) =>
-        valueStack({
-          refId: i.itemId,
-          quantity: i.quantity,
-          // The hold read carries its OWN volume from the same catalog the server used; prefer it
-          // over the client catalog so the hold's numbers are the server's numbers.
-          volumeM3: i.volumeM3,
-          unitPrice: priceAt(itemIndex, t.locationId, i.itemId),
-        }),
-      )
-      placed.push({
-        ...makeHolding('hold', `hold-${t.id}`, `${t.title} — carrying`, stacks),
-        // The server's own used/capacity numbers, passed through untouched.
-        capacity: {
-          usedM3: hold.usedM3,
-          capacityM3: hold.capacityM3,
-          overCapacity: hold.overCapacity,
-        },
-        locationId: t.locationId,
-        locationName: t.locationName,
-      })
-    }
-
-    // ── trade cargo, one holding per ship that carries any ──────────────────────────────────────
-    const lotsByShip = new Map<string, Array<ShipCargoLot & { main_ship_id: string }>>()
-    for (const l of lots) {
-      const list = lotsByShip.get(l.main_ship_id) ?? []
-      list.push(l)
-      lotsByShip.set(l.main_ship_id, list)
-    }
-    for (const [shipId, shipLots] of lotsByShip) {
-      const ship = ships.find((s) => s.main_ship_id === shipId)
-      const place = placeOfShip(posByShip.get(shipId), locationsById)
-      const qtyByGood = new Map<string, { qty: number; volume: number }>()
-      for (const l of shipLots) {
-        const cur = qtyByGood.get(l.good_id) ?? { qty: 0, volume: l.unit_volume_m3 }
-        qtyByGood.set(l.good_id, { qty: cur.qty + l.qty, volume: l.unit_volume_m3 })
-      }
-      const stacks = [...qtyByGood].map(([goodId, v]) =>
-        valueStack({
-          refId: goodId,
-          quantity: v.qty,
-          volumeM3: v.volume,
-          // GOODS index, never the item index — the two namespaces are not interchangeable.
-          unitPrice: priceAt(goodsIndex, place.locationId, goodId),
-        }),
-      )
-      placed.push({
-        ...makeHolding('cargo', `cargo-${shipId}`, `${ship?.name ?? 'Ship'} — trade cargo`, stacks),
-        ...place,
-      })
-    }
+    // THE ASSEMBLY IS PURE AND LIVES IN ITS OWN MODULE (assembleLedger.ts) so it can be specced
+    // without React or Supabase — tests/assembleLedger.spec.ts. This hook's whole job is issuing
+    // the reads above and handing their answers over.
+    const ledger = assembleLedger({
+      stock: stockRows,
+      volumeByItem: new Map((catalog ?? []).map((c) => [c.item_id, c.volume_m3])),
+      // A catalogue that failed to read arrives EMPTY, which makes every stack "No price here" —
+      // the honest answer. It never falls back to a stale or borrowed number, and
+      // `pricesUnavailable` below is what tells the screen to say WHY the prices are missing.
+      itemPrices: itemRows ?? [],
+      goodsPrices: goodsRows ?? [],
+      holds,
+      holdTargets,
+      cargo: cargoTargets,
+      nameByLocation: new Map([...locationsById].map(([id, l]) => [id, l.name])),
+      unnamedPort: UNNAMED_PORT,
+    })
 
     return {
-      ledger: buildLedger(placed.filter((h) => h.stacks.length > 0)),
+      ledger,
       unavailable: false,
       pricesUnavailable: itemPrices === 'error' || goodsPrices === 'error',
       shipCount,
@@ -374,10 +306,9 @@ export function useAssetLedger(
     goodsPrices,
     holds,
     holdTargets,
-    lots,
+    cargoTargets,
     groups,
     ships,
-    posByShip,
     locationsById,
   ])
 }
