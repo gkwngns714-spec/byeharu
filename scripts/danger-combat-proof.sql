@@ -4353,6 +4353,248 @@ begin
     v_pre_status, v_pre_hp, v_wreck_max, v_max, v_max;
 end $$;
 
+-- ════════ DZCOMBAT_PASS_DOCKWRECK (0334): A WRECK IS WHERE ITS FLEET IS ══════════════════════════
+-- The owner, verbatim: "you don't need to tow to a nearest port. As a fleet we have arrived at a
+-- dock already."
+--
+-- THE DEFECT THIS IS RED AGAINST: mainship_port_of_ship (0297 §1) had exactly two arms — the ship's
+-- OWN resolved fleet, then its berth. A ship that owns no per-ship fleet row resolves nothing
+-- (mainship_resolve_fleet's transition fallback ends `if v_n <> 1 then return null;`) and, being in a
+-- group, can hold no berth at all (the 0216 XOR: `(group_id is null) = (berth_location_id is not
+-- null)`). So it had NO position — while its own fleetmates, which DO own per-ship fleets, were
+-- reading "Docked at Haven" from them. Every recovery verb then refused it: repair_main_ship raises
+-- ship_not_at_port, and get_my_disabled_ships reports at_port=false so the client offers only a tow.
+-- The tow was not the design; it was the only thing that still worked.
+--
+-- ── THE STAGING, and why it is the owner's shape rather than a convenient one ────────────────────
+-- Every hull is commissioned through the real RPC, and port_entry_commission_build mints each one
+-- "exactly ONE present/location fleet" tagged with its own main_ship_id. Group assignment writes no
+-- fleets at all, so after assignment each member still owns that per-ship fleet and the group has NO
+-- unified (main_ship_id IS NULL) fleet — which is EXACTLY production group df4649fc, and exactly the
+-- case the two arms could not answer. A group that does own a unified fleet was never broken: its
+-- members resolve it directly through branch (1). This block stages the broken shape on purpose.
+--
+-- The casualty is then produced by the tick's OWN terminal leaves, never a hand-write: fleet_destroy
+-- on the wreck's own fleet (the exact thing combat does to a fleet that dies) followed by
+-- mainship_mark_combat_destroyed on the ship. That leaves B owning no live fleet and no berth — the
+-- pre-0334 dead end — while A, its fleetmate, is still docked.
+--
+-- NOTE WHICH CLAUSE OF THE FIX THIS EXERCISES: A's commission fleet carries main_ship_id but NOT
+-- group_id (port_entry_commission_build sets no group), so the group arm can only find it through
+-- its member-ownership clause — "a live docked fleet owned by a ship that is a member of my group".
+-- A tagged-fleets-only implementation goes RED here. That clause is the load-bearing one and this is
+-- what proves it.
+--
+-- PROPERTIES, in order. (1) is the pre-0334 RED; the rest exist so it cannot pass for a wrong reason:
+--   1. THE WRECK IS AT ITS FLEET'S DOCK. Its port is the port its fleetmate is docked at. The RED is
+--      SOURCE-DERIVED and stated as such: a proof can only run the post-fix chain, so the premise is
+--      asserted instead — the wreck resolves NO fleet and holds NO berth, which are precisely the
+--      two inputs the old body had, so the old body could only have returned NULL.
+--   2. LIVING AND WRECKED CANNOT DISAGREE. The fleetmate and the wreck resolve the SAME port. This is
+--      the invariant whose absence produced the bug, asserted directly.
+--   3. THE CLIENT CAN SEE IT: get_my_disabled_ships lists the wreck with at_port TRUE and the right
+--      location_id — the one field src/features/ship/shipRecovery.ts's repairGate keys on.
+--   4. IT REPAIRS WITHOUT A TOW, AND KEEPS ITS PLACE IN THE FLEET. No tow is called; the ship comes
+--      back to full hp and is STILL a member of its group. The tow un-groups (the 0216 XOR write), so
+--      an unchanged group_id is positive proof no tow happened.
+--   5. THE TOW SURVIVES FOR THE CASE IT WAS BUILT FOR. A wreck whose group holds no docked fleet at
+--      all still resolves no port, still has its repair refused with ship_not_at_port, and is still
+--      recovered by tow-then-repair. 0334 must not have deleted the escape hatch.
+--   6. RECOVERY IS OWNER-SCOPED: another player's tow and repair on the wreck are refused.
+do $$
+declare
+  r jsonb;
+  uD uuid; gG uuid; gH uuid; sA uuid; sB uuid; sC uuid;
+  fA uuid; fB uuid; fC uuid;
+  uZ uuid := (select v from dzc where k='uZ');
+  v_port uuid; v_pa uuid; v_pb uuid; v_pc uuid;
+  v_status text; v_hp integer; v_max integer; v_group uuid; v_berth uuid;
+  v_listed jsonb; v_n integer; v_at_port boolean; v_loc_listed uuid;
+begin
+  -- ── a fresh, funded fixture player and THREE hulls. 100% real RPCs. ────────────────────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.dw.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uD;
+  insert into public.player_wallet (player_id, balance) values (uD, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+
+  r := pg_temp.call_as(uD, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'DOCKWRECK FAIL: hull A: %', r; end if;
+  select main_ship_id into sA from public.main_ship_instances where player_id = uD;
+  select berth_location_id into v_port from public.main_ship_instances where main_ship_id = sA;
+  if v_port is null then raise exception 'DOCKWRECK FAIL: the commissioned hull has no berth port'; end if;
+  r := pg_temp.call_as(uD, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'DOCKWRECK FAIL: hull B: %', r; end if;
+  select main_ship_id into sB from public.main_ship_instances
+   where player_id = uD and main_ship_id <> sA limit 1;
+  r := pg_temp.call_as(uD, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'DOCKWRECK FAIL: hull C: %', r; end if;
+  select main_ship_id into sC from public.main_ship_instances
+   where player_id = uD and main_ship_id not in (sA, sB) limit 1;
+  if sB is null or sC is null then raise exception 'DOCKWRECK FAIL: hulls B/C did not materialise (% / %)', sB, sC; end if;
+
+  -- ── TWO groups: G holds the fleetmate + the wreck; H holds the genuinely-nowhere wreck alone. ──
+  r := pg_temp.call_as(uD, 'public.upsert_ship_group(1, ''Dock Wreck'')');
+  if (r->>'ok')::boolean is not true then raise exception 'DOCKWRECK FAIL: group G: %', r; end if;
+  gG := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uD, 'public.upsert_ship_group(2, ''Nowhere'')');
+  if (r->>'ok')::boolean is not true then raise exception 'DOCKWRECK FAIL: group H: %', r; end if;
+  gH := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sA, gG));
+  if (r->>'ok')::boolean is not true then raise exception 'DOCKWRECK FAIL: assign A: %', r; end if;
+  r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sB, gG));
+  if (r->>'ok')::boolean is not true then raise exception 'DOCKWRECK FAIL: assign B: %', r; end if;
+  r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sC, gH));
+  if (r->>'ok')::boolean is not true then raise exception 'DOCKWRECK FAIL: assign C: %', r; end if;
+
+  -- ── THE STAGING PREMISE, OWNED not inherited: the group has NO unified fleet, so every member is
+  --    answered by its own commission fleet. If that ever changes, this block is staging a shape the
+  --    bug never had and must say so rather than pass. ────────────────────────────────────────────
+  select count(*) into v_n from public.fleets
+   where group_id = gG and player_id = uD and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if v_n <> 0 then
+    raise exception 'DOCKWRECK FAIL: group G already owns % unified fleet(s) — a group with a unified fleet was NEVER broken (its members resolve it through branch 1), so this block would prove nothing about the defect', v_n;
+  end if;
+  fA := public.mainship_resolve_fleet(sA);
+  fB := public.mainship_resolve_fleet(sB);
+  fC := public.mainship_resolve_fleet(sC);
+  if fA is null or fB is null or fC is null then
+    raise exception 'DOCKWRECK FAIL: a hull owns no per-ship fleet after commission+assign (% / % / %) — the staging assumes port_entry_commission_build''s present/location fleet survives assignment', fA, fB, fC;
+  end if;
+  -- and A's fleet is NOT group-tagged, which is what forces the fix's member-ownership clause to be
+  -- the thing under test rather than a convenient tagged-fleet lookup.
+  select group_id into v_group from public.fleets where id = fA;
+  if v_group is not null then
+    raise exception 'DOCKWRECK FAIL: the fleetmate''s commission fleet is group-tagged (%) — then a tagged-only implementation would pass and the member-ownership clause would be untested', v_group;
+  end if;
+
+  -- ── WRECK B, through the tick's OWN terminal leaves, exactly as a combat casualty is made. ──────
+  perform public.fleet_destroy(fB);
+  perform public.mainship_mark_combat_destroyed(sB);
+
+  -- ── ⭐ THE PRE-0334 DEAD END, ASSERTED AS THE RED'S PREMISE. The old body had exactly two inputs:
+  --    a resolved fleet, and a berth. Both are empty here, so it could only ever have returned NULL.
+  if public.mainship_resolve_fleet(sB) is not null then
+    raise exception 'DOCKWRECK FAIL: the wreck still resolves a fleet — the pre-0334 dead end is not staged and property 1 would prove nothing';
+  end if;
+  select berth_location_id, group_id, status into v_berth, v_group, v_status
+    from public.main_ship_instances where main_ship_id = sB;
+  if v_berth is not null then
+    raise exception 'DOCKWRECK FAIL: the wreck holds a berth (%) — then the old berth arm would already have answered and this block would not be red against anything', v_berth;
+  end if;
+  if v_group is distinct from gG or v_status is distinct from 'destroyed' then
+    raise exception 'DOCKWRECK FAIL: the wreck is group % status % (want group G, destroyed)', v_group, v_status;
+  end if;
+  -- …while its FLEETMATE is demonstrably docked. Without this the group has no dock to inherit.
+  v_pa := public.mainship_port_of_ship(sA);
+  if v_pa is distinct from v_port then
+    raise exception 'DOCKWRECK FAIL: the fleetmate is at % (want the commission port %) — the group is not at a dock, so there is nothing for the wreck to be at either', v_pa, v_port;
+  end if;
+
+  -- ── 1. THE WRECK IS AT ITS FLEET'S DOCK. RED on the pre-0334 body (premise asserted above). ─────
+  v_pb := public.mainship_port_of_ship(sB);
+  if v_pb is null then
+    raise exception 'DOCKWRECK FAIL: the wreck is at NO port even though its fleetmate is docked at % — this is the owner''s bug: "as a fleet we have arrived at a dock already". A ship that owns no per-ship fleet resolves none, and being grouped it can hold no berth (0216 XOR), so the two-arm body had no answer and demanded a tow to a port the fleet was already at',
+      v_pa;
+  end if;
+  if v_pb is distinct from v_port then
+    raise exception 'DOCKWRECK FAIL: the wreck resolved port % but its fleet is docked at % — a wreck must never name a port its fleetmates are not at', v_pb, v_port;
+  end if;
+
+  -- ── 2. LIVING AND WRECKED CANNOT DISAGREE. ─────────────────────────────────────────────────────
+  if v_pb is distinct from v_pa then
+    raise exception 'DOCKWRECK FAIL: the fleetmate reads % and the wreck reads % — a fleet''s living ships and its wrecks disagreeing about where they are is exactly what produced this defect', v_pa, v_pb;
+  end if;
+
+  -- ── 3. THE CLIENT CAN SEE IT (the one field repairGate keys on). ───────────────────────────────
+  v_listed := pg_temp.call_as(uD, 'public.get_my_disabled_ships()');
+  select (el->>'at_port')::boolean, (el->>'location_id')::uuid
+    into v_at_port, v_loc_listed
+    from jsonb_array_elements(v_listed) el
+   where (el->>'main_ship_id')::uuid = sB;
+  if not found then
+    raise exception 'DOCKWRECK FAIL: the wreck is not listed by get_my_disabled_ships (%) — the Ships tab renders from exactly this read', v_listed;
+  end if;
+  if v_at_port is not true or v_loc_listed is distinct from v_port then
+    raise exception 'DOCKWRECK FAIL: the wreck is listed at_port=% location=% (want true / %) — with at_port false the client shows "Tow to the nearest port" and disables Repair, so the player still cannot do the thing the server would now allow',
+      v_at_port, v_loc_listed, v_port;
+  end if;
+
+  -- ── 4. IT REPAIRS WITHOUT A TOW, AND KEEPS ITS PLACE IN THE FLEET. ─────────────────────────────
+  select max_hp into v_max from public.main_ship_instances where main_ship_id = sB;
+  r := pg_temp.call_as(uD, format('public.repair_main_ship(%L::uuid)', sB));
+  if (r->>'status') is distinct from 'home' then
+    raise exception 'DOCKWRECK FAIL: repair refused a wreck standing at its own fleet''s dock: %', r;
+  end if;
+  select hp, status, group_id, berth_location_id into v_hp, v_status, v_group, v_berth
+    from public.main_ship_instances where main_ship_id = sB;
+  if v_hp is distinct from v_max or v_status is distinct from 'home' then
+    raise exception 'DOCKWRECK FAIL: the repaired ship is hp %/% status %', v_hp, v_max, v_status;
+  end if;
+  -- NO TOW HAPPENED, positively: the tow's only durable write is the 0216 XOR pair (group -> NULL,
+  -- berth -> a port). The ship is still grouped and still berthless, so it was never hauled anywhere.
+  if v_group is distinct from gG or v_berth is not null then
+    raise exception 'DOCKWRECK FAIL: the ship left its fleet during recovery (group %, berth %) — repairing where it already was must not un-group it, and an un-grouped berthed ship is the signature of a tow the owner said should not be needed', v_group, v_berth;
+  end if;
+
+  -- ── 5. THE TOW SURVIVES FOR THE CASE IT WAS BUILT FOR: a wreck whose group holds no dock. ──────
+  perform public.fleet_destroy(fC);
+  perform public.mainship_mark_combat_destroyed(sC);
+  select count(*) into v_n from public.fleets f
+   where f.player_id = uD and public.fleet_docked_location(f) is not null
+     and (f.group_id = gH
+          or exists (select 1 from public.main_ship_instances m
+                      where m.main_ship_id = f.main_ship_id and m.group_id = gH));
+  if v_n <> 0 then
+    raise exception 'DOCKWRECK FAIL: group H still holds % docked fleet(s) — then its wreck is NOT nowhere and the tow-still-required property is vacuous', v_n;
+  end if;
+  v_pc := public.mainship_port_of_ship(sC);
+  if v_pc is not null then
+    raise exception 'DOCKWRECK FAIL: a wreck whose group holds no docked fleet resolved port % — 0334 must answer only from a dock the fleet actually holds, never invent one', v_pc;
+  end if;
+  begin
+    r := pg_temp.call_as(uD, format('public.repair_main_ship(%L::uuid)', sC));
+    raise exception 'DOCKWRECK FAIL: repair accepted a wreck that is genuinely at no port: %', r;
+  exception
+    when sqlstate 'P0001' then
+      if position('DOCKWRECK FAIL' in SQLERRM) > 0 then raise; end if;
+      if position('ship_not_at_port' in SQLERRM) = 0 then
+        raise exception 'DOCKWRECK FAIL: repair refused the nowhere-wreck with the wrong reason (%) — the position gate must still be the thing that answers', SQLERRM;
+      end if;
+  end;
+  r := pg_temp.call_as(uD, format('public.mainship_emergency_tow(%L::uuid)', sC));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'DOCKWRECK FAIL: the tow refused the nowhere-wreck: % — 0334 must not have broken the escape hatch it relies on for exactly this case', r;
+  end if;
+  r := pg_temp.call_as(uD, format('public.repair_main_ship(%L::uuid)', sC));
+  if (r->>'status') is distinct from 'home' then
+    raise exception 'DOCKWRECK FAIL: repair did not revive the towed nowhere-wreck: %', r;
+  end if;
+
+  -- ── 6. RECOVERY IS OWNER-SCOPED. Re-wreck B, then let a STRANGER try. ──────────────────────────
+  perform public.mainship_mark_combat_destroyed(sB);
+  r := pg_temp.call_as(uZ, format('public.mainship_emergency_tow(%L::uuid)', sB));
+  if (r->>'ok')::boolean is not false then
+    raise exception 'DOCKWRECK FAIL: another player towed a wreck they do not own: %', r;
+  end if;
+  begin
+    r := pg_temp.call_as(uZ, format('public.repair_main_ship(%L::uuid)', sB));
+    raise exception 'DOCKWRECK FAIL: another player repaired a wreck they do not own: %', r;
+  exception
+    when sqlstate 'P0001' then
+      if position('DOCKWRECK FAIL' in SQLERRM) > 0 then raise; end if;
+  end;
+  select status into v_status from public.main_ship_instances where main_ship_id = sB;
+  if v_status is distinct from 'destroyed' then
+    raise exception 'DOCKWRECK FAIL: a stranger''s refused recovery still moved the ship to % — a refusal must write nothing', v_status;
+  end if;
+
+  raise notice 'DZCOMBAT_PASS_DOCKWRECK ok: in a group with NO unified fleet (production''s own shape), a wreck that owns no fleet row and — being grouped — can hold no berth resolved its FLEETMATE''S dock (%) instead of nothing, through the member-ownership clause alone (the fleetmate''s commission fleet carries no group_id). The living ship and the wreck report the SAME port, get_my_disabled_ships lists it at_port=true, and it repaired to %/% WITHOUT a tow — still in its group, still berthless, so no haul occurred. A wreck whose group holds no docked fleet still resolves nothing, is still refused with ship_not_at_port, and is still recovered by tow-then-repair; and a stranger''s tow and repair are both refused, writing nothing',
+    v_port, v_hp, v_max;
+end $$;
+
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;
 
 rollback;   -- self-rolling-back: ZERO persisted state (no COMMIT anywhere above).
