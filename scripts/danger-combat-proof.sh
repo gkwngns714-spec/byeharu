@@ -36,7 +36,11 @@ SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 # UNION of this one string, and every one of them was a merge where two branches each appended a
 # single marker. Taking either side whole drops the other's block from the local run while the
 # suite still prints OVERALL_PASS. Union, always.
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER"
+# 0332 appends WRECKHOME — TWENTY-FOUR markers now, from eight slices. Same law, fifth time: this
+# block is the ONLY runtime check that a fight the fleet SURVIVES still reconciles its casualties,
+# and dropping the marker in a merge would leave that entirely unverified while the suite prints
+# ALL PASSED. Union, always.
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -71,7 +75,12 @@ if [ "$MODE" = "selftest" ]; then
   # inside calculate_expedition_stats (sliced from 0205, still its byte source) and eight inside
   # combat_create_group_encounter (sliced from 0301 and from 0315's own emitted text). THIRTEEN
   # generators now. Same law as every line above: a missing or unrun generator is a HARD FAIL.
-  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn gen-0331-one-authority-for-attack"
+  # 0332 joins: ONE hunk inside process_combat_ticks (the escape/completed settle arm's member
+  # loop, sliced from 0299:622-624), statically disjoint from 0310's, 0314's and 0317's sites, all
+  # three of which gen-0332's own head check names explicitly rather than widening the window — so
+  # 0333 still cannot cut a slice from a head that has moved without failing here first. FOURTEEN
+  # generators now. Same law as every line above: a missing or unrun generator is a HARD FAIL.
+  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn gen-0331-one-authority-for-attack gen-0332-a-wreck-can-always-come-home"
   if command -v node >/dev/null 2>&1; then
     # DIRECTION 1 — nothing on disk may be unregistered. This is the half that would have caught 0307
     # on the day the gate was written, and it needs no maintenance to keep working.
@@ -431,6 +440,43 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks the both-sides ordering invariant (no salvo at a seq later than the destruction event naming its firer)"
   grep -q "the ordering invariant would be vacuous"               "$SQL" \
     || fail "harness lacks the ordering-invariant vacuity guard (it must quantify over real destructions)"
+  # 0332 — A WRECK CAN ALWAYS COME HOME, in assert-form. The first is the pre-0332 RED (the settle
+  # arm filtered its dead members out and gave them no terminal write, so the casualty of a fight
+  # the fleet SURVIVED ended at hp 0 / status 'home' — recoverable by nothing). The rest are what
+  # stops the block passing for the wrong reason: the fleet must actually survive with exactly one
+  # casualty (or the DEFEAT arm, which always reconciled, would be doing the work), the survivor's
+  # hp-0-but-alive trap must be armed (or an hp-shaped "fix" would pass), and the recovery must be
+  # proven reachable, owner-scoped and non-destructive of the hull's capacity.
+  grep -q "a hull at 0 that the settle arm never marked"          "$SQL" \
+    || fail "harness lacks the settle-arm-reconciles assert (the pre-0332 red: a fight the fleet survived left its casualty unrecoverable)"
+  grep -q "this block needs EXACTLY ONE casualty beside a survivor" "$SQL" \
+    || fail "harness lacks the WRECKHOME window premise (0 dead makes property 1 vacuous; both dead hands the work to the DEFEAT arm, which was never broken)"
+  grep -q "the aggro concentration this block relies on did not hold" "$SQL" \
+    || fail "harness lacks the WRECKHOME casualty-identity pin (the fight it staged must be the fight it describes)"
+  grep -q "something other than the settle arm reconciled it"     "$SQL" \
+    || fail "harness lacks the WRECKHOME attribution pin (the wreck must still be unreconciled immediately BEFORE the settle, or property 1 cannot be attributed to the arm under test)"
+  grep -q "a merely damaged ship was wrecked by the settle"       "$SQL" \
+    || fail "harness lacks the damaged-but-alive survivor assert (the 0312 fractional-hull law: an hp-shaped reconciliation passes property 1 and must fail here)"
+  grep -q "the hp-predicate trap is not armed"                    "$SQL" \
+    || fail "harness lacks the WRECKHOME hp-trap non-vacuity guard (the survivor's unit must really still be alive while its instance row reads 0)"
+  grep -q "the recovery UI 0297 shipped keys on exactly this read" "$SQL" \
+    || fail "harness lacks the wreck-is-listed assert (server verbs the client cannot see leave the player just as stuck)"
+  grep -q "must accept exactly the ships the position gate rejects" "$SQL" \
+    || fail "harness lacks the tow-accepts-the-reconciled-wreck assert (0297's escape hatch, end to end)"
+  grep -q "a wreck must keep the capacity its owner paid for"     "$SQL" \
+    || fail "harness lacks the max_hp-survives assert (a wreck at max_hp<=0 raises invalid max_hp and can never be repaired — the 0052 softlock)"
+  grep -q "another player towed a wreck they do not own"          "$SQL" \
+    || fail "harness lacks the owner-scoped tow refusal assert"
+  grep -q "another player repaired a wreck they do not own"       "$SQL" \
+    || fail "harness lacks the owner-scoped repair refusal assert"
+  grep -q "a fight it was never in must not touch a ship that was already destroyed" "$SQL" \
+    || fail "harness lacks the already-destroyed-bystander assert (the shape the real destroyed ships in production carry must be undisturbed)"
+  grep -q "this slice must not have touched the recovery path that already worked" "$SQL" \
+    || fail "harness lacks the bystander-still-repairs assert"
+  grep -q "the fleet was wiped before the auto-exit could arm"    "$SQL" \
+    || fail "harness lacks the WRECKHOME erosion premise (a wipe routes through the DEFEAT arm and the settle arm under test would never run)"
+  grep -q "public.get_my_disabled_ships("                         "$SQL" \
+    || fail "harness does not read the client's own wreck list (0297 §4) — the seam where a reconciled wreck becomes a button the player can press"
 
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
