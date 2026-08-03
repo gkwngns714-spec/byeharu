@@ -140,6 +140,28 @@ begin
   perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);      -- exact numbers (0314 per-hit roll)
   perform public.set_game_config('combat_tick_logging',  'true'::jsonb);
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
+  -- ── THE FROZEN-CLOCK COOLDOWN WORLD, OWNED — the house idiom this file was the only combat proof
+  --    never to adopt, and the reason (f) measured a player that dealt 0 damage. ─────────────────
+  -- 0314 arms REAL weapon cooldowns (next_ready_at = now() + cooldown_seconds) and now() is FROZEN
+  -- for this whole transaction, so ANY positive cooldown means a weapon fires at most ONCE per proof
+  -- run. This file's two ships each carry a FITTED autocannon_battery, whose 2s cooldown comes from
+  -- the CATALOG — combat_create_group_encounter freezes module_types.cooldown_seconds into
+  -- weapons_json at creation (0301:770) — so neither cooldown KNOB can reach it.
+  -- WHY IT ONLY BIT AFTER 0336, AND WHY IT IS THE FIXTURE RATHER THAN THE ENGINE: while every enemy
+  -- spawned ON the player, both sides fired on the SAME tick — the wave's first shot and the player's
+  -- one and only shot were both tick 1, which is the tick (f) read. 0336 stands a wave outside its
+  -- own reach, so its first shot lands a tick or more later, by which time the player's single shot
+  -- is long spent and its clock can never come round again under a frozen now(). CI read exactly
+  -- that: `the player dealt 0 damage on tick 2 (encounter active, nearest living enemy 1.800 away,
+  -- weakest player reach 5)` — in range, armed, not retreating, and simply not ready. In the real
+  -- game the cron advances the clock and the gun fires again two seconds later.
+  -- The property (f) asserts is UNCHANGED — real damage in BOTH directions on ONE tick — and this is
+  -- the same fire-every-tick precondition five other combat proofs in this repo already own with
+  -- these exact three lines (team-command-proof.sql:1147-1149 among them). Reverted by the ROLLBACK.
+  -- The cooldown property ITSELF is proven where it is owned: danger-combat-proof's RSFEEL block.
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+  update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
   -- ── 0336 REPOINTED THIS SCENARIO'S GEOMETRY, AND THE OLD SPELLING IS NOW ACTIVELY HARMFUL ──────
   -- This line used to read `enemy_synthetic_range_base = 10000  -- in range at dist 0`. Both halves of
   -- that comment are dead:
@@ -708,17 +730,24 @@ begin
   select player_damage, enemy_damage into v_pdmg, v_edmg
     from public.combat_ticks where encounter_id = v_enc and tick_number = v_dmg_tick;
   if coalesce(v_pdmg, 0) <= 0 then
-    -- DIAGNOSABLE, not merely red. The two ways a correct engine can produce zero player damage on a
-    -- tick the enemy fought in are BOTH geometric-or-status, and neither is "the weapons are empty"
-    -- (that is guarded above): the fleet is out of reach, or it is retreating and therefore silenced
-    -- by the v_offense gate. Both are in the message so the next run names its own cause.
+    -- DIAGNOSABLE, not merely red. On a correct engine there are exactly THREE ways a player with a
+    -- real weapon (guarded above) deals nothing on a tick the enemy fought in: it is out of reach, it
+    -- is retreating and silenced by the v_offense gate, or its clock is not ready. All three are in
+    -- the message, because the FIRST version of this assert reported only the first two and the real
+    -- cause was the third — a fitted 2s catalog cooldown against a frozen now(), which is why the
+    -- three cooldown-zeroing lines at the top of this file exist.
     select status into v_status from public.combat_encounters where id = v_enc;
     select min(public.osn_distance(p.pos_x, p.pos_y, e.pos_x, e.pos_y)) into v_mind
       from public.combat_units p, public.combat_units e
      where p.encounter_id = v_enc and p.side = 'player' and p.alive_count > 0
        and e.encounter_id = v_enc and e.side = 'enemy' and e.alive_count > 0;
-    raise exception 'ELITE PROOF FAIL DAMAGE: the player dealt % damage on tick % — the Fleet-1 zero-damage failure has recurred (encounter %, nearest living enemy % away, weakest player reach %)',
-      v_pdmg, v_dmg_tick, v_status, round(coalesce(v_mind, -1)::numeric, 3), v_preach;
+    select count(*) into v_bad
+      from public.combat_units p, jsonb_array_elements(p.weapons_json) w
+     where p.encounter_id = v_enc and p.side = 'player' and p.alive_count > 0
+       and nullif(w->>'next_ready_at','') is not null
+       and (w->>'next_ready_at')::timestamptz > now();
+    raise exception 'ELITE PROOF FAIL DAMAGE: the player dealt % damage on tick % — the Fleet-1 zero-damage failure has recurred (encounter %, nearest living enemy % away, weakest player reach %, % player weapon(s) still on cooldown against a FROZEN now())',
+      v_pdmg, v_dmg_tick, v_status, round(coalesce(v_mind, -1)::numeric, 3), v_preach, v_bad;
   end if;
   if coalesce(v_edmg, 0) <= 0 then
     raise exception 'ELITE PROOF FAIL DAMAGE: the enemy (elite + normal) dealt % damage — the spawned enemies do not fight', v_edmg;
