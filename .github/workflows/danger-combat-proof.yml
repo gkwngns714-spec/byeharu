@@ -58,6 +58,12 @@ on:
       # or not) and this proof carries its behaviour block (DZCOMBAT_PASS_LEAD) — a formation branch
       # that does not fire this gate ships with nothing but its own text self-asserts behind it.
       - 'slice-every-fleet**'
+      # 0316 divides EVERY combat distance and rate by 5 (ranges, the formation ring, the enemy
+      # speeds and projectile speeds by config; the player's world-travel speed converted into a
+      # combat speed by a new knob read in the encounter builder). This proof carries the CLOSURE
+      # block, which 0316 turned into a pinned tick-count property — a five-times-tighter branch
+      # that does not fire this gate ships the whole geometry on text self-asserts alone.
+      - 'slice-combat-five-times**'
 
 permissions:
   contents: read

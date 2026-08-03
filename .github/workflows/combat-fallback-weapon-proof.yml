@@ -31,6 +31,10 @@ on:
       # expected values were repointed to knob/catalog derivation in the same slice, so range
       # branches must run it.
       - 'slice-weapon-ranges**'
+      # 0316 divides combat_player_fallback_weapon_range (25 -> 5) and its projectile speed
+      # (300 -> 60); this proof derives every expected value from those knobs, so it is the gate that
+      # proves the derivation still holds at the new scale.
+      - 'slice-combat-five-times**'
 
 permissions:
   contents: read
