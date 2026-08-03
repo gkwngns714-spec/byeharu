@@ -1365,10 +1365,22 @@ begin
   if sA is null or sB is null or sC is null or sD is null or sE is null then
     raise exception 'ONEPOWER FAIL: five hulls did not materialise'; end if;
 
-  -- materials for four batteries (0183: crystal/ore/scrap) and one mk2 (0202: blueprint_fragment 2
-  -- + artifact_core 1 + weapon_parts 6), through the real Reward writer.
-  perform public.reward_grant('combat', gen_random_uuid(), uP, null,
-    '{"items": [{"item_id": "crystal", "quantity": 40}, {"item_id": "ore", "quantity": 80}, {"item_id": "scrap", "quantity": 80}, {"item_id": "blueprint_fragment", "quantity": 4}, {"item_id": "artifact_core", "quantity": 2}, {"item_id": "weapon_parts", "quantity": 12}]}'::jsonb);
+  -- Materials for FOUR autocannon_batteries and ONE mk2, DERIVED FROM module_recipe_ingredients
+  -- rather than written out. The first version of this block hard-coded crystal/ore/scrap (the
+  -- mining rig's recipe, copied from the RIGFALLBACK block above) and CI answered
+  -- insufficient_items: pirate_alloy — a gun is not a rig. Deriving it means a recipe retune can
+  -- never starve this fixture again, and the vacuity pin below means a recipe that VANISHED cannot
+  -- quietly leave the grant empty and the craft failing for a different reason.
+  select jsonb_build_object('items', jsonb_agg(jsonb_build_object('item_id', i.item_id, 'quantity', i.q)))
+    into r
+    from (select item_id, sum(qty * mult)::int as q from (
+            select item_id, qty, 4 as mult from public.module_recipe_ingredients where module_type_id = 'autocannon_battery'
+            union all
+            select item_id, qty, 1      from public.module_recipe_ingredients where module_type_id = 'autocannon_battery_mk2'
+          ) x group by item_id) i;
+  if r is null or jsonb_array_length(r->'items') < 1 then
+    raise exception 'ONEPOWER FAIL: module_recipe_ingredients carries no recipe for the two guns this block crafts — the grant would be empty and the failure would surface as a craft error rather than as this message'; end if;
+  perform public.reward_grant('combat', gen_random_uuid(), uP, null, r);
 
   r := pg_temp.call_as(uP, 'public.craft_module(''dzc-op-a1'', ''autocannon_battery'')');
   if (r->>'ok')::boolean is not true then raise exception 'ONEPOWER FAIL: craft A: %', r; end if;
