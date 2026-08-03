@@ -174,12 +174,13 @@ test('repairDockStateLine: one honest sentence per blocked state; silence where 
   // server reject shows the same words).
   expect(repairDockStateLine('away')).toBe(repairReasonMessage('not_docked'))
   // berthed → its OWN sentence (two different reasons never share one sentence), naming the real
-  // blocker (no fleet) and where to fix it (Command) — never "take this ship to a port".
+  // blocker (no fleet) and where to fix it (the Fleet tab — FLEET-TAB moved fleet composition off
+  // Command, 2026-08-03) — never "take this ship to a port".
   const berthedLine = repairDockStateLine('berthed')
   expect(berthedLine).not.toBeNull()
   expect(berthedLine).not.toBe(repairDockStateLine('away'))
   expect(berthedLine).toContain('fleet')
-  expect(berthedLine).toContain('Command')
+  expect(berthedLine).toContain('Fleet tab')
   expect(berthedLine!.toLowerCase()).not.toContain('take this ship to a port')
 })
 

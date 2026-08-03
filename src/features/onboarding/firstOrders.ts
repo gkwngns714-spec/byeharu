@@ -98,9 +98,9 @@ export function deriveFirstOrders(input: FirstOrdersInput): FirstOrderStep[] {
       id: 'second-ship',
       label: 'Buy a second ship',
       done: input.shipCount >= 2,
-      // PLAIN-WORDS + copy fix: the "Buy ship" panel lives on the Command screen (S6 re-homed
-      // acquisition there) — the old hint pointed at the Ship screen, where no buy control exists.
-      hint: 'Buy a second ship right here in Command and start building a fleet.',
+      // PLAIN-WORDS + copy fix: the "Buy ship" panel lives on the FLEET tab (FLEET-TAB moved
+      // acquisition there with fleet composition — the S6 principle: buy a ship where you crew it).
+      hint: 'Buy a second ship on the Fleet tab and start building a fleet.',
     })
   }
 

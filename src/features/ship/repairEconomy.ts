@@ -131,7 +131,7 @@ export function repairDockStateLine(state: RepairDockState): string | null {
     case 'away':
       return repairReasonMessage('not_docked')
     case 'berthed':
-      return 'Add this ship to a fleet in Command to mend its hull here.'
+      return 'Add this ship to a fleet on the Fleet tab to mend its hull here.'
   }
 }
 

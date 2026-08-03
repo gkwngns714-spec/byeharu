@@ -121,7 +121,7 @@ export function PirateInterceptPanel({
       {mode === 'route' && (
         <div className="flex flex-col gap-2">
           {/* PLAIN-WORDS: the UI's one word for a ship group is "fleet" — "team" was the old name. */}
-          {!groupId && <p className="text-ink-muted">No fleet yet — create a fleet in Command first.</p>}
+          {!groupId && <p className="text-ink-muted">No fleet yet — create a fleet on the Fleet tab first.</p>}
           <p className="text-ink-muted">Tap the map to plot up to 4 points — the last one is the destination.</p>
           <p className="text-ink">{draftPoints.length} plotted</p>
           <div className="flex gap-2">
