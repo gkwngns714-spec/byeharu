@@ -299,6 +299,38 @@ const H10_NEW = `          -- ██ 0336 ONE TARGETING AUTHORITY, COMPOSED — 
             into v_target_id, v_target_x, v_target_y, v_target_range, v_target_dist
             from public.combat_acquire_target(v_units, v_ur.pos_x, v_ur.pos_y, v_ur.side) t;`;
 
+// ── H10B: 0317's own comment now says the opposite of what the engine does. Correct it HERE. ────
+// 0317 prepended the actor-liveness guard and, four lines below it, wrote down the rule it was
+// establishing: that targeting resolves from the frozen population, "which is why a surviving unit
+// still fires at a hull that died earlier in the tick … RATHER THAN SILENTLY RE-ACQUIRING". This
+// slice makes the engine re-acquire. Leaving that sentence in place would be a comment asserting the
+// opposite of the code beneath it — the exact drift this codebase keeps paying for — so the sentence
+// dies in the same slice that falsifies it, and the balance consequence is written down instead of
+// discovered. Sliced from 0317's own emitted text (it owns the deployed text of this region).
+const F317 = load('20260618000317_the_dead_do_not_shoot.sql');
+const H10B_OLD = slice(F317, '0317', 201, 204,
+  'NOT re-read: the snapshot. Only the actor', 'simultaneity is preserved.');
+const H10B_NEW = `          -- NOT re-read: the snapshot. Only the actor's own liveness, and the target's.
+          -- ██ 0336 CORRECTS THE SENTENCE THAT STOOD HERE ██ 0317 wrote that a surviving unit still
+          -- fires at a hull which died earlier in the tick "rather than silently re-acquiring —
+          -- simultaneity is preserved". That is no longer true, and it should not have been the rule:
+          -- the whole defect 0336 fixes is a shot thrown away because its target was already dead,
+          -- and a shot wasted on a corpse killed by SOMEBODY ELSE is the same waste as one wasted on
+          -- a corpse killed by this ship's own first gun. Treating them differently would be two
+          -- rules for one question. So targeting now asks for a LIVE target, at both acquisition
+          -- sites, through one leaf.
+          -- WHAT IS ACTUALLY SIMULTANEOUS, AND STILL IS: POSITION. Every unit resolves its target and
+          -- its close/kite decision from the frozen pre-move world, so no unit gains ground on
+          -- another by being processed earlier. DAMAGE has been strictly sequential since 0234 — the
+          -- target re-read means a dying unit stops absorbing hits the instant it dies — so death has
+          -- always taken effect immediately in the TARGET role. This slice makes it take effect in
+          -- the TARGETING role too, which is the consistent end of the same rule.
+          -- THE BALANCE CONSEQUENCE, STATED RATHER THAN SMUGGLED: fewer shots are wasted, on both
+          -- sides, on every tick where anything dies. Waves are endless and the player destroys far
+          -- more units per fight than it loses, so this favours the player — the same direction and
+          -- the same mechanism as 0317, and for the same reason. It changes no reward, no drop, no
+          -- threshold and no config value.`;
+
 // ── H11: never retreat past your SHORTEST gun ───────────────────────────────────────────────────
 const H11_OLD = slice(F299, '0299', 852, 856,
   'MOVEMENT — combat_unit_decide_move', 'v_target_x, v_target_y, coalesce(v_target_range,0));');
@@ -390,12 +422,13 @@ const HUNKS = [
   [9,  'process_combat_ticks', H7_OLD,  H7_NEW],
   [10, 'process_combat_ticks', H8_OLD,  H8_NEW],
   [11, 'process_combat_ticks', H9_OLD,  H9_NEW],
-  [12, 'process_combat_ticks', H10_OLD, H10_NEW],
-  [13, 'process_combat_ticks', H11_OLD, H11_NEW],
-  [14, 'process_combat_ticks', H12_OLD, H12_NEW],
-  [15, 'process_combat_ticks', H13_OLD, H13_NEW],
-  [16, 'process_combat_ticks', H14_OLD, H14_NEW],
-  [17, 'combat_create_group_encounter', H15_OLD, H15_NEW],
+  [12, 'process_combat_ticks', H10_OLD,  H10_NEW],
+  [13, 'process_combat_ticks', H10B_OLD, H10B_NEW],
+  [14, 'process_combat_ticks', H11_OLD,  H11_NEW],
+  [15, 'process_combat_ticks', H12_OLD,  H12_NEW],
+  [16, 'process_combat_ticks', H13_OLD,  H13_NEW],
+  [17, 'process_combat_ticks', H14_OLD,  H14_NEW],
+  [18, 'combat_create_group_encounter', H15_OLD, H15_NEW],
 ];
 
 // Dollar-quote tags must not collide with anything inside the hunk text.
@@ -492,7 +525,7 @@ const sql = `-- ═════════════════════�
 --   fleet_consume_retreat_target   — read-and-clear fleets.retreat_target_*. Composed by all four
 --                                    terminal arms.
 --   combat_encounter_release       — the confined world-state release. Composed by all four arms.
--- SIXTEEN HUNKS in process_combat_ticks and ONE in combat_create_group_encounter, every old_t sliced
+-- SEVENTEEN HUNKS in process_combat_ticks and ONE in combat_create_group_encounter, every old_t sliced
 -- verbatim from the migration that owns its deployed text (0299 and 0315), every new_t derived from
 -- that slice. Nothing retyped.
 -- NO KNOB IS MOVED, AND THAT IS DELIBERATE. An earlier draft of this slice raised
@@ -782,8 +815,8 @@ ${rows}
     v_done := v_done + 1;
   end loop;
 
-  if v_done <> 17 then
-    raise exception '0336 REWRITE FAIL: rewrote % site(s), expected 17', v_done;
+  if v_done <> 18 then
+    raise exception '0336 REWRITE FAIL: rewrote % site(s), expected 18', v_done;
   end if;
 end $rewrite$;
 

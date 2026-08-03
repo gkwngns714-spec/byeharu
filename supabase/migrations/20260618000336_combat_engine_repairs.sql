@@ -56,7 +56,7 @@
 --   fleet_consume_retreat_target   — read-and-clear fleets.retreat_target_*. Composed by all four
 --                                    terminal arms.
 --   combat_encounter_release       — the confined world-state release. Composed by all four arms.
--- SIXTEEN HUNKS in process_combat_ticks and ONE in combat_create_group_encounter, every old_t sliced
+-- SEVENTEEN HUNKS in process_combat_ticks and ONE in combat_create_group_encounter, every old_t sliced
 -- verbatim from the migration that owns its deployed text (0299 and 0315), every new_t derived from
 -- that slice. Nothing retyped.
 -- NO KNOB IS MOVED, AND THAT IS DELIBERATE. An earlier draft of this slice raised
@@ -610,12 +610,37 @@ begin
             into v_target_id, v_target_x, v_target_y, v_target_range, v_target_dist
             from public.combat_acquire_target(v_units, v_ur.pos_x, v_ur.pos_y, v_ur.side) t;$h12n$),
     (13, 'process_combat_ticks',
-     $h13o$          -- MOVEMENT — combat_unit_decide_move, the pure leaf.
+     $h13o$          -- NOT re-read: the snapshot. Only the actor's own liveness. Targeting still resolves from
+          -- the frozen population, which is why a surviving unit still fires at a hull that died
+          -- earlier in the tick (its shot simply lands on a corpse and deals nothing, exactly as
+          -- before) rather than silently re-acquiring — simultaneity is preserved.$h13o$,
+     $h13n$          -- NOT re-read: the snapshot. Only the actor's own liveness, and the target's.
+          -- ██ 0336 CORRECTS THE SENTENCE THAT STOOD HERE ██ 0317 wrote that a surviving unit still
+          -- fires at a hull which died earlier in the tick "rather than silently re-acquiring —
+          -- simultaneity is preserved". That is no longer true, and it should not have been the rule:
+          -- the whole defect 0336 fixes is a shot thrown away because its target was already dead,
+          -- and a shot wasted on a corpse killed by SOMEBODY ELSE is the same waste as one wasted on
+          -- a corpse killed by this ship's own first gun. Treating them differently would be two
+          -- rules for one question. So targeting now asks for a LIVE target, at both acquisition
+          -- sites, through one leaf.
+          -- WHAT IS ACTUALLY SIMULTANEOUS, AND STILL IS: POSITION. Every unit resolves its target and
+          -- its close/kite decision from the frozen pre-move world, so no unit gains ground on
+          -- another by being processed earlier. DAMAGE has been strictly sequential since 0234 — the
+          -- target re-read means a dying unit stops absorbing hits the instant it dies — so death has
+          -- always taken effect immediately in the TARGET role. This slice makes it take effect in
+          -- the TARGETING role too, which is the consistent end of the same rule.
+          -- THE BALANCE CONSEQUENCE, STATED RATHER THAN SMUGGLED: fewer shots are wasted, on both
+          -- sides, on every tick where anything dies. Waves are endless and the player destroys far
+          -- more units per fight than it loses, so this favours the player — the same direction and
+          -- the same mechanism as 0317, and for the same reason. It changes no reward, no drop, no
+          -- threshold and no config value.$h13n$),
+    (14, 'process_combat_ticks',
+     $h14o$          -- MOVEMENT — combat_unit_decide_move, the pure leaf.
           select action, new_x, new_y into v_move_action, v_new_x, v_new_y
             from public.combat_unit_decide_move(
               v_ur.pos_x, v_ur.pos_y, coalesce(v_ur.my_range,0), coalesce(v_ur.move_speed,0),
-              v_target_x, v_target_y, coalesce(v_target_range,0));$h13o$,
-     $h13n$          -- MOVEMENT — combat_unit_decide_move, the pure leaf.
+              v_target_x, v_target_y, coalesce(v_target_range,0));$h14o$,
+     $h14n$          -- MOVEMENT — combat_unit_decide_move, the pure leaf.
           select action, new_x, new_y into v_move_action, v_new_x, v_new_y
             from public.combat_unit_decide_move(
               -- 0336 NEVER RETREAT PAST YOUR SHORTEST GUN. The mover uses this argument for BOTH
@@ -628,11 +653,11 @@ begin
               -- what I must respect about the enemy is its full reach. Two questions, two values.
               -- Single-weapon ships have min = max, so their movement is byte-identical to the head.
               v_ur.pos_x, v_ur.pos_y, coalesce(v_ur.my_min_range, v_ur.my_range, 0), coalesce(v_ur.move_speed,0),
-              v_target_x, v_target_y, coalesce(v_target_range,0));$h13n$),
-    (14, 'process_combat_ticks',
-     $h14o$            if v_w_range is not null and v_target_dist <= v_w_range
-               and (v_w_next_ready is null or now() >= v_w_next_ready) then$h14o$,
-     $h14n$            -- ██ 0336 A KILL DOES NOT DISARM THE REST OF THE VOLLEY ██
+              v_target_x, v_target_y, coalesce(v_target_range,0));$h14n$),
+    (15, 'process_combat_ticks',
+     $h15o$            if v_w_range is not null and v_target_dist <= v_w_range
+               and (v_w_next_ready is null or now() >= v_w_next_ready) then$h15o$,
+     $h15n$            -- ██ 0336 A KILL DOES NOT DISARM THE REST OF THE VOLLEY ██
             -- The target was resolved ONCE, above, before this per-weapon loop. Every gun on the
             -- ship fired at that one row, and when gun 1 destroyed it the damage step's `if found`
             -- simply DROPPED guns 2 and 3 — their shots vanished rather than being re-aimed. On a
@@ -653,15 +678,15 @@ begin
               end if;
             end if;
             if v_w_range is not null and v_target_dist <= v_w_range
-               and (v_w_next_ready is null or now() >= v_w_next_ready) then$h14n$),
-    (15, 'process_combat_ticks',
-     $h15o$        if v_hp_after <= 0 then
+               and (v_w_next_ready is null or now() >= v_w_next_ready) then$h15n$),
+    (16, 'process_combat_ticks',
+     $h16o$        if v_hp_after <= 0 then
           perform fleet_destroy(e.fleet_id);
           for cu in select * from combat_units where encounter_id = e.id and main_ship_id is not null loop
             perform mainship_mark_combat_destroyed(cu.main_ship_id);
           end loop;
-          perform presence_complete(e.presence_id);$h15o$,
-     $h15n$        if v_hp_after <= 0 then
+          perform presence_complete(e.presence_id);$h16o$,
+     $h16n$        if v_hp_after <= 0 then
           -- ██ 0336 THE TERMINAL ARM IS CONFINED, AND THE ENCOUNTER STILL CONCLUDES ██
           -- fleet_destroy and presence_complete both RAISE on a status mismatch (fleet_destroy: not in a
           -- destroyable state; presence_complete: presence not in an active state). Neither was guarded
@@ -685,15 +710,15 @@ begin
           perform public.fleet_consume_retreat_target(e.fleet_id);
           for cu in select * from combat_units where encounter_id = e.id and main_ship_id is not null loop
             perform mainship_mark_combat_destroyed(cu.main_ship_id);
-          end loop;$h15n$),
-    (16, 'process_combat_ticks',
-     $h16o$      if v_hp_after <= 0 then
+          end loop;$h16n$),
+    (17, 'process_combat_ticks',
+     $h17o$      if v_hp_after <= 0 then
         perform fleet_destroy(e.fleet_id);
         for cu in select * from combat_units where encounter_id = e.id and main_ship_id is not null loop
           perform mainship_mark_combat_destroyed(cu.main_ship_id);
         end loop;
-        perform presence_complete(e.presence_id);$h16o$,
-     $h16n$      if v_hp_after <= 0 then
+        perform presence_complete(e.presence_id);$h17o$,
+     $h17n$      if v_hp_after <= 0 then
         -- ██ 0336 THE TERMINAL ARM IS CONFINED, AND THE ENCOUNTER STILL CONCLUDES ██
         -- fleet_destroy and presence_complete both RAISE on a status mismatch (fleet_destroy: not in a
         -- destroyable state; presence_complete: presence not in an active state). Neither was guarded
@@ -717,17 +742,17 @@ begin
         perform public.fleet_consume_retreat_target(e.fleet_id);
         for cu in select * from combat_units where encounter_id = e.id and main_ship_id is not null loop
           perform mainship_mark_combat_destroyed(cu.main_ship_id);
-        end loop;$h16n$),
-    (17, 'combat_create_group_encounter',
-     $h17o$            v_pos_x := v_loc_x + v_ring_radius * cos(2 * pi() * v_escort_idx / 8);
-            v_pos_y := v_loc_y + v_ring_radius * sin(2 * pi() * v_escort_idx / 8);$h17o$,
-     $h17n$            -- 0336: the escort ring now composes combat_formation_point, the ONE authority for
+        end loop;$h17n$),
+    (18, 'combat_create_group_encounter',
+     $h18o$            v_pos_x := v_loc_x + v_ring_radius * cos(2 * pi() * v_escort_idx / 8);
+            v_pos_y := v_loc_y + v_ring_radius * sin(2 * pi() * v_escort_idx / 8);$h18o$,
+     $h18n$            -- 0336: the escort ring now composes combat_formation_point, the ONE authority for
             -- "where does slot k of a formation ring sit". The tick spawns enemy waves through the
             -- same leaf, so the two formations can never drift apart. At phase 0 and slots 0..7 the
             -- leaf evaluates to this line's own expression, so no existing fleet moves; slots 8 and
             -- beyond, which used to WRAP onto an occupied slot, now step out to a wider ring.
             select fp.x, fp.y into v_pos_x, v_pos_y
-              from public.combat_formation_point(v_loc_x, v_loc_y, v_ring_radius, v_escort_idx, 0) fp;$h17n$)
+              from public.combat_formation_point(v_loc_x, v_loc_y, v_ring_radius, v_escort_idx, 0) fp;$h18n$)
     ) as t(idx, fname, old_t, new_t)
     order by idx
   loop
@@ -757,8 +782,8 @@ begin
     v_done := v_done + 1;
   end loop;
 
-  if v_done <> 17 then
-    raise exception '0336 REWRITE FAIL: rewrote % site(s), expected 17', v_done;
+  if v_done <> 18 then
+    raise exception '0336 REWRITE FAIL: rewrote % site(s), expected 18', v_done;
   end if;
 end $rewrite$;
 
