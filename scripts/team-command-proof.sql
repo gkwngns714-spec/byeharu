@@ -343,6 +343,56 @@ begin
   perform public.process_combat_telegraphs();
 end $$;
 
+-- ★ THE THIRD LIGHTS-ON FIXTURE HELPER (added 2026-08-03) ────────────────────────────────────────
+-- wipe_tick — spatial_combat_enabled (0234, lit by 0300:78).
+--
+-- UNDER THE SPATIAL ENGINE, `enemy_attack_base` IS HONOURED AT WAVE SPAWN AND ONLY THERE. The
+-- aggregate arm recomputes `v_enemy_attack` from the live knob on EVERY tick (0299:1037). The spatial
+-- arm computes it ONCE, when the wave spawns, and freezes it into each enemy unit's
+-- `combat_units.weapons_json -> 'power'` (0299:748-777 synthetic, :707-720 resolved); the fire loop
+-- then reads that frozen value (0299:867). 0300:78 lit `spatial_combat_enabled`, so every encounter
+-- this file creates takes the spatial arm.
+--
+-- THAT SPLIT THE FILE'S "one-step wipe" IDIOM IN TWO, AND NOTHING SAID SO:
+--   * raised BEFORE the encounter's first tick (TEAMSETTLE's loss fixture) the very next tick spawns
+--     wave 1 at the boosted knob — still lethal, still correct, which is why that block stayed green;
+--   * raised MID-WAVE (SHIELD1's tick 4, after three ticks had already spawned and frozen wave 1) it
+--     is completely INERT. The tick delivered the same ordinary damage, the regenerated 40 pool
+--     absorbed all of it, the hull never reached 0, and `SHIELD1 FAIL defeat` has aborted this file on
+--     every branch since — taking the 7 blocks behind it (~23% of the file) with it.
+--
+-- THE REPOINT (the "follow the game" arm of proofs-never-assert-ambient-defaults): a mid-fight raise
+-- only bites on a wave the engine actually SPAWNS, so spend the live wave and let the next tick roll a
+-- fresh one at the CURRENT knob. That is the game's own escalation path (0299:659 spatial / :1043
+-- aggregate — the same `enemy side is wiped -> spawn` branch in both arms), not a shortcut around it.
+-- Using it at BOTH wipe sites also leaves ONE authority for "make the next tick lethal" instead of two
+-- spellings whose difference nobody could see.
+--
+-- MODE-AGNOSTIC BY CONSTRUCTION — it spends the wave in BOTH representations (the spatial arm's
+-- side='enemy' rows and the aggregate arm's `enemy_integrity_current` scalar), so this helper is
+-- correct whether or not `spatial_combat_enabled` is lit, and never re-acquires the ambient
+-- dependency it exists to remove. `next_wave_at` is cleared because now() is FROZEN inside the
+-- proof's single transaction: a wave-transition pause set to now()+N could never elapse and would
+-- park every later tick on the `next_wave_incoming` branch.
+--
+-- The knob is CAPTURED and RESTORED, never restored to a hard-coded literal — the committed seed is
+-- the chain's to own, not this file's.
+create or replace function pg_temp.wipe_tick(p_enc uuid) returns void language plpgsql as $$
+declare v_prev jsonb;
+begin
+  select value into v_prev from public.game_config where key = 'enemy_attack_base';
+  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);
+  -- spend the live wave in both arms, then make the tick due
+  delete from public.combat_units where encounter_id = p_enc and side = 'enemy';
+  update public.combat_encounters
+     set enemy_integrity_current = 0,
+         next_wave_at            = null,
+         last_resolved_at        = last_resolved_at - interval '1 minute'
+   where id = p_enc;
+  perform public.process_combat_ticks();
+  perform public.set_game_config('enemy_attack_base', coalesce(v_prev, '1'::jsonb));
+end $$;
+
 -- three fresh players: uA (3-ship team ops), uB (foreign-owner gap probe), uC (all-or-nothing pair).
 -- The on-signup triggers auto-create each player's ACTIVE Home Base (required by the live send).
 do $$
@@ -3218,10 +3268,13 @@ end $$;
 --          is guarded); the leaf mirrors round(pool) to the ship row after every tick with hp
 --          byte-consistent and the ship still hunting; combat_ticks integrity stays HULL-only
 --          while the pool is nonzero (the accounting-unchanged pin);
---          tick 4 (enemy_attack_base 1000000 — the TEAMSETTLE one-step-wipe idiom): a ship whose
+--          tick 4 (pg_temp.wipe_tick — enemy_attack_base 1000000 delivered through a wave the
+--          engine SPAWNS at that knob, because the spatial arm freezes wave firepower into
+--          weapons_json at spawn and never re-reads the knob mid-wave; see the helper): a ship whose
 --          pool regenerated to FULL still dies the moment its hull reaches 0 — defeat detection
 --          is HULL-only, integrity lands 0, the D1 destroyed terminal fires on the ship row.
---          Knob and enemy_attack_base restored in-txn after (leak checks stay meaningful).
+--          Knob restored in-txn after; enemy_attack_base is captured/restored by the helper
+--          (leak checks stay meaningful).
 do $$
 declare r jsonb; n int; uV uuid; sV uuid; gV uuid;
   v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
@@ -3395,9 +3448,15 @@ begin
   -- ── TICK 4: DEFEAT IS HULL-ONLY — a shielded ship at hull 0 is dead ───────────────────────────
   v_pre := v_sh;   -- the pool entering the defeat tick (> 0 by the guard; regen even tops it to 40)
   if v_pre <= 0 then raise exception 'SHIELD1 FAIL guard: the defeat-arm pool is not positive (the pin would be vacuous)'; end if;
-  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);   -- one-step hull wipe (the TEAMSETTLE idiom)
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
+  -- ★ REPOINTED 2026-08-03. This raised enemy_attack_base and ticked once. Under the SPATIAL engine
+  -- ★ (0234, lit by 0300:78 — the arm every encounter this file creates now takes) that knob is read
+  -- ★ ONLY at wave spawn and frozen into the enemy's weapons_json, so the raise was INERT: the tick
+  -- ★ delivered the same ordinary damage, the full 40 pool absorbed all of it, the hull never reached
+  -- ★ 0 and this assert has been red on every branch since. pg_temp.wipe_tick SPENDS the wave first,
+  -- ★ so the engine spawns a replacement AT the boosted knob and the hit is genuinely lethal. The
+  -- ★ property asserted below is UNCHANGED and now actually exercised: a pool regenerated to FULL 40
+  -- ★ does not save a ship whose HULL reaches 0 — defeat and integrity are hull-only.
+  perform pg_temp.wipe_tick(v_enc);
   select count(*) into n from public.combat_encounters
     where id = v_enc and status = 'defeat' and ended_at is not null and player_integrity_current = 0;
   if n <> 1 then
@@ -3405,7 +3464,8 @@ begin
   select count(*) into n from public.main_ship_instances
     where main_ship_id = sV and status = 'destroyed' and hp = 0;
   if n <> 1 then raise exception 'SHIELD1 FAIL defeat: the D1 destroyed terminal did not fire on the shielded member'; end if;
-  perform public.set_game_config('enemy_attack_base', '1'::jsonb);          -- restore the engine default
+  -- enemy_attack_base is captured and restored inside pg_temp.wipe_tick (the committed seed is the
+  -- chain's to own — a hard-coded restore is the same ambient-default disease in reverse).
   perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);    -- restore the dark seed in-txn
 
   raise notice 'TEAMCMD_PASS_SHIELD1 ok: zero state pinned (member rows exist, none carries a snapshot, no fought ship''s instance shield ever moved — COMBATPARITY/TEAMHUNT/TEAMSETTLE ran their exact pins against THIS tick as the parity proof); lit arm exact vs the independent damage derivation — snapshot 40/3 carries the CURRENT pool, knob-0 tick fully drains min(pool,damage) with the hull taking only the overflow, knob-1 regen climbs 0→40 then CAPS at max, the leaf mirrors round(pool) each tick with hp consistent, integrity stays hull-only at a nonzero pool, and the fully-shielded ship still dies at hull 0 (defeat hull-only, D1 terminal); knob + enemy_attack_base restored in-txn';
@@ -3617,8 +3677,8 @@ end $$;
 --          home-normalize → surgery 40/3 → send_ship_group_hunt → movement_settle_arrival →
 --          ACTIVE encounter): the lit reconciler must NOT move its instance shield (want 3 —
 --          non-vacuous: the same predicate minus the live encounter matched fixture A above).
---          Then the one-step-wipe defeat (enemy_attack_base 1000000, the TEAMSETTLE idiom,
---          restored) destroys the ship; re-armed to 3/40 by surgery, the lit reconciler must
+--          Then the one-step-wipe defeat (pg_temp.wipe_tick — enemy_attack_base 1000000 delivered
+--          through a freshly SPAWNED wave, captured/restored) destroys the ship; re-armed to 3/40 by surgery, the lit reconciler must
 --          leave the DESTROYED hull at 3 (dead ships do not regenerate — repair is the revival
 --          path).
 --   COMMISSION COPY — SANCTIONED HULL SURGERY (commented, negative-grep-tightened in the .sh to
@@ -3734,11 +3794,15 @@ begin
   if v_sh is distinct from 3 then
     raise exception 'SHIELD2 FAIL exclusion: the lit reconciler moved an in-encounter shield to % (want 3 — while an encounter is active/retreating the tick is the SOLE shield writer)', v_sh; end if;
 
-  -- one-step-wipe defeat (the TEAMSETTLE idiom; restored) → the DESTROYED exclusion.
-  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
-  perform public.set_game_config('enemy_attack_base', '1'::jsonb);
+  -- one-step-wipe defeat → the DESTROYED exclusion. Routed through pg_temp.wipe_tick (2026-08-03) so
+  -- there is ONE spelling of "make the next tick lethal" in this file. This site is the SAFE half of
+  -- the split described on the helper — no combat tick has run on v_enc yet, so the boosted knob would
+  -- have been picked up by wave 1 anyway; wipe_tick is behaviour-identical here (nothing to delete,
+  -- the scalar is already 0, next_wave_at already null) and immune to the mid-wave trap if a future
+  -- edit ever ticks this encounter first. NOTE: this block has never executed — SHIELD1's defeat
+  -- assert aborted the file ahead of it on every branch since 0300 — so everything below is newly
+  -- reachable.
+  perform pg_temp.wipe_tick(v_enc);
   select count(*) into n from public.main_ship_instances where main_ship_id = sB and status = 'destroyed';
   if n <> 1 then raise exception 'SHIELD2 FAIL: the wipe tick did not destroy the exclusion fixture (fixture drift)'; end if;
   update public.main_ship_instances set shield = 3 where main_ship_id = sB;   -- re-arm the dead hull (sanctioned surgery)
@@ -3863,10 +3927,20 @@ declare
   slag  uuid := (select v from tcmd where k='slag');
   drift uuid := (select v from tcmd where k='drift');
   v_hunt uuid;
+  v_seed_fc jsonb;
 begin
-  -- ── (0) structural: fleet_control_enabled committed DARK; the surface deployed ──────────────────────
-  if coalesce((select value #>> '{}' from public.game_config where key='fleet_control_enabled'),'false') <> 'false' then
-    raise exception 'FLEETCTRL FAIL: fleet_control_enabled is not committed false (dark)'; end if;
+  -- ── (0) structural: this block OWNS its dark precondition; the surface deployed ─────────────────────
+  -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults). This asserted the COMMITTED seed was
+  -- ★ 'false'. 0300:68 lit fleet_control_enabled, so the assert was testing the WORLD, not the gate —
+  -- ★ and it never fired, because SHIELD1's defeat assert aborted the file ahead of it on every branch.
+  -- ★ The block now CAPTURES the committed value, SETS its own dark precondition in-txn, and restores
+  -- ★ exactly what it captured. Strictly stronger than the old form: the dark arm below is now
+  -- ★ genuinely dark instead of merely hoping the seed was, and the restore is correct through any
+  -- ★ future flip in EITHER direction rather than silently rewriting the seed to 'false'.
+  select value into v_seed_fc from public.game_config where key='fleet_control_enabled';
+  if v_seed_fc is null then
+    raise exception 'FLEETCTRL FAIL: fleet_control_enabled is absent from game_config (the 0204 gate was never seeded — a dark arm against a missing key can only false-green)'; end if;
+  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
   if to_regprocedure('public.set_fleet_command_ship(uuid, boolean)') is null then
     raise exception 'FLEETCTRL FAIL: set_fleet_command_ship(uuid,boolean) not deployed'; end if;
   if not exists (select 1 from information_schema.columns
@@ -3984,10 +4058,11 @@ begin
   r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gCap, v_hunt));
   if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL: standing down the last command ship did not re-inactivate the fleet: %', r; end if;
 
-  -- restore the flag to the committed dark seed (rolled back regardless — the honesty loop checks it).
-  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
+  -- restore the CAPTURED committed value (rolled back regardless — the honesty loop checks it stayed
+  -- unchanged, in either direction; a literal 'false' here would be the same ambient assumption again).
+  update public.game_config set value=v_seed_fc where key='fleet_control_enabled';
 
-  raise notice 'TEAMCMD_PASS_FLEETCTRL ok: flag committed dark; DARK a zero-command fleet HUNTS (no command requirement) and a 9th assign SUCCEEDS (no 8-cap) — byte-identical to today; LIT a zero-command fleet REJECTS fleet_inactive_no_command on the group hunt (the gate fires before the destination read), designating a command ship (owner-scoped, un-flag-gated, PERSISTED) ACTIVATES it, the 8th assign is OK while the 9th rejects fleet_full (held at 8), the per-fleet command role is CLEARED when a ship changes fleets, an ungrouped ship cannot be a command ship (ship_not_in_fleet), and standing down the last command ship RE-inactivates the fleet; flag restored in-txn';
+  raise notice 'TEAMCMD_PASS_FLEETCTRL ok: the block set its OWN dark precondition (committed value captured + restored); DARK a zero-command fleet HUNTS (no command requirement) and a 9th assign SUCCEEDS (no 8-cap) — byte-identical to today; LIT a zero-command fleet REJECTS fleet_inactive_no_command on the group hunt (the gate fires before the destination read), designating a command ship (owner-scoped, un-flag-gated, PERSISTED) ACTIVATES it, the 8th assign is OK while the 9th rejects fleet_full (held at 8), the per-fleet command role is CLEARED when a ship changes fleets, an ungrouped ship cannot be a command ship (ship_not_in_fleet), and standing down the last command ship RE-inactivates the fleet; flag restored in-txn';
 end $$;
 
 -- ════════ BLOCK NOHOME (NO-HOME, 0199): TEAM launch-from-dock + reconciler dock-at-return ════════
@@ -4005,10 +4080,16 @@ declare
   uNT uuid; sNT uuid; gNT uuid; v_team_fleet uuid; v_team_mv uuid;
   slag  uuid := (select v from tcmd where k='slag');
   v_hunt uuid;
+  v_seed_lfd jsonb;
 begin
-  -- ── (0) structural: the 0199 surface is deployed and the flag is committed DARK ──────────────────
-  if coalesce((select value #>> '{}' from public.game_config where key='launch_from_dock_enabled'),'false') <> 'false' then
-    raise exception 'NOHOME FAIL: launch_from_dock_enabled is not committed false (dark)'; end if;
+  -- ── (0) structural: the 0199 surface is deployed and this block OWNS its dark precondition ───────
+  -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults) — same shape as FLEETCTRL above.
+  -- ★ 0300:73 lit launch_from_dock_enabled, so asserting the committed seed was 'false' asserted a
+  -- ★ world, not the gate. Capture, set the dark precondition in-txn, restore what was captured.
+  select value into v_seed_lfd from public.game_config where key='launch_from_dock_enabled';
+  if v_seed_lfd is null then
+    raise exception 'NOHOME FAIL: launch_from_dock_enabled is absent from game_config (the 0199 gate was never seeded)'; end if;
+  update public.game_config set value='false'::jsonb where key='launch_from_dock_enabled';
   if to_regprocedure('public.send_ship_group_hunt(uuid, uuid, uuid)') is null
      or to_regprocedure('public.nohome_dock_returning_ship(uuid)') is null then
     raise exception 'NOHOME FAIL: the 0199 widened hunt or dock-at-return leaf is missing'; end if;
@@ -4031,25 +4112,49 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL provision team: %', r; end if;
   select main_ship_id into sNT from public.main_ship_instances where player_id = uNT;
 
-  -- FIXTURE SURGERY (replaces the dropped the legacy single-ship send (retired 0232) relocation): place sNT's commission
-  -- present fleet at Slagworks so it is DOCKED at the launch-from-dock port. "Docked" = status='home'
-  -- (the lifecycle signal only, 0221) PLUS a real 'present' fleet at the port (fleet truth).
-  update public.main_ship_instances set status='home', updated_at=now() where main_ship_id=sNT;
-  update public.fleets
-     set current_location_id=slag, location_mode='location', current_base_id=null,
-         active_movement_id=null, updated_at=now()
-   where main_ship_id=sNT and status='present';
-  update public.location_presence set location_id=slag, status='active', updated_at=now()
-   where fleet_id in (select id from public.fleets where main_ship_id=sNT and status='present');
-  select count(*) into n from public.main_ship_instances s
-    where s.main_ship_id=sNT and s.status='home'
-      and exists (select 1 from public.fleets f where f.main_ship_id=s.main_ship_id and f.status='present' and f.current_location_id=slag);
-  if n <> 1 then raise exception 'NOHOME FAIL: docked fixture not placed at Slagworks'; end if;
-
   r := pg_temp.call_as(uNT, 'public.upsert_ship_group(1, ''DockWing'')');
   gNT := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uNT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sNT, gNT));
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: assign team member: %', r; end if;
+  -- ★ ADDED 2026-08-03. 0300:68 lit fleet_control_enabled, and send_ship_group_hunt then rejects a
+  -- ★ group with no designated command ship BEFORE any destination/readiness read (0231:483-490 —
+  -- ★ the gate is GROUP-scoped, so one arming covers both sends below). The five other sortie
+  -- ★ fixtures in this file were armed on 2026-07-27; NOHOME was missed because SHIELD1 had already
+  -- ★ made it unreachable, so nothing ever surfaced it.
+  perform pg_temp.arm_group(uNT, gNT);
+
+  -- FIXTURE SURGERY (replaces the dropped the legacy single-ship send (retired 0232) relocation): place
+  -- the team at Slagworks so it is DOCKED at the launch-from-dock port. "Docked" = status='home'
+  -- (the lifecycle signal only, 0221) PLUS a real 'present' fleet at the port (fleet truth).
+  --
+  -- ★ REPOINTED 2026-08-03. This ran BEFORE the group existed and scoped both updates to
+  -- ★ `main_ship_id = sNT`. 0300:69 lit fleet_movement_unified_enabled, so the hunt now takes 0214's
+  -- ★ CONSUME arm (0231:519-560): it resolves the group's OWN fleet via ship_group_resolve_fleet and
+  -- ★ reads the launch origin off THAT fleet (0231:626-634), not off a per-ship dock join. A team
+  -- ★ fleet carries main_ship_id NULL, so the old surgery could never touch it — the group fleet sat
+  -- ★ at the commission port and the leg departed from there. Measured, not guessed: the leg landed
+  -- ★ origin_type=location origin_location_id=b1a00001-…0001 (the commission port) with the team
+  -- ★ fleet carrying a group_id, which is the unified arm's signature.
+  -- ★ THE FIX FOLLOWS THE GAME: dock EVERY live fleet the player owns, after the group exists, so the
+  -- ★ fixture places whichever fleet the resolver actually reads. Mode-agnostic — it is equally
+  -- ★ correct for the 0199 head branch, which joins the per-ship fleet.
+  update public.main_ship_instances set status='home', updated_at=now() where main_ship_id=sNT;
+  update public.fleets
+     set current_location_id=slag, location_mode='location', current_base_id=null,
+         active_movement_id=null, updated_at=now()
+   where player_id=uNT and status='present';
+  update public.location_presence set location_id=slag, status='active', updated_at=now()
+   where fleet_id in (select id from public.fleets where player_id=uNT and status='present');
+  select count(*) into n from public.main_ship_instances s
+    where s.main_ship_id=sNT and s.status='home'
+      and exists (select 1 from public.fleets f where f.main_ship_id=s.main_ship_id and f.status='present' and f.current_location_id=slag);
+  if n <> 1 then raise exception 'NOHOME FAIL: docked fixture not placed at Slagworks'; end if;
+  -- and NO live fleet of this player is anywhere else — the placement is total, so whichever fleet the
+  -- send resolves, it departs from Slagworks. (Without this the old fixture false-passed its own
+  -- placement check while the fleet that actually mattered sat at another port.)
+  select count(*) into n from public.fleets
+    where player_id=uNT and status='present' and current_location_id is distinct from slag;
+  if n <> 0 then raise exception 'NOHOME FAIL: % live fleet(s) are docked somewhere other than Slagworks (the fixture must place every fleet the send could resolve)', n; end if;
 
   -- ── (2) LIT: flip launch_from_dock_enabled (raw update — the gate convention); the docked TEAM hunt
   --         launches ONE fleet FROM the port ─────────────────────────────────────────────────────────
@@ -4062,7 +4167,23 @@ begin
     raise exception 'NOHOME FAIL: team hunt return port not recorded (want Slagworks)'; end if;
   -- launched FROM the docked port (origin_type='location'=Slagworks), not the (0,0) base:
   select count(*) into n from public.fleet_movements where id=v_team_mv and origin_type='location' and origin_location_id=slag;
-  if n <> 1 then raise exception 'NOHOME FAIL: team hunt did not depart from the docked port'; end if;
+  if n <> 1 then
+    -- SELF-DIAGNOSING (2026-08-03, the REAMBUSH idiom): this block has been unreachable since 0300,
+    -- so a first failure here has no history to read it against. Say WHAT the leg actually recorded
+    -- and WHICH arm minted it (a group-tagged fleet means the 0214 unified consume ran; NULL means
+    -- the 0199 head's launch-from-dock branch did).
+    raise exception 'NOHOME FAIL: team hunt did not depart from the docked port — leg origin_type=% origin_location_id=% origin_base_id=% origin=(%,%); want location/% ; team fleet group_id=% origin_base_id=% ; the member''s pre-send present fleets: %',
+      (select origin_type from public.fleet_movements where id=v_team_mv),
+      (select origin_location_id from public.fleet_movements where id=v_team_mv),
+      (select origin_base_id from public.fleet_movements where id=v_team_mv),
+      (select origin_x from public.fleet_movements where id=v_team_mv),
+      (select origin_y from public.fleet_movements where id=v_team_mv),
+      slag,
+      (select group_id from public.fleets where id=v_team_fleet),
+      (select origin_base_id from public.fleets where id=v_team_fleet),
+      coalesce((select string_agg(format('%s status=%s mode=%s loc=%s grp=%s mv=%s', f.id, f.status, f.location_mode, f.current_location_id, f.group_id, f.active_movement_id), ' | ')
+                  from public.fleets f where f.player_id=uNT), '<none>');
+  end if;
   select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='hunting';
   if n <> 1 then raise exception 'NOHOME FAIL: team member not hunting after the docked launch'; end if;
   -- the member's OWN docked present fleet was dissolved (it flies with the team now):
@@ -4088,8 +4209,9 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: a returned docked team could not launch again (H1 second-launch wedge): %', r; end if;
   if (r->>'fleet_id')::uuid = v_team_fleet then raise exception 'NOHOME FAIL: the second hunt reused the OLD team fleet (want a fresh sortie)'; end if;
 
-  -- restore the flipped gates in-txn (ROLLBACK reverts regardless — the .sh honesty check re-confirms).
-  update public.game_config set value='false'::jsonb where key='launch_from_dock_enabled';
+  -- restore the CAPTURED committed value in-txn (ROLLBACK reverts regardless — the .sh honesty check
+  -- re-confirms it is UNCHANGED, in either direction).
+  update public.game_config set value=v_seed_lfd where key='launch_from_dock_enabled';
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
 
   raise notice 'TEAMCMD_PASS_NOHOME ok: the SINGLE-ship launch-from-dock arm is retired with the legacy single-ship send (retired 0232) (0232); the surviving TEAM path holds — a docked team hunt launches ONE fleet FROM the port (origin_type=location=Slagworks, member hunting, docked present fleet dissolved, return port recorded), the reconciler DOCKS the returning member at the recorded return port (never re-homed) splitting the shared fleet back into the member''s OWN present fleet (H1), and the returned team LAUNCHES AGAIN with a fresh sortie; flags restored in-txn';
@@ -4116,10 +4238,17 @@ declare
   v_buff_a text; v_buff_b text; v_expect text;
   abuff jsonb; bbuff jsonb;   -- A's / B's rolled buff stats_json (independent, from the catalog)
   base_a jsonb; base_b jsonb; lit jsonb;
+  v_seed_cb jsonb; v_seed_fc jsonb;
 begin
-  -- ── (0) structural: command_buffs_enabled committed DARK; the catalog/column/tier deployed ────────
-  if coalesce((select value #>> '{}' from public.game_config where key='command_buffs_enabled'),'false') <> 'false' then
-    raise exception 'CMDBUFF FAIL: command_buffs_enabled is not committed false (dark)'; end if;
+  -- ── (0) structural: this block OWNS its dark precondition; the catalog/column/tier deployed ───────
+  -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults) — same shape as FLEETCTRL/NOHOME.
+  -- ★ 0300:60 lit command_buffs_enabled. Capture both gates this block moves, set the dark
+  -- ★ precondition the INERT arm at (4) actually needs, and restore exactly what was captured.
+  select value into v_seed_cb from public.game_config where key='command_buffs_enabled';
+  select value into v_seed_fc from public.game_config where key='fleet_control_enabled';
+  if v_seed_cb is null then
+    raise exception 'CMDBUFF FAIL: command_buffs_enabled is absent from game_config (the 0205 gate was never seeded)'; end if;
+  update public.game_config set value='false'::jsonb where key='command_buffs_enabled';
   if to_regprocedure('public.command_buff_roll_for_ship(uuid)') is null then
     raise exception 'CMDBUFF FAIL: command_buff_roll_for_ship not deployed'; end if;
   if not exists (select 1 from information_schema.columns
@@ -4247,13 +4376,13 @@ begin
   if lit is distinct from base_b then
     raise exception 'CMDBUFF FAIL: an ungrouped ship folded a fleet buff (the group_id gate breach)'; end if;
 
-  -- restore the flipped gates in-txn via the raw update (ROLLBACK reverts regardless — the .sh honesty
-  -- check re-confirms each committed flag is still false post-run).
-  update public.game_config set value='false'::jsonb where key='command_buffs_enabled';
-  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
+  -- restore the CAPTURED committed values in-txn via the raw update (ROLLBACK reverts regardless — the
+  -- .sh honesty check re-confirms each committed flag is UNCHANGED post-run, in either direction).
+  update public.game_config set value=v_seed_cb where key='command_buffs_enabled';
+  update public.game_config set value=v_seed_fc where key='fleet_control_enabled';
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
 
-  raise notice 'TEAMCMD_PASS_CMDBUFF ok: command_buffs_enabled committed dark; the AFTER-INSERT commission trigger rolled BOTH new ships a T0 buff = the deterministic hash derivation (immutable); DARK a designated command ship''s buff is INERT (adapter byte-identical to the baseline); LIT the command ship A''s buff folds FLEET-WIDE into every member EXACTLY per key (independent catalog derivation — combat_power/survival/repair/cargo/scouting/mining/retreat_safety + the multiplicative speed, every non-buff key byte-identical) with B''s OWN buff DORMANT, the command ship itself receives its buff, two command ships SUM both buffs (backups), a zero-command fleet folds NO buff, and an ungrouped ship folds NO buff (the group_id gate); flags restored in-txn';
+  raise notice 'TEAMCMD_PASS_CMDBUFF ok: the block set its OWN dark precondition for command_buffs_enabled (committed value captured + restored); the AFTER-INSERT commission trigger rolled BOTH new ships a T0 buff = the deterministic hash derivation (immutable); DARK a designated command ship''s buff is INERT (adapter byte-identical to the baseline); LIT the command ship A''s buff folds FLEET-WIDE into every member EXACTLY per key (independent catalog derivation — combat_power/survival/repair/cargo/scouting/mining/retreat_safety + the multiplicative speed, every non-buff key byte-identical) with B''s OWN buff DORMANT, the command ship itself receives its buff, two command ships SUM both buffs (backups), a zero-command fleet folds NO buff, and an ungrouped ship folds NO buff (the group_id gate); flags restored in-txn';
 end $$;
 
 -- ════════ BLOCK CRONGUARD (CRON-GUARD, 0206): per-row exception isolation for the two hottest ═════
@@ -4381,6 +4510,13 @@ begin
     where id in (v_mvhc, v_mvpc);
   if (public.movement_settle_arrival(v_mvhc)->>'settled')::boolean is not true then raise exception 'CRONGUARD FAIL settle healthy encounter'; end if;
   if (public.movement_settle_arrival(v_mvpc)->>'settled')::boolean is not true then raise exception 'CRONGUARD FAIL settle poison encounter'; end if;
+  -- ★ ADDED 2026-08-03. 0300 lit combat_telegraph_enabled (0230), so arrival QUEUES an 8s telegraph
+  -- ★ instead of opening the encounter inline — a settle no longer leaves an active encounter behind.
+  -- ★ COMBATPARITY/TEAMHUNT/TEAMSETTLE/SHIELD1/SHIELD2 all drive the telegraph cron for exactly this
+  -- ★ reason; CRONGUARD was missed because SHIELD1's defeat assert made it unreachable, so its
+  -- ★ "expected two active encounters" guard was never given the chance to fail.
+  perform pg_temp.open_telegraphed(v_fhc);
+  perform pg_temp.open_telegraphed(v_fpc);
   select id into v_ench from public.combat_encounters where fleet_id=v_fhc and status='active';
   select id into v_encp from public.combat_encounters where fleet_id=v_fpc and status='active';
   if v_ench is null or v_encp is null then raise exception 'CRONGUARD FAIL: expected two active encounters'; end if;
