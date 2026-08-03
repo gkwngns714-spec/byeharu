@@ -12,7 +12,7 @@
 #              hold/screening).
 #
 # 0336 REPOINT. 0336 moved the enemy wave OFF the engagement anchor and onto a formation ring at
-# (spatial_formation_ring_radius + the wave's own weapon range + 1), phase 0.5. Every player hull is
+# (spatial_formation_ring_radius + the wave's own weapon range + 1), on the bearing to the zone's own city (0338). Every player hull is
 # therefore at least (that range + 1) from every enemy at spawn, so NO PLAYER SHIP CAN BE IN HOLD ON
 # TICK 1 at any knob setting, and the lead — alone on the anchor while the escorts stand on the ring —
 # is now the FURTHEST player hull from the wave rather than the nearest. The .sql was repointed onto
@@ -115,7 +115,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "escort ring distances wrong" "$SQL"                     || fail "harness lacks the escort-ring-distance assert"
   grep -q "weapon counts wrong" "$SQL"                             || fail "harness lacks the weapons_json shape assert"
   grep -q "unit_type_id = 'pirate_synthetic'" "$SQL"               || fail "harness lacks the synthetic-pirate-identity assert"
-  grep -q "TICK1 FAIL ENEMY: the wave stands at" "$SQL"            || fail "harness lacks the 0336 wave-spawn-point pin (radius = ring + the wave's own range + 1, slot 0, phase 0.5 — the assert the old 'at the location centre' one was repointed into)"
+  grep -q "TICK1 FAIL ENEMY: the wave stands at" "$SQL"            || fail "harness lacks the 0336 wave-spawn-point pin (radius = ring + the wave's own range + 1, slot 0, the 0338 arrival phase — the assert the old 'at the location centre' one was repointed into)"
   grep -q "TICK1 FAIL ENEMY: the wave carries range" "$SQL"        || fail "harness lacks the cross-check that the wave's frozen weapons_json range IS the one the spawn radius was predicted from"
   grep -q "TICK1 FAIL KITE: armed escort distance did not increase" "$SQL" || fail "harness lacks the KITE (armed escort retreat) assert"
   grep -q "TICK1 FAIL KITE: armed escort retreated past its own frozen" "$SQL" || fail "harness lacks the KITE cap assert (0234 never retreats past its own range edge)"
@@ -163,7 +163,7 @@ if [ "$MODE" = "selftest" ]; then
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "COMBAT-SPATIAL SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. craft/fit/group/send/settle; ONE authority each for advance-a-tick (pg_temp.cs_tick, the single textual process_combat_ticks call) and for which-arm-is-this (pg_temp.cs_arm, NULL-safe); the 0336 geometry knobs present (wave range 2 / ring 4 -> escort chord 3.642 inside the catalog gun 5 and lead radius 7 outside it / owned fallback range 1 / PARKED wave / owned player step 1 / owned wave attack / both variance knobs 0) with the fitted range still derived from the catalog; every property — spawn positions, the wave standing exactly on combat_formation_point(anchor, ring + its own range + 1, slot 0, phase 0.5), KITE, CLOSE, the DERIVED tick-1 fire count, pirate hp fell, the arrived HOLD and the aggro-tier screen — asserted in assert-form, each behind a non-vacuity guard on the DERIVED arm; no random())"
+  echo "COMBAT-SPATIAL SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. craft/fit/group/send/settle; ONE authority each for advance-a-tick (pg_temp.cs_tick, the single textual process_combat_ticks call) and for which-arm-is-this (pg_temp.cs_arm, NULL-safe); the 0336 geometry knobs present (wave range 2 / ring 4 -> escort chord 3.642 inside the catalog gun 5 and lead radius 7 outside it / owned fallback range 1 / PARKED wave / owned player step 1 / owned wave attack / both variance knobs 0) with the fitted range still derived from the catalog; every property — spawn positions, the wave standing exactly on combat_formation_point(anchor, ring + its own range + 1, slot 0, the 0338 arrival phase), KITE, CLOSE, the DERIVED tick-1 fire count, pirate hp fell, the arrived HOLD and the aggro-tier screen — asserted in assert-form, each behind a non-vacuity guard on the DERIVED arm; no random())"
   exit 0
 fi
 

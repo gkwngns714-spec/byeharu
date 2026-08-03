@@ -18,7 +18,7 @@
 -- dist 0, and the escort is parked 500 away." Both halves came from the SAME knob, because the wave
 -- spawned ON the engagement anchor — the exact point the command ship stands on — so raising
 -- spatial_formation_ring_radius moved ONLY the escort. 0336 ends that: the wave now spawns at
---     radius = spatial_formation_ring_radius + THE WAVE'S OWN WEAPON RANGE + 1,  phase 0.5 slots
+--     radius = spatial_formation_ring_radius + THE WAVE'S OWN WEAPON RANGE + 1,  the 0338 arrival phase (slots)
 -- through combat_formation_point, so the ring moves the WAVE as well. At ring 500 the wave stands 511
 -- from the anchor, i.e. 511 from s_fb, hundreds of units outside the synthesized weapon's reach —
 -- s_fb would silently CLOSE all fight and never fire, and CFALLBACK_PASS_DAMAGE ("no player
@@ -71,7 +71,7 @@
 --   CFALLBACK_PASS_DAMAGE       — after tick 1 the pirate's hp_current fell below its frozen hp_max,
 --                                 and the attribution is now NAMED rather than inferred: the wave
 --                                 stands exactly on combat_formation_point(anchor, ring + its OWN
---                                 range + 1, slot 0, phase 0.5) — pinned against a point predicted
+--                                 range + 1, slot 0, the 0338 arrival phase) — pinned against a point predicted
 --                                 from the knobs BEFORE the tick; s_fb's PRE-MOVE distance is inside
 --                                 the synthesized weapon's own reach and s_arm's is outside its
 --                                 catalog gun's; the derived count of in-reach player hulls is 1, the
@@ -373,6 +373,7 @@ declare
   s_arm uuid := (select v from cfb where k='s_arm');
   u_fb uuid; u_arm uuid; u_en uuid;
   v_anchor_x double precision; v_anchor_y double precision; v_diff double precision;
+  v_site_x double precision; v_site_y double precision;  -- (0338) the zone's own city
   v_ring double precision; v_er_pred double precision;
   v_px double precision; v_py double precision;      -- the PREDICTED wave slot-0 point
   v_ex double precision; v_ey double precision;      -- where the wave actually stands
@@ -386,21 +387,26 @@ declare
 begin
   -- THE ENGAGEMENT ANCHOR, resolved exactly as the tick resolves it
   -- (v_anchor_x := coalesce(e.engagement_x, loc.x), 0294/0299) — never the location row alone.
-  select coalesce(e.engagement_x, l.x), coalesce(e.engagement_y, l.y), l.base_difficulty
-    into v_anchor_x, v_anchor_y, v_diff
+  select coalesce(e.engagement_x, l.x), coalesce(e.engagement_y, l.y), l.base_difficulty, l.x, l.y
+    into v_anchor_x, v_anchor_y, v_diff, v_site_x, v_site_y
     from public.combat_encounters e join public.locations l on l.id = e.location_id
    where e.id = v_enc;
   v_ring := public.cfg_num('spatial_formation_ring_radius');
   -- 0336's spawn geometry, PREDICTED from the knobs BEFORE the tick, through the very leaf the tick
-  -- composes: radius = ring + the wave's OWN range + 1, slot 0, phase 0.5. Predicting first and
-  -- comparing after is what makes this a pin on 0336 rather than a restatement of the row.
+  -- composes: radius = ring + the wave's OWN range + 1, slot 0, the arrival phase. Predicting first
+  -- and comparing after is what makes this a pin on 0336 rather than a restatement of the row.
+  -- 0338 REPOINTED: the phase is the bearing to this encounter's OWN site, taken from the one
+  -- authority (combat_wave_arrival_phase) at the same arguments the tick composes it with. The radius
+  -- is untouched, so the LEAD's distance to the wave — the full radius, because the lead stands on
+  -- the anchor — is unchanged; only the direction moves.
   v_er_pred := coalesce(public.cfg_num('enemy_synthetic_range_base'), 120)
                + v_diff * coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 5);
   if v_anchor_x is null or v_anchor_y is null or v_ring is null or v_er_pred is null then
     raise exception 'DAMAGE FAIL: anchor (%,%), ring % or predicted wave range % is NULL — every distance below would be vacuous', v_anchor_x, v_anchor_y, v_ring, v_er_pred;
   end if;
   select fp.x, fp.y into v_px, v_py
-    from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring + v_er_pred + 1, 0, 0.5) fp;
+    from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring + v_er_pred + 1, 0,
+           public.combat_wave_arrival_phase(v_anchor_x, v_anchor_y, v_site_x, v_site_y, 0)) fp;
 
   -- the PRE-MOVE player positions and each hull's own frozen reach (its weapons_json, never the
   -- catalog): 0299's fire gate compares the PRE-MOVE distance, so that is what attribution must use.
@@ -438,7 +444,7 @@ begin
     raise exception 'DAMAGE FAIL: the wave carries range % but the knobs predict % — the radius the distances were measured against was derived from the wrong reach', v_r_en, v_er_pred;
   end if;
   if abs(v_ex - v_px) > 1e-9 or abs(v_ey - v_py) > 1e-9 then
-    raise exception 'DAMAGE FAIL: the wave stands at %,% but combat_formation_point(anchor, ring % + its own range % + 1, slot 0, phase 0.5) is %,% — 0336''s wave-spawn geometry is not what landed, so every pre-move distance above was measured to the wrong point', v_ex, v_ey, v_ring, v_r_en, v_px, v_py;
+    raise exception 'DAMAGE FAIL: the wave stands at %,% but combat_formation_point(anchor, ring % + its own range % + 1, slot 0, the arrival phase) is %,% — 0336''s wave-spawn geometry is not what landed, so every pre-move distance above was measured to the wrong point', v_ex, v_ey, v_ring, v_r_en, v_px, v_py;
   end if;
 
   -- ── ATTRIBUTION, all of it DERIVED from the measured geometry ──────────────────────────────────
@@ -491,7 +497,7 @@ begin
   if v_hp_fb1 is distinct from v_hp_fb0 or v_hp_arm1 is distinct from v_hp_arm0 then
     raise exception 'DAMAGE FAIL: a player ship took damage on tick 1 (pirate should have fired nothing)'; end if;
 
-  raise notice 'CFALLBACK_PASS_DAMAGE ok: tick 1 — the wave stands exactly on combat_formation_point(anchor, ring % + its own range % + 1, slot 0, phase 0.5); pirate hp fell %->% (NONZERO, from s_fb''s synthesized weapon ALONE — the single tick-1 player salvo carries s_fb''s own unit id, s_fb in reach at pre-move dist % against its synthesized %, s_arm out of reach at % against its catalog %, pirate fired 0); pre-fix (empty weapons_json) this ship would have dealt ZERO', v_ring, v_r_en, v_e_hpmax, v_e_hpcur, v_dist_fb, v_r_fb, v_dist_arm, v_r_arm;
+  raise notice 'CFALLBACK_PASS_DAMAGE ok: tick 1 — the wave stands exactly on combat_formation_point(anchor, ring % + its own range % + 1, slot 0, the 0338 arrival phase); pirate hp fell %->% (NONZERO, from s_fb''s synthesized weapon ALONE — the single tick-1 player salvo carries s_fb''s own unit id, s_fb in reach at pre-move dist % against its synthesized %, s_arm out of reach at % against its catalog %, pirate fired 0); pre-fix (empty weapons_json) this ship would have dealt ZERO', v_ring, v_r_en, v_e_hpmax, v_e_hpcur, v_dist_fb, v_r_fb, v_dist_arm, v_r_arm;
 end $$;
 
 do $$ begin raise notice 'COMBAT-FALLBACK PROOF PASSED'; end $$;

@@ -472,6 +472,7 @@ declare uZ uuid := (select v from elfx where k='uZ'); g1 uuid := (select v from 
   n_players int; n_enemy int; v_slot int; v_slot_found int := null;
   v_hpmax double precision; v_exp_hp double precision; v_px double precision; v_py double precision; v_ut text;
   v_ax double precision; v_ay double precision; v_extent double precision; v_erange double precision;
+  v_sx double precision; v_sy double precision;  -- (0338) the encounter's own site: where a wave comes FROM
   v_fx double precision; v_fy double precision;
 begin
   v_enc := pg_temp.send_and_settle(uZ, g1, v_hunt);
@@ -483,7 +484,7 @@ begin
   -- rows, which is what the spawn arm itself does, and it has to be read BEFORE the spawn tick: the
   -- spawn happens before any movement inside that tick, so a reading taken afterwards would be the
   -- extent of a formation that has already moved, not the one the wave was placed against.
-  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y) into v_ax, v_ay
+  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), l.x, l.y into v_ax, v_ay, v_sx, v_sy
     from public.combat_encounters ce join public.locations l on l.id = ce.location_id
    where ce.id = v_enc;
   if v_ax is null or v_ay is null then
@@ -528,21 +529,22 @@ begin
   end if;
   for v_slot in 0 .. n_enemy - 1 loop
     select fp.x, fp.y into v_fx, v_fy
-      from public.combat_formation_point(v_ax, v_ay, v_extent + v_erange + 1, v_slot, 0.5) fp;
+      from public.combat_formation_point(v_ax, v_ay, v_extent + v_erange + 1, v_slot,
+              public.combat_wave_arrival_phase(v_ax, v_ay, v_sx, v_sy, v_slot)) fp;
     if v_fx is not null and v_fy is not null
        and abs(v_px - v_fx) <= 0.000001 and abs(v_py - v_fy) <= 0.000001 then
       v_slot_found := v_slot; exit;
     end if;
   end loop;
   if v_slot_found is null then
-    raise exception 'ELITE PROOF FAIL FLAGOFF: the synthetic enemy stands at (%,%), which is not combat_formation_point(anchor %,%, radius % = measured extent % + its own range % + 1, slot, phase 0.5) for any slot of this wave — the flag-off arm is no longer laying the pre-E3 wave out through the one formation authority',
+    raise exception 'ELITE PROOF FAIL FLAGOFF: the synthetic enemy stands at (%,%), which is not combat_formation_point(anchor %,%, radius % = measured extent % + its own range % + 1, slot, the 0338 arrival phase toward its own site) for any slot of this wave — the flag-off arm is no longer laying the pre-E3 wave out through the one formation authority',
       v_px, v_py, v_ax, v_ay, v_extent + v_erange + 1, v_extent, v_erange;
   end if;
 
   if (select resolved_plan_json from public.combat_encounters where id = v_enc) is not null then
     raise exception 'ELITE PROOF FAIL FLAGOFF: resolved_plan_json is not NULL on a synthetic encounter';
   end if;
-  raise notice 'ELITE_PASS_FLAGOFF_SYNTHETIC (verbatim pre-E3 wave: 1 pirate_synthetic row, hp_max %, resolved_plan_json NULL, standing exactly on combat_formation_point(anchor %,%, extent % + its own range % + 1, slot %, phase 0.5))',
+  raise notice 'ELITE_PASS_FLAGOFF_SYNTHETIC (verbatim pre-E3 wave: 1 pirate_synthetic row, hp_max %, resolved_plan_json NULL, standing exactly on combat_formation_point(anchor %,%, extent % + its own range % + 1, slot %, the 0338 arrival phase))',
     round(v_hpmax::numeric, 3), v_ax, v_ay, v_extent, v_erange, v_slot_found;
 
   update public.combat_encounters set status='defeat', ended_at=now() where id = v_enc;
@@ -586,7 +588,7 @@ begin
   -- next time a gun range or the per-difficulty coefficient moves. So the range is SOLVED FOR here,
   -- from this encounter's own rows and the same expressions the spawn arm evaluates, and then
   -- verified against the spawned rows below. Every input is derived, none is typed in.
-  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y) into v_ax, v_ay
+  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), l.x, l.y into v_ax, v_ay, v_sx, v_sy
     from public.combat_encounters ce join public.locations l on l.id = ce.location_id
    where ce.id = v_enc;
   if v_ax is null or v_ay is null then

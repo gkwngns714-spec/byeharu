@@ -623,6 +623,7 @@ declare uZ uuid := (select v from erfx where k='uZ'); g1 uuid := (select v from 
   v_hpmax double precision; v_exp_hp double precision; v_px double precision; v_py double precision;
   v_metal double precision; v_exp_metal double precision; v_tier int;
   v_ax double precision; v_ay double precision; v_extent double precision; v_erange double precision;
+  v_sx double precision; v_sy double precision;  -- (0338) the encounter's own site: where a wave comes FROM
   v_fx double precision; v_fy double precision; v_slot int; v_slot_found int := null;
 begin
   select reward_tier into v_tier from public.locations where id = v_hunt;
@@ -635,7 +636,7 @@ begin
   -- own weapon range + 1). The extent must be read BEFORE the spawn tick: the spawn arm measures it
   -- before anything moves inside that tick, so a reading taken afterwards would describe a formation
   -- that has already acted.
-  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y) into v_ax, v_ay
+  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), l.x, l.y into v_ax, v_ay, v_sx, v_sy
     from public.combat_encounters ce join public.locations l on l.id = ce.location_id
    where ce.id = v_enc;
   if v_ax is null or v_ay is null then
@@ -679,14 +680,15 @@ begin
   end if;
   for v_slot in 0 .. n - 1 loop
     select fp.x, fp.y into v_fx, v_fy
-      from public.combat_formation_point(v_ax, v_ay, v_extent + v_erange + 1, v_slot, 0.5) fp;
+      from public.combat_formation_point(v_ax, v_ay, v_extent + v_erange + 1, v_slot,
+              public.combat_wave_arrival_phase(v_ax, v_ay, v_sx, v_sy, v_slot)) fp;
     if v_fx is not null and v_fy is not null
        and abs(v_px - v_fx) <= 0.000001 and abs(v_py - v_fy) <= 0.000001 then
       v_slot_found := v_slot; exit;
     end if;
   end loop;
   if v_slot_found is null then
-    raise exception 'ER PROOF FAIL FLAGOFF: the synthetic enemy stands at (%,%), which is not combat_formation_point(anchor %,%, radius % = measured extent % + its own range % + 1, slot, phase 0.5) for any slot of this wave — the flag-off arm no longer lays the pre-E3 wave out through the one formation authority',
+    raise exception 'ER PROOF FAIL FLAGOFF: the synthetic enemy stands at (%,%), which is not combat_formation_point(anchor %,%, radius % = measured extent % + its own range % + 1, slot, the 0338 arrival phase toward its own site) for any slot of this wave — the flag-off arm no longer lays the pre-E3 wave out through the one formation authority',
       v_px, v_py, v_ax, v_ay, v_extent + v_erange + 1, v_extent, v_erange;
   end if;
   if (select resolved_plan_json from public.combat_encounters where id = v_enc) is not null then
@@ -695,7 +697,7 @@ begin
   if exists (select 1 from public.encounter_runtime_state) then
     raise exception 'ER PROOF FAIL FLAGOFF: encounter_runtime_state is non-empty after a synthetic wave';
   end if;
-  raise notice 'ER_PASS_FLAGOFF_ROWS (1 pirate_synthetic row at the verbatim pre-E3 hp_max %, resolved_plan_json NULL, encounter_runtime_state empty, standing exactly on combat_formation_point(anchor %,%, measured extent % + its own range % + 1, slot %, phase 0.5))',
+  raise notice 'ER_PASS_FLAGOFF_ROWS (1 pirate_synthetic row at the verbatim pre-E3 hp_max %, resolved_plan_json NULL, encounter_runtime_state empty, standing exactly on combat_formation_point(anchor %,%, measured extent % + its own range % + 1, slot %, the 0338 arrival phase))',
     round(v_hpmax::numeric, 3), v_ax, v_ay, v_extent, v_erange, v_slot_found;
 
   -- force a deterministic clear: knock the surviving enemy to 1 hp, then re-tick (real clear path).
@@ -726,6 +728,7 @@ declare uZ uuid := (select v from erfx where k='uZ'); g2 uuid := (select v from 
   v_hpmax double precision; v_exp_hp double precision; v_px double precision; v_py double precision;
   v_metal double precision; v_exp_metal double precision; v_tier int; v_grants jsonb; v_plan jsonb;
   v_ax double precision; v_ay double precision; v_extent double precision; v_erange double precision;
+  v_sx double precision; v_sy double precision;  -- (0338) the encounter's own site: where a wave comes FROM
   v_fx double precision; v_fy double precision; v_slot int; v_slot_found int := null;
 begin
   select reward_tier into v_tier from public.locations where id = v_hunt;
@@ -736,7 +739,7 @@ begin
   -- 0336: the anchor and the MEASURED player extent, read before the wave exists (see the FLAG-OFF
   -- block above and this file's header — the spawn arm measures the extent before anything moves in
   -- the spawn tick, so it has to be read here and not afterwards).
-  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y) into v_ax, v_ay
+  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), l.x, l.y into v_ax, v_ay, v_sx, v_sy
     from public.combat_encounters ce join public.locations l on l.id = ce.location_id
    where ce.id = v_enc;
   if v_ax is null or v_ay is null then
@@ -773,14 +776,15 @@ begin
   end if;
   for v_slot in 0 .. n - 1 loop
     select fp.x, fp.y into v_fx, v_fy
-      from public.combat_formation_point(v_ax, v_ay, v_extent + v_erange + 1, v_slot, 0.5) fp;
+      from public.combat_formation_point(v_ax, v_ay, v_extent + v_erange + 1, v_slot,
+              public.combat_wave_arrival_phase(v_ax, v_ay, v_sx, v_sy, v_slot)) fp;
     if v_fx is not null and v_fy is not null
        and abs(v_px - v_fx) <= 0.000001 and abs(v_py - v_fy) <= 0.000001 then
       v_slot_found := v_slot; exit;
     end if;
   end loop;
   if v_slot_found is null then
-    raise exception 'ER PROOF FAIL RESOLVED: the resolved enemy stands at (%,%), which is not combat_formation_point(anchor %,%, radius % = measured extent % + its own range % + 1, slot, phase 0.5) for any slot of this wave — the resolved spawn arm no longer lays its wave out through the one formation authority',
+    raise exception 'ER PROOF FAIL RESOLVED: the resolved enemy stands at (%,%), which is not combat_formation_point(anchor %,%, radius % = measured extent % + its own range % + 1, slot, the 0338 arrival phase toward its own site) for any slot of this wave — the resolved spawn arm no longer lays its wave out through the one formation authority',
       v_px, v_py, v_ax, v_ay, v_extent + v_erange + 1, v_extent, v_erange;
   end if;
   v_plan := (select resolved_plan_json from public.combat_encounters where id = v_enc);
@@ -806,7 +810,7 @@ begin
   if v_exp_metal = round(coalesce(public.cfg_num('reward_metal_base'),10) * greatest(v_tier,1) * (1 + 0.25*1) * coalesce(public.cfg_num('reward_multiplier'),1.0)) then
     raise exception 'ER PROOF FAIL RESOLVED: the authored (base 20) reward is indistinguishable from the pre-E3 (base 10) reward — the test cannot discriminate the branch';
   end if;
-  raise notice 'ER_PASS_RESOLVED_PLAN (1 archetype-derived row at hp_max %, plan-tagged, runtime ledger written, reward from the authored profile, standing exactly on combat_formation_point(anchor %,%, measured extent % + its own range % + 1, slot %, phase 0.5))',
+  raise notice 'ER_PASS_RESOLVED_PLAN (1 archetype-derived row at hp_max %, plan-tagged, runtime ledger written, reward from the authored profile, standing exactly on combat_formation_point(anchor %,%, measured extent % + its own range % + 1, slot %, the 0338 arrival phase))',
     round(v_hpmax::numeric, 3), v_ax, v_ay, v_extent, v_erange, v_slot_found;
 end $$;
 

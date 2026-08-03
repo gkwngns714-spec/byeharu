@@ -453,7 +453,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "the enemy CLOSE arm never ran"                         "$SQL" || fail "harness lacks the pirate-moved-off-anchor assert"
   grep -q "they are not closing"                                  "$SQL" || fail "harness lacks the gap-shrinks assert"
   grep -q "something fired across a gap larger than its own range" "$SQL" || fail "harness lacks the no-fire-beyond-range tick-1 assert"
-  grep -q "the escort NEVER fired within 12 ticks"                "$SQL" || fail "harness lacks the closure-completes assert (approach must reach firing range)"
+  grep -q "the escort NEVER fired within the derived observation window" "$SQL" || fail "harness lacks the closure-completes assert (approach must reach firing range; 0338 derives the window from the worst bearing the geometry admits, so a legitimate long approach is not reported as a stall)"
   grep -q "the fire gate is not honouring the cut range"          "$SQL" || fail "harness lacks the first-shot-within-own-range assert"
   grep -q "no silent closing tick before it"                      "$SQL" || fail "harness lacks the closure non-vacuity guard (at least one silent approach tick)"
   grep -q "the out-range order inverted"                          "$SQL" || fail "harness lacks the longer-range-fires-first assert"
@@ -517,15 +517,19 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "a flagless fleet still opens a fight its lead cannot join" "$SQL" \
     || fail "harness lacks the LEAD is-CLOSING-off-the-anchor assert (the direct 'it can join' evidence, and strictly more than the old form, which only proved the lead fired BECAUSE it stood at distance 0)"
   grep -q "the fleet never fired within 12 ticks of the spawn"    "$SQL" || fail "harness lacks the LEAD bounded joining loop (a fleet that cannot join must fail loudly, not hang)"
+  grep -q "at the WORST bearing the seeded world needs"           "$SQL" || fail "harness lacks the CLOSURE worst-bearing anti-sprawl bound (0338: the approach depends on the bearing to the city as well as the knobs, so the teeth must be a knob-only worst case, not one arbitrary chord)"
+  grep -q "at the WORST bearing the fleet needs"                  "$SQL" || fail "harness lacks the LEAD worst-bearing anti-sprawl bound (0338, same reason)"
+  grep -q "did not come from the hull this block measured as nearest" "$SQL" || fail "harness lacks the LEAD measured-opener assert (0338: which hull is nearest depends on where the city lies, so naming 'an escort' would assert one arrangement of the world)"
+  grep -q "either the election stopped anchoring exactly one hull" "$SQL" || fail "harness lacks the LEAD lead-stands-at-the-spawn-radius pin (the bearing-independent property that replaced the lead-is-furthest ordering)"
   grep -q "the fleet joined its fight on tick % but the engine"   "$SQL" || fail "harness lacks the LEAD predicted-equals-observed joining tick (growing silence must fail here, not pass as 'fires eventually')"
   grep -q "the fleet needs % ticks to join its own fight"         "$SQL" || fail "harness lacks the LEAD joining-tick upper bound (the sprawl must fail here, not in a playtest)"
   grep -q "there would be nothing to close and the silent opening tick above would be vacuous" "$SQL" \
     || fail "harness lacks the LEAD joining-tick lower bound (a hull already in range at spawn makes the silent opening tick vacuous)"
-  grep -q "so the lead is not the screened hull any more"         "$SQL" \
-    || fail "harness lacks the LEAD attribution, repointed: the lead must be STRICTLY FURTHER from the wave than every escort (that is the screen working, and it is the inverse of the dead 'only the lead can reach' premise)"
+  grep -q "or the wave is no longer going out at the radius 0336 established" "$SQL" \
+    || fail "harness lacks the LEAD attribution, repointed AGAIN by 0338: the lead-is-strictly-furthest ordering held only while the wave stood at a fixed bearing. It is replaced by the bearing-INDEPENDENT property — the lead stands EXACTLY the spawn radius from the wave — which pins the anchor election and 0336's radius in one line, while the screen itself is proven where it lives, in aggro"
   grep -q "a hull could open the fight from its spawn slot"       "$SQL" || fail "harness lacks the LEAD silent-spawn-tick premise (measured on the escort-to-wave gap, which is the gap that decides who can fire — never the ring)"
   grep -q "salvo(s) on the spawn tick"                            "$SQL" || fail "harness lacks the LEAD silent-opening-tick assert (the property only 0336 makes statable)"
-  grep -q "an opener that is not an escort"                       "$SQL" || fail "harness lacks the LEAD opener-is-the-nearest-hull assert"
+  grep -q "an opener that is not the near hull"                   "$SQL" || fail "harness lacks the LEAD opener-is-the-nearest-hull assert (0338: the near hull is MEASURED, because the bearing to the city decides whether it is an escort or the lead)"
   grep -q "the measured extent would not be this formation"       "$SQL" || fail "harness lacks the LEAD positioned-living-player non-vacuity guard"
   grep -q "the derivation overrode a real command ship"           "$SQL" || fail "harness lacks the flagged-fleet control assert (the fallback is never an override)"
   grep -qF "flagged ship(s) were provisioned into the flagless fleet" "$SQL" || fail "harness lacks the no-command-ship precondition assert (owned, never inherited)"

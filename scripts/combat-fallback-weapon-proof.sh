@@ -14,7 +14,7 @@
 # convention). Standalone pair (the decks/combat-spatial precedent): NOT appended to any contended proof.
 #
 # 0336 REPOINT. 0336 spawns each enemy wave on a formation ring at (spatial_formation_ring_radius +
-# the wave's OWN weapon range + 1), phase 0.5, instead of on the engagement anchor. The ring therefore
+# the wave's OWN weapon range + 1), on the bearing to the zone's own city (0338), instead of on the engagement anchor. The ring therefore
 # moves the WAVE as well as the escort, which is exactly what killed the old "ring 500 = the escort is
 # out of range while the command ship stands ON the pirate" fixture: at 500 the wave stands 511 from
 # the command ship and the synthesized weapon — this proof's whole subject — would never fire. The
@@ -101,7 +101,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "DAMAGE FAIL: a player ship took damage on tick 1" "$SQL" || fail "harness lacks the clean-tick assert"
   # 0336: the wave's spawn point is PINNED against a point predicted from the knobs before the tick,
   # through combat_formation_point — the very leaf the tick composes.
-  grep -q "DAMAGE FAIL: the wave stands at" "$SQL" || fail "harness lacks the 0336 wave-spawn-point pin (radius = ring + the wave's own range + 1, slot 0, phase 0.5) — without it every pre-move distance below is measured against a guess"
+  grep -q "DAMAGE FAIL: the wave stands at" "$SQL" || fail "harness lacks the 0336 wave-spawn-point pin (radius = ring + the wave's own range + 1, slot 0, the 0338 arrival phase) — without it every pre-move distance below is measured against a guess"
   grep -q "DAMAGE FAIL: the wave carries range" "$SQL" || fail "harness lacks the cross-check that the wave's frozen weapons_json range IS the one the spawn radius was predicted from"
 
   # ── NON-VACUITY: the attribution is DERIVED from the measured geometry and then NAMED — a retune
@@ -121,7 +121,7 @@ if [ "$MODE" = "selftest" ]; then
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "COMBAT-FALLBACK SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/captain_assignment/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. mint/assign captain + craft/fit; exactly 1 tick invocation; the 0336 geometry present (ring 20 -> escort chord 8.89 clear of the catalog gun 5, owned fallback range 30 above the lead's radius 23, wave range 2, PARKED wave, both variance knobs 0); every property — pre-fix empty fitted join, synthesized power=attack_snapshot @ basic_player_weapon with knob-derived range/projectile/cooldown (0313 repoint: never the hard-coded seeds), armed ship unchanged at its catalog row, the wave standing exactly on combat_formation_point(anchor, ring + its own range + 1, slot 0, phase 0.5), and pirate hp fell with the attribution DERIVED from the measured reaches and NAMED by the salvo event's own unit_id — asserted in assert-form; no random())"
+  echo "COMBAT-FALLBACK SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/captain_assignment/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. mint/assign captain + craft/fit; exactly 1 tick invocation; the 0336 geometry present (ring 20 -> escort chord 8.89 clear of the catalog gun 5, owned fallback range 30 above the lead's radius 23, wave range 2, PARKED wave, both variance knobs 0); every property — pre-fix empty fitted join, synthesized power=attack_snapshot @ basic_player_weapon with knob-derived range/projectile/cooldown (0313 repoint: never the hard-coded seeds), armed ship unchanged at its catalog row, the wave standing exactly on combat_formation_point(anchor, ring + its own range + 1, slot 0, the 0338 arrival phase), and pirate hp fell with the attribution DERIVED from the measured reaches and NAMED by the salvo event's own unit_id — asserted in assert-form; no random())"
   exit 0
 fi
 
