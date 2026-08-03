@@ -65,8 +65,17 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
         'read that migration and re-point these slices; do not regenerate blindly.');
     }
   };
+  // 0337 JOINS THE EXEMPTION, by name — exactly the mechanism the paragraph above describes, used
+  // for the first time. It makes a reposition a MOVE instead of a teleport, and its four hunks in
+  // this function (the declare block, the v_is_spatial line, the per-unit POSITION write, and the
+  // foot of the spatial arm) were checked against all seventeen of this migration's tick hunks and
+  // are DISJOINT from every one of them: h14 ends at the close-paren of combat_unit_decide_move and
+  // 0337 wraps the separate `update combat_units set pos_x` line beneath it; h1 appends after
+  // v_spawn_i while 0337 appends after v_move_action; h10/h11 own the freeze and the loop header,
+  // neither of which 0337 touches. The check is scratchpad/anchors.mjs, run against the live body:
+  // each 0337 anchor occurs EXACTLY ONCE in production and overlaps no old_t here.
   guard('process_combat_ticks', '20260618000299',
-    new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332']));
+    new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000337']));
   guard('combat_create_group_encounter', '20260618000301',
     new Set(['20260618000308', '20260618000315', '20260618000316', '20260618000331']));
 }

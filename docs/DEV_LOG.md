@@ -6,6 +6,78 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 ---
 
 ## 2026-08-03 — HUNTING IS FINDABLE, AND A NEAR MISS IS NOT SILENCE (client only)
+## 2026-08-04 — A REPOSITION IS A MOVE (`slice-reposition-is-a-move`, migration 0337)
+
+**The owner:** *"when in combat, and i move, i teleport."*
+
+They were right, and it was my design. `20260618000311_reposition_inside_the_fights_zone.sql:153`
+says it in as many words — **"The reposition is INSTANT (the ambush park's own primitive). Enemy rows
+are NOT moved."** — and :159 justifies the instantness with a measurement: the live zones span at most
+~79 world units against **"enemy weapon range 120+"**, so "NO in-zone reposition on today's zones can
+leave anyone's weapon range." **0316 then cut every weapon range by five, to 5–6.** The justification
+died with that migration; the teleport outlived it, and at today's geometry an instant jump drops a
+fleet clean out of the fight's geometry in a single frame. Both facts were re-read against the
+deployed text before building, at prod head 0335.
+
+### What 0337 does
+
+| layer | change |
+|---|---|
+| `command_ship_group_go` | the reposition arm's **three instant writes are DELETED** — the `fleet_set_in_space` jump, the whole-delta `combat_translate_player_formation`, the engagement restamp — plus the two locals that existed only to compute that delta. In their place **ONE** write: `combat_encounters.reposition_x/reposition_y`. Outcome token `repositioned` → `repositioning`. |
+| `process_combat_ticks` | the **reposition step**: while an order stands, the player side's per-unit close/kite position write stands down and the formation translates **rigidly** toward the destination at `min(move_speed)` over the fleet's living hulls. Arrival consumes the order. |
+| `combat_fleet_move_speed` | the one new leaf — THE fleet's combat speed, by the same min-over-the-fleet rule `fleet_speed` and `combat_fleet_return_speed` already use. |
+| client | `repositionCourse.ts` (pure, the ONE reader of the new columns) + a line in `ActiveCombatPanel`; the go/route copy moves to the present tense. Both halves in this slice. |
+
+**The fleet is the actor.** The owner, on seeing one marker per ship: *"why are there four ships?
+because i have 4 ships in fleet? no, show only fleet. it is as a whole."* So the destination is **per
+FLEET** — one pair of columns on the ENCOUNTER, which is per-fleet by construction — never one per
+`combat_units` row. ONE writer (the order arm), ONE reader (the tick step), ONE speed, ONE arrival.
+The per-ship rows keep doing what only they can do (hold hp, account losses) and are moved as a rigid
+body by the ONE translation leaf, never steered individually.
+
+**Why the encounter and not the fleet.** This repository already ran the other experiment:
+`fleets.retreat_target_*` is a destination stored on the fleet row, and it outlived its encounter so
+reliably that **0336 had to add `fleet_consume_retreat_target` and call it from FOUR arms** to stop a
+dead fleet's next sortie flying to a point it was ordered to in a fight it had already lost. A
+destination on the encounter cannot outlive the fight — the tick only ever selects
+`status in ('active','retreating')` and the step re-reads `status = 'active'` at the instant of
+acting. Nothing to clear, no fourth arm to forget.
+
+**The three stale cases, decided:** a retreat (or 0310's auto-exit) mid-move → the step's fresh read
+stops matching and the fleet **holds where it stands**, which is already the engine's rule for a
+retreating side (the `v_offense` gate); the fleet dies / the fight ends → the row goes terminal and is
+never selected again; re-ordered mid-journey → last write wins on the one pair.
+`presence_request_leave` remains the sole retreat authority and this slice calls it nowhere.
+
+### The consequence to state rather than smuggle
+
+Player `move_speed` in production is **0.2–1.0 world units per 3-second tick** (0316's
+`combat_player_speed_scale` = 0.2 applied to folded hull speed), against zone spans of 29–79 units. So
+crossing a zone under fire now takes **minutes, not a frame**, and enemy speeds of 1–6 mean a
+repositioning fleet **cannot outrun its pursuers** — which is the intended half of that. If it plays
+too slowly, it is **one knob**: `combat_player_speed_scale`. It is deliberately NOT changed here;
+changing it in the same slice would be an unproven balance edit riding a bug fix.
+
+### Proof
+
+`DZCOMBAT_PASS_REPOSITION` is rewritten to prove the **journey**: the order moves nothing (this fails
+on the 0311 body at its very first position check), then three ticks each move **exactly** the fleet's
+measured speed with the order still standing, then arrival on the ordered point consumes it — **the
+per-tick delta bound is asserted, not just the endpoint, because an endpoint-only assert passes a
+teleport.** Plus rigidity (one constant offset from the anchor at every step), enemies moving to
+follow, no leg, no retreat write. New `DZCOMBAT_PASS_REPOHOLD` proves the stale case with explicit
+non-vacuity premises (a living fleet, a positive speed, more than one step still to run).
+`REPOOVERLAP` / `REPOOUTSIDE` now derive the anchor from the fight instead of hard-coding a teleport's
+landing point.
+
+`gen-0337-reposition-is-a-move.mjs` is registered in `scripts/danger-combat-proof.sh` (17 generators).
+`gen-0317` / `gen-0332` / `gen-0336` each name `20260618000337` in their KNOWN_LATER_REWRITERS — by
+name, never by widening the window, exactly as gen-0336's own comment anticipated. No emitted
+migration changed.
+
+---
+
+## 2026-08-03 — COMBAT ENGINE REPAIRS (`slice-combat-engine-repairs`, migration 0336)
 
 Branch `slice-hunting-is-findable` off `97447b3`. **No migration, no `game_config` write, no
 production write** — every fact below was READ from production (head `20260618000335`).
