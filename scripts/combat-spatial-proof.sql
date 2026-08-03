@@ -171,6 +171,37 @@ begin
 
   insert into cspatial values ('s_cmd', s_cmd), ('s_arm', s_arm), ('s_bare', s_bare);
 
+  -- ── CRAFT + FIT BEFORE THE NORMALIZATION BELOW (0333) ────────────────────────────────────────
+  -- Items live PER PORT now (`base_items`), and `craft_module` derives the port it spends from the
+  -- crafting ship's VALIDATED DOCK. The normalization immediately below deliberately retires each
+  -- commission fleet, which is exactly what makes a ship stop being 'at_location' — so a craft
+  -- placed after it would (correctly) answer `not_docked`. The crafts therefore happen HERE, while
+  -- the three ships are still docked at Haven Reach, and each one NAMES the ship it builds at:
+  -- uZ owns THREE ships, so the sole-ship shim cannot resolve one and would answer `ship_not_found`.
+  --
+  -- grant EXACTLY the autocannon_battery recipe TWICE over (weapon_parts x4, pirate_alloy x2, scrap x6
+  -- per unit — the S0/0107 seed) via the real Reward sole writer. A NULL base sends it to uZ's oldest
+  -- active base — the Home Base, whose location_id IS Haven — i.e. the very store the crafts draw on.
+  perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
+    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
+
+  -- craft + fit ONE autocannon_battery onto the command ship.
+  r := pg_temp.call_as(uZ, format('public.craft_module(''cspatial-gun-1'', ''autocannon_battery'', %L::uuid)', s_cmd));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft gun1: %', r; end if;
+  v_mod_cmd := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''cspatial-fit-1'')', v_mod_cmd, s_cmd));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit gun1: %', r; end if;
+
+  -- craft + fit a SECOND autocannon_battery onto the armed escort.
+  r := pg_temp.call_as(uZ, format('public.craft_module(''cspatial-gun-2'', ''autocannon_battery'', %L::uuid)', s_arm));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft gun2: %', r; end if;
+  v_mod_arm := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''cspatial-fit-2'')', v_mod_arm, s_arm));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit gun2: %', r; end if;
+
+  -- s_bare gets NO craft/fit call — since 0262 it will carry the synthesized fallback weapon,
+  -- whose range this harness owns at 1 (< the 4 ring): the CLOSE witness.
+
   -- ── FIXTURE NORMALIZATION — the ONE non-RPC-pure step in this proof (the team-command-proof.sql
   --    PROVISION-block precedent, lifted verbatim). port_entry_commission_build (0222) docks every
   --    freshly commissioned ship at Haven Reach via a REAL 'present' fleet + active location_presence
@@ -194,28 +225,6 @@ begin
    where fleet_id in (select id from public.fleets
                         where main_ship_id in (s_cmd, s_arm, s_bare) and status = 'destroyed')
      and status = 'active';
-
-  -- grant EXACTLY the autocannon_battery recipe TWICE over (weapon_parts x4, pirate_alloy x2, scrap x6
-  -- per unit — the S0/0107 seed) via the real Reward sole writer.
-  perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
-    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
-
-  -- craft + fit ONE autocannon_battery onto the command ship.
-  r := pg_temp.call_as(uZ, 'public.craft_module(''cspatial-gun-1'', ''autocannon_battery'')');
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft gun1: %', r; end if;
-  v_mod_cmd := (r->>'instance_id')::uuid;
-  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''cspatial-fit-1'')', v_mod_cmd, s_cmd));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit gun1: %', r; end if;
-
-  -- craft + fit a SECOND autocannon_battery onto the armed escort.
-  r := pg_temp.call_as(uZ, 'public.craft_module(''cspatial-gun-2'', ''autocannon_battery'')');
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft gun2: %', r; end if;
-  v_mod_arm := (r->>'instance_id')::uuid;
-  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''cspatial-fit-2'')', v_mod_arm, s_arm));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit gun2: %', r; end if;
-
-  -- s_bare gets NO craft/fit call — since 0262 it will carry the synthesized fallback weapon,
-  -- whose range this harness owns at 1 (< the 4 ring): the CLOSE witness.
 
   -- form the team, assign all 3, designate the command ship (owner-scoped, NOT flag-gated, 0204).
   r := pg_temp.call_as(uZ, 'public.upsert_ship_group(1, ''Spatial'')');

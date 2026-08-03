@@ -11,7 +11,15 @@
 -- all reverted by ROLLBACK. Items are granted via the REAL secured-deposit pipeline leaf
 -- public.reward_grant (0040: reward_grants row + inventory_deposit with the stable idempotency key) with a
 -- synthetic combat source — the same function every settled combat bundle deposits through; the harness
--- NEVER inserts into player_inventory directly.
+-- NEVER inserts into base_items directly.
+--
+-- ── WHERE THE ITEMS ARE (0333) ────────────────────────────────────────────────────────────────────
+-- Items no longer live in a global pool — `player_inventory` is DROPPED and items live PER PORT in
+-- `base_items`, keyed to the player's `bases` row for that port. So every balance in this proof names
+-- the port it is about: uS commissions at HAVEN, sells at HAVEN, and `sell_item_at_port` now spends
+-- from `get_or_create_store(player, <the docked port>)`. That store is also the row a NULL-base
+-- `reward_grant` lands in (the player's oldest active base is the Home Base, whose location_id IS
+-- Haven), which is why the grants below and the sale below touch the SAME stock.
 
 \set ON_ERROR_STOP on
 
@@ -60,7 +68,7 @@ end $$;
 -- commission each player's first ship (real RPC) → docked at Haven; grant uS loot via the REAL reward
 -- pipeline leaf (reward_grant → inventory_deposit — the secured-combat-bundle deposit path, 0040/0041).
 do $$
-declare r jsonb; sk text; u uuid; uS uuid;
+declare r jsonb; sk text; u uuid; uS uuid; v_store uuid;
 begin
   foreach sk in array array['uS','uD'] loop
     u := (select v from sv1 where sv1.k = sk);
@@ -68,11 +76,15 @@ begin
     if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'SETUP FAIL first-ship %: %', sk, r; end if;
   end loop;
   uS := (select v from sv1 where k='uS');
+  -- 0333: a balance is always AT a port. Resolve uS's store AT HAVEN once and stash it — that is the
+  -- port this proof sells at, and the exact store sell_item_at_port now derives from the docked ship.
+  v_store := public.get_or_create_store(uS, (select v from sv1 where k='haven'));
+  insert into sv1 values ('storeS', v_store);
   perform public.reward_grant('combat', gen_random_uuid(), uS, null,
     '{"items":[{"item_id":"scrap","quantity":6},{"item_id":"repair_parts","quantity":4}]}'::jsonb);
-  if public.inventory_get_balance(uS, 'scrap') <> 6 or public.inventory_get_balance(uS, 'repair_parts') <> 4 then
-    raise exception 'SETUP FAIL: reward_grant deposit did not land (scrap=% repair=%)',
-      public.inventory_get_balance(uS, 'scrap'), public.inventory_get_balance(uS, 'repair_parts');
+  if public.inventory_get_balance(uS, v_store, 'scrap') <> 6 or public.inventory_get_balance(uS, v_store, 'repair_parts') <> 4 then
+    raise exception 'SETUP FAIL: reward_grant deposit did not land in Haven''s store (scrap=% repair=%)',
+      public.inventory_get_balance(uS, v_store, 'scrap'), public.inventory_get_balance(uS, v_store, 'repair_parts');
   end if;
   -- pre-create wallets at a KNOWN balance by direct owner insert (the tm1 funding precedent; rolled
   -- back) so every credit assert below is an EXACT delta, independent of wallet_ensure's seed.
@@ -82,9 +94,18 @@ begin
   on conflict (player_id) do update set balance = excluded.balance;
 end $$;
 
+-- ⚠ THE PRECONDITION IS STATED, NOT ASSUMED. Migration 0300 LIT salvage_market_enabled (it is one of the 44
+-- capability flags that migration turned on), so the 0185/0235-era seed this block used to lean on
+-- is gone: on the real chain the flag is TRUE by the time this proof runs. Asserting the seed was
+-- asserting a WORLD rather than a property — the exact failure recorded after 0300's lights-on wave
+-- — and it went unnoticed only because this workflow fired on no branch that carried 0300. The dark
+-- scenario now SETS its own precondition in-txn (the hold-transfer-proof idiom); the ROLLBACK
+-- reverts it either way, so the block is correct whichever way the committed flag ever points.
+update public.game_config set value='false'::jsonb where key='salvage_market_enabled';
 -- ════════ P0 — DARK gate: with salvage_market_enabled OFF, the sell RPC rejects and writes NOTHING. ════════
 do $$
 declare r jsonb; uS uuid := (select v from sv1 where k='uS'); v_ship uuid; v_bal numeric; n int;
+  v_store uuid := (select v from sv1 where k='storeS');   -- 0333: uS's stock AT HAVEN
 begin
   select main_ship_id into v_ship from public.main_ship_instances where player_id=uS;
   select coalesce((select balance from public.player_wallet where player_id=uS), -1) into v_bal;
@@ -100,7 +121,7 @@ begin
   select count(*) into n from public.salvage_receipts where main_ship_id=v_ship;
   if n <> 0 then raise exception 'P0 FAIL dark path wrote % receipts', n; end if;
   if coalesce((select balance from public.player_wallet where player_id=uS), -1) <> v_bal then raise exception 'P0 FAIL dark path moved wallet'; end if;
-  if public.inventory_get_balance(uS, 'scrap') <> 6 then raise exception 'P0 FAIL dark path moved inventory'; end if;
+  if public.inventory_get_balance(uS, v_store, 'scrap') <> 6 then raise exception 'P0 FAIL dark path moved Haven''s stock'; end if;
 
   -- enable the dark salvage capability ONLY inside this rolled-back txn (production flag stays false after ROLLBACK).
   update public.game_config set value='true'::jsonb where key='salvage_market_enabled';
@@ -162,6 +183,7 @@ end $$;
 do $$
 declare r jsonb; uS uuid := (select v from sv1 where k='uS'); v_ship uuid; v_bal0 numeric; v_bal1 numeric;
   n int; v_req uuid := gen_random_uuid();
+  v_store uuid := (select v from sv1 where k='storeS');   -- 0333: uS's stock AT HAVEN
 begin
   select main_ship_id into v_ship from public.main_ship_instances where player_id=uS;
   select balance into v_bal0 from public.player_wallet where player_id=uS;   -- known 100 (setup insert)
@@ -176,9 +198,10 @@ begin
   select balance into v_bal1 from public.player_wallet where player_id=uS;
   if v_bal1 - v_bal0 <> 60 then raise exception 'P2 FAIL wallet delta % (want exactly +60)', v_bal1 - v_bal0; end if;
 
-  -- inventory delta EXACT: repair_parts 4 → 1; scrap untouched at 6.
-  if public.inventory_get_balance(uS, 'repair_parts') <> 1 then raise exception 'P2 FAIL inventory: repair_parts %', public.inventory_get_balance(uS, 'repair_parts'); end if;
-  if public.inventory_get_balance(uS, 'scrap') <> 6 then raise exception 'P2 FAIL inventory: scrap moved'; end if;
+  -- stock delta EXACT, MEASURED AT HAVEN (the port that was sold at): repair_parts 4 → 1; scrap
+  -- untouched at 6. 0333 makes this the only place the sale could have drawn from.
+  if public.inventory_get_balance(uS, v_store, 'repair_parts') <> 1 then raise exception 'P2 FAIL Haven stock: repair_parts %', public.inventory_get_balance(uS, v_store, 'repair_parts'); end if;
+  if public.inventory_get_balance(uS, v_store, 'scrap') <> 6 then raise exception 'P2 FAIL Haven stock: scrap moved'; end if;
 
   -- exactly ONE receipt row with the exact fields.
   select count(*) into n from public.salvage_receipts where main_ship_id=v_ship;
@@ -198,6 +221,7 @@ end $$;
 do $$
 declare r jsonb; uS uuid := (select v from sv1 where k='uS'); v_ship uuid; v_req uuid := (select v from sv1 where k='sellreq');
   v_bal0 numeric; nrec int;
+  v_store uuid := (select v from sv1 where k='storeS');   -- 0333: uS's stock AT HAVEN
 begin
   select main_ship_id into v_ship from public.main_ship_instances where player_id=uS;
   select balance into v_bal0 from public.player_wallet where player_id=uS;
@@ -208,7 +232,7 @@ begin
   if (r->>'total_price')::numeric <> 60 or (r->>'unit_price')::numeric <> 20 then raise exception 'P3 FAIL replay envelope: %', r; end if;
 
   if (select balance from public.player_wallet where player_id=uS) <> v_bal0 then raise exception 'P3 FAIL replay re-credited'; end if;
-  if public.inventory_get_balance(uS, 'repair_parts') <> 1 then raise exception 'P3 FAIL replay re-spent'; end if;
+  if public.inventory_get_balance(uS, v_store, 'repair_parts') <> 1 then raise exception 'P3 FAIL replay re-spent'; end if;
   if (select count(*) from public.salvage_receipts where main_ship_id=v_ship) <> nrec then raise exception 'P3 FAIL replay wrote a receipt'; end if;
   raise notice 'SV1_PASS_IDEMPOTENT ok: replay -> idempotent_replay envelope verbatim, no double credit/spend/receipt';
 end $$;
@@ -216,7 +240,8 @@ end $$;
 -- ════════ P4 — guards: invalid_quantity (zero/negative/fractional) · not_docked · no_demand · insufficient_items. ════════
 do $$
 declare r jsonb; uS uuid := (select v from sv1 where k='uS'); uD uuid := (select v from sv1 where k='uD');
-  v_shipS uuid; v_shipD uuid; v_bal0 numeric; nrec int;
+  v_shipS uuid; v_shipD uuid; v_bal0 numeric; nrec int; v_group uuid;
+  v_store uuid := (select v from sv1 where k='storeS');   -- 0333: uS's stock AT HAVEN
 begin
   select main_ship_id into v_shipS from public.main_ship_instances where player_id=uS;
   select main_ship_id into v_shipD from public.main_ship_instances where player_id=uD;
@@ -237,9 +262,33 @@ begin
   if (r->>'reason') is distinct from 'invalid_quantity' then raise exception 'P4 FAIL qty 2.5 (fractional must reject): %', r; end if;
 
   -- not_docked: uD departs toward Slagworks → in transit → the ONE docked-resolver returns null.
-  r := pg_temp.call_as(uD, format('public.command_main_ship_space_move_to_location(%L::uuid, %L::uuid, %L::uuid)',
-                                   (select v from sv1 where k='slag'), gen_random_uuid(), v_shipD));
+  --
+  -- ⚠ REPOINTED 2026-08-03. This block called
+  -- `command_main_ship_space_move_to_location(uuid,uuid,uuid)`, which migration
+  -- `20260618000232_movement_function_drop.sql:237` DROPPED. This proof has therefore been broken
+  -- since 0232 and nobody saw it, because until 0333 widened the trigger NO WORKFLOW RAN IT AT ALL
+  -- (it had no `.yml` of any kind). Repointed onto the live unified mover — the same idiom
+  -- hold-transfer-proof uses — rather than onto a resurrected corpse. Every flag the mover needs is
+  -- FORCED here, in-txn, and reverted by the ROLLBACK.
+  update public.game_config set value='true'::jsonb where key='team_command_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_control_enabled';
+  r := pg_temp.call_as(uD, 'public.upsert_ship_group(1, ''Runner'')');
+  if (r->>'ok')::boolean is not true then raise exception 'P4 FAIL group uD: %', r; end if;
+  v_group := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', v_shipD, v_group));
+  if (r->>'ok')::boolean is not true then raise exception 'P4 FAIL assign uD: %', r; end if;
+  -- 0204 requires a command ship before the group can be ordered; arm it so the reject under test
+  -- is the DOCK one and not a missing-command-ship one.
+  r := pg_temp.call_as(uD, format('public.set_fleet_command_ship(%L::uuid, true)', v_shipD));
+  if (r->>'ok')::boolean is not true then raise exception 'P4 FAIL arm uD: %', r; end if;
+  r := pg_temp.call_as(uD, format('public.command_ship_group_go(%L::uuid, %L::uuid)', v_group, (select v from sv1 where k='slag')));
   if (r->>'ok')::boolean is not true then raise exception 'P4 FAIL move uD: %', r; end if;
+  -- the mover really did undock it — the shared resolver is the oracle, not a status guess. Without
+  -- this the not_docked assertion below could pass for the wrong reason.
+  if public.mainship_resolve_docked_location(v_shipD) is not null then
+    raise exception 'P4 FAIL fixture: uD is still docked after the go — the not_docked probe would be vacuous';
+  end if;
   r := pg_temp.call_as(uD, format('public.sell_item_at_port(%L::uuid, %L, %s, %L::uuid)', v_shipD, 'scrap', 1, gen_random_uuid()));
   if (r->>'reason') is distinct from 'not_docked' then raise exception 'P4 FAIL in-transit not rejected: %', r; end if;
 
@@ -255,7 +304,7 @@ begin
 
   -- ALL guards wrote nothing: wallet, inventory, receipts unchanged.
   if (select balance from public.player_wallet where player_id=uS) <> v_bal0 then raise exception 'P4 FAIL a guard moved the wallet'; end if;
-  if public.inventory_get_balance(uS, 'scrap') <> 6 then raise exception 'P4 FAIL a guard moved inventory'; end if;
+  if public.inventory_get_balance(uS, v_store, 'scrap') <> 6 then raise exception 'P4 FAIL a guard moved Haven''s stock'; end if;
   if (select count(*) from public.salvage_receipts where main_ship_id=v_shipS) <> nrec then raise exception 'P4 FAIL a guard wrote a receipt'; end if;
   raise notice 'SV1_PASS_GUARDS ok: invalid_quantity (0/-3/2.5), in-transit not_docked, crystal no_demand, over-held insufficient_items — all zero-write';
 end $$;
@@ -263,17 +312,18 @@ end $$;
 -- ════════ P5 — NEVER-SELLABLE: a HELD progression item still cannot be sold anywhere (no_demand). ════════
 do $$
 declare r jsonb; uS uuid := (select v from sv1 where k='uS'); v_ship uuid; v_bal0 numeric;
+  v_store uuid := (select v from sv1 where k='storeS');   -- 0333: uS's stock AT HAVEN
 begin
   select main_ship_id into v_ship from public.main_ship_instances where player_id=uS;
   -- grant ONE captain_memory_shard through the REAL pipeline (the 0171 drop rides this same path).
   perform public.reward_grant('combat', gen_random_uuid(), uS, null,
     '{"items":[{"item_id":"captain_memory_shard","quantity":1}]}'::jsonb);
-  if public.inventory_get_balance(uS, 'captain_memory_shard') <> 1 then raise exception 'P5 FAIL shard grant'; end if;
+  if public.inventory_get_balance(uS, v_store, 'captain_memory_shard') <> 1 then raise exception 'P5 FAIL shard grant'; end if;
 
   select balance into v_bal0 from public.player_wallet where player_id=uS;
   r := pg_temp.call_as(uS, format('public.sell_item_at_port(%L::uuid, %L, %s, %L::uuid)', v_ship, 'captain_memory_shard', 1, gen_random_uuid()));
   if (r->>'reason') is distinct from 'no_demand' then raise exception 'P5 FAIL held shard sellable: %', r; end if;
-  if public.inventory_get_balance(uS, 'captain_memory_shard') <> 1 then raise exception 'P5 FAIL shard consumed'; end if;
+  if public.inventory_get_balance(uS, v_store, 'captain_memory_shard') <> 1 then raise exception 'P5 FAIL shard consumed'; end if;
   if (select balance from public.player_wallet where player_id=uS) <> v_bal0 then raise exception 'P5 FAIL shard sale credited'; end if;
   raise notice 'SV1_PASS_NEVER_SELLABLE ok: held captain_memory_shard -> no_demand at every port (excluded by omission), zero writes';
 end $$;

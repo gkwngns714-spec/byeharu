@@ -513,9 +513,9 @@ export function ShipScreen() {
           )}
         </div>
         <div className={screenRailClass('aside')}>
-          {/* The player's item inventory — live data, always lit (feeds RecruitCaptainPanel here
-              and the Port Workshop's recipes). */}
-          <InventoryPanel refreshKey={readRefreshKey} />
+          {/* The SELECTED SHIP'S FLEET HOLD — what it is carrying right now (0333). Items LIVE in
+              port storage; this is the transient half. Live data, always lit. */}
+          <InventoryPanel refreshKey={readRefreshKey} mainShipId={selection.selectedShipId} />
           {/* CAPTAIN-P15 (dark, server-lit only): assign/unassign captains to the SELECTED ship.
               REVIEW FIX (S6 major 2): the target is the shell selection DIRECTLY — the same source
               the detail uses — never the polled map.mainShip, which lags a roster click and would
@@ -526,7 +526,11 @@ export function ShipScreen() {
             onChanged={bumpLoadoutRev}
           />
           {/* CAPTAIN-P16 (dark, server-lit only): captain recruitment (progression). */}
-          <RecruitCaptainPanel lifecycleKey={lifecycleKey} onChanged={bumpLoadoutRev} />
+          <RecruitCaptainPanel
+            lifecycleKey={lifecycleKey}
+            mainShipId={selection.selectedShipId}
+            onChanged={bumpLoadoutRev}
+          />
         </div>
       </div>
     </Screen>

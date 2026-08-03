@@ -127,10 +127,18 @@ export type StartHullBuildResult =
  *  Exact param names from 0188: p_request_id (uuid) + p_hull_type_id. Transport error →
  *  { ok:false, code:'unavailable' } (fail-closed; 'unavailable' is deliberately unmapped →
  *  the generic message). */
-export async function startHullBuild(requestId: string, hullTypeId: string): Promise<StartHullBuildResult> {
+export async function startHullBuild(
+  requestId: string,
+  hullTypeId: string,
+  mainShipId: string | null,
+): Promise<StartHullBuildResult> {
+  // 0333 - LAW 3: a hull order consumes the DOCKED PORT'S storage and RECORDS that store on the
+  // order, so its cancel refund has a port to give the ingredients back to. Never a location: the
+  // server derives the port from the ship's own dock.
   const { data, error } = await supabase.rpc('start_hull_build', {
     p_request_id: requestId,
     p_hull_type_id: hullTypeId,
+    p_main_ship_id: mainShipId,
   })
   if (error) return { ok: false, code: 'unavailable' }
   return data as StartHullBuildResult

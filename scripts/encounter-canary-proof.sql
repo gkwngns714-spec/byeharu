@@ -231,6 +231,20 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL ship (%): %', p_tag, r; end if;
   select main_ship_id into s from public.main_ship_instances where player_id = uP;
 
+  -- ARM FIRST (0333): items live PER PORT (`base_items`) and craft_module derives the port it spends
+  -- from the crafting ship's VALIDATED DOCK. Retiring the commission fleet below is exactly what
+  -- stops the ship being 'at_location', so a craft after it would answer `not_docked`. Craft while
+  -- the ship is still docked at Haven Reach and NAME it (the shim would resolve a sole ship, but
+  -- naming it is what makes the port this call spends from explicit). A NULL-base grant lands in
+  -- uP's oldest active base — the Home Base, location_id = Haven — i.e. the store the craft uses.
+  perform public.reward_grant('combat', gen_random_uuid(), uP, null,
+    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
+  r := pg_temp.call_as(uP, format('public.craft_module(%L, ''autocannon_battery'', %L::uuid)', 'ecp-gun-'||p_tag, s));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft (%): %', p_tag, r; end if;
+  m := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, %L)', m, s, 'ecp-fit-'||p_tag));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit (%): %', p_tag, r; end if;
+
   -- retire the commission dock fleet (the team-command-proof normalisation, mirrored).
   update public.main_ship_instances set status='home', updated_at=now() where main_ship_id = s;
   update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
@@ -238,14 +252,6 @@ begin
    where main_ship_id = s and status='present';
   update public.location_presence set status='completed', updated_at=now()
    where fleet_id in (select id from public.fleets where main_ship_id = s and status='destroyed') and status='active';
-
-  perform public.reward_grant('combat', gen_random_uuid(), uP, null,
-    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
-  r := pg_temp.call_as(uP, format('public.craft_module(%L, ''autocannon_battery'')', 'ecp-gun-'||p_tag));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft (%): %', p_tag, r; end if;
-  m := (r->>'instance_id')::uuid;
-  r := pg_temp.call_as(uP, format('public.fit_module_to_ship(%L::uuid, %L::uuid, %L)', m, s, 'ecp-fit-'||p_tag));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit (%): %', p_tag, r; end if;
 
   r := pg_temp.call_as(uP, format('public.upsert_ship_group(1, %L)', 'ECP '||p_tag));
   if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL group (%): %', p_tag, r; end if;

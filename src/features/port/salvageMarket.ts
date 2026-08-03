@@ -23,7 +23,7 @@ export interface PortItemDemandRow {
 export interface SalvageEntry {
   item_id: string
   unit_price: number
-  /** The caller's sellable stock (player_inventory own-row read); missing item → 0. */
+  /** The caller's sellable stock AT THIS PORT (0333 — items live per-port); missing item → 0. */
   balance: number
 }
 
@@ -107,8 +107,8 @@ export type SalvageSellReason =
   | 'insufficient_items'
 
 // DISPLAY-ONLY mirror of sell_item_at_port's reject order (0174): gate FIRST (before ANY read) →
-// input validation (invalid_quantity: items are INTEGER quantities — player_inventory.quantity is
-// integer, 0039 — so null/non-positive/fractional reject, never round; the 1e6 magnitude cap) →
+// input validation (invalid_quantity: items are INTEGER quantities — an item is a whole thing —
+// so null/non-positive/fractional reject, never round; the 1e6 magnitude cap) →
 // ship resolved → docked → an ACTIVE demand row at this port → enough items (balance null =
 // balances unreadable → SKIP the precheck and let the server answer insufficient_items itself —
 // the haulAcceptAvailability null-cap idiom) → ok. The server-only guards (not_authenticated,

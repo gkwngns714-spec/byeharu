@@ -1,0 +1,68 @@
+name: SALVAGE-MARKET — port item buy-desk disposable proof (no production)
+
+# WHY THIS FILE EXISTS AT ALL (2026-08-03): scripts/salvage-market-proof.{sh,sql} has been in the
+# repo since 0174 and ran NOWHERE — no workflow referenced it, so `sell_item_at_port` had a written
+# proof that gated nothing. 0333 (ITEMS LIVE AT PORTS) changed what that verb spends and where from,
+# which made the gap load-bearing: shipping a changed proof that never executes is worse than no
+# proof, because everyone assumes it is running. Its two siblings (port-shop, shipyard) already had
+# workflows; this is the third, modelled on port-shop-proof.yml verbatim.
+#
+# Runs the SALVAGE-MARKET disposable proof on a single throwaway local Supabase — NEVER production:
+#   1. DB-free selftest: the harness is well-formed, self-rolling-back (opens a txn, FORCES
+#      salvage_market_enabled false for its own dark block and true only inside the txn, provisions
+#      via the REAL RPCs — commission_first_main_ship + reward_grant; never a direct base_items or
+#      salvage_receipts insert — and ends in ROLLBACK with NO COMMIT, so it persists nothing);
+#   2. a disposable local Supabase (the full chain incl. 0174 and 0333) running the real-chain
+#      matrix: dark gate (sell rejects, zero writes) → the exact 15-row demand table + the
+#      never-sellable pin → SELL (exact port-store spend + exact credit + receipt) → idempotent
+#      replay → the guard envelope (invalid_quantity / no_demand / not_docked / insufficient_items).
+# The proof flips NO committed flag. No `environment:` on any job — none can read production secrets.
+# Disposable local Supabase only.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-salvage**'
+      # Any slice may touch the sell path — 0333 did, from a branch named nothing like
+      # 'slice-salvage'. A proof that only fires on the branches that remembered is not a net
+      # (danger-combat-proof.yml rev.3 reached the same conclusion for the same reason).
+      - 'slice-**'
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: salvage-market-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/salvage-market-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full migration chain incl. 0174 + 0333)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: SALVAGE-MARKET real-chain matrix (sell items at the docked port)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/salvage-market-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

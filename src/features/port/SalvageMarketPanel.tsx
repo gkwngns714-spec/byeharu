@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
-import { fetchMyItemBalances } from '../modules/modulesApi'
+import { fetchPortItemBalances } from '../modules/modulesApi'
 import { getWalletBalance } from '../map/tradeApi'
 import { getPortItemDemand, getSalvageConfigRows, sellItemAtPort } from './salvageApi'
 import {
@@ -89,7 +89,8 @@ export function SalvageMarketPanel({
     }
     const [d, b, w] = await Promise.all([
       getPortItemDemand(locationId),
-      fetchMyItemBalances(),
+      // 0333: your sellable stock is what THIS port is holding for you — items live at ports.
+      fetchPortItemBalances(mainShipId),
       getWalletBalance(),
     ])
     if (!activeRef.current) return

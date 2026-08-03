@@ -5,7 +5,7 @@
 // get_my_module_instances' rows (0110), plus the two PUBLIC-READ Reference/Config catalogs the
 // client selects directly (module_types / module_recipe_ingredients, 0107 — the item_types/
 // hull-types direct-select convention; deliberately NO catalog RPC, see the 0110 header) and the
-// caller's own player_inventory rows (the 0039 own-row grant). No React/DOM/fetch here (the
+// caller's own stock AT THE PORT they are docked at (0333 — items live per-port). No React/DOM/fetch here (the
 // miningTypes.ts idiom). DARK: the server rejects every crafting RPC while
 // module_crafting_enabled is false; the panel renders nothing on that envelope — the UI is never
 // the control (fail-closed law), and no client-side flag constant gates visibility (server-driven).
@@ -89,7 +89,11 @@ const CRAFT_ERROR_COPY: Record<string, string> = {
   invalid_request: 'Invalid command request.',
   unknown_module: 'Unknown module design.',
   no_recipe: 'This module design cannot be crafted yet.',
-  insufficient_items: 'Not enough materials to craft this module.',
+  insufficient_items: 'Not enough materials stored at this port.',
+  // 0333, law 3 in the player's words: you build from the port you are standing in.
+  not_docked: 'Dock at a port to craft from what is stored there.',
+  port_has_no_storage: 'This place has no storage.',
+  ship_not_found: 'No ship available.',
   not_authenticated: 'You must be signed in.',
   unavailable: 'Module crafting is unavailable right now.',
 }

@@ -143,6 +143,25 @@ begin
 
   insert into cfb values ('s_fb', s_fb), ('s_arm', s_arm);
 
+  -- s_arm: a real autocannon_battery — the "armed ship weapons_json unchanged" witness. Fund the
+  -- recipe (weapon_parts x4, pirate_alloy x2, scrap x6 — the S0/0107 seed) via the real Reward writer.
+  -- ── CRAFTED HERE, BEFORE THE NORMALIZATION BELOW (0333) ──────────────────────────────────────
+  -- Items live PER PORT now (`base_items`) and `craft_module` derives the port it spends from the
+  -- crafting ship's VALIDATED DOCK. The normalization below retires the commission fleets, which is
+  -- exactly what stops a ship being 'at_location' — a craft after it would answer `not_docked`. So
+  -- the craft happens while both ships are still docked at Haven Reach, and it NAMES s_arm: uZ owns
+  -- TWO ships, so the sole-ship shim cannot resolve one and would answer `ship_not_found`. A NULL
+  -- base on the grant lands in uZ's oldest active base — the Home Base, whose location_id IS Haven
+  -- — i.e. the same store the craft draws on. Fitting is legal at 'at_location' too (0114's
+  -- settled-SAFE set is ('home','at_location')), so it moves up unchanged with the craft.
+  perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
+    '{"items": [{"item_id": "weapon_parts", "quantity": 4}, {"item_id": "pirate_alloy", "quantity": 2}, {"item_id": "scrap", "quantity": 6}]}'::jsonb);
+  r := pg_temp.call_as(uZ, format('public.craft_module(''cfb-gun-1'', ''autocannon_battery'', %L::uuid)', s_arm));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft gun: %', r; end if;
+  v_mod_arm := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''cfb-fit-1'')', v_mod_arm, s_arm));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit gun: %', r; end if;
+
   -- FIXTURE NORMALIZATION — retire each ship's commission 'present' fleet + complete its presence (the
   -- team-command/combat-spatial-proof precedent, verbatim): send_ship_group_hunt's dark-path readiness
   -- gate treats a fleet-truth-docked member as NOT ready, so a team fleet on top of a live dock fleet
@@ -170,16 +189,6 @@ begin
   r := pg_temp.call_as(uZ, format('public.assign_captain_to_ship(%L, %L::uuid, %L::uuid, %L)', 'cfb-assign-1', v_cap, s_fb, 'gunnery'));
   if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL assign captain: %', r; end if;
   -- s_fb gets NO weapon module — its RAW fitted-weapon join must stay EMPTY (the fallback trigger).
-
-  -- s_arm: a real autocannon_battery — the "armed ship weapons_json unchanged" witness. Fund the
-  -- recipe (weapon_parts x4, pirate_alloy x2, scrap x6 — the S0/0107 seed) via the real Reward writer.
-  perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
-    '{"items": [{"item_id": "weapon_parts", "quantity": 4}, {"item_id": "pirate_alloy", "quantity": 2}, {"item_id": "scrap", "quantity": 6}]}'::jsonb);
-  r := pg_temp.call_as(uZ, 'public.craft_module(''cfb-gun-1'', ''autocannon_battery'')');
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL craft gun: %', r; end if;
-  v_mod_arm := (r->>'instance_id')::uuid;
-  r := pg_temp.call_as(uZ, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''cfb-fit-1'')', v_mod_arm, s_arm));
-  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL fit gun: %', r; end if;
 
   -- form the team, assign both, designate s_fb the command ship (spawns at the location center).
   r := pg_temp.call_as(uZ, 'public.upsert_ship_group(1, ''Fallback'')');
