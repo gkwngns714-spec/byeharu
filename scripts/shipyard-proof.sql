@@ -83,6 +83,16 @@ begin
   insert into public.game_config(key,value,description)
     values('mainship_space_movement_enabled','true'::jsonb,'sy1 transient (rolled back)')
     on conflict (key) do update set value='true'::jsonb;
+  -- ⚠ 2026-08-03 — THE DELIVERY BLOCK PINS EXACT CATALOG HULL STATS, so it must OWN the one
+  -- precondition that makes them exact. `soul_roll_traits_for_ship` (0186) applies a trait
+  -- multiplier to max_hp ONCE at roll time and the commission core has carried that hook since
+  -- 0193, so a delivered hull's hp is deterministic only while `ship_traits_enabled` is dark. CI
+  -- returned a Mule at hp/max_hp = 702 against the catalog's 650 — one particular roll. Asserting
+  -- 702 would be asserting THAT roll; loosening the pin to `>=` would throw the property away. So
+  -- the proof states the precondition it needs, in-txn, reverted by the ROLLBACK.
+  insert into public.game_config(key,value,description)
+    values('ship_traits_enabled','false'::jsonb,'sy1 transient (rolled back)')
+    on conflict (key) do update set value='false'::jsonb;
   r := pg_temp.call_as(uB, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'SETUP FAIL first-ship: %', r; end if;
   insert into public.player_wallet (player_id, balance) values (uB, 500)
