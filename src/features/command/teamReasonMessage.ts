@@ -18,7 +18,9 @@ const REASON_MESSAGES: Record<string, string> = {
   team_command_disabled: 'Fleet commands are not available right now.',
   not_authenticated: 'Sign in to command fleets.',
   group_not_found: 'That fleet no longer exists.',
-  empty_group: 'That fleet has no ships yet — add ships in the Fleets panel.',
+  // "Fleet tab" — the nav destination's real name (navTabs.ts); the old "Fleets panel" named a
+  // surface that no longer exists as such.
+  empty_group: 'That fleet has no ships yet — add ships on the Fleet tab.',
   // NO LIVING SHIPS (0312) — every ship in the group is wrecked, so the mover/dock refuse the
   // order. DISTINCT from empty_group: that fleet has no ships at all; this one has ships and they
   // are all disabled. The copy says what to actually do — the recovery path is per-ship (Fitting
@@ -28,11 +30,11 @@ const REASON_MESSAGES: Record<string, string> = {
   invalid_location: 'This destination can’t take a fleet right now.',
   // shared readiness reject: hunt (0168 — every ship home and battle-ready) and docked-team move
   // (0190 — every ship docked together at one port)
-  member_not_ready: 'Every ship in the fleet must be ready first — home for a hunt, docked together for a move.',
+  member_not_ready: 'Every ship in the fleet must be free first — idle for a hunt, docked together for a move.',
   fleet_limit_reached: 'Too many fleets are already deployed — wait for one to return.',
-  stats_invalid: 'The fleet’s stats couldn’t be verified — check each ship in the Fleets panel.',
+  stats_invalid: 'The fleet’s stats couldn’t be verified — check each ship on the Fleet tab.',
   power_below_required: 'The fleet’s combat power is below what this zone requires.',
-  no_home_base: 'The fleet has no home port to launch from.',
+  no_home_base: 'The fleet has no port to launch from.',
   // preview/totals reads (0165/0166)
   invalid_activity: 'That activity isn’t recognized for fleet orders.',
   // FLEET-CONTROL (0204): the fleet control-model rejects (movement RPCs + assign cap + command-ship setter)
@@ -81,7 +83,7 @@ const REASON_MESSAGES: Record<string, string> = {
   invalid_group_index: 'You can have up to three fleets — that slot doesn’t exist.',
   invalid_name: 'Give the fleet a name between 1 and 40 characters.',
   // ROSTER WRITES — the command-ship setter (0204:104) and the assign/unassign guards (0216:214).
-  ship_not_found: 'That ship couldn’t be found — open the Fleets panel and pick it again.',
+  ship_not_found: 'That ship couldn’t be found — open the Fleet tab and pick it again.',
   // HP AUTO-EXIT — set_group_auto_exit (0310). The server is the authority on the [5,95] bounds;
   // the client control mirrors them, so these normally surface only for a stale/bypassed client.
   invalid_auto_exit_pct: 'Auto-retreat needs a hull percent between 5 and 95.',

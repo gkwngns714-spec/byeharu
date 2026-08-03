@@ -145,7 +145,7 @@ export function fleetPositionLocationLabel(
 //
 // Derivation order, over the SAME fleet-position row fleetPositionLocationLabel already folds (never a
 // second position pipeline):
-//   • moving (in-transit/returning)   → a short tone-coded verb ("Traveling"/"Returning"); etaText +
+//   • moving (in-transit/returning)   → a short tone-coded verb ("In transit"/"Returning"); etaText +
 //     progress (0..1, the SAME clamped fraction the map's dot interpolation uses) let the caller render
 //     the destination/ETA/progress bar the row's OTHER line already shows the port name for.
 //   • docked / berthed at a real port → "Docked", neutral — never "Ready to launch": the ship IS
@@ -154,12 +154,13 @@ export function fleetPositionLocationLabel(
 //   • at a combat/hunt site           → "In combat", danger (matches the map's combat colour).
 //   • position UNRESOLVED (hidden/missing — a ship with no berth AND no fleet: e.g. freshly grouped
 //     but its group has never yet been sent, or destroyed, or the FLEETMAP row hasn't loaded) → falls
-//     back to the RAW per-ship status label/tone (mainShipInstanceStatusLabel/Tone). This is the one
-//     place "Ready to launch" can still appear, and it is honest there: a ship with no known position
-//     genuinely has nothing holding it. Pure; unit-tested in tests/teamRoster.spec.ts.
+//     back to the RAW per-ship status label/tone (mainShipInstanceStatusLabel/Tone). Since the
+//     one-name-per-state pass that fallback says "Idle" (quiet, neutral) — honest for a ship with no
+//     known position, and it can no longer contradict the "Location unavailable" line beside it the
+//     way the old green "Ready to launch" did. Pure; unit-tested in tests/teamRoster.spec.ts.
 export interface CommandFleetState {
-  /** Short badge word — "Docked" / "Traveling" / "Returning" / "In combat" / "In deep space", or the
-   *  raw-status fallback label (e.g. "Ready to launch", "Disabled") when position is unresolved. */
+  /** Short badge word — "Docked" / "In transit" / "Returning" / "In combat" / "In deep space", or the
+   *  raw-status fallback label (e.g. "Idle", "Wrecked") when position is unresolved. */
   label: string
   tone: BadgeTone
   /** Live "3m 12s"-style remaining time — moving legs only, else null. */
@@ -186,7 +187,7 @@ export function commandFleetState(
   if (resolved.kind === 'in-transit' || resolved.kind === 'returning') {
     const seg = pos && pos.place === 'transit' ? pos.segment : null
     return {
-      label: resolved.kind === 'returning' ? 'Returning' : 'Traveling',
+      label: resolved.kind === 'returning' ? 'Returning' : 'In transit',
       tone: resolved.kind === 'returning' ? 'accent' : 'warning', // matches the map's outbound/return colours
       etaText: resolved.etaText,
       progress: seg ? movementProgress(seg, nowMs) : null,

@@ -8,13 +8,16 @@
 // mold. The shipyard.ts availability mirror reuses these exact code names, so display-only
 // prechecks and real server rejects share ONE copy source.
 
+// PLAIN-WORDS (2026-08-03): the player word is "ship" — "hull" was EVE-flavoured jargon the rest
+// of the app (nav "Ships", empty states) does not speak. Server CODE names keep "hull"; only the
+// player-facing text changed.
 const REASON_MESSAGES: Record<string, string> = {
   feature_disabled: 'The shipyard is not open yet.',
-  not_authenticated: 'Sign in to order a hull build.',
+  not_authenticated: 'Sign in to order a ship build.',
   invalid_request: 'Invalid command request.',
-  unknown_hull: 'Unknown hull class.',
-  no_recipe: 'This hull cannot be built at a shipyard.',
-  hull_prerequisite_not_met: 'You must own the prerequisite hull first.',
+  unknown_hull: 'Unknown ship design.',
+  no_recipe: 'This ship can’t be built at a shipyard.',
+  hull_prerequisite_not_met: 'You must own the required ship first.',
   captain_level_too_low: 'A higher-level captain is required.',
   queue_full: 'Your build queue is full.',
   insufficient_items: 'Not enough materials stored at this port.',

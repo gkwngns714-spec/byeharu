@@ -13,7 +13,7 @@ import {
   type GetLocationInvestmentLeaderboardResult,
   type GetMyLocationInvestmentsResult,
 } from './investmentTypes'
-import { Button, Card, CardHeader } from '../../components/ui'
+import { Button, CollapsibleCard } from '../../components/ui'
 
 // LOCATION-INVEST-P18 (post-audit UI, panel 2 of 4) — the dark Port Investment surface: the docked
 // port's persistent development + seasonal score board + the caller's own history, and ONE Invest
@@ -90,7 +90,8 @@ export function InvestmentPanel({
       setPending: setInvestPending,
       setNote: setInvestNote,
       exec: () => investInLocation(mainShipId, amt, crypto.randomUUID()),
-      successNote: (res) => `Invested ${res.amount} credits.`,
+      // toLocaleString — every other credits string on the screen formats; this one was the stray.
+      successNote: (res) => `Invested ${(res.amount ?? 0).toLocaleString()} credits.`,
       errorNote: (res) => investErrorMessage(res.code ?? 'unavailable'),
       refresh,
     })
@@ -111,8 +112,16 @@ export function InvestmentPanel({
     // UI R2: the Card primitive owns the chrome (accent tone = the investment identity; ex-cyan).
     // Screen-embedded — rides PortScreen's Screen stack (space-y-4), so the legacy map-corner
     // absolute offset (bottom-2 left-2) is gone with the hand-rolled skin. Tokens only.
-    <Card tone="accent" data-testid="investment-panel">
-      <CardHeader title="Port Investment" />
+    // HIERARCHY (2026-08-03): rare-use → folded CLOSED by default (persists per player); the
+    // subtitle finally says what this IS (the card had a bare title and 10px jargon rows).
+    <CollapsibleCard
+      tone="accent"
+      data-testid="investment-panel"
+      title="Port Investment"
+      subtitle="Put credits into this port's growth for seasonal standing."
+      storageKey="port.investment"
+      defaultOpen={false}
+    >
 
       {/* Persistent development (all-time) vs seasonal score (current window). */}
       <div data-testid="investment-development" className="mt-1 grid grid-cols-2 gap-1 text-[10px]">
@@ -123,7 +132,7 @@ export function InvestmentPanel({
         <span className="text-ink-muted">Season score</span>
         <span className="text-right font-mono tabular-nums text-accent">{development.season_total}</span>
       </div>
-      <p data-testid="investment-window" className="mt-1 text-[9px] text-ink-faint">
+      <p data-testid="investment-window" className="mt-1 text-[10px] text-ink-faint">
         Season window #{development.window_index}: {windowRange}
       </p>
 
@@ -212,6 +221,6 @@ export function InvestmentPanel({
           ))}
         </ul>
       )}
-    </Card>
+    </CollapsibleCard>
   )
 }

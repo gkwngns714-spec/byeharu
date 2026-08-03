@@ -93,7 +93,7 @@ export function WorldEventsPanel({
                 </span>
                 <span
                   data-testid={`world-event-badge-${e.id}`}
-                  className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase ${SEVERITY_BADGE[e.severity]}`}
+                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase ${SEVERITY_BADGE[e.severity]}`}
                 >
                   {e.severity}
                 </span>

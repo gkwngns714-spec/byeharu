@@ -6,7 +6,7 @@ import {
   type GetMyModuleInstancesResult,
   type ModuleCatalogEntry,
 } from './modulesTypes'
-import { Button, Card, CardHeader, SectionLabel } from '../../components/ui'
+import { Button, Card, CardHeader } from '../../components/ui'
 import { ItemChip, ItemGlyph, itemLabel } from '../../components/items'
 
 // MODULES-P13 — the module-CRAFTING surface: the craftable catalog (recipes + the player's
@@ -115,8 +115,11 @@ export function ModulesPanel({
 
   const panel = (
     // UI R2: the Card primitive owns the chrome (accent tone = the modules identity).
+    // ONE NAME: when the mount passes a sectionLabel ("Workshop" on the Port screen) it IS the
+    // card's title — the old rendering stacked a "Workshop" micro-label 8px above a card titled
+    // "Modules": two names for one panel. The subtitle says what it does in plain words.
     <Card tone="accent" data-testid="modules-panel">
-      <CardHeader title="Modules" />
+      <CardHeader title={sectionLabel ?? 'Modules'} subtitle="Craft modules from materials." />
       {catalog === null ? (
         <p data-testid="modules-catalog-unavailable" className="mt-1 text-[10px] text-ink-muted">
           Catalog unavailable right now.
@@ -138,7 +141,7 @@ export function ModulesPanel({
                     <ItemGlyph id={entry.id} kind="module" size={14} className="shrink-0 text-accent" />
                     <span className="truncate text-ink">{entry.name}</span>
                   </span>
-                  <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">
+                  <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">
                     {entry.slot_type}
                   </span>
                 </div>
@@ -196,7 +199,7 @@ export function ModulesPanel({
                   <ItemGlyph id={m.module_type_id} kind="module" size={14} className="shrink-0 text-accent" />
                   <span className="truncate text-ink">{m.name}</span>
                 </span>
-                <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">{m.slot_type}</span>
+                <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">{m.slot_type}</span>
               </div>
               <p className="font-mono text-ink-faint">{new Date(m.created_at).toLocaleString()}</p>
               {/* S6: fit/unfit moved to the Fitting tab's per-ship detail — this list is the
@@ -212,12 +215,6 @@ export function ModulesPanel({
     </Card>
   )
 
-  // WORKSHOP: label + panel as ONE rail child. No label prop → the bare Card.
-  if (sectionLabel == null) return panel
-  return (
-    <div>
-      <SectionLabel>{sectionLabel}</SectionLabel>
-      {panel}
-    </div>
-  )
+  // WORKSHOP: the sectionLabel became the CardHeader title above — one name, one chrome.
+  return panel
 }

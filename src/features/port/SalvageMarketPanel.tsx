@@ -16,7 +16,7 @@ import {
   type SalvageConfig,
 } from './salvageMarket'
 import { salvageReasonMessage } from './salvageReasonMessage'
-import { Button, Card, CardHeader, SectionLabel, Skeleton } from '../../components/ui'
+import { Button, CollapsibleCard, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemTile } from '../../components/items'
 
 // SALVAGE-2 — the dark salvage-market surface: the docked port's item buy-list (port_item_demand,
@@ -142,10 +142,20 @@ export function SalvageMarketPanel({
 
   return (
     // UI R2: the Card primitive owns the chrome (warning tone = the trade-family identity).
-    <Card tone="warning" data-testid="salvage-panel">
-      {/* PLAIN-WORDS (owner: "what is salvage buyer? it could just be shop"): this is the shop's
-          SELL side — the buy side is ShopPanel ("Shop"). One familiar concept, two cards. */}
-      <CardHeader title="Sell Items" subtitle="Sell your salvage and spare items to this port for credits." />
+    // HIERARCHY (2026-08-03): an occasional-use surface → a CollapsibleCard folded CLOSED by
+    // default (the player's choice persists — collapsibleState). The hooks above still run; only
+    // the card BODY unmounts while folded, so no fetch behavior changes.
+    // PLAIN-WORDS (owner: "what is salvage buyer? it could just be shop"): this is the shop's
+    // SELL side — the buy side is ShopPanel ("Shop"). One familiar concept, two cards — and the
+    // body copy says "items" like the title, not "salvage".
+    <CollapsibleCard
+      tone="warning"
+      data-testid="salvage-panel"
+      title="Sell Items"
+      subtitle="Sell spare items to this port for credits."
+      storageKey="port.sellItems"
+      defaultOpen={false}
+    >
 
       {/* Current credits — the getWalletBalance semantics verbatim: 'error'/unread → honest '—',
           no wallet row → the effective starting credits (the CommissionShipPanel honesty posture). */}
@@ -168,8 +178,8 @@ export function SalvageMarketPanel({
           Buy-list unavailable right now.
         </p>
       ) : entries.length === 0 ? (
-        <p data-testid="salvage-empty" className="mt-1 text-[10px] text-ink-muted">
-          This port isn&apos;t buying salvage right now.
+        <p data-testid="salvage-empty" className="mt-1 text-xs text-ink-muted">
+          This port isn&apos;t buying anything right now — check back after the next restock.
         </p>
       ) : (
         <ul data-testid="salvage-list" className="mt-1 space-y-1.5">
@@ -304,6 +314,6 @@ export function SalvageMarketPanel({
           })}
         </ul>
       )}
-    </Card>
+    </CollapsibleCard>
   )
 }

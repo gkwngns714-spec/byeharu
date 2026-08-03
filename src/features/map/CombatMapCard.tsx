@@ -11,6 +11,7 @@
 // cadence), so it needs no new fetch and no new poll.
 import type { CombatEncounter, CombatUnit } from '../combat/combatTypes'
 import { selectCombatPhase, nextWaveText } from '../combat/combatPhase'
+import { OverlayPanel } from '../../components/ui'
 
 /** One side's live standing, as the server reports it. */
 function SideBar({
@@ -39,7 +40,7 @@ function SideBar({
         </span>
         <span className="text-xs text-ink-muted">
           {units === null ? '' : `${units} ship${units === 1 ? '' : 's'} · `}
-          power {Math.round(power)}
+          Power {Math.round(power)}
         </span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
@@ -48,8 +49,9 @@ function SideBar({
           style={{ width: `${pct * 100}%`, background: color }}
         />
       </div>
+      {/* "Hull" — the word the ship meters already use; "integrity" was an engine noun. */}
       <div className="text-[11px] text-ink-faint">
-        integrity {Math.round(integrity)} / {Math.round(integrityMax)}
+        Hull {Math.round(integrity)} / {Math.round(integrityMax)}
       </div>
     </div>
   )
@@ -86,18 +88,14 @@ export function CombatMapCard({
         const phase = selectCombatPhase(e)
 
         return (
-          <div
-            key={e.id}
-            className="w-64 rounded-card border border-danger/50 bg-surface/95 p-3 shadow-overlay backdrop-blur"
-            data-testid={`combat-map-card-${e.id}`}
-          >
+          // The ONE overlay chrome (OverlayPanel, danger tone) — this card was one of three
+          // hand-rolled skins on the map; "tick" (a server-internal unit) no longer prints.
+          <OverlayPanel key={e.id} tone="danger" className="w-64" data-testid={`combat-map-card-${e.id}`}>
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wide text-danger">
                 {phase.label}
               </span>
-              <span className="text-[11px] text-ink-faint">
-                wave {e.wave_number} · tick {e.tick_number}
-              </span>
+              <span className="text-[11px] text-ink-faint">Wave {e.wave_number}</span>
             </div>
 
             <div className="flex flex-col gap-2.5">
@@ -135,7 +133,7 @@ export function CombatMapCard({
                 This battle has no ship positions, so nothing is drawn on the map for it.
               </p>
             )}
-          </div>
+          </OverlayPanel>
         )
       })}
     </div>

@@ -5,6 +5,7 @@ import { useCombat } from '../features/combat/useCombat'
 import { useGalaxyMapData } from '../features/map/useGalaxyMapData'
 import { useMainShipSelection } from '../features/map/useMainShipSelection'
 import { Icon } from '../components/ui'
+import { AccountMenu } from '../features/account/AccountMenu'
 import { NAV_TABS, navGridClass } from './navTabs'
 
 // UI-REBUILD (2b) — the persistent shell. ONE mobile-first bottom tab bar (Map · Ships · Fleet ·
@@ -34,7 +35,15 @@ export function AppShell() {
   return (
     <ShellStateContext.Provider value={{ game, combat, map, selection }}>
       <div className="flex h-[100dvh] flex-col bg-app text-ink">
-        {/* Destination content gets the full viewport minus the tab bar; each screen owns its scroll. */}
+        {/* ACCOUNT (2026-08-03): a slim persistent header whose only control is the top-right
+            profile affordance — identity/credits/totals live behind it (AccountMenu), NOT in a
+            nav cell. The wordmark is quiet chrome, not a control. z-40 keeps the open panel above
+            every screen's own overlays (the map's stacks top out at z-30). */}
+        <header className="relative z-40 flex min-h-11 items-center justify-between border-b border-edge bg-surface pl-4 pr-1">
+          <span className="font-mono text-xs uppercase tracking-wider text-ink-faint">Byeharu</span>
+          <AccountMenu />
+        </header>
+        {/* Destination content gets the full viewport minus the header + tab bar; each screen owns its scroll. */}
         <main className="min-h-0 flex-1 overflow-hidden">
           <Outlet />
         </main>

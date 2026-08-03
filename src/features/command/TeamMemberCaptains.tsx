@@ -115,7 +115,7 @@ export function TeamMemberCaptains({
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-ink">{c.name}</span>
                 <span className="flex shrink-0 items-center gap-1.5">
-                  <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[9px] text-ink-muted">
+                  <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
                     {c.specialization}
                   </span>
                   <Button

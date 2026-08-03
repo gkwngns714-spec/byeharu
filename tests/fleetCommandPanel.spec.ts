@@ -284,7 +284,8 @@ test('hunt target: the absorbed hunt arm (both worlds) — readiness mirror + NO
   const h3 = away.sections.find((s) => s.kind === 'hunt')
   if (!h3 || h3.kind !== 'hunt') throw new Error('no hunt section')
   expect(h3.rows[0].canHunt).toBe(false)
-  expect(h3.rows[0].readyHint).toBe('Every ship must be home to hunt.')
+  // "idle", not "home" — the one name for the at-rest state (NO-HOME law kills the base noun).
+  expect(h3.rows[0].readyHint).toBe('Every ship must be idle to hunt.')
 })
 
 // ── the brake lock: Stop is NEVER disabled by another verb's in-flight request ───────────────────

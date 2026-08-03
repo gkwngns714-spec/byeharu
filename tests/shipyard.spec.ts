@@ -373,9 +373,9 @@ test('shipyardRejectNote: each context-carrying code appends the SERVER envelope
       { code: 'hull_prerequisite_not_met', required_hull_type_id: 'bulk_hauler' },
       { bulk_hauler: 'Mule-class Hauler' },
     ),
-  ).toBe('You must own the prerequisite hull first. (requires Mule-class Hauler)')
+  ).toBe('You must own the required ship first. (requires Mule-class Hauler)')
   expect(shipyardRejectNote({ code: 'hull_prerequisite_not_met', required_hull_type_id: 'bulk_hauler' })).toBe(
-    'You must own the prerequisite hull first. (requires Bulk Hauler)',
+    'You must own the required ship first. (requires Bulk Hauler)',
   )
   expect(shipyardRejectNote({ code: 'captain_level_too_low', required_captain_level: 3 })).toBe(
     'A higher-level captain is required. (requires captain level 3)',
@@ -390,7 +390,7 @@ test('shipyardRejectNote: ABSENT context leaves the mapped base copy unchanged (
   expect(shipyardRejectNote({ code: 'insufficient_credits' })).toBe('Not enough credits to start this build.')
   expect(shipyardRejectNote({ code: 'queue_full' })).toBe('Your build queue is full.')
   expect(shipyardRejectNote({ code: 'hull_prerequisite_not_met' })).toBe(
-    'You must own the prerequisite hull first.',
+    'You must own the required ship first.',
   )
   expect(shipyardRejectNote({ code: 'captain_level_too_low' })).toBe('A higher-level captain is required.')
 })

@@ -416,7 +416,7 @@ export function FleetCommandPanel({
                     {/* FLEET-CONTROL (0204): dark → cmdActive is always true and this never renders. */}
                     {r.memberCount > 0 && !r.cmdActive && (
                       <p className="mt-1 text-xs text-warning/90" data-testid={`team-inactive-${r.groupId}`}>
-                        This fleet has no command ship — set one in the Fleets panel to move, send, or hunt.
+                        This fleet has no command ship — set one on the Fleet tab to move, send, or hunt.
                       </p>
                     )}
                     {r.readyHint && <p className="mt-1 text-xs text-ink-faint">{r.readyHint}</p>}

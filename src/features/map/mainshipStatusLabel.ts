@@ -9,8 +9,15 @@ import type { BadgeTone } from '../../components/ui/Badge'
 // 'home'|'traveling'|'hunting'|'trading'|'exploring'|'mining'|'retreating'|'returning'|'repairing'|'destroyed').
 // A ship-list row carries only this activity-status string, so labeling lives here to keep ALL main-ship
 // status labels in one module. Pure, and it exposes no location name — nothing to leak.
+// ONE NAME PER STATE (visual pass, 2026-08-03): these labels speak the SAME vocabulary as the
+// location resolver (shipLocation.ts) — "Idle" / "In transit" / "Wrecked" — so a ship never wears
+// two names for one state depending on which surface renders it. Retired pairs:
+//   home      → "Ready to launch"  (overpromised, and the dossier called the same idle ship "Idle")
+//   traveling → "Traveling"        (the location line says "In transit to X" — same state, one word)
+//   destroyed → "Disabled"         (every recovery message says "wrecked"; "Disabled" also collided
+//                                   with the literally-disabled buttons rendered beside it)
 const INSTANCE_STATUS_LABELS: Record<string, string> = {
-  home: 'Ready to launch',
+  home: 'Idle',
   // NO-HOME (0199): a docked ship (status='stationary'/spatial_state='at_location') reads as "Docked"
   // rather than falling back to the raw 'stationary' code. Deliberately NOT "ready to launch": while the
   // launch_from_dock_enabled flag is dark a docked ship CANNOT launch, so a launch promise here would
@@ -18,7 +25,7 @@ const INSTANCE_STATUS_LABELS: Record<string, string> = {
   // both flag states — an improvement over the raw fallback with no promise; the send UI (which reads the
   // flag) is where launch-readiness is surfaced once lit.
   stationary: 'Docked',
-  traveling: 'Traveling',
+  traveling: 'In transit',
   hunting: 'Hunting',
   trading: 'Trading',
   exploring: 'Exploring',
@@ -26,7 +33,7 @@ const INSTANCE_STATUS_LABELS: Record<string, string> = {
   retreating: 'Retreating',
   returning: 'Returning',
   repairing: 'Repairing',
-  destroyed: 'Disabled',
+  destroyed: 'Wrecked',
 }
 
 // FLEET-READ (UI): the semantic tone for each status, so a roster row is scannable at a glance instead
@@ -35,7 +42,7 @@ const INSTANCE_STATUS_LABELS: Record<string, string> = {
 // colour), combat = danger — so a ship reads identically on both surfaces. Tones are semantic tokens
 // only; no raw colours here (the Badge/design-system law).
 const INSTANCE_STATUS_TONES: Record<string, BadgeTone> = {
-  home: 'success', // ready to launch
+  home: 'neutral', // idle — quiet like docked; a ship with no known position must not glow green
   stationary: 'neutral', // docked / at rest — the quiet default
   traveling: 'warning', // in transit — matches the map's outbound path
   returning: 'accent', // matches the map's return-home path

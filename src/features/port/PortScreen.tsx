@@ -107,7 +107,7 @@ export function PortScreen() {
   // there is deliberately nothing else on that screen state).
   return (
     <Screen wide>
-      <PageHeader eyebrow="Ops · Dock" title="Port" subtitle="Dock services & trade" />
+      <PageHeader eyebrow="Ops · Port" title="Port" subtitle="Port services & trade" />
       {/* PORT-HUB — the port picker: pick which of your docked ports to act at. Renders only when you
           have at least one docked ship; one ship → its port shows here (highlighted), no forced pick.
           The chosen (port, ship) drives the dock context + every action panel below. */}
@@ -133,8 +133,8 @@ export function PortScreen() {
                 </p>
                 <p className="mt-2 text-xs text-ink-faint">
                   Ships docked on their own can't use paid port services yet. Add the ship to a fleet
-                  in <span className="text-ink">Command</span>, or dock a fleet at this port, to use
-                  them.
+                  on the <span className="text-ink">Fleet</span> tab, or dock a fleet at this port, to
+                  use them.
                 </p>
               </>
             }
@@ -154,9 +154,9 @@ export function PortScreen() {
                 <p>None of your ships are docked at a port right now.</p>
                 <p className="mt-2 text-xs text-ink-faint">
                   Ships travel as fleets: send a fleet to a port from the{' '}
-                  <span className="text-ink">Map</span> and this screen opens up with its trade, build,
-                  and other services. No fleet yet? Create one in{' '}
-                  <span className="text-ink">Command</span> and add your ships to it first.
+                  <span className="text-ink">Map</span> and this screen opens up with its port services.
+                  No fleet yet? Create one on the <span className="text-ink">Fleet</span> tab and add
+                  your ships to it first.
                 </p>
               </>
             }

@@ -15,7 +15,7 @@ import {
 
 // TEAM-ACTIVATION PREP — the commission-ship affordance (the in-client path to ship #2+).
 //
-// Mounted by CommandScreen ONLY (S6 re-home: ship ACQUISITION lives with fleet COMPOSITION —
+// Mounted by FleetScreen ONLY (S6 re-home: ship ACQUISITION lives with fleet COMPOSITION —
 // the Fitting tab's no-ship empty state points here; ShipSwitcher retired, superseded by
 // roster-row selection) behind the compile-time MAINSHIP_ADDITIONAL_ENABLED gate, and the server
 // independently rejects commission_additional_main_ship while

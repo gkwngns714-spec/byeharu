@@ -8,11 +8,20 @@
 // panel (TEAM_COMMAND_ENABLED): while that gate is dark the tab is absent and the nav is the old
 // four-destination bar — a tab may never lead to an empty screen.
 //
+// MISSION-TAB (owner order 2026-08-03: "make another tab of account - showing info as a whole,
+// mission tab") — Command's slot became Mission. Command's forces surfaces had ALREADY folded
+// into /fleet (the FLEET-TAB move above); what remained on /command was ops — onboarding, live
+// battles, battle reports, standings — which is exactly what a mission tab is. So /mission is the
+// renamed home of that content (MissionScreen), /command redirects there (bookmarks resolve), and
+// ACCOUNT deliberately did NOT take a cell: it is the top-corner profile affordance in AppShell
+// (AccountMenu) — identity/credits/totals are things you CHECK, not things you DO, and the
+// thumb-reachable bar stays reserved for destinations you act on.
+//
 // FIVE ON A PHONE — measured, not assumed: at the 320px floor each of five cells is 64px wide ×
 // the bar's min-h-14 (56px) — both beyond the 44px touch floor — and the longest label
-// ("Command", 7ch at text-[11px] ≈ 39px) fits its cell. Six would drop cells to 53px and start
-// clipping labels; five is the ceiling, so any FUTURE destination must merge into an existing
-// tab, not extend this table.
+// ("Mission", 7ch at text-[11px] ≈ 39px — same length "Command" measured before it) fits its
+// cell. Six would drop cells to 53px and start clipping labels; five is the ceiling, so any
+// FUTURE destination must merge into an existing tab, not extend this table.
 
 import { TEAM_COMMAND_ENABLED } from '../features/map/osnReleaseGates'
 import type { IconName } from '../components/ui'
@@ -32,7 +41,8 @@ const ALL_TABS: readonly (NavTab & { enabled: boolean })[] = [
   // FLEET-TAB: fleet composition + ship acquisition (see FleetScreen). Same gate as the panels.
   { to: '/fleet', label: 'Fleet', icon: 'fleet', enabled: TEAM_COMMAND_ENABLED },
   { to: '/port', label: 'Port', icon: 'anchor', enabled: true },
-  { to: '/command', label: 'Command', icon: 'command', enabled: true },
+  // MISSION-TAB: ops — what you're doing now and what happened (MissionScreen).
+  { to: '/mission', label: 'Mission', icon: 'mission', enabled: true },
 ]
 
 /** The tabs AppShell renders, in order (dark-gated destinations already dropped). */

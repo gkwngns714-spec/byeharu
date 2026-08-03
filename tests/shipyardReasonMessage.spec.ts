@@ -11,12 +11,12 @@ import { shipyardReasonMessage } from '../src/features/port/shipyardReasonMessag
 
 test('every known server code maps to specific player text (not the fallback)', () => {
   const known: Record<string, string> = {
-    not_authenticated: 'Sign in to order a hull build.',
+    not_authenticated: 'Sign in to order a ship build.',
     feature_disabled: 'The shipyard is not open yet.',
     invalid_request: 'Invalid command request.',
-    unknown_hull: 'Unknown hull class.',
-    no_recipe: 'This hull cannot be built at a shipyard.',
-    hull_prerequisite_not_met: 'You must own the prerequisite hull first.',
+    unknown_hull: 'Unknown ship design.',
+    no_recipe: 'This ship can’t be built at a shipyard.',
+    hull_prerequisite_not_met: 'You must own the required ship first.',
     captain_level_too_low: 'A higher-level captain is required.',
     queue_full: 'Your build queue is full.',
     // 0333 — items live in PORT storage now, so the shortfall is about THIS port's stock, and the

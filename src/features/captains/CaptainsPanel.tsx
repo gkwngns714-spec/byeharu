@@ -181,7 +181,7 @@ export function CaptainsPanel({
               <li key={c.instance_id} data-testid={`captain-row-${c.instance_id}`} className="text-[10px]">
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-ink">{c.name}</span>
-                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[9px] text-ink-muted">
+                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
                     {c.specialization}
                   </span>
                 </div>
@@ -216,7 +216,7 @@ export function CaptainsPanel({
                   )}
                   <span
                     data-testid={`captain-state-${c.instance_id}`}
-                    className={`shrink-0 text-[9px] ${assigned ? 'text-success' : 'text-ink-muted'}`}
+                    className={`shrink-0 text-[10px] ${assigned ? 'text-success' : 'text-ink-muted'}`}
                   >
                     {assigned ? 'Assigned' : 'Unassigned'}
                   </span>

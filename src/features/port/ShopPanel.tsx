@@ -193,7 +193,7 @@ function ShopRow({
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-xs font-medium text-ink">{offer.name ?? offer.ref_id}</span>
-            <span className="shrink-0 rounded bg-surface px-1 text-[9px] uppercase tracking-wide text-ink-faint">
+            <span className="shrink-0 rounded bg-surface px-1 text-[10px] uppercase tracking-wide text-ink-faint">
               {badge}
               {isModule && offer.slot_cost ? ` · ${offer.slot_cost} slot${offer.slot_cost > 1 ? 's' : ''}` : ''}
             </span>
@@ -201,7 +201,7 @@ function ShopRow({
           {chips.length > 0 && (
             <div className="mt-0.5 flex flex-wrap gap-1">
               {chips.map((c) => (
-                <span key={c} className="rounded bg-surface px-1 text-[9px] font-mono tabular-nums text-ink-muted">
+                <span key={c} className="rounded bg-surface px-1 text-[10px] font-mono tabular-nums text-ink-muted">
                   {c}
                 </span>
               ))}

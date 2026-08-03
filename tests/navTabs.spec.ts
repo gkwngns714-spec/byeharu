@@ -7,12 +7,14 @@ import { TEAM_COMMAND_ENABLED } from '../src/features/map/osnReleaseGates'
 // specs pin the FLEET-TAB change: five destinations while the fleet gate is lit, the /fleet tab
 // between Ships and Port, and a grid class that always matches the tab count.
 
-test('the five destinations, in order: Map · Ships · Fleet · Port · Command', () => {
+test('the five destinations, in order: Map · Ships · Fleet · Port · Mission', () => {
   // TEAM_COMMAND_ENABLED is a compile-time `true` (activated 2026-07-12); if that gate is ever
   // re-darkened this spec must change WITH the table (the tab legitimately disappears).
+  // MISSION-TAB (2026-08-03): Command's cell became Mission; /command redirects to /mission
+  // (App.tsx) and Account lives in the top corner (AccountMenu), NOT in this bar.
   expect(TEAM_COMMAND_ENABLED).toBe(true)
-  expect(NAV_TABS.map((t) => t.label)).toEqual(['Map', 'Ships', 'Fleet', 'Port', 'Command'])
-  expect(NAV_TABS.map((t) => t.to)).toEqual(['/map', '/ship', '/fleet', '/port', '/command'])
+  expect(NAV_TABS.map((t) => t.label)).toEqual(['Map', 'Ships', 'Fleet', 'Port', 'Mission'])
+  expect(NAV_TABS.map((t) => t.to)).toEqual(['/map', '/ship', '/fleet', '/port', '/mission'])
 })
 
 test('every tab wears a real design-system icon', () => {
