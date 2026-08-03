@@ -412,6 +412,12 @@ revoke insert, update, delete on table public.item_transfer_receipts from anon, 
 -- ATOMICITY: one function, one transaction. The spend, the add and the receipt commit or roll back
 -- TOGETHER — any raise from an Inventory/Base leaf aborts the whole thing, so an item can never be
 -- in both places or in neither.
+--
+-- CONCURRENCY: two locks, in this order. The per-PLAYER advisory lock (the 0078/0109/0112 house
+-- idiom) comes first because the capacity check reads the WHOLE hold, which is player-scoped — a
+-- per-ship lock alone would let two of one player's ships each pass the check and land the hold
+-- over capacity between them, and no leaf below can re-check a capacity. The per-SHIP row lock
+-- comes second and protects the replay check against a concurrent transfer on the same ship.
 create or replace function public.transfer_items(
   p_main_ship_id uuid, p_direction text, p_item_id text, p_quantity numeric, p_request_id uuid
 ) returns jsonb
@@ -473,10 +479,16 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'ship_not_found');
   end if;
 
-  -- PER-SHIP LOCK (the 0090/0174 idiom): held to txn end, so the replay, balance and capacity
-  -- checks and the writes below are race-safe against concurrent transfers on the SAME ship.
-  -- Cross-ship same-player races are backstopped by inventory_spend's and base_items_take's own
-  -- FOR UPDATE re-checks — the pre-checks give the friendly envelope, the leaves enforce.
+  -- PLAYER LOCK FIRST (the 0078/0109/0112 house idiom: advisory, per-domain, per-player, taken
+  -- BEFORE any row lock). The capacity check below reads the WHOLE hold, which is player-scoped, so
+  -- a per-ship lock alone would let two ships of one player each pass the check and land the hold
+  -- over capacity between them. inventory_spend and base_items_take backstop the BALANCES with
+  -- their own FOR UPDATE re-checks, but neither can re-check a capacity, so this is the only place
+  -- that invariant can be made authoritative rather than advisory.
+  perform pg_advisory_xact_lock(hashtext('item_transfer'), hashtext(v_player::text));
+
+  -- PER-SHIP LOCK (the 0090/0174 idiom): held to txn end, so the replay check and the receipt's
+  -- (main_ship_id, request_id) key are race-safe against concurrent transfers on the SAME ship.
   perform public.mainship_space_lock_context(v_ship);
 
   -- LAW 3, SERVER-SIDE: the port comes from the ONE shared docked resolver. Never inlined, never
@@ -978,6 +990,16 @@ begin
   end if;
   if position('mainship_space_lock_context(' in v_src) = 0 then
     raise exception '0332 (d) FAIL: transfer_items does not take the per-ship lock';
+  end if;
+  -- and the PLAYER-scoped advisory lock, WITHOUT which the capacity check is only advisory: two of
+  -- one player's ships could each pass it and land the hold over capacity between them.
+  if position('pg_advisory_xact_lock(hashtext(''item_transfer'')' in v_src) = 0 then
+    raise exception '0332 (d) FAIL: transfer_items does not take the per-player advisory lock — the capacity check would not be authoritative across a player''s ships';
+  end if;
+  -- ORDER MATTERS (the 0112:30 law): the advisory lock is taken BEFORE any row lock, or two
+  -- transactions can acquire them in opposite orders and deadlock.
+  if position('pg_advisory_xact_lock(' in v_src) > position('mainship_space_lock_context(' in v_src) then
+    raise exception '0332 (d) FAIL: the per-ship row lock is taken BEFORE the per-player advisory lock — inverted lock order';
   end if;
   if position('is_home_port_eligible(' in v_src) = 0 then
     raise exception '0332 (d) FAIL: transfer_items does not reuse the canonical port predicate';

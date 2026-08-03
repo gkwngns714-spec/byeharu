@@ -63,6 +63,14 @@ if [ "$MODE" = "selftest" ]; then
   # ── REFUSE, never clamp. ────────────────────────────────────────────────────────────────────────
   grep -q "clamped!" "$SQL" || fail "harness does not assert that an over-capacity refusal moves NOTHING"
 
+  # ── the capacity check must be SERIALIZED per player, or two of one player's ships can each pass
+  #    it and land the hold over capacity between them. A one-transaction proof cannot stage that
+  #    race, so it asserts the lock that prevents it — and its order against the row lock. ─────────
+  grep -q "pg_advisory_xact_lock" "$SQL" \
+    || fail "harness does not assert the per-player advisory lock that makes the capacity check authoritative"
+  grep -q "inverted lock order" "$SQL" \
+    || fail "harness does not assert the advisory lock is taken BEFORE the row lock"
+
   # ── every reject/replay envelope the proof exercises live. ──────────────────────────────────────
   for tok in station_storage_disabled invalid_request invalid_direction invalid_item invalid_quantity \
              ship_not_found not_docked insufficient_items insufficient_stored hold_over_capacity \

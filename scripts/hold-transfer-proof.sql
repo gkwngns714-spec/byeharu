@@ -588,7 +588,7 @@ end $$;
 
 -- ════════ P9 — the write surface is locked down (the danger_zones 2026-07-20 lesson). ════════
 do $$
-declare v_t text; v_g text;
+declare v_t text; v_g text; v_src text;
 begin
   foreach v_t in array array['public.base_items','public.item_transfer_receipts',
                              'public.player_inventory','public.item_types','public.inventory_ledger'] loop
@@ -609,7 +609,20 @@ begin
   if not has_function_privilege('authenticated','public.transfer_items(uuid,text,text,numeric,uuid)','execute')
      or not has_function_privilege('authenticated','public.get_my_hold()','execute') then
     raise exception 'P9 FAIL: authenticated cannot reach the transfer surface'; end if;
-  raise notice 'HOLD_PASS_ACL ok: client INSERT/UPDATE/DELETE revoked on all five load-bearing tables; the four leaves are server-only; the two RPCs are authenticated-only and closed to anon';
+
+  -- CONCURRENCY. This proof runs in ONE transaction, so it cannot stage a real race; what it CAN
+  -- do is refuse to pass while the only thing that makes the capacity check authoritative is
+  -- missing. Without the per-player advisory lock, two of one player's ships could each pass the
+  -- check and land the hold over capacity between them — and neither inventory_deposit nor
+  -- base_items_take can re-check a capacity, so there is no backstop below it.
+  v_src := (select pg_get_functiondef(p.oid) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+             where n.nspname='public' and p.proname='transfer_items');
+  if position('pg_advisory_xact_lock(hashtext(''item_transfer'')' in v_src) = 0 then
+    raise exception 'P9 FAIL: transfer_items takes no per-player advisory lock — the capacity invariant is not authoritative across a player''s ships'; end if;
+  if position('pg_advisory_xact_lock(' in v_src) > position('mainship_space_lock_context(' in v_src) then
+    raise exception 'P9 FAIL: inverted lock order — the row lock is taken before the advisory lock'; end if;
+
+  raise notice 'HOLD_PASS_ACL ok: client INSERT/UPDATE/DELETE revoked on all five load-bearing tables; the four leaves are server-only; the two RPCs are authenticated-only and closed to anon; and the capacity check is serialized by the per-player advisory lock, taken before any row lock';
 end $$;
 
 do $$
