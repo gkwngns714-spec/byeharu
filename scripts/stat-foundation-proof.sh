@@ -22,6 +22,7 @@ MARKERS=(
   SF_PASS_FLEET_LIVE_SHAPES_UNCHANGED
   SF_PASS_INTENDED_DIFFERENCES
   SF_PASS_NO_UNDECLARED_DIFFERENCE
+  SF_PASS_ROUTINE_CARRIES_NO_DORMANT
   SF_PASS_EMPTY_FLEET_EXPLICIT
   SF_PASS_SINGLE_SHIP_FLEET
   SF_PASS_BREAKDOWN_RECONCILES
@@ -69,8 +70,44 @@ if [ "$MODE" = "selftest" ]; then
   grep -q 'auth.uid()'             "$MIG" || fail "the inspection RPC is not ownership-scoped"
 
   # (6) the migration's own asserts must be NON-VACUOUS: exact cardinalities, not existence-only
-  grep -q '<> 9 then' "$MIG" || fail "migration 0340 has no exact-cardinality guard on the seed"
+  grep -q '<> 10 then' "$MIG" || fail "migration 0340 has no exact-cardinality guard on the seed"
   grep -q 'stat_combine(' "$MIG" || fail "migration 0340 never EXECUTES the pure fold in its self-assert"
+
+  # (6b) THE LIFECYCLE RULING, and the two things about it that must never become prose:
+  #      · the lifecycle vocabulary fails closed (the migration attempts an illegal value), and
+  #      · a dormant stat is proven ABSENT from the routine snapshot, not merely filtered late.
+  grep -q "lifecycle in ('active','dormant','deprecated')" "$MIG" \
+    || fail "migration 0340 has no closed lifecycle vocabulary"
+  grep -q 'the lifecycle vocabulary does not fail closed' "$MIG" \
+    || fail "migration 0340 never PROBES the lifecycle CHECK — a CHECK nobody exercised is a CHECK nobody confirmed"
+  grep -q 'a DORMANT stat is present in the ROUTINE registry snapshot' "$MIG" \
+    || fail "migration 0340 does not prove dormant stats are absent from the routine path"
+  grep -q 'a contribution to a DORMANT stat was accepted on the routine path' "$MIG" \
+    || fail "migration 0340 does not prove a dormant contribution is REJECTED, not silently ignored"
+
+  # (6c) THREE-WAY PROVENANCE: the partition law exists, and it is EXECUTED, not described.
+  grep -q 'stat_assert_provenance_partition' "$MIG" \
+    || fail "migration 0340 has no provenance partition law"
+  grep -q 'appears in more than one provenance map' "$MIG" \
+    || fail "the provenance law does not forbid a stat sitting in two maps"
+  grep -q "'is_real_zero'" "$MIG" \
+    || fail "a real zero is not distinguished from an unresolved or a not-applicable"
+
+  # (6d) THE AMBUSH IMPOSSIBILITY PIN, and the proof the live consumer was NOT repaired.
+  grep -q 'refusing to produce a number from a failed stat resolution' "$MIG" \
+    || fail "migration 0340 does not prove a stat-resolution failure can never become a number"
+  grep -q 'this is exactly the 0301:545-547 fail-open defect' "$MIG" \
+    || fail "the ambush impossibility pin is missing"
+  grep -q 'repairing the live ambush consumer is OUT OF SCOPE' "$MIG" \
+    || fail "migration 0340 does not pin pirate_intercept_plan_leg as UNCHANGED"
+
+  # (6e) THE CARGO RE-RULING: the conversion is structurally inert, not inert by convention.
+  grep -q 'stat_definitions_undefined_conversion_accepts_nothing' "$MIG" \
+    || fail "the cargo conversion guard is not a constraint"
+  grep -q 'the unit conversion is NOT activated in this slice' "$SQL" \
+    || fail "the harness does not prove on real rows that no source reaches cargo_volume_m3"
+  grep -q 'this slice changed a live hold size' "$SQL" \
+    || fail "the harness does not prove live hold sizes are unchanged"
 
   # (7) every loop in the harness is preceded by a cardinality guard (a loop is never the assertion)
   grep -q 'would be vacuous' "$SQL" || fail "harness has no explicit vacuity guard"

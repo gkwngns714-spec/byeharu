@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { levelForXp, xpForLevel, XP_LEVEL_BASE } from '../src/features/captains/captainProgress.ts'
-import { ADDITIVE_STAT_KEYS } from '../src/features/command/teamSkillset.ts'
+import {
+  ADDITIVE_STAT_KEYS,
+  DORMANT_STAT_KEYS,
+  EFFECTIVE_STAT_KEYS,
+} from '../src/features/command/teamSkillset.ts'
 
 // STAT FOUNDATION (0340) — pure structural + curve proofs.
 //
@@ -33,6 +37,8 @@ interface SeededStat {
   statId: string
   catalogKey: string
   fleetAggregation: string
+  lifecycle: string
+  row: string
 }
 
 function seededStats(sql: string): SeededStat[] {
@@ -43,27 +49,32 @@ function seededStats(sql: string): SeededStat[] {
   const block = sql.slice(start, end)
 
   // Each row opens with ('<stat_id>', '<catalog_key>', '<display name>', ...
-  const rows = [...block.matchAll(/\n\s{2}\('([a-z_]+)',\s*'([a-z_]+)',/g)]
+  const rows = [...block.matchAll(/\n\s{2}\('([a-z0-9_]+)',\s*'([a-z0-9_]+)',/g)]
   return rows.map((m) => {
     const rowStart = m.index ?? 0
-    const rowEnd = block.indexOf("\n\n", rowStart)
+    const rowEnd = block.indexOf('\n\n', rowStart)
     const row = block.slice(rowStart, rowEnd === -1 ? block.length : rowEnd)
     const agg = /'(sum|min|max|average|weighted_average|primary_ship|none)', (?:null|'[a-z_]+')(?:, )/.exec(row)
+    const life = /'(active|dormant|deprecated)'/.exec(row)
     return {
       statId: m[1],
       catalogKey: m[2],
       fleetAggregation: agg ? agg[1] : '(unparsed)',
+      lifecycle: life ? life[1] : '(unparsed)',
+      row,
     }
   })
 }
 
 const stats = seededStats(migration)
+const byId = new Map(stats.map((s) => [s.statId, s]))
 
-test('the seed is exactly the nine deployed stats — no more, no fewer', () => {
-  expect(stats.length).toBe(9)
+test('the seed is exactly the ten registered stats — no more, no fewer', () => {
+  expect(stats.length).toBe(10)
   expect(stats.map((s) => s.statId).sort()).toEqual(
     [
       'cargo_capacity',
+      'cargo_volume_m3',
       'combat_power',
       'mining_yield',
       'pirate_attention',
@@ -74,6 +85,101 @@ test('the seed is exactly the nine deployed stats — no more, no fewer', () => 
       'survival',
     ].sort(),
   )
+})
+
+// ── LIFECYCLE ───────────────────────────────────────────────────────────────────────────────────
+
+test('every seeded stat declares a lifecycle, and it parses to one of exactly three values', () => {
+  for (const s of stats) {
+    expect(['active', 'dormant', 'deprecated'], `${s.statId} declares no lifecycle`).toContain(
+      s.lifecycle,
+    )
+  }
+})
+
+test('the lifecycle column has NO DEFAULT and a closed CHECK — an undeclared lifecycle fails closed', () => {
+  // No default: a row that forgets to state a lifecycle is rejected, never silently promoted.
+  expect(migration).toMatch(
+    /lifecycle\s+text not null check \(lifecycle in \('active','dormant','deprecated'\)\)/,
+  )
+  expect(migration).not.toMatch(/lifecycle\s+text not null default/)
+  // And the migration EXECUTES the illegal insert rather than trusting the CHECK exists.
+  expect(migration).toContain("'experimental'")
+  expect(migration).toContain('the lifecycle vocabulary does not fail closed')
+})
+
+test('active REQUIRES a consumer, dormant FORBIDS one, deprecated may never hold a gameplay one', () => {
+  expect(migration).toContain('stat_definitions_active_needs_consumer')
+  expect(migration).toContain('stat_definitions_dormant_has_no_consumer')
+  expect(migration).toContain('stat_definitions_deprecated_is_legacy_only')
+  // exactly three active stats, and they are the three that name a decider
+  const active = stats.filter((s) => s.lifecycle === 'active').map((s) => s.statId).sort()
+  expect(active).toEqual(['combat_power', 'speed', 'survival'])
+})
+
+test('the five confirmed-dead outputs are seeded DORMANT, not as active gameplay stats', () => {
+  for (const dead of ['retreat_safety', 'scouting', 'mining_yield', 'repair', 'pirate_attention']) {
+    expect(byId.get(dead)?.lifecycle, `${dead} must be dormant`).toBe('dormant')
+  }
+})
+
+test('a DORMANT stat is not computed on the routine path — it is absent from the routine snapshot', () => {
+  // The routine snapshot is the ONE place the vocabulary is decided, and the rule lives in ONE
+  // function. Dormant is excluded from 'routine' and included only in 'inspection'.
+  expect(migration).toMatch(
+    /when p_scope = 'routine'\s+then p_lifecycle in \('active','deprecated'\)/,
+  )
+  expect(migration).toMatch(
+    /when p_scope = 'inspection' then p_lifecycle in \('active','dormant','deprecated'\)/,
+  )
+  // The resolver defaults to routine, so a caller that says nothing gets no dormant stat.
+  expect(migration).toMatch(/p_lifecycle_scope text\s+default 'routine'/)
+  // The gatherers filter on the SNAPSHOT, never on a second lifecycle predicate over the table —
+  // two predicates answering one question is how a dormant stat gets gathered by a forgotten path.
+  expect(migration).not.toMatch(/where d\.is_active/)
+  expect(migration).not.toMatch(/and d\.is_active/)
+  const gathererFilters = migration.match(/\(v_reg -> 'stats'\) \? d\.stat_id/g) ?? []
+  expect(gathererFilters.length).toBeGreaterThanOrEqual(4) // hull, trait, module, captain
+  // and the migration PROVES it at deploy rather than describing it
+  expect(migration).toContain('a DORMANT stat is present in the ROUTINE registry snapshot')
+  expect(migration).toContain('a contribution to a DORMANT stat was accepted on the routine path')
+})
+
+test('a dormant value never reaches `stats`, and is marked effective=false when inspected', () => {
+  expect(migration).toMatch(/if \(v_def ->> 'lifecycle'\) = 'dormant' then/)
+  expect(migration).toContain("'effective', false")
+  expect(migration).toContain('a dormant stat reached `stats` under inspection')
+})
+
+test('the client lifecycle list and the migration seed cannot drift', () => {
+  const seededDormant = stats
+    .filter((s) => s.lifecycle === 'dormant')
+    .map((s) => s.statId)
+    // cargo_volume_m3 is a dormant CANONICAL TARGET the client fold never receives — the server
+    // does not emit it in the legacy envelope — so it is not part of the client mirror.
+    .filter((k) => k !== 'cargo_volume_m3')
+    .sort()
+  expect([...DORMANT_STAT_KEYS].sort()).toEqual(seededDormant)
+  // and none of them is rendered as an effective total
+  for (const k of DORMANT_STAT_KEYS) {
+    expect(EFFECTIVE_STAT_KEYS, `${k} is still rendered as an effective total`).not.toContain(k)
+  }
+  // ...while the effective list is still a subset of what the server actually sends
+  for (const k of EFFECTIVE_STAT_KEYS) {
+    expect(ADDITIVE_STAT_KEYS as readonly string[]).toContain(k)
+  }
+})
+
+test('pirate_attention stays dormant DESPITE 0331 widening it across four catalog surfaces', () => {
+  expect(byId.get('pirate_attention')?.lifecycle).toBe('dormant')
+  // the four surfaces are documented at the point of the decision, with their line numbers
+  const row = byId.get('pirate_attention')?.row ?? ''
+  const context = migration.slice(Math.max(0, migration.indexOf(row) - 2000), migration.indexOf(row) + row.length)
+  expect(context).toContain('20260618000331')
+  expect(context).toContain(':471-475') // ship traits
+  expect(context).toContain(':493-496') // command buffs
+  expect(context).toContain(':500-508') // modules
+  expect(context).toContain(':511-519') // captains
 })
 
 test('every OUTPUT key the client still hard-codes has a registry row', () => {
@@ -97,6 +203,7 @@ test('every INPUT catalog key the catalogs write has a registry row', () => {
     [
       'attack',
       'cargo',
+      'cargo_volume_m3',
       'defense',
       'evasion',
       'mining',
@@ -108,8 +215,7 @@ test('every INPUT catalog key the catalogs write has a registry row', () => {
   )
 })
 
-test("the owner's two aggregation corrections are the ones actually seeded", () => {
-  const byId = new Map(stats.map((s) => [s.statId, s]))
+test("the owner's two aggregation corrections are still the ones seeded, dormant or not", () => {
   expect(byId.get('scouting')?.fleetAggregation).toBe('max')
   expect(byId.get('retreat_safety')?.fleetAggregation).toBe('min')
 })
@@ -122,15 +228,136 @@ test('fleet travel speed is the MINIMUM, never a sum', () => {
   expect(migration).toMatch(/check \(fleet_aggregation <> 'sum' or value_kind = 'flat'\)/)
 })
 
-test('cargo is QUARANTINED: no source may contribute and no operation is permitted', () => {
-  const start = migration.indexOf("('cargo_capacity', 'cargo'")
-  expect(start).toBeGreaterThan(-1)
-  const row = migration.slice(start, migration.indexOf("('repair', 'repair'", start))
+// ── CARGO, AFTER THE OWNER'S RE-RULING ──────────────────────────────────────────────────────────
+
+test('the legacy cargo integer is DEPRECATED and non-authoritative, never a second gameplay stat', () => {
+  const row = byId.get('cargo_capacity')?.row ?? ''
+  expect(row).not.toBe('')
+  expect(byId.get('cargo_capacity')?.lifecycle).toBe('deprecated')
   // both permitted arrays are empty
   expect(row).toContain('array[]::text[]')
-  expect(row).toContain('DEPRECATED display-only legacy')
-  // and it declares no engine consumer
+  expect(row).toContain('DEPRECATED legacy display integer')
+  // and it declares no engine consumer — the table forbids one on a deprecated row
   expect(row).not.toMatch(/'combat_create_group_encounter'/)
+  expect(migration).toMatch(
+    /check \(lifecycle <> 'deprecated'\s*\n\s*or \(deprecated_reason is not null and engine_consumer is null\)\)/,
+  )
+})
+
+test('the canonical cargo target is ship-bound VOLUME in m3, modelled with provenance', () => {
+  const row = byId.get('cargo_volume_m3')?.row ?? ''
+  expect(row).not.toBe('')
+  expect(row).toContain("'m3'")
+  // it names what it supersedes — that is the provenance
+  expect(row).toContain("'cargo_capacity'")
+  // its base is the ship's REAL volume column, not a converted integer
+  expect(row).toContain("'instance_column', 'cargo_capacity_m3'")
+  expect(byId.get('cargo_volume_m3')?.lifecycle).toBe('dormant')
+})
+
+test('the cargo unit conversion is NOT ACTIVATED, and the table is what makes that so', () => {
+  // unit_conversion is a CLOSED enum, so an undefined conversion cannot be faked with prose
+  expect(migration).toMatch(/unit_conversion\s+text check \(unit_conversion in \('identity'\)\)/)
+  // ...and while it is NULL the superseding stat may accept NOTHING. This is the 0333:1926-1929
+  // precedent (enforce, never comment) expressed as a constraint instead of a text scan.
+  expect(migration).toContain('stat_definitions_undefined_conversion_accepts_nothing')
+  expect(migration).toMatch(
+    /check \(supersedes_stat_id is null or unit_conversion is not null\s*\n\s*or \(permitted_operations = '\{\}'::text\[\] and permitted_source_kinds = '\{\}'::text\[\]\)\)/,
+  )
+  // the migration EXECUTES the illegal insert rather than trusting the constraint
+  expect(migration).toContain(
+    'a superseding stat with an UNDEFINED unit conversion ACCEPTED a module contribution',
+  )
+  // NO +25 IS COPIED: the volume stat's permitted lists are empty in the seed itself
+  const row = byId.get('cargo_volume_m3')?.row ?? ''
+  const permittedEmpty = (row.match(/array\[\]::text\[\]/g) ?? []).length
+  expect(permittedEmpty).toBe(2) // permitted_operations AND permitted_source_kinds
+  // ...while the INTENT is recorded, because modules/captains/traits ARE meant to affect volume
+  expect(row).toContain("array['hull','trait','module','captain']::text[]")
+  expect(migration).toContain('stat_definitions_permitted_within_intended')
+})
+
+test('the two cargo representations can never share a catalog key', () => {
+  expect(byId.get('cargo_capacity')?.catalogKey).toBe('cargo')
+  expect(byId.get('cargo_volume_m3')?.catalogKey).toBe('cargo_volume_m3')
+  expect(byId.get('cargo_capacity')?.catalogKey).not.toBe(byId.get('cargo_volume_m3')?.catalogKey)
+  expect(migration).toContain('the m3 authority and the legacy integer share a catalog key')
+})
+
+test('this slice changes NO live hold size', () => {
+  // The volume authority and its columns are 0333/0076's; 0340 must not write either.
+  expect(migration).not.toMatch(/update public\.main_ship_instances/)
+  // it never CALLS or re-creates the 0333 volume authority (a prose mention of it is fine)
+  expect(migration).not.toMatch(/public\.fleet_hold_capacity_m3\(/)
+  expect(migration).not.toMatch(/public\.fleet_hold_used_m3\(/)
+  expect(migration).not.toMatch(/create (or replace )?function public\.fleet_hold/)
+})
+
+// ── THREE-WAY PROVENANCE ────────────────────────────────────────────────────────────────────────
+
+test('a real zero, a resolution failure and a not-applicable are three different shapes', () => {
+  // Four disjoint maps, indexed by one provenance object. The law is a FUNCTION that raises, so a
+  // collapsed result cannot be ignored by not reading a boolean.
+  expect(migration).toContain('create function public.stat_assert_provenance_partition')
+  expect(migration).toContain('appears in more than one provenance map')
+  expect(migration).toContain('has a provenance status but appears in no map')
+  // a real zero is a RESOLVED value and says so
+  expect(migration).toContain("'is_real_zero', (v_running = 0)")
+  // ...and the migration executes all three in one place
+  expect(migration).toContain('a real zero is not recorded as a RESOLVED value')
+  expect(migration).toContain('a not-applicable stat leaked a value')
+  expect(migration).toContain('a member resolution failure did not become an UNRESOLVED stat')
+})
+
+test('a member whose own resolution failed can never be silently dropped from a fleet fold', () => {
+  // Dropping the member is how a min becomes too high and a sum too low — a confident wrong answer.
+  expect(migration).toContain("v_status not in ('resolved','unresolved')")
+  expect(migration).toContain('member_resolution_failed')
+  expect(migration).toContain('a member with no status was treated as resolved')
+  // and an unresolved stat may never hold a number
+  expect(migration).toContain('must never be expressible as a value')
+})
+
+// ── THE AMBUSH IMPOSSIBILITY PIN ────────────────────────────────────────────────────────────────
+
+test('a stat-resolution failure cannot become a numeric risk value', () => {
+  // ONE numeric extractor, and it refuses every non-ok envelope. There is no second door, so there
+  // is no path from "we could not read the stats" to a number the risk formula would accept.
+  expect(migration).toContain('create function public.stat_required_sum')
+  expect(migration).toContain('refusing to produce a number from a failed stat resolution')
+  // the refusal carries no values object at all — nothing to read optimistically
+  expect(migration).toContain(
+    'a REFUSAL carried a values object — there must be nothing to read optimistically',
+  )
+  // ...and it is EXECUTED against all three failure shapes at deploy
+  expect(migration).toContain('this is exactly the 0301:545-547 fail-open defect')
+  expect(migration).toContain('an empty fleet produced the numeric risk input')
+  expect(migration).toContain('an envelope claiming ok with no values produced')
+  // a genuinely weak fleet still resolves — to a REAL zero. That is the distinction the live
+  // consumer cannot make.
+  expect(migration).toContain('a genuinely weak (real zero) fleet was not resolvable to 0')
+})
+
+test('the live ambush consumer is designed against, NOT repaired — and that is pinned', () => {
+  // Repairing pirate_intercept_plan_leg is the bounded consumer-retirement sequence, not this
+  // slice. The fail-open handler must still be exactly where it was.
+  expect(migration).toContain(
+    'the 0301:545-547 fail-open handler is gone — repairing the live ambush consumer is OUT OF SCOPE',
+  )
+  expect(migration).toContain(
+    'pirate_intercept_plan_leg carries a 0340 token — the consumer cutover is a separate, bounded sequence',
+  )
+  // the replacement contract is stated in full: no max risk, no min risk, no roll, no mutation
+  expect(migration).toContain(
+    'reject or defer at the nearest atomic boundary, preserve prior valid state, do not roll, do not mutate movement or intercept state',
+  )
+})
+
+test('the ambush contract states the ACTUAL atomic boundaries, by name and line', () => {
+  expect(migration).toContain('20260618000330_the_mover_is_in_the_repo.sql:226')
+  expect(migration).toContain('process_pirate_route_legs (0301:2376)')
+  // and it refuses the deployed route-deletion behaviour explicitly
+  expect(migration).toContain("DO NOT delete the fleet's remaining route")
 })
 
 test('the captain cap is 99 and lives in exactly ONE place', () => {

@@ -119,6 +119,7 @@ declare
   n  integer;
   legacy jsonb;
   canon  jsonb;
+  routine jsonb;
   key    text;
   lv numeric; cv numeric;
 begin
@@ -127,16 +128,40 @@ begin
 
   for s in select v from sf_ctx where k in ('s1','s2','s3') order by k loop
     legacy := public.calculate_expedition_stats(u1, s, '[]'::jsonb, 'pirate_hunt');
-    canon  := public.resolve_effective_stats('ship', s);
+    -- INSPECTION scope, on purpose: the deployed fold emits all nine keys, so a parity comparison
+    -- has to ask for all ten. The ROUTINE resolution is taken separately below and must NOT carry
+    -- the dormant ones at all.
+    canon   := public.resolve_effective_stats('ship', s, '{}'::jsonb, now(), 'inspection');
+    routine := public.resolve_effective_stats('ship', s);
 
-    -- Every stat EXCEPT the quarantined cargo_capacity must agree exactly.
-    foreach key in array array['combat_power','survival','speed','repair','scouting',
-                               'mining_yield','retreat_safety','pirate_attention'] loop
+    -- ACTIVE stats: the arithmetic must agree exactly with the deployed fold.
+    foreach key in array array['combat_power','survival','speed'] loop
       lv := (legacy ->> key)::numeric;
       cv := (canon -> 'stats' ->> key)::numeric;
       if lv is distinct from cv then
         raise exception 'SF-PROOF FAIL: ship % stat % — deployed fold says %, canonical resolver says %', s, key, lv, cv;
       end if;
+    end loop;
+
+    -- DORMANT stats: the arithmetic still agrees (so promoting one later is a decision, not a
+    -- rewrite), but the value is quarantined in `dormant` and marked effective=false.
+    foreach key in array array['repair','scouting','mining_yield','retreat_safety','pirate_attention'] loop
+      lv := (legacy ->> key)::numeric;
+      cv := (canon -> 'dormant' -> key ->> 'value')::numeric;
+      if lv is distinct from cv then
+        raise exception 'SF-PROOF FAIL: ship % DORMANT stat % — deployed fold says %, inspected resolver says %', s, key, lv, cv;
+      end if;
+      if (canon -> 'dormant' -> key ->> 'effective') <> 'false' then
+        raise exception 'SF-PROOF FAIL: inspected dormant stat % is not marked effective=false', key; end if;
+      if (canon -> 'stats') ? key then
+        raise exception 'SF-PROOF FAIL: dormant stat % reached `stats` under inspection', key; end if;
+      -- ...and on the ROUTINE path it does not exist in ANY map. Not filtered — never computed.
+      if (routine -> 'stats') ? key or (routine -> 'dormant') ? key
+         or (routine -> 'provenance') ? key then
+        raise exception 'SF-PROOF FAIL: dormant stat % was computed on the ROUTINE path', key; end if;
+      if exists (select 1 from jsonb_array_elements(routine -> 'breakdown') b
+                  where b.value ->> 'stat_id' = key) then
+        raise exception 'SF-PROOF FAIL: dormant stat % appears in the ROUTINE breakdown — a contribution to it was gathered', key; end if;
     end loop;
   end loop;
   raise notice 'SF_PASS_SHIP_PARITY';
@@ -154,13 +179,30 @@ declare
   legacy jsonb; canon jsonb;
 begin
   legacy := public.calculate_expedition_stats(u1, s1, '[]'::jsonb, 'pirate_hunt');
-  canon  := public.resolve_effective_stats('ship', s1);
+  canon  := public.resolve_effective_stats('ship', s1, '{}'::jsonb, now(), 'inspection');
   if (legacy ->> 'cargo_capacity')::numeric <> 75 then
     raise exception 'SF-PROOF FAIL: the deployed fold no longer adds the module cargo key (want 50+25=75, got %)',
       (legacy ->> 'cargo_capacity'); end if;
   if (canon -> 'stats' ->> 'cargo_capacity')::numeric <> 50 then
-    raise exception 'SF-PROOF FAIL: a cargo contribution reached the QUARANTINED canonical cargo_capacity (want the bare base 50, got %)',
+    raise exception 'SF-PROOF FAIL: a cargo contribution reached the DEPRECATED canonical cargo_capacity (want the bare base 50, got %)',
       (canon -> 'stats' ->> 'cargo_capacity'); end if;
+
+  -- THE RE-RULING, PROVEN ON REAL ROWS: the canonical target is ship-bound VOLUME, and THE +25 IS
+  -- NOT COPIED INTO IT. The volume stat resolves to the ship's own cargo_capacity_m3 column and
+  -- nothing else — no module, no captain, no trait — because the conversion is undefined and the
+  -- table forbids the contribution rather than a comment discouraging it.
+  if (canon -> 'dormant' -> 'cargo_volume_m3' ->> 'value')::numeric
+     is distinct from coalesce((select msi.cargo_capacity_m3 from public.main_ship_instances msi
+                                 where msi.main_ship_id = s1), 0)::numeric then
+    raise exception 'SF-PROOF FAIL: cargo_volume_m3 does not resolve to the ship-bound volume column (got %)',
+      (canon -> 'dormant' -> 'cargo_volume_m3' ->> 'value'); end if;
+  if exists (select 1 from jsonb_array_elements(canon -> 'breakdown') b
+              where b.value ->> 'stat_id' = 'cargo_volume_m3'
+                and b.value ->> 'source_kind' not in ('base','clamp')) then
+    raise exception 'SF-PROOF FAIL: a source contributed to cargo_volume_m3 — the unit conversion is NOT activated in this slice'; end if;
+  -- and the legacy integer's hold is untouched: the resolver reads it, it never writes it.
+  if (select msi.cargo_capacity from public.main_ship_instances msi where msi.main_ship_id = s1) <> 50 then
+    raise exception 'SF-PROOF FAIL: this slice changed a live hold size'; end if;
   raise notice 'SF_PASS_CARGO_QUARANTINE';
 end $b2$;
 
@@ -174,19 +216,29 @@ declare
 begin
   legacy := public.calculate_group_expedition_stats(u1, g1, 'pirate_hunt');
   t := legacy -> 'totals';
-  canon := public.resolve_effective_stats('fleet', g1);
-  insert into sf_out values ('legacy_totals', t), ('canon_fleet', canon -> 'stats');
+  canon := public.resolve_effective_stats('fleet', g1, '{}'::jsonb, now(), 'inspection');
+  insert into sf_out values ('legacy_totals', t), ('canon_fleet', canon -> 'stats'),
+                            ('canon_fleet_dormant', canon -> 'dormant'),
+                            ('canon_fleet_provenance', canon -> 'provenance');
 
   if (canon ->> 'member_count')::integer <> 3 then
     raise exception 'SF-PROOF FAIL: canonical fleet resolution saw % member(s), want 3', (canon ->> 'member_count'); end if;
 
   -- (a) THE SHAPES THE SIX LIVE CALLERS ACTUALLY READ MUST NOT MOVE.
   --     A1/A2/A4 read totals.speed (min). A3/A5 read combat_power + survival (both sum).
-  foreach key in array array['speed','combat_power','survival','repair','mining_yield','pirate_attention'] loop
+  foreach key in array array['speed','combat_power','survival'] loop
     lv := (t ->> key)::numeric;
     cv := (canon -> 'stats' ->> key)::numeric;
     if lv is distinct from cv then
       raise exception 'SF-PROOF FAIL: fleet stat % moved — deployed authority %, canonical %. This shape is read by a LIVE caller.', key, lv, cv;
+    end if;
+  end loop;
+  -- The dormant fleet keys still agree arithmetically, under inspection only.
+  foreach key in array array['repair','mining_yield','pirate_attention'] loop
+    lv := (t ->> key)::numeric;
+    cv := (canon -> 'dormant' -> key ->> 'value')::numeric;
+    if lv is distinct from cv then
+      raise exception 'SF-PROOF FAIL: fleet DORMANT stat % moved — deployed authority %, inspected %', key, lv, cv;
     end if;
   end loop;
   -- the exact values, spelled out, so a silent double-change cannot cancel out
@@ -202,13 +254,13 @@ begin
   --     scouting: legacy SUM 6+2+0 = 8 ; canonical MAX = 6
   if (t ->> 'scouting')::numeric <> 8 then
     raise exception 'SF-PROOF FAIL: the deployed authority no longer SUMS scouting (want 8, got %)', (t ->> 'scouting'); end if;
-  if (canon -> 'stats' ->> 'scouting')::numeric <> 6 then
-    raise exception 'SF-PROOF FAIL: canonical scouting is not the MAX (want 6, got %)', (canon -> 'stats' ->> 'scouting'); end if;
+  if (canon -> 'dormant' -> 'scouting' ->> 'value')::numeric <> 6 then
+    raise exception 'SF-PROOF FAIL: canonical scouting is not the MAX (want 6, got %)', (canon -> 'dormant' -> 'scouting' ->> 'value'); end if;
   --     retreat_safety: legacy SUM 4+1+0 = 5 ; canonical MIN = 0 (the ship with no evasion module)
   if (t ->> 'retreat_safety')::numeric <> 5 then
     raise exception 'SF-PROOF FAIL: the deployed authority no longer SUMS retreat_safety (want 5, got %)', (t ->> 'retreat_safety'); end if;
-  if (canon -> 'stats' ->> 'retreat_safety')::numeric <> 0 then
-    raise exception 'SF-PROOF FAIL: canonical retreat_safety is not the MIN (want 0, got %)', (canon -> 'stats' ->> 'retreat_safety'); end if;
+  if (canon -> 'dormant' -> 'retreat_safety' ->> 'value')::numeric <> 0 then
+    raise exception 'SF-PROOF FAIL: canonical retreat_safety is not the MIN (want 0, got %)', (canon -> 'dormant' -> 'retreat_safety' ->> 'value'); end if;
   raise notice 'SF_PASS_INTENDED_DIFFERENCES';
 
   -- (c) NO OTHER DIFFERENCE EXISTS. Every key of the deployed totals is compared; only the two
@@ -216,12 +268,27 @@ begin
   for key in select k from jsonb_object_keys(t) k loop
     if key in ('scouting','retreat_safety','cargo_capacity') then continue; end if;
     lv := (t ->> key)::numeric;
-    cv := (canon -> 'stats' ->> key)::numeric;
+    -- a key is either effective (`stats`) or dormant (`dormant`) — never both, never neither.
+    cv := coalesce((canon -> 'stats' ->> key)::numeric,
+                   (canon -> 'dormant' -> key ->> 'value')::numeric);
     if lv is distinct from cv then
       raise exception 'SF-PROOF FAIL: UNDECLARED fleet difference on % — deployed %, canonical %', key, lv, cv;
     end if;
   end loop;
   raise notice 'SF_PASS_NO_UNDECLARED_DIFFERENCE';
+
+  -- (d) THE ROUTINE FLEET RESOLUTION CARRIES NO DORMANT KEY AT ALL, and its provenance partitions
+  --     the effective set exactly. This is the owner's ruling on a real three-ship roster.
+  canon := public.resolve_effective_stats('fleet', g1);
+  foreach key in array array['repair','scouting','mining_yield','retreat_safety','pirate_attention','cargo_volume_m3'] loop
+    if (canon -> 'stats') ? key or (canon -> 'dormant') ? key or (canon -> 'provenance') ? key then
+      raise exception 'SF-PROOF FAIL: dormant stat % appeared in a ROUTINE fleet resolution', key; end if;
+  end loop;
+  if (canon -> 'provenance' -> 'combat_power' ->> 'status') <> 'resolved' then
+    raise exception 'SF-PROOF FAIL: a resolved fleet stat is not recorded as resolved'; end if;
+  if canon -> 'unresolved' <> '{}'::jsonb then
+    raise exception 'SF-PROOF FAIL: a healthy fleet reported unresolved stats'; end if;
+  raise notice 'SF_PASS_ROUTINE_CARRIES_NO_DORMANT';
 end $b3$;
 
 -- ── BLOCK 4 — THE EMPTY FLEET: the one behavioural difference that is a FIX ──────────────────────
@@ -269,15 +336,20 @@ begin
     values (u1, 3, 'SF Solo') returning group_id into g3;
   update public.main_ship_instances set group_id = g3 where main_ship_id = s1;
 
-  ship  := public.resolve_effective_stats('ship', s1);
-  fleet := public.resolve_effective_stats('fleet', g3);
+  ship  := public.resolve_effective_stats('ship', s1, '{}'::jsonb, now(), 'inspection');
+  fleet := public.resolve_effective_stats('fleet', g3, '{}'::jsonb, now(), 'inspection');
   if (fleet ->> 'member_count')::integer <> 1 then
     raise exception 'SF-PROOF FAIL: single-ship fleet reported % members', (fleet ->> 'member_count'); end if;
-  foreach key in array array['combat_power','survival','speed','scouting','retreat_safety',
-                             'repair','mining_yield','pirate_attention'] loop
+  foreach key in array array['combat_power','survival','speed'] loop
     if (ship -> 'stats' ->> key)::numeric is distinct from (fleet -> 'stats' ->> key)::numeric then
       raise exception 'SF-PROOF FAIL: single-ship fleet % (%) does not equal its member (%)',
         key, (fleet -> 'stats' ->> key), (ship -> 'stats' ->> key); end if;
+  end loop;
+  foreach key in array array['scouting','retreat_safety','repair','mining_yield','pirate_attention'] loop
+    if (ship -> 'dormant' -> key ->> 'value')::numeric
+       is distinct from (fleet -> 'dormant' -> key ->> 'value')::numeric then
+      raise exception 'SF-PROOF FAIL: single-ship fleet dormant % (%) does not equal its member (%)',
+        key, (fleet -> 'dormant' -> key ->> 'value'), (ship -> 'dormant' -> key ->> 'value'); end if;
   end loop;
   update public.main_ship_instances set group_id = (select v from sf_ctx where k='g1') where main_ship_id = s1;
   raise notice 'SF_PASS_SINGLE_SHIP_FLEET';
@@ -289,22 +361,32 @@ declare
   s1 uuid := (select v from sf_ctx where k='s1');
   canon jsonb; key text; n integer; last_running numeric; emitted numeric;
 begin
-  canon := public.resolve_effective_stats('ship', s1);
+  canon := public.resolve_effective_stats('ship', s1, '{}'::jsonb, now(), 'inspection');
   select count(*) into n from jsonb_array_elements(canon -> 'breakdown');
-  if n < 9 then
+  if n < 10 then
     raise exception 'SF-PROOF FAIL: breakdown has only % entries — provenance guard would be vacuous', n; end if;
 
   foreach key in array array['combat_power','survival','speed','scouting','retreat_safety',
-                             'repair','mining_yield','pirate_attention','cargo_capacity'] loop
+                             'repair','mining_yield','pirate_attention','cargo_capacity',
+                             'cargo_volume_m3'] loop
     select (b.value ->> 'running')::numeric into last_running
       from jsonb_array_elements(canon -> 'breakdown') with ordinality as b(value, ord)
      where b.value ->> 'stat_id' = key and b.value ->> 'running' is not null
      order by b.ord desc limit 1;
-    emitted := (canon -> 'stats' ->> key)::numeric;
+    -- an effective stat reconciles against `stats`, a dormant one against `dormant`. Both must
+    -- reconcile EXACTLY: a breakdown that does not add up is worse than no breakdown.
+    emitted := coalesce((canon -> 'stats' ->> key)::numeric,
+                        (canon -> 'dormant' -> key ->> 'value')::numeric);
     if last_running is distinct from emitted then
       raise exception 'SF-PROOF FAIL: breakdown for % ends at % but the emitted stat is % — provenance that does not add up is worse than none',
         key, last_running, emitted; end if;
   end loop;
+
+  -- THE PARTITION LAW, on a real ship: every computed stat sits in exactly one map, and the four
+  -- maps together are exactly the provenance key set.
+  perform public.stat_assert_provenance_partition(canon, 'sf-proof/ship');
+  perform public.stat_assert_provenance_partition(
+    public.resolve_effective_stats('fleet', (select v from sf_ctx where k='g1')), 'sf-proof/fleet');
   raise notice 'SF_PASS_BREAKDOWN_RECONCILES';
 end $b6$;
 
@@ -367,9 +449,13 @@ begin
   reg := public.get_stat_definitions();
   if not (reg ->> 'ok')::boolean then
     raise exception 'SF-PROOF FAIL: get_stat_definitions did not return ok'; end if;
-  if jsonb_array_length(reg -> 'registry' -> 'stat_ids') <> 9 then
-    raise exception 'SF-PROOF FAIL: the inspectable registry does not expose 9 stats (got %)',
+  -- get_stat_definitions exposes the ROUTINE vocabulary: the four stats a gameplay path can ever
+  -- see. The dormant six are catalogued but are not part of what the client is told is in effect.
+  if jsonb_array_length(reg -> 'registry' -> 'stat_ids') <> 4 then
+    raise exception 'SF-PROOF FAIL: the inspectable registry does not expose the 4 routine stats (got %)',
       jsonb_array_length(reg -> 'registry' -> 'stat_ids'); end if;
+  if jsonb_array_length(public.stat_registry_snapshot('inspection') -> 'stat_ids') <> 10 then
+    raise exception 'SF-PROOF FAIL: the inspection snapshot does not carry all 10 registered stats'; end if;
 
   -- Unauthenticated (auth.uid() is null in this context) must be refused, not served.
   if (public.get_my_effective_stats('fleet', g1) ->> 'error') is distinct from 'not_authenticated' then

@@ -7,7 +7,7 @@ import {
   type GroupTotalsResult,
 } from './teamApi'
 import { teamReasonMessage } from './teamReasonMessage'
-import { ADDITIVE_STAT_KEYS, aggregateTeamStats, groupPreviewAvailability } from './teamSkillset'
+import { EFFECTIVE_STAT_KEYS, aggregateTeamStats, groupPreviewAvailability } from './teamSkillset'
 import { isPreviewActivity, PREVIEW_ACTIVITY_TYPES } from './teamCaptains'
 
 // TEAM-COMMAND Slice C1 — per-team expedition PREVIEW (dark UI). Rendered ONLY from TeamRosterPanel,
@@ -131,9 +131,13 @@ export function TeamPreviewSection({
             {currentTotals.member_count === 1 ? '' : 's'} · authoritative
           </p>
           <dl className="space-y-0.5 text-xs">
-            {/* Only the keys the D0 authority folds (the eight additive 0122 keys); captain-slot
+            {/* Only the keys the D0 authority folds AND that something actually reads. The five
+                DORMANT keys (repair, scouting, mining_yield, retreat_safety, pirate_attention) are
+                still sent by the server and are deliberately NOT rendered: no gameplay path
+                consumes any of them, so printing them under "authoritative" promises an effect the
+                game does not deliver. See DORMANT_STAT_KEYS in teamSkillset.ts. Captain-slot
                 bookkeeping keys are preview-only and never appear in totals. */}
-            {ADDITIVE_STAT_KEYS.filter((k) => typeof currentTotals.totals[k] === 'number').map((k) => (
+            {EFFECTIVE_STAT_KEYS.filter((k) => typeof currentTotals.totals[k] === 'number').map((k) => (
               <StatRow key={k} label={statLabel(k)} value={currentTotals.totals[k]} />
             ))}
             <StatRow
@@ -154,7 +158,8 @@ export function TeamPreviewSection({
               {agg.memberCount} member{agg.memberCount === 1 ? '' : 's'} · estimate, display-only
             </p>
             <dl className="space-y-0.5 text-xs">
-              {ADDITIVE_STAT_KEYS.map((k) => (
+              {/* Dormant keys are omitted here for the same reason as above. */}
+              {EFFECTIVE_STAT_KEYS.map((k) => (
                 <StatRow key={k} label={statLabel(k)} value={agg.totals[k]} />
               ))}
               <StatRow

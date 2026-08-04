@@ -72,10 +72,28 @@
 --     deliberate live re-read (0310's auto-exit max_hp denominator) is documented, not moved.
 --   • The malformed-ship concealment handler at 0301:804-806. Its replacement is the later
 --     combat-integration slice. This migration does not touch it.
---   • Cargo unit unification. The volume authority (fleet_hold_capacity_m3, 0333) is the canonical
---     gameplay authority; the fold's unitless cargo_capacity is registered DEPRECATED display-only
---     legacy — excluded from contributions entirely (permitted_source_kinds = '{}').
+--   • Cargo unit CONVERSION. Per the owner's post-census re-ruling, cargo modules, captain effects
+--     and cargo traits ARE intended to affect real ship-bound VOLUME capacity, so cargo_volume_m3 is
+--     registered as the canonical target with provenance — but the conversion is NOT ACTIVATED, no
+--     +25 is copied into a volume field, and no live hold size changes. The legacy integer stays
+--     DEPRECATED and non-authoritative. Conversion, hold changes, already-fitted modules and the
+--     player-impact proof are a SEPARATE migration.
+--   • Repairing the ambush consumer. pirate_intercept_plan_leg's fail-open (0301:545-547) is
+--     DESIGNED against and PINNED here, and deliberately left in place; cutting it over is the
+--     bounded consumer-retirement sequence.
 --   • Any flag flip, any live row mutation, any balance change.
+--
+-- THE OWNER'S LATER RULINGS, FOLDED IN:
+--   · STAT LIFECYCLE. Every stat declares active / dormant / deprecated, with no default and a
+--     closed CHECK, so an undeclared or unknown lifecycle is REJECTED. Dormant means NOT COMPUTED on
+--     any routine resolution path — it is absent from the routine registry snapshot, so nothing
+--     gathers it, folds it or emits it; only an explicitly requested, authorized inspection call
+--     resolves it, and even then it lands in a `dormant` map marked effective=false.
+--   · THE FIVE CONFIRMED-DEAD OUTPUTS (retreat_safety, scouting, mining_yield, repair,
+--     pirate_attention) are seeded DORMANT, not as ordinary active stats. Prior implementation
+--     effort does not create gameplay semantics.
+--   · THREE-WAY PROVENANCE. A real zero, a resolution failure and a not-applicable are three
+--     different shapes in every result and are never collapsed into one value.
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 
 -- ── 0. DEPENDENCY GATE — abort loudly if a surface this slice reads is missing ────────────────────
@@ -89,6 +107,11 @@ begin
     raise exception 'STAT-FOUNDATION: public.cfg_num(text) missing — the resolver reads the captain multiplier knobs'; end if;
   if to_regclass('public.main_ship_instances') is null or to_regclass('public.main_ship_hull_types') is null then
     raise exception 'STAT-FOUNDATION: main_ship_instances / main_ship_hull_types missing — the ship resolver reads them'; end if;
+  -- The canonical cargo target reads the VOLUME column (0076), never the legacy integer.
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'main_ship_instances'
+                    and column_name = 'cargo_capacity_m3') then
+    raise exception 'STAT-FOUNDATION: main_ship_instances.cargo_capacity_m3 (0076) missing — cargo_volume_m3 is based on it'; end if;
   if to_regclass('public.ship_groups') is null then
     raise exception 'STAT-FOUNDATION: public.ship_groups (0160) missing — fleet scope resolves a group_id'; end if;
   if to_regclass('public.main_ship_traits') is null or to_regclass('public.ship_trait_types') is null then
@@ -146,9 +169,43 @@ create table public.stat_definitions (
   combat_snapshot    text not null check (combat_snapshot in ('frozen','live','not_applicable')),
   combat_snapshot_live_reader text,
   engine_consumer    text,
+  presentation_consumer text,
   deprecated_reason  text,
   revision           integer not null default 1 check (revision >= 1),
-  is_active          boolean not null default true,
+
+  -- ── LIFECYCLE (owner ruling, 2026-08-04). THE stat's standing, and the ONLY thing that decides
+  --    whether it is computed at all. NO DEFAULT, on purpose: an INSERT that forgets to declare a
+  --    lifecycle is REJECTED rather than silently promoted to a live gameplay stat. Any value
+  --    outside the three is rejected by the CHECK. Fail closed at both ends.
+  --
+  --      active     — has an APPROVED gameplay (engine_consumer) or presentation
+  --                   (presentation_consumer) consumer. Computed on the routine resolution path.
+  --      dormant    — catalogued, NO consumer of any kind. NEVER computed on a routine resolution
+  --                   path; it is absent from the routine registry snapshot, so the resolver cannot
+  --                   reach it even by accident. It is resolvable ONLY through an explicitly
+  --                   requested, authorized INSPECTION call, and even then its value is returned in
+  --                   a separate `dormant` map carrying effective=false — never in `stats`, so no
+  --                   client can describe it as an effective number.
+  --      deprecated — legacy compatibility only. Still computed for its existing readers, but
+  --                   engine_consumer MUST be null: it is forbidden to NEW gameplay consumers, and
+  --                   the table is what forbids it.
+  --
+  --    THIS COLUMN REPLACED `is_active boolean`. Two columns deciding one question — "is this stat
+  --    in play?" — is spaghetti, and the boolean could not express the three standings the owner
+  --    named. It is folded, not doubled: there is exactly one lifecycle authority and every
+  --    resolver reads it through the registry snapshot.
+  lifecycle          text not null check (lifecycle in ('active','dormant','deprecated')),
+
+  -- ── SUPERSESSION (the cargo re-ruling). A row may name the stat it is the canonical replacement
+  --    for, together with the unit conversion between them. unit_conversion is a CLOSED enum, not
+  --    free text: today the only expressible conversion is 'identity', so an undefined conversion
+  --    is NULL and cannot be faked by writing a sentence into a text column. Adding a real
+  --    conversion means adding an enum value in a migration — a reviewed act, not an edit.
+  supersedes_stat_id text collate "C" references public.stat_definitions (stat_id),
+  unit_conversion    text check (unit_conversion in ('identity')),
+  intended_source_kinds text[] not null default '{}'::text[]
+    check (intended_source_kinds <@ array['hull','trait','module','captain','command_ship','consumable','zone','event','debug','speed_penalty']::text[]),
+
   registered_in      text not null,
   constraint stat_definitions_base_ref_coherent
     check ((ship_base_source = 'none') = (ship_base_ref is null)),
@@ -164,7 +221,45 @@ create table public.stat_definitions (
   constraint stat_definitions_live_reader_coherent
     check ((combat_snapshot = 'live') = (combat_snapshot_live_reader is not null)),
   constraint stat_definitions_clamp_coherent
-    check (min_value is null or max_value is null or min_value <= max_value)
+    check (min_value is null or max_value is null or min_value <= max_value),
+
+  -- ── THE LIFECYCLE LAW, enforced by the table so that no review step is load-bearing.
+  -- active REQUIRES an approved consumer. "Active because a catalog mentions it" is exactly the
+  -- error this closes: prior implementation effort does not create gameplay semantics.
+  constraint stat_definitions_active_needs_consumer
+    check (lifecycle <> 'active'
+           or engine_consumer is not null or presentation_consumer is not null),
+  -- dormant FORBIDS every consumer. The moment a stat acquires one it must be promoted in a
+  -- migration, which is a decision, not a drift.
+  constraint stat_definitions_dormant_has_no_consumer
+    check (lifecycle <> 'dormant'
+           or (engine_consumer is null and presentation_consumer is null)),
+  -- deprecated is legacy compatibility ONLY: it may keep a display reader, it may NEVER hold a
+  -- gameplay consumer, and it must say why it is deprecated.
+  constraint stat_definitions_deprecated_is_legacy_only
+    check (lifecycle <> 'deprecated'
+           or (deprecated_reason is not null and engine_consumer is null)),
+  -- ...and a deprecation reason may not be attached to a stat that is not deprecated, so the two
+  -- can never disagree about which stats are legacy.
+  constraint stat_definitions_reason_only_when_deprecated
+    check (deprecated_reason is null or lifecycle = 'deprecated'),
+  -- ── THE SUPERSESSION LAW.
+  constraint stat_definitions_supersedes_not_self
+    check (supersedes_stat_id is null or supersedes_stat_id <> stat_id),
+  constraint stat_definitions_conversion_needs_supersession
+    check (unit_conversion is null or supersedes_stat_id is not null),
+  -- THE CARGO GUARD, structural (the 20260618000333 precedent: enforce, never comment). A stat
+  -- that supersedes another but has NO DEFINED CONVERSION may accept NOTHING — no operation, no
+  -- source category. This is what makes "do not copy the legacy integer into the volume field"
+  -- impossible rather than merely forbidden: with both permitted lists empty, stat_combine raises
+  -- on any contribution aimed at it, whatever the contribution's origin.
+  constraint stat_definitions_undefined_conversion_accepts_nothing
+    check (supersedes_stat_id is null or unit_conversion is not null
+           or (permitted_operations = '{}'::text[] and permitted_source_kinds = '{}'::text[])),
+  -- Nothing may be PERMITTED that was never declared INTENDED. Widening the resolver's input
+  -- surface therefore requires editing the declared intent first, in the same reviewed row.
+  constraint stat_definitions_permitted_within_intended
+    check (permitted_source_kinds <@ intended_source_kinds)
 );
 
 comment on table public.stat_definitions is
@@ -186,9 +281,31 @@ comment on column public.stat_definitions.combat_snapshot is
   'accident rediscovered by reading two migrations five hundred lines apart.';
 comment on column public.stat_definitions.engine_consumer is
   'DOCUMENTATION ONLY — nothing dispatches on it and nothing executes it. Names the one function '
-  'that DECIDES something with this stat, or NULL for display-only-by-declaration.';
+  'that DECIDES something with this stat, or NULL when no gameplay path decides anything with it.';
+comment on column public.stat_definitions.presentation_consumer is
+  'DOCUMENTATION ONLY. Names the one client surface that DISPLAYS this stat to a player. A stat '
+  'with neither an engine nor a presentation consumer cannot be active — that is the table''s rule, '
+  'not a convention.';
 comment on column public.stat_definitions.deprecated_reason is
-  'Non-null = this stat is legacy and must not be given new consumers or new contributions.';
+  'Non-null = this stat is legacy and must not be given new consumers or new contributions. It is '
+  'permitted only on lifecycle = deprecated, so the two can never disagree.';
+comment on column public.stat_definitions.lifecycle is
+  'active = has an approved gameplay or presentation consumer, computed on the routine resolution '
+  'path. dormant = catalogued with NO consumer; absent from the routine registry snapshot, so it '
+  'is never computed on a routine path and is returned only by an explicitly requested authorized '
+  'inspection call, in a separate map marked effective=false. deprecated = legacy compatibility '
+  'only, still computed for existing readers, forbidden to new gameplay consumers. No default: an '
+  'undeclared lifecycle is rejected.';
+comment on column public.stat_definitions.supersedes_stat_id is
+  'This stat is the canonical replacement for the named one. While unit_conversion is NULL the '
+  'conversion is UNDEFINED and the table forbids this stat from accepting any contribution at all.';
+comment on column public.stat_definitions.unit_conversion is
+  'A CLOSED enum, never free text, so an undefined conversion cannot be faked with a sentence. '
+  'NULL = undefined. Defining a real conversion means adding an enum value in a migration.';
+comment on column public.stat_definitions.intended_source_kinds is
+  'The source categories this stat is INTENDED to accept once its architecture is complete — a '
+  'declaration of design intent that executes nothing. permitted_source_kinds must always be a '
+  'subset of it, so widening what the resolver accepts requires stating the intent first.';
 
 alter table public.stat_definitions enable row level security;
 -- Explicit REVOKE, never a mere assert of absence: a Supabase project-default GRANT ALL to anon
@@ -199,35 +316,56 @@ grant select on table public.stat_definitions to anon, authenticated;
 revoke insert, update, delete on table public.stat_definitions from anon, authenticated;
 
 -- ── 1a. THE SEED — the deployed vocabulary, transcribed as data (contract §3.3) ───────────────────
--- Nine rows. stat_id is what calculate_expedition_stats EMITS; catalog_key is what the catalogs
--- WRITE. Both are copied from the live fold, so this seed asserts nothing new about the game.
+-- TEN rows: the nine keys the deployed fold emits, plus cargo_volume_m3, the canonical cargo target.
+-- stat_id is what calculate_expedition_stats EMITS; catalog_key is what the catalogs WRITE. Both are
+-- copied from the live fold, so the vocabulary asserts nothing new about the game.
 --
--- The two owner-decided aggregation corrections (contract §14 D3, option A) are seeded here:
+-- LIFECYCLE IS THE LOAD-BEARING FIELD HERE, and it is decided per row on EVIDENCE:
+--   active     (3)  combat_power, survival, speed — each names the function that decides with it.
+--   deprecated (1)  cargo_capacity — legacy display integer, forbidden a gameplay consumer.
+--   dormant    (6)  cargo_volume_m3 (canonical target, conversion not activated) and the five
+--                   confirmed-dead outputs: repair, scouting, mining_yield, retreat_safety,
+--                   pirate_attention.
+--
+-- THE OWNER'S RULING THIS ENCODES: "Do not automatically seed these as active canonical gameplay
+-- stats merely because old functions or catalogs mention them… Prior implementation effort does not
+-- create gameplay semantics." A stat is active because something DECIDES with it, never because
+-- something once computed it.
+--
+-- The two owner-decided aggregation corrections (contract §14 D3, option A) are still recorded:
 --   scouting       sum -> max   (detection is intensive: the fleet sees as far as its best sensor)
 --   retreat_safety sum -> min   (evasion is weakest-link: a fleet escapes as cleanly as its most
 --                                exposed ship)
--- Both stats have ZERO engine consumers, so neither correction can move a gameplay number. They are
--- inert until a consumer exists, and this slice creates no consumer.
+-- Both stats are dormant, so neither correction can move a gameplay number — it is preserved so the
+-- decision survives until a consumer justifies promotion.
 insert into public.stat_definitions (
   stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
   numeric_domain, round_to, min_value, max_value, ship_base_source, ship_base_ref,
-  combination_class, permitted_operations, permitted_source_kinds,
+  combination_class, permitted_operations, permitted_source_kinds, intended_source_kinds,
   fleet_aggregation, fleet_weight_stat, combat_snapshot, combat_snapshot_live_reader,
-  engine_consumer, deprecated_reason, registered_in) values
+  engine_consumer, presentation_consumer, deprecated_reason, lifecycle,
+  supersedes_stat_id, unit_conversion, registered_in) values
 
+  -- ACTIVE. Both are frozen into combat_units at encounter creation and DECIDED upon there: the
+  -- live combat_create_group_encounter head is 20260618000301:661, combat_power -> attack_snapshot
+  -- and survival -> combat_units.defense at 0301:744.
   ('combat_power', 'attack', 'Combat Power', 10, 'both', 'flat', 'points',
    'numeric', 2, 0, null, 'none', null,
    'additive', array['flat','additive_pct','multiplicative_pct','clamp_min','clamp_max']::text[],
    array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
+   array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
    'sum', null, 'frozen', null,
-   'combat_create_group_encounter', null, '0340'),
+   'combat_create_group_encounter', 'src/features/command/TeamPreviewSection.tsx', null, 'active',
+   null, null, '0340'),
 
   ('survival', 'defense', 'Survival', 20, 'both', 'flat', 'points',
    'numeric', 2, 0, null, 'none', null,
    'additive', array['flat','additive_pct','multiplicative_pct','clamp_min','clamp_max']::text[],
    array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
+   array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
    'sum', null, 'frozen', null,
-   'combat_create_group_encounter', null, '0340'),
+   'combat_create_group_encounter', 'src/features/command/TeamPreviewSection.tsx', null, 'active',
+   null, null, '0340'),
 
   -- speed: the ONE multiplier stat. Base is the hull column (read LIVE on every fold today, never
   -- copied to the instance — contract §0 correction 1). min_value 0.2 is the deployed floor at
@@ -237,68 +375,137 @@ insert into public.stat_definitions (
   -- 20260618000339_a_fight_you_can_move_in.sql:637 — 0339 re-created it as min(move_speed) scaled by
   -- greatest(cfg_num('combat_reposition_speed_scale'), 0). Any speed reasoning must use the 0339
   -- body, NOT the superseded 0337:133-146 one.)
+  -- ACTIVE: command_ship_group_go reads totals.speed at 0330:777 and REFUSES the movement command
+  -- when it is not > 0. Refusing a command is a decision, so speed has a gameplay consumer.
   ('speed', 'speed_mult_bonus', 'Speed', 30, 'both', 'multiplier', 'wu_per_second',
    'numeric', 3, 0.2, null, 'hull_column', 'base_speed',
    'multiplier_bonus', array['base_override','additive_pct','multiplicative_pct','clamp_min','clamp_max']::text[],
    array['trait','module','captain','command_ship','speed_penalty','consumable','zone','event','debug']::text[],
+   array['trait','module','captain','command_ship','speed_penalty','consumable','zone','event','debug']::text[],
    'min', null, 'frozen', null,
+   'command_ship_group_go', null, null, 'active',
    null, null, '0340'),
 
-  -- cargo_capacity: QUARANTINED. The ship-bound VOLUME capacity (fleet_hold_capacity_m3, migration
-  -- 0333) is the canonical gameplay cargo authority — every real cargo decision (transfers, port
-  -- sales, hold limits) goes through it. THIS unitless number decides nothing. It is registered so
-  -- the legacy display path is legible, and it is fenced off: permitted_source_kinds is EMPTY, so no
-  -- module, captain, trait, hull or buff contribution may ever reach it; permitted_operations is
-  -- empty for the same reason. Its base still resolves from the instance column so a reader sees the
-  -- hold size it has always seen. It is NOT a second authority and must not be described as one.
+  -- ── CARGO, AFTER THE OWNER'S RE-RULING (2026-08-04) ────────────────────────────────────────────
+  -- The census was run and the ruling changed: cargo modules, captain effects and cargo traits ARE
+  -- intended to affect real ship-bound VOLUME capacity. The canonical cargo stat is therefore volume
+  -- in m3, and the unitless integer is legacy. What this slice may NOT do, and does not do:
+  --   · it does NOT copy the existing +25 into the volume field — no unit conversion is defined and
+  --     inventing one is forbidden;
+  --   · it does NOT change a single live hold size;
+  --   · it does NOT make the integer a second gameplay stat.
+  -- So the canonical target is MODELLED, with provenance, and THE CONVERSION IS NOT ACTIVATED. The
+  -- TABLE is what enforces that, not this comment: cargo_volume_m3 supersedes cargo_capacity with
+  -- unit_conversion NULL, and stat_definitions_undefined_conversion_accepts_nothing then makes both
+  -- of its permitted lists necessarily empty — so no module, trait or captain contribution can reach
+  -- the volume field by ANY route, including one that reads the legacy `cargo` key. That is the
+  -- 20260618000333:1926-1929 precedent (which forbids fleet_hold_capacity_m3 from reading the dead
+  -- integer columns) re-expressed as a CONSTRAINT instead of a text scan.
+  -- Conversion, hold-size changes, the treatment of already-fitted modules and the player-impact
+  -- proof belong to a separate migration.
+  --
+  -- cargo_capacity: DEPRECATED, not merely "quarantined". It keeps its display reader
+  -- (TeamDossier.tsx:131 renders the 'Cargo cap' chip) and can NEVER acquire a gameplay one —
+  -- stat_definitions_deprecated_is_legacy_only forbids engine_consumer on a deprecated row.
   ('cargo_capacity', 'cargo', 'Cargo Capacity (legacy, display-only)', 40, 'ship', 'flat', 'points',
    'integer', 0, 0, null, 'instance_column', 'cargo_capacity',
    'additive', array[]::text[],
-   array[]::text[],
+   array[]::text[], array[]::text[],
    'sum', null, 'not_applicable', null,
-   null,
-   'DEPRECATED display-only legacy. The canonical cargo authority is the ship-bound volume capacity '
-   'in m3 (fleet_hold_capacity_m3 / fleet_hold_used_m3, migration 0333). This unitless number is '
-   'differently unitised, drives no decision, takes no contributions, and must not be given new '
-   'consumers. Unit unification is a separate slice.',
-   '0340'),
+   null, 'src/features/command/TeamDossier.tsx',
+   'DEPRECATED legacy display integer, non-authoritative. The canonical cargo authority is the '
+   'ship-bound volume capacity in m3 (cargo_volume_m3 here; fleet_hold_capacity_m3 / '
+   'fleet_hold_used_m3 in migration 20260618000333). This unitless number is differently unitised, '
+   'drives no decision, takes no contributions, and must not be given new consumers. The unit '
+   'conversion, any hold-size change, the treatment of already-fitted modules and the player-impact '
+   'proof are a SEPARATE migration.',
+   'deprecated', null, null, '0340'),
 
+  -- cargo_volume_m3: THE CANONICAL TARGET, DORMANT. Its base is the ship's REAL cargo_capacity_m3
+  -- column (added by 20260618000076), so an inspection reports the true ship-bound volume rather
+  -- than a fabricated 0 — and its permitted lists are empty, so the +25 cargo module contributes
+  -- NOTHING to it. intended_source_kinds records where those contributions WILL come from once a
+  -- conversion exists; it executes nothing and permits nothing. Fleet rule is sum, matching
+  -- fleet_hold_capacity_m3 (0333:402-421), which sums cargo_capacity_m3 over the fleet's ships.
+  ('cargo_volume_m3', 'cargo_volume_m3', 'Cargo Volume', 45, 'both', 'flat', 'm3',
+   'numeric', 2, 0, null, 'instance_column', 'cargo_capacity_m3',
+   'additive', array[]::text[],
+   array[]::text[],
+   array['hull','trait','module','captain']::text[],
+   'sum', null, 'not_applicable', null,
+   null, null, null, 'dormant',
+   'cargo_capacity', null, '0340'),
+
+  -- ── THE FIVE CONFIRMED-DEAD OUTPUTS, SEEDED DORMANT (owner ruling, 2026-08-04) ─────────────────
+  -- "Do not automatically seed these as active canonical gameplay stats merely because old functions
+  -- or catalogs mention them… Prior implementation effort does not create gameplay semantics."
+  --
+  -- Verified consumer-free by replaying the chain, not by counting text: all five are accumulated by
+  -- calculate_expedition_stats, re-summed by calculate_group_expedition_stats (0166:121-126),
+  -- emitted and rendered — and no branch, comparison or threshold anywhere reads them. `repair` in
+  -- particular is NOT the repair verb's input: 20260618000335_one_way_to_repair.sql and
+  -- 20260618000336_combat_engine_repairs.sql contain no reference to a 'repair' stat key at all, and
+  -- the repair economy prices off repair_credits_per_hp. `survival` is deliberately NOT among them:
+  -- it is a real engine consumer (0301:744 -> combat_units.defense).
+  --
+  -- DORMANT IS NOT A LABEL, IT IS A BEHAVIOUR: these rows are absent from the routine registry
+  -- snapshot, so no routine resolution gathers a contribution to them, folds them, aggregates them
+  -- or emits them. The two aggregation corrections the owner already decided (D3-A: scouting
+  -- sum->max, retreat_safety sum->min) are still recorded here so the decision is not lost when a
+  -- consumer eventually justifies promoting them.
   ('repair', 'repair', 'Repair', 50, 'both', 'flat', 'points',
    'numeric', 2, 0, null, 'none', null,
    'additive', array['flat','additive_pct','multiplicative_pct','clamp_min','clamp_max']::text[],
    array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
+   array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
    'sum', null, 'not_applicable', null,
-   null, null, '0340'),
+   null, null, null, 'dormant', null, null, '0340'),
 
   -- scouting: MAX (owner decision D3-A). Detection quality is intensive.
   ('scouting', 'scan', 'Scouting', 60, 'both', 'flat', 'points',
    'numeric', 2, 0, null, 'none', null,
    'additive', array['flat','additive_pct','multiplicative_pct','clamp_min','clamp_max']::text[],
    array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
+   array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
    'max', null, 'not_applicable', null,
-   null, null, '0340'),
+   null, null, null, 'dormant', null, null, '0340'),
 
   ('mining_yield', 'mining', 'Mining Yield', 70, 'both', 'flat', 'points',
    'numeric', 2, 0, null, 'none', null,
    'additive', array['flat','additive_pct','multiplicative_pct','clamp_min','clamp_max']::text[],
    array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
+   array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
    'sum', null, 'not_applicable', null,
-   null, null, '0340'),
+   null, null, null, 'dormant', null, null, '0340'),
 
   -- retreat_safety: MIN (owner decision D3-A). Evasion is weakest-link.
   ('retreat_safety', 'evasion', 'Retreat Safety', 80, 'both', 'flat', 'points',
    'numeric', 2, 0, null, 'none', null,
    'additive', array['flat','additive_pct','multiplicative_pct','clamp_min','clamp_max']::text[],
    array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
+   array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
    'min', null, 'not_applicable', null,
-   null, null, '0340'),
+   null, null, null, 'dormant', null, null, '0340'),
 
+  -- pirate_attention: DORMANT **DESPITE** 0331 having widened it across four catalog surfaces.
+  -- 20260618000331_one_authority_for_attack.sql taught four stats_json catalogs to state it —
+  -- ship traits (:471-475), command buffs (:493-496), modules (:500-508) and captains (:511-519),
+  -- exactly the four its own assert loop enumerates at :749-759 — plus the hull base_stats_json at
+  -- :454. NOTHING reads it. The pirate chain is pirate_intercept_plan_leg (0301:484) ->
+  -- pirate_intercept_compute_risk (0233:335-355) -> typed_zone_pirate_candidates_v1 (0279:108), and
+  -- every one of them takes combat_power + survival and nothing else; there is no attention term in
+  -- pirate behaviour anywhere. 0331 records at :123 that no seeded catalog row even carries the key
+  -- ("Byte-inert"), so what actually shipped was four surfaces PROMISING an effect that does not
+  -- exist. Widening a stat across four more surfaces is not a consumer, and prior implementation
+  -- effort does not create gameplay semantics. It stays dormant, it is not computed on any routine
+  -- path, and this slice removes the client rows that presented it as an effective total.
   ('pirate_attention', 'pirate_attention', 'Pirate Attention', 90, 'both', 'flat', 'points',
    'numeric', 2, 0, null, 'none', null,
    'additive', array['flat','additive_pct','multiplicative_pct','clamp_min','clamp_max']::text[],
    array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
+   array['hull','trait','module','captain','command_ship','consumable','zone','event','debug']::text[],
    'sum', null, 'not_applicable', null,
-   null, null, '0340')
+   null, null, null, 'dormant', null, null, '0340')
 
 on conflict (stat_id) do nothing;
 
@@ -489,7 +696,13 @@ from public.command_buff_types cbt
 join public.stat_definitions d
   on cbt.stats_json ? d.catalog_key
 where jsonb_typeof(cbt.stats_json -> d.catalog_key) = 'number'
-  and d.is_active
+  -- ACTIVE ONLY. A buff definition is a contribution SOURCE, and a source aimed at a stat nothing
+  -- consumes is the same lit-but-inert trap this slice exists to end — worse here, because a stored
+  -- contribution to a stat that is absent from the routine snapshot would make stat_combine raise on
+  -- an ordinary ship. The catalog's scan/mining/evasion/repair command buffs are therefore NOT
+  -- registered while those stats are dormant. Promoting a stat is a migration, and that migration
+  -- re-runs this seed; it is not something a catalog edit can do by itself.
+  and d.lifecycle = 'active'
   and array_length(d.permitted_source_kinds, 1) is not null
   and 'command_ship' = any (d.permitted_source_kinds)
 on conflict (buff_def_id) do nothing;
@@ -562,17 +775,50 @@ $$;
 -- stat_registry_snapshot — the registry as ONE ordered jsonb, stamped with its version. Every
 -- resolver result carries registry_version, so a snapshot taken under version 6 stays legible
 -- forever and a consumer can REFUSE a snapshot it does not understand instead of mis-reading it.
-create function public.stat_registry_snapshot()
-returns jsonb
+--
+-- LIFECYCLE SCOPE — the ONE place that decides which stats exist for a given call:
+--   'routine'    (the default, and what every gameplay path will ever get) — active + deprecated.
+--                DORMANT STATS ARE ABSENT FROM THE SNAPSHOT ENTIRELY. They are therefore not
+--                computed, not aggregated, not emitted and not reachable: a routine caller cannot
+--                opt into them, because there is nothing to opt into.
+--   'inspection' — all three lifecycles, for the authorized inspection door only. Dormant values
+--                are still segregated downstream into a `dormant` map marked effective=false.
+-- An unrecognised scope RAISES. There is no permissive fallback.
+-- stat_lifecycle_in_scope — THE lifecycle rule, in ONE function. Every snapshot, every assert and
+-- every future consumer asks this and nothing else, so "is this stat in play?" has one answer and
+-- cannot be re-derived differently in a second place. An unknown lifecycle is NOT in any scope: a
+-- value the table somehow admitted is treated as absent rather than as active.
+create function public.stat_lifecycle_in_scope(p_lifecycle text, p_scope text)
+returns boolean
 language sql
+immutable
+as $$
+  select case
+           when p_scope = 'inspection' then p_lifecycle in ('active','dormant','deprecated')
+           when p_scope = 'routine'    then p_lifecycle in ('active','deprecated')
+           else false
+         end;
+$$;
+
+create function public.stat_registry_snapshot(p_lifecycle_scope text default 'routine')
+returns jsonb
+language plpgsql
 stable
 security definer
 set search_path = ''
 as $$
-  select jsonb_build_object(
-    'registry_version', coalesce((select max(revision) from public.stat_definitions where is_active), 0),
+begin
+  if p_lifecycle_scope is null or p_lifecycle_scope not in ('routine','inspection') then
+    raise exception 'STAT-FOUNDATION stat_registry_snapshot: unknown lifecycle scope % — must be ''routine'' or ''inspection''. There is no permissive fallback.',
+      coalesce(p_lifecycle_scope, '(null)');
+  end if;
+  return (select jsonb_build_object(
+    'lifecycle_scope', p_lifecycle_scope,
+    'registry_version', coalesce((select max(revision) from public.stat_definitions s
+                                   where public.stat_lifecycle_in_scope(s.lifecycle, p_lifecycle_scope)), 0),
     'stat_ids', coalesce((select jsonb_agg(s.stat_id order by s.display_order, s.stat_id)
-                            from public.stat_definitions s where s.is_active), '[]'::jsonb),
+                            from public.stat_definitions s
+                           where public.stat_lifecycle_in_scope(s.lifecycle, p_lifecycle_scope)), '[]'::jsonb),
     'stats', coalesce((
       select jsonb_object_agg(s.stat_id, jsonb_build_object(
                'stat_id',                s.stat_id,
@@ -595,9 +841,78 @@ as $$
                'fleet_weight_stat',      s.fleet_weight_stat,
                'combat_snapshot',        s.combat_snapshot,
                'engine_consumer',        s.engine_consumer,
+               'presentation_consumer',  s.presentation_consumer,
                'deprecated_reason',      s.deprecated_reason,
+               'lifecycle',              s.lifecycle,
+               'supersedes_stat_id',     s.supersedes_stat_id,
+               'unit_conversion',        s.unit_conversion,
+               'intended_source_kinds',  to_jsonb(s.intended_source_kinds),
                'revision',               s.revision))
-        from public.stat_definitions s where s.is_active), '{}'::jsonb));
+        from public.stat_definitions s
+       where public.stat_lifecycle_in_scope(s.lifecycle, p_lifecycle_scope)), '{}'::jsonb)));
+end;
+$$;
+
+-- stat_assert_provenance_partition — THE provenance law, in ONE executable place.
+--
+-- It proves, on any resolver result, that the four maps are PAIRWISE DISJOINT and that their union
+-- is EXACTLY the provenance key set. That is what makes "a real zero", "unresolved" and "not
+-- applicable" mutually distinguishable as a structural property rather than as a convention: a stat
+-- that appeared in two maps, or in a map without a provenance entry, or in provenance without a map,
+-- is a collapsed distinction, and this function refuses it.
+--
+-- It RAISES rather than returning false: a violated invariant must not be something a caller can
+-- ignore by not reading the boolean.
+create function public.stat_assert_provenance_partition(p_result jsonb, p_where text)
+returns boolean
+language plpgsql
+immutable
+as $$
+declare
+  v_map    text;
+  v_status text;
+  v_k      text;
+  v_seen   text[] := array[]::text[];
+  v_prov   jsonb;
+begin
+  if p_result is null or jsonb_typeof(p_result -> 'provenance') <> 'object' then
+    raise exception 'STAT-FOUNDATION provenance law (%): result carries no provenance index', coalesce(p_where, '(unknown)');
+  end if;
+  v_prov := p_result -> 'provenance';
+
+  -- (1) Every map key must carry the matching provenance status, and no key may appear twice.
+  foreach v_map in array array['stats','not_applicable','unresolved','dormant'] loop
+    v_status := case v_map when 'stats' then 'resolved' else v_map end;
+    if jsonb_typeof(p_result -> v_map) <> 'object' then
+      raise exception 'STAT-FOUNDATION provenance law (%): map "%" is missing or is not an object', coalesce(p_where, '(unknown)'), v_map;
+    end if;
+    for v_k in select k from jsonb_object_keys(p_result -> v_map) k loop
+      if v_k = any (v_seen) then
+        raise exception 'STAT-FOUNDATION provenance law (%): stat % appears in more than one provenance map — a real zero, an unresolved value and a not-applicable must never be collapsed', coalesce(p_where, '(unknown)'), v_k;
+      end if;
+      v_seen := v_seen || v_k;
+      if (v_prov -> v_k ->> 'status') is distinct from v_status then
+        raise exception 'STAT-FOUNDATION provenance law (%): stat % sits in map "%" but its provenance says "%"', coalesce(p_where, '(unknown)'), v_k, v_map, coalesce(v_prov -> v_k ->> 'status', '(absent)');
+      end if;
+    end loop;
+  end loop;
+
+  -- (2) ...and nothing may be in provenance without being in exactly one map.
+  for v_k in select k from jsonb_object_keys(v_prov) k loop
+    if not (v_k = any (v_seen)) then
+      raise exception 'STAT-FOUNDATION provenance law (%): stat % has a provenance status but appears in no map', coalesce(p_where, '(unknown)'), v_k;
+    end if;
+  end loop;
+
+  -- (3) An unresolved entry must never carry a number anywhere in it. This is the structural half of
+  --     the ambush ruling: a resolution failure cannot BE a value, so it cannot become one.
+  for v_k in select k from jsonb_object_keys(p_result -> 'unresolved') k loop
+    if jsonb_typeof(p_result -> 'unresolved' -> v_k) = 'number' then
+      raise exception 'STAT-FOUNDATION provenance law (%): unresolved stat % holds a NUMBER — a resolution failure must never be expressible as a value', coalesce(p_where, '(unknown)'), v_k;
+    end if;
+  end loop;
+  return true;
+end;
 $$;
 
 -- stat_combine — THE pure fold. No table reads. No time. No RNG.
@@ -625,6 +940,30 @@ $$;
 -- permit, a source category the stat does not permit, a non-numeric amount, or a DUPLICATE
 -- contribution identity (stat_id, source_kind, source_id, operation) all RAISE, naming the offender.
 -- Malformed source data is never converted into a plausible stat.
+--
+-- THREE-WAY PROVENANCE (owner ruling, 2026-08-04). A structure in which "a real zero", "resolution
+-- failed" and "not applicable here" all read `0` is precisely the defect this architecture exists to
+-- eliminate, so they are made MUTUALLY DISTINGUISHABLE and are never collapsed into one value. Every
+-- result carries a `provenance` index over FOUR DISJOINT maps:
+--
+--    provenance status   lives in          means
+--    ─────────────────   ───────────────   ─────────────────────────────────────────────────────────
+--    resolved            stats             a real number was produced. A REAL ZERO IS THIS, with
+--                                          value 0 — "this ship's scanner reads zero" is a fact.
+--    not_applicable      not_applicable    the stat has no value for this entity at all (no member
+--                                          ships, no eligible member, not defined at this scope).
+--                                          There is no number, and none is invented.
+--    unresolved          unresolved        RESOLUTION FAILED. The value is UNKNOWN. It is not zero,
+--                                          not minimum, not maximum, and not safe to substitute.
+--                                          Carries a structured diagnostic naming what failed.
+--    dormant             dormant           inspection-only: catalogued, no consumer, marked
+--                                          effective=false so no client may present it as a number
+--                                          that does anything.
+--
+-- `stats` therefore contains ONLY effective, resolved numbers — at every scope, forever. A consumer
+-- that reads `stats` can never accidentally read an unknown or an inapplicable as a zero, because
+-- the key is not there. stat_assert_provenance_partition proves the four maps partition the computed
+-- key set exactly, and it is executed, not documented.
 create function public.stat_combine(
   p_contributions jsonb,
   p_bases         jsonb,
@@ -635,6 +974,8 @@ immutable
 as $$
 declare
   v_stats     jsonb := '{}'::jsonb;
+  v_dormant   jsonb := '{}'::jsonb;
+  v_prov      jsonb := '{}'::jsonb;
   v_breakdown jsonb := '[]'::jsonb;
   v_reg       jsonb;
   v_ids       text[];
@@ -655,6 +996,8 @@ declare
   v_key       text;
   v_seen      text[] := array[]::text[];
   v_n         integer;
+  v_out       jsonb;
+  v_result    jsonb;
 begin
   if p_registry is null or jsonb_typeof(p_registry -> 'stats') <> 'object' then
     raise exception 'STAT-FOUNDATION stat_combine: p_registry is not a registry snapshot (missing "stats" object)';
@@ -717,15 +1060,25 @@ begin
                 else 90 end));
   end loop;
 
-  -- (B) The stats to emit: EVERY ACTIVE REGISTERED STAT, in display order.
+  -- (B) The stats to emit: EVERY STAT IN THE SUPPLIED SNAPSHOT, in display order.
   --
-  --     Not "every stat that happens to have a contribution". A ship with no sensor has a scouting
-  --     of 0 — that is a fact about the ship, not a missing value — and the deployed fold agrees:
-  --     it emits all nine keys on every call, with the accumulators starting at 0
-  --     (0205:666-685). Emitting the full registry keeps key-parity with the fold exactly, and it
-  --     keeps "not applicable" meaning the one thing it should mean at fleet scope: there are no
-  --     ships. A fleet of three ships that all carry 0 scouting has a scouting of 0; only a fleet
-  --     with no members has none.
+  --     RECONCILING TWO RULES THAT LOOK OPPOSED. The earlier draft of this slice argued (deviation
+  --     5) that the fold must emit EVERY registry stat, not only the ones that happen to carry a
+  --     contribution: a ship with no sensor has a scouting of 0, which is a fact about the ship, and
+  --     the deployed fold agrees — it emits all its keys on every call with the accumulators
+  --     starting at 0 (0205:666-685). That argument is accepted and PRESERVED. The owner's later
+  --     ruling says dormant stats must NOT be computed on routine resolution paths. The two are
+  --     reconciled at the SNAPSHOT, not here:
+  --
+  --       · this leaf still emits the WHOLE supplied vocabulary — no "skip the ones that are zero",
+  --         so a real zero is still a fact and key-parity with the deployed fold is exact;
+  --       · but the ROUTINE snapshot does not contain dormant stats at all, so on every routine
+  --         path there is nothing dormant to emit. The dormant stats are not filtered out late —
+  --         they were never in scope, and no contribution to them is even gathered.
+  --
+  --     There is therefore exactly ONE place that decides which stats exist for a call
+  --     (stat_lifecycle_in_scope, read through the snapshot), and this leaf has no lifecycle opinion
+  --     of its own beyond routing a dormant value away from `stats`.
   --
   --     A base naming an unregistered stat still fails closed below.
   select coalesce(array_agg(k order by (v_reg -> k ->> 'display_order')::integer, k), array[]::text[])
@@ -836,13 +1189,40 @@ begin
     -- An integer-domain stat is emitted as a JSON integer; everything else as a number with exactly
     -- round_to decimals. to_jsonb over numeric preserves the exact value — no float round-trip.
     if (v_def ->> 'numeric_domain') = 'integer' then
-      v_stats := v_stats || jsonb_build_object(v_id, to_jsonb(v_running::bigint));
+      v_out := to_jsonb(v_running::bigint);
     else
-      v_stats := v_stats || jsonb_build_object(v_id, to_jsonb(v_running));
+      v_out := to_jsonb(v_running);
+    end if;
+
+    -- LIFECYCLE ROUTING. A dormant stat NEVER lands in `stats`. It can only be here at all because
+    -- the caller asked for an inspection snapshot, and even then it is quarantined into `dormant`
+    -- with effective=false, so no client can render it as a number that does something.
+    if (v_def ->> 'lifecycle') = 'dormant' then
+      v_dormant := v_dormant || jsonb_build_object(v_id, jsonb_build_object(
+        'value', v_out, 'effective', false, 'lifecycle', 'dormant',
+        'note', 'catalogued with no approved consumer: this number is inspection-only and no gameplay path reads it'));
+      v_prov := v_prov || jsonb_build_object(v_id, jsonb_build_object(
+        'status', 'dormant',
+        'reason', 'no approved gameplay or presentation consumer'));
+    else
+      v_stats := v_stats || jsonb_build_object(v_id, v_out);
+      v_prov := v_prov || jsonb_build_object(v_id, jsonb_build_object(
+        'status', 'resolved', 'lifecycle', (v_def ->> 'lifecycle'),
+        -- A REAL ZERO IS A RESOLVED VALUE, and says so. This flag is the difference between "the
+        -- scanner reads zero" and "we could not read the scanner".
+        'is_real_zero', (v_running = 0)));
     end if;
   end loop;
 
-  return jsonb_build_object('stats', v_stats, 'breakdown', v_breakdown);
+  v_result := jsonb_build_object(
+    'stats',          v_stats,
+    'not_applicable', '{}'::jsonb,   -- ship scope: a registered stat always resolves or the fold raises
+    'unresolved',     '{}'::jsonb,
+    'dormant',        v_dormant,
+    'provenance',     v_prov,
+    'breakdown',      v_breakdown);
+  perform public.stat_assert_provenance_partition(v_result, 'stat_combine');
+  return v_result;
 end;
 $$;
 
@@ -853,9 +1233,21 @@ $$;
 -- addition.
 --
 -- AN EMPTY OR INELIGIBLE FLEET YIELDS AN EXPLICIT NON-APPLICABLE RESULT, NEVER A SILENT 0. A stat
--- appears in exactly one of `stats` (a real number) or `not_applicable` (a reason string) — never in
--- both, and never as a fabricated zero that a consumer would read as "this fleet has no combat
--- power" when the truth is "this fleet has no ships".
+-- appears in exactly one of `stats` (a real number), `not_applicable` (a reason), `unresolved` (a
+-- structured failure) or `dormant` (inspection-only) — never in two, and never as a fabricated zero
+-- that a consumer would read as "this fleet has no combat power" when the truth is "this fleet has
+-- no ships" or "we could not read this fleet".
+--
+-- A MEMBER WHOSE OWN RESOLUTION FAILED POISONS THE WHOLE AGGREGATE, DELIBERATELY. Every rule here —
+-- sum, min, max, average, weighted average, primary ship — is a statement about the WHOLE roster. An
+-- aggregate computed over the members that happened to resolve is not a smaller-but-honest answer,
+-- it is a confident wrong one: a min over the surviving members can be higher than the true min, a
+-- sum lower than the true sum. So a single unresolved member makes every stat `unresolved`, naming
+-- the members that failed. That is one rule, applied once, with no per-rule special case to drift.
+--
+-- Member entries are `{entity_id, status, stats}` for a resolved member and
+-- `{entity_id, status:'unresolved', failure:{...}}` for a failed one. `status` is REQUIRED: an entry
+-- that does not say whether it resolved is itself a resolution failure, not a resolved empty ship.
 create function public.stat_aggregate_fleet(
   p_member_stats jsonb,
   p_registry     jsonb)
@@ -867,6 +1259,9 @@ declare
   v_reg      jsonb;
   v_stats    jsonb := '{}'::jsonb;
   v_na       jsonb := '{}'::jsonb;
+  v_unres    jsonb := '{}'::jsonb;
+  v_dormant  jsonb := '{}'::jsonb;
+  v_prov     jsonb := '{}'::jsonb;
   v_break    jsonb := '[]'::jsonb;
   v_members  jsonb;
   v_count    integer;
@@ -881,6 +1276,9 @@ declare
   v_wsum     numeric;
   v_i        integer;
   v_round    integer;
+  v_failed   jsonb := '[]'::jsonb;
+  v_status   text;
+  v_result   jsonb;
 begin
   if p_registry is null or jsonb_typeof(p_registry -> 'stats') <> 'object' then
     raise exception 'STAT-FOUNDATION stat_aggregate_fleet: p_registry is not a registry snapshot';
@@ -893,9 +1291,55 @@ begin
   end if;
   v_count := jsonb_array_length(v_members);
 
+  -- THE UNRESOLVED SWEEP, before any arithmetic. Every member must state its status; an entry that
+  -- states nothing is treated as a failure, never as an empty-but-fine ship.
+  for v_m in select value from jsonb_array_elements(v_members) loop
+    v_status := v_m ->> 'status';
+    if v_status is null or v_status not in ('resolved','unresolved') then
+      v_failed := v_failed || jsonb_build_array(jsonb_build_object(
+        'entity_id', v_m -> 'entity_id',
+        'failure', jsonb_build_object(
+          'reason', 'member_status_missing_or_unknown',
+          'detail', 'a member entry must declare status ''resolved'' or ''unresolved''; an entry that declares neither is a resolution failure, not a resolved empty ship',
+          'got', coalesce(to_jsonb(v_status), 'null'::jsonb))));
+    elsif v_status = 'unresolved' then
+      v_failed := v_failed || jsonb_build_array(jsonb_build_object(
+        'entity_id', v_m -> 'entity_id',
+        'failure', coalesce(v_m -> 'failure', jsonb_build_object('reason', 'unspecified_member_failure'))));
+    elsif jsonb_typeof(v_m -> 'stats') <> 'object' then
+      v_failed := v_failed || jsonb_build_array(jsonb_build_object(
+        'entity_id', v_m -> 'entity_id',
+        'failure', jsonb_build_object('reason', 'resolved_member_carries_no_stats_object')));
+    end if;
+  end loop;
+
   select coalesce(array_agg(k order by (v_reg -> k ->> 'display_order')::integer, k), array[]::text[])
     into v_ids
     from jsonb_object_keys(v_reg) k;
+
+  -- ANY failed member ⇒ EVERY stat is unresolved. No number is produced, and the diagnostic names
+  -- the members that failed so the caller can act on it.
+  if jsonb_array_length(v_failed) > 0 then
+    foreach v_id in array v_ids loop
+      v_unres := v_unres || jsonb_build_object(v_id, jsonb_build_object(
+        'reason', 'member_resolution_failed',
+        'detail', 'at least one member ship could not be resolved, so no aggregate over this roster is trustworthy. The value is UNKNOWN — it is not zero, not minimum and not maximum.',
+        'failed_members', v_failed));
+      v_prov := v_prov || jsonb_build_object(v_id, jsonb_build_object(
+        'status', 'unresolved', 'reason', 'member_resolution_failed'));
+    end loop;
+    v_result := jsonb_build_object(
+      'member_count',   v_count,
+      'applicable',     false,
+      'stats',          '{}'::jsonb,
+      'not_applicable', '{}'::jsonb,
+      'unresolved',     v_unres,
+      'dormant',        '{}'::jsonb,
+      'provenance',     v_prov,
+      'breakdown',      '[]'::jsonb);
+    perform public.stat_assert_provenance_partition(v_result, 'stat_aggregate_fleet/unresolved');
+    return v_result;
+  end if;
 
   foreach v_id in array v_ids loop
     v_def  := v_reg -> v_id;
@@ -909,10 +1353,12 @@ begin
     -- are the reason this rule exists.
     if v_rule = 'none' then
       v_na := v_na || jsonb_build_object(v_id, 'aggregation_rule_none: this stat is not defined at fleet scope');
+      v_prov := v_prov || jsonb_build_object(v_id, jsonb_build_object('status', 'not_applicable', 'reason', 'aggregation_rule_none'));
       continue;
     end if;
     if (v_def ->> 'applies_to_scope') = 'ship' then
       v_na := v_na || jsonb_build_object(v_id, 'ship_scope_only: this stat is not defined at fleet scope');
+      v_prov := v_prov || jsonb_build_object(v_id, jsonb_build_object('status', 'not_applicable', 'reason', 'ship_scope_only'));
       continue;
     end if;
 
@@ -936,6 +1382,8 @@ begin
         case when v_count = 0
              then 'empty_fleet: no member ships, so this stat has no value (it is NOT zero)'
              else 'no_eligible_member: no participating ship reports this stat (it is NOT zero)' end);
+      v_prov := v_prov || jsonb_build_object(v_id, jsonb_build_object('status', 'not_applicable',
+        'reason', case when v_count = 0 then 'empty_fleet' else 'no_eligible_member' end));
       continue;
     end if;
 
@@ -953,6 +1401,7 @@ begin
         select sum(w) into v_wsum from unnest(v_weights) w;
         if v_wsum is null or v_wsum = 0 then
           v_na := v_na || jsonb_build_object(v_id, 'zero_total_weight: the weighting stat sums to zero, so a weighted average is undefined (it is NOT zero)');
+          v_prov := v_prov || jsonb_build_object(v_id, jsonb_build_object('status', 'not_applicable', 'reason', 'zero_total_weight'));
           continue;
         end if;
         v_acc := 0;
@@ -968,22 +1417,195 @@ begin
     end case;
 
     v_acc := round(v_acc, v_round);
+    -- LIFECYCLE ROUTING, identical in law to the ship-scope routing and expressed once per scope:
+    -- a dormant stat can only be present because an inspection snapshot was supplied, and it never
+    -- reaches `stats`.
+    if (v_def ->> 'lifecycle') = 'dormant' then
+      v_dormant := v_dormant || jsonb_build_object(v_id, jsonb_build_object(
+        'value', case when (v_def ->> 'numeric_domain') = 'integer'
+                      then to_jsonb(v_acc::bigint) else to_jsonb(v_acc) end,
+        'effective', false, 'lifecycle', 'dormant', 'rule', v_rule,
+        'note', 'catalogued with no approved consumer: this number is inspection-only and no gameplay path reads it'));
+      v_prov := v_prov || jsonb_build_object(v_id, jsonb_build_object(
+        'status', 'dormant', 'reason', 'no approved gameplay or presentation consumer'));
+      continue;
+    end if;
     if (v_def ->> 'numeric_domain') = 'integer' then
       v_stats := v_stats || jsonb_build_object(v_id, to_jsonb(v_acc::bigint));
     else
       v_stats := v_stats || jsonb_build_object(v_id, to_jsonb(v_acc));
     end if;
+    v_prov := v_prov || jsonb_build_object(v_id, jsonb_build_object(
+      'status', 'resolved', 'lifecycle', (v_def ->> 'lifecycle'), 'rule', v_rule,
+      'member_values_used', array_length(v_vals, 1),
+      'is_real_zero', (v_acc = 0)));
     v_break := v_break || jsonb_build_array(jsonb_build_object(
       'stat_id', v_id, 'rule', v_rule, 'member_values_used', array_length(v_vals, 1),
       'result', v_acc));
   end loop;
 
-  return jsonb_build_object(
+  v_result := jsonb_build_object(
     'member_count',   v_count,
     'applicable',     (v_count > 0),
     'stats',          v_stats,
     'not_applicable', v_na,
+    'unresolved',     v_unres,
+    'dormant',        v_dormant,
+    'provenance',     v_prov,
     'breakdown',      v_break);
+  perform public.stat_assert_provenance_partition(v_result, 'stat_aggregate_fleet');
+  return v_result;
+end;
+$$;
+
+-- ── 5b. THE CONSUMER CONTRACT — how a gameplay path is allowed to turn stats into a decision ──────
+--
+-- WHY THIS EXISTS, with the live evidence. pirate_intercept_plan_leg
+-- (20260618000301_intercept_fires_at_zone_entry.sql:484, the fold call at :542) sums
+-- `combat_power + survival` and FAILS OPEN:
+--
+--     exception when others then
+--       v_combined := 0;                                   -- 0301:545-547
+--
+-- and that zero is fed to pirate_intercept_compute_risk (0233:345-354), whose stat term is
+--
+--     stat_reference / (stat_reference + greatest(combined, 0))
+--
+-- a strictly decreasing function of `combined` whose supremum, 1.0, is reached at exactly
+-- combined = 0. So a malformed stat graph produces THE HIGHEST RISK THE SYSTEM CAN GENERATE, and a
+-- genuinely weak fleet produces the same gameplay value as a broken one. The comment there calls it
+-- "the conservative choice"; it is the opposite. A `pirate_intercepts` row is then written
+-- (0301:590-602) off a risk the engine had no basis to compute.
+--
+-- THIS SLICE DOES NOT TOUCH THAT FUNCTION. Repairing a live consumer is the bounded
+-- consumer-retirement sequence, not a foundation slice, and a self-assert below proves the
+-- fail-open body is still byte-for-byte where it was. What this slice ships is the CONTRACT its
+-- replacement must satisfy, executable and pinned:
+--
+--   1. SUCCESS AND STAT-RESOLUTION-FAILURE ARE DIFFERENT ANSWERS. There is exactly one way to get a
+--      number out of a resolution (stat_required_sum), and it REFUSES any envelope that is not ok.
+--      A failure therefore cannot become a numeric risk input by any route — not maximum risk, not
+--      minimum risk, not a default, not a clamp.
+--   2. ON FAILURE: no safe passage and no ambush roll. The caller receives ok=false and MUST NOT
+--      write an intercept row, must not advance a leg and must not mutate movement state.
+--   3. REJECT OR DEFER AT THE NEAREST ATOMIC BOUNDARY, PRESERVING PRIOR VALID STATE. For the
+--      interactive path that boundary is the whole command_ship_group_go statement
+--      (20260618000330_the_mover_is_in_the_repo.sql:226, intercept call at :866): reject the command
+--      and leave the fleet exactly as it was. For the scheduled path it is the per-fleet block
+--      inside process_pirate_route_legs (0301:2376): skip that fleet and retry next tick — and,
+--      unlike the deployed handler at 0301:2386-2397, DO NOT delete the fleet's remaining route,
+--      because "we could not read the stats" is not evidence about the route.
+--   4. EMIT A STRUCTURED DIAGNOSTIC: fleet, failing resolver, the stat and source where known, and
+--      the resolver version. That is what the failure envelope carries.
+--   5. RETURN AN ACTIONABLE ERROR — a named reason a caller can branch on, never a bare zero.
+--
+-- stat_require_resolved — the gate. Given a resolver result and the stats a consumer needs, it
+-- either hands back exactly those values, or it hands back a refusal. It NEVER hands back a number
+-- in the refusal case: the failure envelope has no `values` key at all, so there is nothing to read
+-- optimistically.
+create function public.stat_require_resolved(
+  p_resolution jsonb,
+  p_required   text[],
+  p_consumer   text)
+returns jsonb
+language plpgsql
+immutable
+as $$
+declare
+  v_id     text;
+  v_status text;
+  v_vals   jsonb := '{}'::jsonb;
+  v_bad    jsonb := '[]'::jsonb;
+begin
+  if p_consumer is null or p_consumer = '' then
+    raise exception 'STAT-FOUNDATION stat_require_resolved: a consumer name is required — an unattributed refusal is not actionable';
+  end if;
+  if p_required is null or array_length(p_required, 1) is null then
+    raise exception 'STAT-FOUNDATION stat_require_resolved: % asked for no stats — a consumer must state what it needs', p_consumer;
+  end if;
+  if p_resolution is null or jsonb_typeof(p_resolution -> 'provenance') <> 'object' then
+    -- A result with no provenance index is not a resolution this contract can reason about. It is a
+    -- failure, and it is reported as one rather than being probed for a usable number.
+    return jsonb_build_object(
+      'ok', false, 'error', 'stat_resolution_failed', 'reason', 'no_provenance_index',
+      'diagnostic', jsonb_build_object(
+        'consumer', p_consumer, 'required', to_jsonb(p_required),
+        'detail', 'the supplied resolution carries no provenance index, so no stat in it can be confirmed resolved'));
+  end if;
+
+  foreach v_id in array p_required loop
+    v_status := p_resolution -> 'provenance' -> v_id ->> 'status';
+    if v_status = 'resolved' and jsonb_typeof(p_resolution -> 'stats' -> v_id) = 'number' then
+      v_vals := v_vals || jsonb_build_object(v_id, p_resolution -> 'stats' -> v_id);
+    else
+      v_bad := v_bad || jsonb_build_array(jsonb_build_object(
+        'stat_id', v_id,
+        'status',  coalesce(v_status, 'absent_from_resolution'),
+        'detail',  coalesce(
+                     p_resolution -> 'unresolved' -> v_id,
+                     p_resolution -> 'not_applicable' -> v_id,
+                     to_jsonb(coalesce(p_resolution -> 'provenance' -> v_id ->> 'reason',
+                                       'the stat is not present in this resolution'))),
+        'source',  coalesce(p_resolution -> 'provenance' -> v_id -> 'source', 'null'::jsonb)));
+    end if;
+  end loop;
+
+  if jsonb_array_length(v_bad) > 0 then
+    return jsonb_build_object(
+      'ok', false, 'error', 'stat_resolution_failed', 'reason', 'required_stat_not_resolved',
+      'diagnostic', jsonb_build_object(
+        'consumer',         p_consumer,
+        'scope',            p_resolution -> 'scope',
+        'entity_id',        p_resolution -> 'entity_id',
+        'resolver_version', p_resolution -> 'resolver_version',
+        'registry_version', p_resolution -> 'registry_version',
+        'failed_stats',     v_bad,
+        'required',         to_jsonb(p_required),
+        'action',           'reject or defer at the nearest atomic boundary, preserve prior valid state, do not roll, do not mutate movement or intercept state'));
+  end if;
+
+  return jsonb_build_object(
+    'ok', true, 'values', v_vals,
+    'scope',            p_resolution -> 'scope',
+    'entity_id',        p_resolution -> 'entity_id',
+    'resolver_version', p_resolution -> 'resolver_version',
+    'registry_version', p_resolution -> 'registry_version');
+end;
+$$;
+
+-- stat_required_sum — THE ONLY numeric extractor, and therefore the whole impossibility proof. A
+-- consumer that wants the `combat_power + survival` number the ambush path wants must come through
+-- here, and this function refuses anything that is not an ok envelope. There is no second door, no
+-- coalesce, no default and no zero.
+create function public.stat_required_sum(p_envelope jsonb, p_stats text[] default null)
+returns numeric
+language plpgsql
+immutable
+as $$
+declare
+  v_total numeric := 0;
+  v_id    text;
+  v_ids   text[];
+begin
+  if p_envelope is null or (p_envelope ->> 'ok') is distinct from 'true' then
+    raise exception 'STAT-FOUNDATION stat_required_sum: refusing to produce a number from a failed stat resolution (%). A resolution failure is not a value — it is not zero, not a minimum and not a maximum.',
+      coalesce(p_envelope ->> 'reason', p_envelope ->> 'error', 'no envelope');
+  end if;
+  if jsonb_typeof(p_envelope -> 'values') <> 'object' then
+    raise exception 'STAT-FOUNDATION stat_required_sum: envelope claims ok but carries no values object';
+  end if;
+  v_ids := coalesce(p_stats, (select coalesce(array_agg(k order by k), array[]::text[])
+                                from jsonb_object_keys(p_envelope -> 'values') k));
+  if array_length(v_ids, 1) is null then
+    raise exception 'STAT-FOUNDATION stat_required_sum: no stats to sum';
+  end if;
+  foreach v_id in array v_ids loop
+    if jsonb_typeof(p_envelope -> 'values' -> v_id) <> 'number' then
+      raise exception 'STAT-FOUNDATION stat_required_sum: stat % is not a resolved number in this envelope', v_id;
+    end if;
+    v_total := v_total + (p_envelope -> 'values' ->> v_id)::numeric;
+  end loop;
+  return v_total;
 end;
 $$;
 
@@ -1456,11 +2078,17 @@ $$;
 -- p_scope='fleet' takes a group_id. A fleets.id is NEVER a valid p_entity_id.
 --
 -- This function contains NO stat arithmetic of its own. It GATHERS rows and calls the pure leaves.
+--
+-- p_lifecycle_scope is the ONLY way dormant stats can enter a resolution, and it defaults to
+-- 'routine'. A gameplay caller that writes nothing extra gets no dormant stat, no dormant
+-- contribution gathered, and no dormant key in its result — that is the owner's ruling made
+-- structural rather than remembered.
 create function public.resolve_effective_stats(
   p_scope       text,
   p_entity_id   uuid,
   p_context     jsonb       default '{}'::jsonb,
-  p_resolved_at timestamptz default now())
+  p_resolved_at timestamptz default now(),
+  p_lifecycle_scope text    default 'routine')
 returns jsonb
 language plpgsql
 stable
@@ -1491,9 +2119,15 @@ declare
   v_memberout  jsonb := '[]'::jsonb;
   v_agg        jsonb;
   v_group      uuid;
+  v_one        jsonb;
+  v_err        text;
+  v_errdetail  text;
 begin
   if p_scope is null or p_scope not in ('ship','fleet') then
     raise exception 'STAT-FOUNDATION resolve_effective_stats: scope must be ''ship'' or ''fleet'', got %', coalesce(p_scope, '(null)');
+  end if;
+  if p_lifecycle_scope is null or p_lifecycle_scope not in ('routine','inspection') then
+    raise exception 'STAT-FOUNDATION resolve_effective_stats: lifecycle scope must be ''routine'' or ''inspection'', got %', coalesce(p_lifecycle_scope, '(null)');
   end if;
   if p_entity_id is null then
     raise exception 'STAT-FOUNDATION resolve_effective_stats: entity id is required for scope %', p_scope;
@@ -1502,7 +2136,10 @@ begin
     raise exception 'STAT-FOUNDATION resolve_effective_stats: p_context must be a JSON object, got %', jsonb_typeof(p_context);
   end if;
 
-  v_reg := public.stat_registry_snapshot();
+  -- THE ONE PLACE THE VOCABULARY IS DECIDED for this call. Everything below — which contributions
+  -- are even gathered, which stats are folded, which are aggregated — reads THIS snapshot and never
+  -- re-derives the set from the table, so a dormant stat cannot slip in through a second predicate.
+  v_reg := public.stat_registry_snapshot(p_lifecycle_scope);
 
   -- ══ FLEET SCOPE ═══════════════════════════════════════════════════════════════════════════════
   -- Aggregation runs THROUGH canonical ship resolution — this function calls ITSELF for each
@@ -1519,9 +2156,29 @@ begin
 
     if v_members is not null then
       foreach v_member in array v_members loop
-        v_memberout := v_memberout || jsonb_build_array(jsonb_build_object(
-          'entity_id', v_member,
-          'stats', (public.resolve_effective_stats('ship', v_member, p_context, p_resolved_at)) -> 'stats'));
+        -- A MEMBER THAT CANNOT BE RESOLVED IS RECORDED AS UNRESOLVED, NOT DROPPED AND NOT ZEROED.
+        -- The ship resolver still fails closed (it raises rather than fabricating); this catch turns
+        -- that raise into a NAMED, structured member failure so the aggregation can say "unknown"
+        -- instead of quietly computing a fleet total over the ships that happened to work. Dropping
+        -- the member is exactly how a min becomes too high and a sum becomes too low.
+        begin
+          v_one := public.resolve_effective_stats('ship', v_member, p_context, p_resolved_at, p_lifecycle_scope);
+          v_memberout := v_memberout || jsonb_build_array(jsonb_build_object(
+            'entity_id', v_member,
+            'status',    'resolved',
+            'stats',     v_one -> 'stats'));
+        exception when others then
+          get stacked diagnostics v_err = returned_sqlstate, v_errdetail = message_text;
+          v_memberout := v_memberout || jsonb_build_array(jsonb_build_object(
+            'entity_id', v_member,
+            'status',    'unresolved',
+            'failure',   jsonb_build_object(
+              'reason',           'ship_resolution_raised',
+              'failed_resolver',  'resolve_effective_stats(ship)',
+              'sqlstate',         v_err,
+              'detail',           v_errdetail,
+              'resolver_version', 'stat-v1')));
+        end;
       end loop;
     end if;
 
@@ -1530,6 +2187,7 @@ begin
     return jsonb_build_object(
       'resolver_version', 'stat-v1',
       'registry_version', (v_reg ->> 'registry_version')::integer,
+      'lifecycle_scope',  p_lifecycle_scope,
       'scope',            'fleet',
       'entity_id',        p_entity_id,
       'resolved_at',      p_resolved_at,
@@ -1538,12 +2196,16 @@ begin
       'applicable',       v_agg -> 'applicable',
       'stats',            v_agg -> 'stats',
       'not_applicable',   v_agg -> 'not_applicable',
+      'unresolved',       v_agg -> 'unresolved',
+      'dormant',          v_agg -> 'dormant',
+      'provenance',       v_agg -> 'provenance',
       'breakdown',        v_agg -> 'breakdown',
       'members',          v_memberout);
   end if;
 
   -- ══ SHIP SCOPE ════════════════════════════════════════════════════════════════════════════════
-  select msi.main_ship_id, msi.player_id, msi.hull_type_id, msi.group_id, msi.cargo_capacity
+  select msi.main_ship_id, msi.player_id, msi.hull_type_id, msi.group_id, msi.cargo_capacity,
+         msi.cargo_capacity_m3
     into v_ship
     from public.main_ship_instances msi where msi.main_ship_id = p_entity_id;
   if v_ship.main_ship_id is null then
@@ -1558,10 +2220,20 @@ begin
   end if;
 
   -- BASES. A bounded set, from columns already read. speed reads the hull column LIVE (it is never
-  -- copied to the instance); cargo_capacity reads the instance column.
+  -- copied to the instance); cargo_capacity and cargo_volume_m3 read their instance columns.
+  --
+  -- cargo_volume_m3's base is the ship's REAL volume column (20260618000076), so an inspection
+  -- reports the true ship-bound volume instead of a fabricated 0. Reading the base is NOT the
+  -- conversion: no module, trait or captain contribution can reach this stat, because the table
+  -- leaves its permitted lists empty while unit_conversion is undefined. It is supplied only when
+  -- the stat is in scope — stat_combine fails closed on a base for a stat it does not know, and that
+  -- check stays exactly as strict as it was.
   v_bases := jsonb_build_object(
     'speed',          coalesce(v_hull.base_speed, 1),
     'cargo_capacity', coalesce(v_ship.cargo_capacity, 0));
+  if (v_reg -> 'stats') ? 'cargo_volume_m3' then
+    v_bases := v_bases || jsonb_build_object('cargo_volume_m3', coalesce(v_ship.cargo_capacity_m3, 0));
+  end if;
 
   -- The captain multipliers, read ONCE at entry — never per captain: a mid-scan config write must
   -- not split one ship's captains across two regimes (the 0180/0196 posture). The NaN guard is the
@@ -1575,6 +2247,12 @@ begin
 
   -- ── HULL (step 20). Registry-driven: the vocabulary is a JOIN, not a hand-written key list.
   --    A key that is PRESENT but not a JSON number RAISES — it is never coalesced to 0.
+  --
+  --    EVERY gatherer join below filters on `(v_reg -> 'stats') ? d.stat_id`, i.e. on THE SNAPSHOT,
+  --    never on a second lifecycle predicate over the table. That is deliberate: two predicates
+  --    answering "is this stat in play?" is how a dormant stat gets gathered by a path that forgot
+  --    to be updated. On a routine call a dormant stat is not in the snapshot, so no contribution to
+  --    it is ever built — it is not computed and then discarded, it is never reached.
   select v_contrib || coalesce(jsonb_agg(jsonb_build_object(
            'stat_id', d.stat_id, 'source_kind', 'hull', 'source_id', v_hull.hull_type_id,
            'operation', 'flat',
@@ -1584,7 +2262,7 @@ begin
          order by d.stat_id), '[]'::jsonb)
     into v_contrib
     from public.stat_definitions d
-   where d.is_active
+   where (v_reg -> 'stats') ? d.stat_id
      and v_hull.base_stats_json ? d.catalog_key
      and 'hull' = any (d.permitted_source_kinds);
 
@@ -1602,7 +2280,7 @@ begin
       join public.ship_trait_types tt on tt.trait_type_id = mt.trait_type_id
       join public.stat_definitions d
         on tt.stats_json ? d.catalog_key
-       and d.is_active
+       and (v_reg -> 'stats') ? d.stat_id
        and 'trait' = any (d.permitted_source_kinds)
      where mt.main_ship_id = v_ship.main_ship_id;
   end if;
@@ -1628,13 +2306,15 @@ begin
            order by d.stat_id), '[]'::jsonb)
       into v_contrib
       from public.stat_definitions d
-     where d.is_active
+     where (v_reg -> 'stats') ? d.stat_id
        and v_r.stats_json ? d.catalog_key
        and 'module' = any (d.permitted_source_kinds);
 
     -- pirate_attention DEFAULT (0331 hunk 8): the slot_type CASE is used only when the row does not
-    -- state a value. Reproduced exactly, including x slot_cost.
-    if not (v_r.stats_json ? 'pirate_attention') then
+    -- state a value. Reproduced exactly, including x slot_cost — but ONLY when pirate_attention is
+    -- in scope at all. It is seeded DORMANT, so on every routine call this branch is unreachable and
+    -- the fold that 0331 widened across four catalog surfaces is simply not run.
+    if (v_reg -> 'stats') ? 'pirate_attention' and not (v_r.stats_json ? 'pirate_attention') then
       v_contrib := v_contrib || jsonb_build_array(jsonb_build_object(
         'stat_id', 'pirate_attention', 'source_kind', 'module',
         'source_id', v_r.module_instance_id::text || ':default', 'operation', 'flat',
@@ -1671,22 +2351,26 @@ begin
            order by d.stat_id), '[]'::jsonb)
       into v_contrib
       from public.stat_definitions d
-     where d.is_active
+     where (v_reg -> 'stats') ? d.stat_id
        and v_r.stats_json ? d.catalog_key
        and 'captain' = any (d.permitted_source_kinds)
        and d.stat_id <> 'pirate_attention';
 
-    if v_r.stats_json ? 'pirate_attention' then
-      v_contrib := v_contrib || jsonb_build_array(jsonb_build_object(
-        'stat_id', 'pirate_attention', 'source_kind', 'captain',
-        'source_id', v_r.captain_instance_id::text, 'operation', 'flat',
-        'amount', (v_r.stats_json ->> 'pirate_attention')::numeric));
-    else
-      v_contrib := v_contrib || jsonb_build_array(jsonb_build_object(
-        'stat_id', 'pirate_attention', 'source_kind', 'captain',
-        'source_id', v_r.captain_instance_id::text || ':default', 'operation', 'flat',
-        'amount', (case v_r.specialization when 'combat' then 2 when 'trade' then 1
-                        when 'exploration' then 1 when 'mining' then 1 else 0 end)::numeric));
+    -- Same gate as the module block: dormant means NOT COMPUTED, so on a routine call neither the
+    -- stated value nor the specialization default is gathered.
+    if (v_reg -> 'stats') ? 'pirate_attention' then
+      if v_r.stats_json ? 'pirate_attention' then
+        v_contrib := v_contrib || jsonb_build_array(jsonb_build_object(
+          'stat_id', 'pirate_attention', 'source_kind', 'captain',
+          'source_id', v_r.captain_instance_id::text, 'operation', 'flat',
+          'amount', (v_r.stats_json ->> 'pirate_attention')::numeric));
+      else
+        v_contrib := v_contrib || jsonb_build_array(jsonb_build_object(
+          'stat_id', 'pirate_attention', 'source_kind', 'captain',
+          'source_id', v_r.captain_instance_id::text || ':default', 'operation', 'flat',
+          'amount', (case v_r.specialization when 'combat' then 2 when 'trade' then 1
+                          when 'exploration' then 1 when 'mining' then 1 else 0 end)::numeric));
+      end if;
     end if;
 
     v_spd_pen := v_spd_pen
@@ -1721,11 +2405,16 @@ begin
   return jsonb_build_object(
     'resolver_version', 'stat-v1',
     'registry_version', (v_reg ->> 'registry_version')::integer,
+    'lifecycle_scope',  p_lifecycle_scope,
     'scope',            'ship',
     'entity_id',        p_entity_id,
     'resolved_at',      p_resolved_at,
     'context',          coalesce(p_context, '{}'::jsonb),
     'stats',            v_folded -> 'stats',
+    'not_applicable',   v_folded -> 'not_applicable',
+    'unresolved',       v_folded -> 'unresolved',
+    'dormant',          v_folded -> 'dormant',
+    'provenance',       v_folded -> 'provenance',
     'breakdown',        v_folded -> 'breakdown',
     'buffs',            v_buffs -> 'buffs',
     'buffs_suppressed', v_buffs -> 'suppressed');
@@ -1846,10 +2535,19 @@ $$;
 -- never become "every player can read every other player's fleet". auth.uid() must own the entity.
 -- Envelope-wrapped in the house idiom (0159:188-189): a resolver raise degrades to a visible
 -- {ok:false,error} instead of a 500, so a defect here is loud and harmless.
+--
+-- THE AUTHORIZED INSPECTION PATH, and the only one. p_options may carry {"include_dormant": true},
+-- which is the ONLY way a dormant stat is ever computed anywhere in this system. It is:
+--   · EXPLICITLY REQUESTED — a caller that does not ask gets the routine set;
+--   · AUTHORIZED — this function has already established that auth.uid() OWNS the entity;
+--   · AND STILL NOT EFFECTIVE — dormant values come back in a separate `dormant` map, each marked
+--     effective=false, never in `stats`. A client cannot describe them as effective without
+--     deliberately reading a field that says they are not.
 create function public.get_my_effective_stats(
   p_scope     text,
   p_entity_id uuid,
-  p_context   jsonb default '{}'::jsonb)
+  p_context   jsonb default '{}'::jsonb,
+  p_options   jsonb default '{}'::jsonb)
 returns jsonb
 language plpgsql
 stable
@@ -1859,9 +2557,17 @@ as $$
 declare
   v_player uuid := auth.uid();
   v_owner  uuid;
+  v_life   text := 'routine';
 begin
   if v_player is null then
     return jsonb_build_object('ok', false, 'error', 'not_authenticated');
+  end if;
+  if p_options is not null and jsonb_typeof(p_options) <> 'object' then
+    return jsonb_build_object('ok', false, 'error', 'invalid_options',
+      'detail', 'p_options must be a JSON object');
+  end if;
+  if coalesce(p_options -> 'include_dormant', 'false'::jsonb) = 'true'::jsonb then
+    v_life := 'inspection';
   end if;
   if p_scope is null or p_scope not in ('ship','fleet') then
     return jsonb_build_object('ok', false, 'error', 'invalid_scope',
@@ -1888,13 +2594,14 @@ begin
   end if;
 
   return jsonb_build_object('ok', true)
-       || public.resolve_effective_stats(p_scope, p_entity_id, coalesce(p_context, '{}'::jsonb));
+       || public.resolve_effective_stats(p_scope, p_entity_id, coalesce(p_context, '{}'::jsonb),
+                                         now(), v_life);
 exception when others then
   return jsonb_build_object('ok', false, 'error', 'resolve_failed', 'detail', sqlerrm);
 end;
 $$;
 
-comment on function public.get_my_effective_stats(text, uuid, jsonb) is
+comment on function public.get_my_effective_stats(text, uuid, jsonb, jsonb) is
   'STAT FOUNDATION (0340): the owner-facing INSPECTION door. Resolves the caller''s OWN ship '
   '(main_ship_id) or fleet (ship_groups.group_id) through the canonical resolver and returns the '
   'stats WITH the full ordered contribution breakdown, so every number can be traced to the row '
@@ -1904,7 +2611,11 @@ comment on function public.get_my_effective_stats(text, uuid, jsonb) is
 -- Strip the PostgreSQL default EXECUTE-to-PUBLIC first (that default is exactly how a "revoked"
 -- function stays reachable), then grant service_role only.
 revoke all on function public.stat_raise_malformed(text, text, text) from public, anon, authenticated;
-revoke all on function public.stat_registry_snapshot() from public, anon, authenticated;
+revoke all on function public.stat_lifecycle_in_scope(text, text) from public, anon, authenticated;
+revoke all on function public.stat_assert_provenance_partition(jsonb, text) from public, anon, authenticated;
+revoke all on function public.stat_require_resolved(jsonb, text[], text) from public, anon, authenticated;
+revoke all on function public.stat_required_sum(jsonb, text[]) from public, anon, authenticated;
+revoke all on function public.stat_registry_snapshot(text) from public, anon, authenticated;
 revoke all on function public.stat_combine(jsonb, jsonb, jsonb) from public, anon, authenticated;
 revoke all on function public.stat_aggregate_fleet(jsonb, jsonb) from public, anon, authenticated;
 revoke all on function public.progression_level_for_xp(text, numeric) from public, anon, authenticated;
@@ -1913,12 +2624,16 @@ revoke all on function public.resolve_progression(text, uuid, timestamptz) from 
 revoke all on function public.buff_apply_stacking(jsonb, jsonb, timestamptz) from public, anon, authenticated;
 revoke all on function public.buff_derive_source_instances(text, uuid, timestamptz) from public, anon, authenticated;
 revoke all on function public.resolve_active_buffs(text, uuid, jsonb, timestamptz) from public, anon, authenticated;
-revoke all on function public.resolve_effective_stats(text, uuid, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.resolve_effective_stats(text, uuid, jsonb, timestamptz, text) from public, anon, authenticated;
 revoke all on function public.buff_grant(text, text, uuid, uuid, timestamptz, timestamptz, numeric) from public, anon, authenticated;
 revoke all on function public.buff_revoke(uuid) from public, anon, authenticated;
 
 grant execute on function public.stat_raise_malformed(text, text, text) to service_role;
-grant execute on function public.stat_registry_snapshot() to service_role;
+grant execute on function public.stat_lifecycle_in_scope(text, text) to service_role;
+grant execute on function public.stat_assert_provenance_partition(jsonb, text) to service_role;
+grant execute on function public.stat_require_resolved(jsonb, text[], text) to service_role;
+grant execute on function public.stat_required_sum(jsonb, text[]) to service_role;
+grant execute on function public.stat_registry_snapshot(text) to service_role;
 grant execute on function public.stat_combine(jsonb, jsonb, jsonb) to service_role;
 grant execute on function public.stat_aggregate_fleet(jsonb, jsonb) to service_role;
 grant execute on function public.progression_level_for_xp(text, numeric) to service_role;
@@ -1927,7 +2642,7 @@ grant execute on function public.resolve_progression(text, uuid, timestamptz) to
 grant execute on function public.buff_apply_stacking(jsonb, jsonb, timestamptz) to service_role;
 grant execute on function public.buff_derive_source_instances(text, uuid, timestamptz) to service_role;
 grant execute on function public.resolve_active_buffs(text, uuid, jsonb, timestamptz) to service_role;
-grant execute on function public.resolve_effective_stats(text, uuid, jsonb, timestamptz) to service_role;
+grant execute on function public.resolve_effective_stats(text, uuid, jsonb, timestamptz, text) to service_role;
 grant execute on function public.buff_grant(text, text, uuid, uuid, timestamptz, timestamptz, numeric) to service_role;
 grant execute on function public.buff_revoke(uuid) to service_role;
 
@@ -1935,9 +2650,9 @@ grant execute on function public.buff_revoke(uuid) to service_role;
 -- exactly `authenticated`. anon is NOT granted: an unauthenticated caller has no ships to inspect,
 -- and get_my_effective_stats would only ever answer not_authenticated.
 revoke all on function public.get_stat_definitions() from public, anon, authenticated;
-revoke all on function public.get_my_effective_stats(text, uuid, jsonb) from public, anon, authenticated;
+revoke all on function public.get_my_effective_stats(text, uuid, jsonb, jsonb) from public, anon, authenticated;
 grant execute on function public.get_stat_definitions() to authenticated, service_role;
-grant execute on function public.get_my_effective_stats(text, uuid, jsonb) to authenticated, service_role;
+grant execute on function public.get_my_effective_stats(text, uuid, jsonb, jsonb) to authenticated, service_role;
 
 -- ── 11. SELF-ASSERTS — the migration proves its own grounding or refuses to land ──────────────────
 -- NON-VACUITY IS THE DESIGN GOAL, not a nice-to-have. Three vacuity shapes have already shipped in
@@ -1955,6 +2670,10 @@ declare
   v_out   jsonb;
   v_agg   jsonb;
   v_reg   jsonb;
+  v_regi  jsonb;
+  v_env   jsonb;
+  v_num   numeric;
+  v_plan  text;
   v_stk   jsonb;
   v_ces   text;
   v_cges  text;
@@ -1981,11 +2700,39 @@ begin
 
   -- (2) EXACT SEED CARDINALITIES. A deleted seed row fails here; it cannot pass by not existing.
   select count(*) into v_n from public.stat_definitions;
-  if v_n <> 9 then
-    raise exception 'STAT-FOUNDATION self-assert FAIL: stat_definitions has % row(s), want exactly 9', v_n; end if;
-  select count(*) into v_n from public.stat_definitions where is_active;
-  if v_n <> 9 then
-    raise exception 'STAT-FOUNDATION self-assert FAIL: % active stat_definitions, want exactly 9', v_n; end if;
+  if v_n <> 10 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: stat_definitions has % row(s), want exactly 10', v_n; end if;
+  -- EXACT LIFECYCLE CARDINALITIES. If a later edit promotes a dormant stat without an owner ruling,
+  -- this line is what fails.
+  select count(*) into v_n from public.stat_definitions where lifecycle = 'active';
+  if v_n <> 3 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: % ACTIVE stat_definitions, want exactly 3 (combat_power, survival, speed)', v_n; end if;
+  if (select count(*) from public.stat_definitions
+       where lifecycle = 'active' and stat_id in ('combat_power','survival','speed')) <> 3 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the three active stats are not combat_power/survival/speed'; end if;
+  select count(*) into v_n from public.stat_definitions where lifecycle = 'deprecated';
+  if v_n <> 1 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: % DEPRECATED stat_definitions, want exactly 1 (cargo_capacity)', v_n; end if;
+  select count(*) into v_n from public.stat_definitions where lifecycle = 'dormant';
+  if v_n <> 6 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: % DORMANT stat_definitions, want exactly 6 (cargo_volume_m3 + the five confirmed-dead outputs)', v_n; end if;
+  -- THE FIVE CONFIRMED-DEAD OUTPUTS ARE DORMANT, BY NAME. The owner's ruling is that prior
+  -- implementation effort does not create gameplay semantics; this is that ruling, executed.
+  if (select count(*) from public.stat_definitions
+       where lifecycle = 'dormant'
+         and stat_id in ('retreat_safety','scouting','mining_yield','repair','pirate_attention')) <> 5 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the five confirmed-dead outputs are not all dormant'; end if;
+  -- ...and NO dormant stat carries a consumer of any kind (the CHECK guarantees it; this proves the
+  -- CHECK is the one actually on the table).
+  if exists (select 1 from public.stat_definitions
+              where lifecycle = 'dormant'
+                and (engine_consumer is not null or presentation_consumer is not null)) then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a dormant stat carries a consumer'; end if;
+  -- ...and every ACTIVE stat names one.
+  if exists (select 1 from public.stat_definitions
+              where lifecycle = 'active'
+                and engine_consumer is null and presentation_consumer is null) then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an active stat names no consumer — active means something DECIDES with it'; end if;
   select count(*) into v_n from public.progression_curves;
   if v_n <> 1 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: progression_curves has % row(s), want exactly 1', v_n; end if;
@@ -2002,12 +2749,19 @@ begin
     from public.command_buff_types cbt
     join public.stat_definitions d on cbt.stats_json ? d.catalog_key
    where jsonb_typeof(cbt.stats_json -> d.catalog_key) = 'number'
-     and d.is_active and 'command_ship' = any (d.permitted_source_kinds);
+     and d.lifecycle = 'active' and 'command_ship' = any (d.permitted_source_kinds);
   select count(*) into v_bad from public.buff_definitions;
   if v_bad <> v_n then
-    raise exception 'STAT-FOUNDATION self-assert FAIL: buff_definitions has % row(s), want % (one per (command buff, stat) pair)', v_bad, v_n; end if;
-  if v_n < 20 then
-    raise exception 'STAT-FOUNDATION self-assert FAIL: only % (buff, stat) pair(s) derived from command_buff_types — the 20-row catalog is missing or unreadable', v_n; end if;
+    raise exception 'STAT-FOUNDATION self-assert FAIL: buff_definitions has % row(s), want % (one per (command buff, ACTIVE stat) pair)', v_bad, v_n; end if;
+  if v_n < 1 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: % (buff, active stat) pair(s) derived from command_buff_types — the catalog is missing or unreadable', v_n; end if;
+  -- NO BUFF DEFINITION MAY NAME A NON-ACTIVE STAT. A stored contribution aimed at a stat that is
+  -- absent from the routine snapshot would make stat_combine raise on an ordinary ship, so this is a
+  -- correctness gate, not only a hygiene one.
+  if exists (select 1 from public.buff_definitions b
+               join public.stat_definitions d on d.stat_id = b.stat_id
+              where d.lifecycle <> 'active') then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a buff_definitions row targets a non-active stat'; end if;
 
   -- (3) THE OWNER'S DECIDED RULINGS ARE THE ONES ACTUALLY SEEDED.
   if (select fleet_aggregation from public.stat_definitions where stat_id = 'scouting') <> 'max' then
@@ -2018,12 +2772,37 @@ begin
     raise exception 'STAT-FOUNDATION self-assert FAIL: speed is not registered min (a fleet travels at its slowest ship)'; end if;
   if (select min_value from public.stat_definitions where stat_id = 'speed') <> 0.2 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: speed floor is not the deployed 0.2 (0205:662)'; end if;
-  -- CARGO QUARANTINE: no source may contribute, no operation is permitted, no engine consumer.
+  -- CARGO, AFTER THE RE-RULING. The legacy integer is DEPRECATED and non-authoritative: no source
+  -- may contribute, no operation is permitted, no engine consumer, and a reason is recorded.
   if (select array_length(permitted_source_kinds, 1) from public.stat_definitions where stat_id = 'cargo_capacity') is not null
      or (select array_length(permitted_operations, 1) from public.stat_definitions where stat_id = 'cargo_capacity') is not null
      or (select engine_consumer from public.stat_definitions where stat_id = 'cargo_capacity') is not null
+     or (select lifecycle from public.stat_definitions where stat_id = 'cargo_capacity') <> 'deprecated'
      or (select deprecated_reason from public.stat_definitions where stat_id = 'cargo_capacity') is null then
-    raise exception 'STAT-FOUNDATION self-assert FAIL: cargo_capacity is not quarantined as deprecated display-only legacy'; end if;
+    raise exception 'STAT-FOUNDATION self-assert FAIL: cargo_capacity is not registered as deprecated, non-authoritative legacy'; end if;
+  -- ...and the CANONICAL TARGET is modelled, in m3, superseding it, with the conversion NOT
+  -- activated. Every clause here is a thing the owner ruled and a thing the table now enforces.
+  if (select unit from public.stat_definitions where stat_id = 'cargo_volume_m3') <> 'm3'
+     or (select supersedes_stat_id from public.stat_definitions where stat_id = 'cargo_volume_m3') <> 'cargo_capacity'
+     or (select unit_conversion from public.stat_definitions where stat_id = 'cargo_volume_m3') is not null
+     or (select lifecycle from public.stat_definitions where stat_id = 'cargo_volume_m3') <> 'dormant'
+     or (select ship_base_ref from public.stat_definitions where stat_id = 'cargo_volume_m3') <> 'cargo_capacity_m3' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: cargo_volume_m3 is not the dormant canonical m3 target superseding cargo_capacity with an UNDEFINED conversion'; end if;
+  -- THE CONVERSION IS NOT ACTIVATED: with unit_conversion NULL the table forbids the volume stat
+  -- from accepting anything at all, so the deployed `+25` cargo module cannot reach it by any route.
+  if (select array_length(permitted_source_kinds, 1) from public.stat_definitions where stat_id = 'cargo_volume_m3') is not null
+     or (select array_length(permitted_operations, 1) from public.stat_definitions where stat_id = 'cargo_volume_m3') is not null then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: cargo_volume_m3 accepts a contribution while its unit conversion is undefined'; end if;
+  -- ...while the INTENT is recorded, because the owner ruled that modules, captains and traits ARE
+  -- meant to affect real volume once a conversion exists. Intent declares; it does not permit.
+  if not ((select intended_source_kinds from public.stat_definitions where stat_id = 'cargo_volume_m3')
+          @> array['module','captain','trait']::text[]) then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: cargo_volume_m3 does not record module/captain/trait as its intended sources'; end if;
+  -- The two cargo representations must never share a catalog key: a shared key is exactly how the
+  -- legacy integer would silently become the volume number.
+  if (select catalog_key from public.stat_definitions where stat_id = 'cargo_volume_m3')
+     = (select catalog_key from public.stat_definitions where stat_id = 'cargo_capacity') then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the m3 authority and the legacy integer share a catalog key'; end if;
   -- THE CAP LIVES IN THE TRACK DEFINITION, and it is 99.
   if (select c.max_level from public.progression_tracks t join public.progression_curves c on c.curve_id = t.curve_id
        where t.track_id = 'captain_v1') <> 99 then
@@ -2099,6 +2878,95 @@ begin
     raise exception 'STAT-FOUNDATION self-assert FAIL: an invalid fleet aggregation rule was ACCEPTED';
   exception when check_violation then null;
   end;
+  -- LIFECYCLE FAIL-CLOSED, PROBE 1: an UNKNOWN lifecycle value is refused by the table. This is the
+  -- owner's "fail closed on anything else", executed rather than asserted in prose.
+  begin
+    insert into public.stat_definitions (
+      stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
+      numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, lifecycle, engine_consumer, registered_in)
+    values ('__sf_probe_bad_life__', '__sf_probe_bl__', 'probe', 999005, 'both', 'flat', 'points',
+            'numeric', 2, 'none', null, 'additive',
+            array['flat']::text[], array['module']::text[], array['module']::text[],
+            'sum', 'not_applicable', 'experimental', 'nobody', '0340-probe');
+    raise exception 'STAT-FOUNDATION self-assert FAIL: lifecycle ''experimental'' was ACCEPTED — the lifecycle vocabulary does not fail closed';
+  exception when check_violation then null;
+  end;
+  -- LIFECYCLE FAIL-CLOSED, PROBE 2: an ACTIVE stat with no consumer of any kind is refused. "Active
+  -- because a catalog mentions it" is the exact error the owner ruled against.
+  begin
+    insert into public.stat_definitions (
+      stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
+      numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, lifecycle, registered_in)
+    values ('__sf_probe_no_consumer__', '__sf_probe_nc__', 'probe', 999006, 'both', 'flat', 'points',
+            'numeric', 2, 'none', null, 'additive',
+            array['flat']::text[], array['module']::text[], array['module']::text[],
+            'sum', 'not_applicable', 'active', '0340-probe');
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an ACTIVE stat with no gameplay and no presentation consumer was ACCEPTED';
+  exception when check_violation then null;
+  end;
+  -- LIFECYCLE FAIL-CLOSED, PROBE 3: a DORMANT stat may not smuggle in a consumer.
+  begin
+    insert into public.stat_definitions (
+      stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
+      numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, lifecycle, engine_consumer, registered_in)
+    values ('__sf_probe_dormant_consumer__', '__sf_probe_dc__', 'probe', 999007, 'both', 'flat', 'points',
+            'numeric', 2, 'none', null, 'additive',
+            array['flat']::text[], array['module']::text[], array['module']::text[],
+            'sum', 'not_applicable', 'dormant', 'some_function', '0340-probe');
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a DORMANT stat with an engine consumer was ACCEPTED';
+  exception when check_violation then null;
+  end;
+  -- LIFECYCLE FAIL-CLOSED, PROBE 4: a DEPRECATED stat may not hold a gameplay consumer.
+  begin
+    insert into public.stat_definitions (
+      stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
+      numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, lifecycle, engine_consumer, deprecated_reason, registered_in)
+    values ('__sf_probe_dep_consumer__', '__sf_probe_pc__', 'probe', 999008, 'both', 'flat', 'points',
+            'numeric', 2, 'none', null, 'additive',
+            array['flat']::text[], array['module']::text[], array['module']::text[],
+            'sum', 'not_applicable', 'deprecated', 'some_function', 'legacy', '0340-probe');
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a DEPRECATED stat with a gameplay consumer was ACCEPTED — deprecated means forbidden to new gameplay consumers';
+  exception when check_violation then null;
+  end;
+  -- THE CARGO GUARD, PROBED: a stat that supersedes another with an UNDEFINED conversion may not
+  -- accept a contribution. This is what makes "do not copy the +25 into the volume field"
+  -- impossible rather than merely forbidden.
+  begin
+    insert into public.stat_definitions (
+      stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
+      numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, lifecycle, supersedes_stat_id, registered_in)
+    values ('__sf_probe_cargo_conv__', '__sf_probe_cc__', 'probe', 999009, 'both', 'flat', 'm3',
+            'numeric', 2, 'none', null, 'additive',
+            array['flat']::text[], array['module']::text[], array['module']::text[],
+            'sum', 'not_applicable', 'dormant', 'cargo_capacity', '0340-probe');
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a superseding stat with an UNDEFINED unit conversion ACCEPTED a module contribution — the cargo conversion is not structurally inert';
+  exception when check_violation then null;
+  end;
+  -- ...and intent must precede permission: nothing may be permitted that was not declared intended.
+  begin
+    insert into public.stat_definitions (
+      stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
+      numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, lifecycle, engine_consumer, registered_in)
+    values ('__sf_probe_unintended__', '__sf_probe_ui__', 'probe', 999010, 'both', 'flat', 'points',
+            'numeric', 2, 'none', null, 'additive',
+            array['flat']::text[], array['module','captain']::text[], array['module']::text[],
+            'sum', 'not_applicable', 'active', 'x', '0340-probe');
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a source category was PERMITTED without being declared INTENDED';
+  exception when check_violation then null;
+  end;
+
   select count(*) into v_n from public.stat_definitions where stat_id like '\_\_sf\_probe\_%';
   if v_n <> 0 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: % probe row(s) survived — a fail-closed probe actually inserted', v_n; end if;
@@ -2285,34 +3153,55 @@ begin
     raise exception 'STAT-FOUNDATION self-assert FAIL: an empty fleet did not report combat_power as explicitly not applicable'; end if;
   if (v_agg -> 'stats' ->> 'combat_power') is not null then
     raise exception 'STAT-FOUNDATION self-assert FAIL: an empty fleet reported a combat_power VALUE'; end if;
+  if (v_agg -> 'provenance' -> 'combat_power' ->> 'status') <> 'not_applicable'
+     or (v_agg -> 'provenance' -> 'combat_power' ->> 'reason') <> 'empty_fleet' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an empty fleet did not record combat_power provenance as not_applicable/empty_fleet'; end if;
 
   -- SINGLE-SHIP FLEET: every rule collapses to the member's own value.
   v_agg := public.stat_aggregate_fleet(
-    '[{"entity_id":"s1","stats":{"combat_power":12.00,"scouting":4.00,"retreat_safety":7.00,"speed":1.500}}]'::jsonb, v_reg);
+    '[{"entity_id":"s1","status":"resolved","stats":{"combat_power":12.00,"survival":3.00,"speed":1.500}}]'::jsonb, v_reg);
   if (v_agg -> 'stats' ->> 'combat_power')::numeric <> 12.00
-     or (v_agg -> 'stats' ->> 'scouting')::numeric <> 4.00
-     or (v_agg -> 'stats' ->> 'retreat_safety')::numeric <> 7.00
+     or (v_agg -> 'stats' ->> 'survival')::numeric <> 3.00
      or (v_agg -> 'stats' ->> 'speed')::numeric <> 1.500 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: a single-ship fleet did not collapse to the member value'; end if;
 
-  -- MULTI-SHIP FLEET: sum / max / min / min, each per the stat's own declared rule.
+  -- MULTI-SHIP FLEET, ROUTINE SCOPE: sum / sum / min, each per the stat's own declared rule.
   v_agg := public.stat_aggregate_fleet(
-    '[{"entity_id":"s1","stats":{"combat_power":10.00,"scouting":9.00,"retreat_safety":8.00,"speed":2.000}},
-      {"entity_id":"s2","stats":{"combat_power":5.00, "scouting":1.00,"retreat_safety":3.00,"speed":1.000}},
-      {"entity_id":"s3","stats":{"combat_power":2.00, "scouting":4.00,"retreat_safety":6.00,"speed":3.000}}]'::jsonb, v_reg);
+    '[{"entity_id":"s1","status":"resolved","stats":{"combat_power":10.00,"survival":9.00,"speed":2.000}},
+      {"entity_id":"s2","status":"resolved","stats":{"combat_power":5.00, "survival":1.00,"speed":1.000}},
+      {"entity_id":"s3","status":"resolved","stats":{"combat_power":2.00, "survival":4.00,"speed":3.000}}]'::jsonb, v_reg);
   if (v_agg -> 'stats' ->> 'combat_power')::numeric <> 17.00 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: combat_power did not SUM across the fleet (want 17.00, got %)', (v_agg -> 'stats' ->> 'combat_power'); end if;
-  if (v_agg -> 'stats' ->> 'scouting')::numeric <> 9.00 then
-    raise exception 'STAT-FOUNDATION self-assert FAIL: scouting did not take the MAX (want 9.00, got %)', (v_agg -> 'stats' ->> 'scouting'); end if;
-  if (v_agg -> 'stats' ->> 'retreat_safety')::numeric <> 3.00 then
-    raise exception 'STAT-FOUNDATION self-assert FAIL: retreat_safety did not take the MIN (want 3.00, got %)', (v_agg -> 'stats' ->> 'retreat_safety'); end if;
+  if (v_agg -> 'stats' ->> 'survival')::numeric <> 14.00 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: survival did not SUM across the fleet (want 14.00, got %)', (v_agg -> 'stats' ->> 'survival'); end if;
   if (v_agg -> 'stats' ->> 'speed')::numeric <> 1.000 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: fleet speed is not the MINIMUM effective speed (want 1.000, got %)', (v_agg -> 'stats' ->> 'speed'); end if;
+
+  -- THE OWNER'S TWO AGGREGATION CORRECTIONS still hold — proven on the INSPECTION registry, because
+  -- scouting and retreat_safety are dormant and are therefore not in the routine one at all. That is
+  -- the point: the rules are preserved for the day they are promoted, and are unreachable until then.
+  v_regi := public.stat_registry_snapshot('inspection');
+  v_agg := public.stat_aggregate_fleet(
+    '[{"entity_id":"s1","status":"resolved","stats":{"scouting":9.00,"retreat_safety":8.00}},
+      {"entity_id":"s2","status":"resolved","stats":{"scouting":1.00,"retreat_safety":3.00}},
+      {"entity_id":"s3","status":"resolved","stats":{"scouting":4.00,"retreat_safety":6.00}}]'::jsonb, v_regi);
+  if (v_agg -> 'dormant' -> 'scouting' ->> 'value')::numeric <> 9.00 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: scouting did not take the MAX (want 9.00, got %)', (v_agg -> 'dormant' -> 'scouting' ->> 'value'); end if;
+  if (v_agg -> 'dormant' -> 'retreat_safety' ->> 'value')::numeric <> 3.00 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: retreat_safety did not take the MIN (want 3.00, got %)', (v_agg -> 'dormant' -> 'retreat_safety' ->> 'value'); end if;
+  -- ...and even under inspection they are NOT effective and NOT in `stats`.
+  if (v_agg -> 'stats' ? 'scouting') or (v_agg -> 'stats' ? 'retreat_safety') then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a dormant stat reached `stats` under inspection — dormant values must never be presentable as effective'; end if;
+  if (v_agg -> 'dormant' -> 'scouting' ->> 'effective') <> 'false' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an inspected dormant stat is not marked effective=false'; end if;
+
   -- A fleet whose members report nothing is not a fleet of zeroes either.
-  v_agg := public.stat_aggregate_fleet('[{"entity_id":"s1","stats":{}},{"entity_id":"s2","stats":{}}]'::jsonb, v_reg);
+  v_agg := public.stat_aggregate_fleet('[{"entity_id":"s1","status":"resolved","stats":{}},{"entity_id":"s2","status":"resolved","stats":{}}]'::jsonb, v_reg);
   if (v_agg -> 'stats' ->> 'combat_power') is not null
      or v_agg -> 'not_applicable' -> 'combat_power' is null then
     raise exception 'STAT-FOUNDATION self-assert FAIL: an ineligible fleet produced a value instead of an explicit non-applicable result'; end if;
+  if (v_agg -> 'provenance' -> 'combat_power' ->> 'reason') <> 'no_eligible_member' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an ineligible fleet did not distinguish no_eligible_member from empty_fleet'; end if;
 
   -- (10) PROGRESSION: the deployed curve, its exact boundaries, its inverse, and the cap.
   --      The right-hand side is 0177:270 transcribed. If the deployed curve ever changes, this fails.
@@ -2458,6 +3347,178 @@ begin
   if v_bad <> 0 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: % buff definition(s) carry the wrong operation mapping', v_bad; end if;
 
+  -- (12b) LIFECYCLE, EXECUTED: A DORMANT STAT IS NOT COMPUTED ON THE ROUTINE PATH.
+  --       Not "is filtered from the output" — NOT COMPUTED. The routine snapshot does not contain
+  --       it, so the fold has no vocabulary entry to fold, the gatherers' snapshot-membership joins
+  --       match nothing, and a contribution aimed at it is REJECTED as an unknown stat.
+  v_regi := public.stat_registry_snapshot('inspection');
+  if (v_reg -> 'stats') ? 'pirate_attention' or (v_reg -> 'stats') ? 'scouting'
+     or (v_reg -> 'stats') ? 'mining_yield' or (v_reg -> 'stats') ? 'retreat_safety'
+     or (v_reg -> 'stats') ? 'repair' or (v_reg -> 'stats') ? 'cargo_volume_m3' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a DORMANT stat is present in the ROUTINE registry snapshot'; end if;
+  select count(*) into v_n from jsonb_object_keys(v_reg -> 'stats');
+  if v_n <> 4 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the routine snapshot holds % stat(s), want exactly 4 (combat_power, survival, speed, cargo_capacity)', v_n; end if;
+  select count(*) into v_n from jsonb_object_keys(v_regi -> 'stats');
+  if v_n <> 10 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the inspection snapshot holds % stat(s), want exactly 10', v_n; end if;
+  -- The routine fold EMITS no dormant key at all...
+  v_out := public.stat_combine('[]'::jsonb, '{}'::jsonb, v_reg);
+  if (v_out -> 'stats') ? 'pirate_attention' or (v_out -> 'dormant') <> '{}'::jsonb then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a routine fold produced a dormant key'; end if;
+  -- ...and REFUSES a contribution aimed at one, rather than silently ignoring it. Silently ignoring
+  -- would let a caller believe a dormant stat was applied.
+  begin
+    v_out := public.stat_combine(
+      '[{"stat_id":"pirate_attention","source_kind":"module","source_id":"m","operation":"flat","amount":5}]'::jsonb,
+      '{}'::jsonb, v_reg);
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a contribution to a DORMANT stat was accepted on the routine path';
+  exception when others then
+    if position('unknown stat_id' in sqlerrm) = 0 then raise; end if;
+  end;
+  -- An unknown lifecycle scope is refused; there is no permissive fallback.
+  begin
+    v_out := public.stat_registry_snapshot('everything');
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an unknown lifecycle scope was accepted';
+  exception when others then
+    if position('unknown lifecycle scope' in sqlerrm) = 0 then raise; end if;
+  end;
+  -- The lifecycle rule itself, at every combination, in the one function that owns it.
+  if public.stat_lifecycle_in_scope('dormant','routine')
+     or not public.stat_lifecycle_in_scope('dormant','inspection')
+     or not public.stat_lifecycle_in_scope('active','routine')
+     or not public.stat_lifecycle_in_scope('deprecated','routine')
+     or public.stat_lifecycle_in_scope('active','nonsense')
+     or public.stat_lifecycle_in_scope('made_up','inspection') then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: stat_lifecycle_in_scope does not implement the lifecycle rule (an unknown lifecycle must be in NO scope)'; end if;
+
+  -- (12c) THREE-WAY PROVENANCE, EXECUTED: a REAL ZERO, a RESOLUTION FAILURE and a NOT-APPLICABLE are
+  --       mutually distinguishable in ONE result. A structure in which all three read `0` is the
+  --       defect being eliminated, so all three are produced here and compared.
+  --
+  --       s1 resolves with combat_power = 0 (a real zero) and reports no speed (not applicable),
+  --       and there is no failed member, so `unresolved` is empty. Then the same roster WITH a
+  --       failed member is aggregated, and the same stat that was a real zero becomes unresolved.
+  v_agg := public.stat_aggregate_fleet(
+    '[{"entity_id":"s1","status":"resolved","stats":{"combat_power":0.00,"survival":4.00}}]'::jsonb, v_reg);
+  -- (i) A REAL ZERO is a RESOLVED value: it is in `stats`, it IS 0, and it says it is a real zero.
+  if (v_agg -> 'stats' ->> 'combat_power')::numeric <> 0
+     or (v_agg -> 'provenance' -> 'combat_power' ->> 'status') <> 'resolved'
+     or (v_agg -> 'provenance' -> 'combat_power' ->> 'is_real_zero') <> 'true' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a real zero is not recorded as a RESOLVED value'; end if;
+  -- (ii) NOT APPLICABLE is not a zero: no key in `stats`, a reason in `not_applicable`.
+  if (v_agg -> 'stats' ? 'speed')
+     or (v_agg -> 'provenance' -> 'speed' ->> 'status') <> 'not_applicable' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a not-applicable stat leaked a value'; end if;
+  if v_agg -> 'unresolved' <> '{}'::jsonb then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a clean aggregation reported unresolved stats'; end if;
+  -- (iii) A RESOLUTION FAILURE is neither: no value, a NAMED failure, and the failing member listed.
+  v_agg := public.stat_aggregate_fleet(
+    '[{"entity_id":"s1","status":"resolved","stats":{"combat_power":0.00,"survival":4.00}},
+      {"entity_id":"s2","status":"unresolved","failure":{"reason":"ship_resolution_raised","failed_resolver":"resolve_effective_stats(ship)","detail":"malformed module stats_json"}}]'::jsonb,
+    v_reg);
+  if (v_agg -> 'stats' ? 'combat_power') then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an aggregate was produced over a roster containing an UNRESOLVED member'; end if;
+  if (v_agg -> 'provenance' -> 'combat_power' ->> 'status') <> 'unresolved'
+     or (v_agg -> 'unresolved' -> 'combat_power' ->> 'reason') <> 'member_resolution_failed' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a member resolution failure did not become an UNRESOLVED stat'; end if;
+  if (v_agg -> 'unresolved' -> 'combat_power' -> 'failed_members' -> 0 -> 'failure' ->> 'failed_resolver')
+       is distinct from 'resolve_effective_stats(ship)' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the unresolved diagnostic does not name the failing resolver'; end if;
+  -- THE THREE ARE DIFFERENT SHAPES, not three spellings of 0. Proven by asking for the number: only
+  -- the real zero yields one.
+  if jsonb_typeof(v_agg -> 'unresolved' -> 'combat_power') = 'number' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an unresolved stat is expressible as a number'; end if;
+  -- A member that does not declare its status is a FAILURE, never a resolved empty ship.
+  v_agg := public.stat_aggregate_fleet('[{"entity_id":"s9","stats":{"combat_power":3}}]'::jsonb, v_reg);
+  if (v_agg -> 'provenance' -> 'combat_power' ->> 'status') <> 'unresolved' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a member with no status was treated as resolved'; end if;
+  -- And the partition law itself refuses a collapsed result. This is the assert that would catch a
+  -- future edit putting a stat in two maps.
+  begin
+    perform public.stat_assert_provenance_partition(
+      '{"stats":{"a":1},"not_applicable":{"a":"x"},"unresolved":{},"dormant":{},"provenance":{"a":{"status":"resolved"}}}'::jsonb,
+      'probe');
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the provenance partition law accepted a stat that is in TWO maps';
+  exception when others then
+    if position('more than one provenance map' in sqlerrm) = 0 then raise; end if;
+  end;
+
+  -- (12d) THE AMBUSH IMPOSSIBILITY PIN. A stat-resolution failure CANNOT become a numeric risk value.
+  --       Live evidence this replaces: pirate_intercept_plan_leg sets v_combined := 0 on any raise
+  --       (0301:545-547) and 0233:345-354 turns 0 into the system's MAXIMUM risk, so a broken stat
+  --       graph and a genuinely weak fleet produce the same gameplay value.
+  --
+  --       SUCCESS PATH: the required stats resolve, and the number comes out.
+  v_agg := public.stat_aggregate_fleet(
+    '[{"entity_id":"s1","status":"resolved","stats":{"combat_power":40.00,"survival":20.00}}]'::jsonb, v_reg);
+  v_env := public.stat_require_resolved(v_agg, array['combat_power','survival'], 'pirate_intercept_plan_leg');
+  if (v_env ->> 'ok') <> 'true' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a fully resolved fleet was refused by the consumer contract'; end if;
+  if public.stat_required_sum(v_env) <> 60.00 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the consumer contract did not sum combat_power + survival (want 60.00)'; end if;
+  --       A GENUINELY WEAK FLEET still produces a NUMBER — zero. That is the distinction the live
+  --       consumer cannot make, and it is made here.
+  v_agg := public.stat_aggregate_fleet(
+    '[{"entity_id":"s1","status":"resolved","stats":{"combat_power":0.00,"survival":0.00}}]'::jsonb, v_reg);
+  v_env := public.stat_require_resolved(v_agg, array['combat_power','survival'], 'pirate_intercept_plan_leg');
+  if (v_env ->> 'ok') <> 'true' or public.stat_required_sum(v_env) <> 0 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a genuinely weak (real zero) fleet was not resolvable to 0'; end if;
+  --       FAILURE PATH, SHAPE 1 — a member could not be resolved.
+  v_agg := public.stat_aggregate_fleet(
+    '[{"entity_id":"s1","status":"unresolved","failure":{"reason":"ship_resolution_raised"}}]'::jsonb, v_reg);
+  v_env := public.stat_require_resolved(v_agg, array['combat_power','survival'], 'pirate_intercept_plan_leg');
+  if (v_env ->> 'ok') <> 'false' or (v_env ->> 'error') <> 'stat_resolution_failed' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an unresolved fleet did not produce an actionable refusal'; end if;
+  if v_env ? 'values' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a REFUSAL carried a values object — there must be nothing to read optimistically'; end if;
+  select count(*) into v_n from jsonb_each(v_env) e where jsonb_typeof(e.value) = 'number';
+  if v_n <> 0 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a stat-resolution refusal carries % top-level number(s) — a failure must not be expressible as a value', v_n; end if;
+  if (v_env -> 'diagnostic' ->> 'consumer') <> 'pirate_intercept_plan_leg'
+     or jsonb_array_length(v_env -> 'diagnostic' -> 'failed_stats') <> 2 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the refusal diagnostic does not name the consumer and the failing stats'; end if;
+  -- THE IMPOSSIBILITY ITSELF: the ONLY numeric extractor REFUSES the failure envelope. There is no
+  -- second door, so no failure can reach the risk formula as a number — not as 0, not as anything.
+  begin
+    v_num := public.stat_required_sum(v_env);
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a stat-resolution FAILURE produced the numeric value % — this is exactly the 0301:545-547 fail-open defect', v_num;
+  exception when others then
+    if position('refusing to produce a number from a failed stat resolution' in sqlerrm) = 0 then raise; end if;
+  end;
+  --       FAILURE PATH, SHAPE 2 — the fleet is empty, so the stats are NOT APPLICABLE. Also a
+  --       refusal, and a DIFFERENT one: "no ships" is not "we could not read the ships".
+  v_agg := public.stat_aggregate_fleet('[]'::jsonb, v_reg);
+  v_env := public.stat_require_resolved(v_agg, array['combat_power','survival'], 'pirate_intercept_plan_leg');
+  if (v_env ->> 'ok') <> 'false' or v_env ? 'values' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an empty fleet was not refused by the consumer contract'; end if;
+  if (v_env -> 'diagnostic' -> 'failed_stats' -> 0 ->> 'status') <> 'not_applicable' then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the refusal collapsed not_applicable into unresolved — the two must stay distinguishable'; end if;
+  begin
+    v_num := public.stat_required_sum(v_env);
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an empty fleet produced the numeric risk input %', v_num;
+  exception when others then
+    if position('refusing to produce a number from a failed stat resolution' in sqlerrm) = 0 then raise; end if;
+  end;
+  --       FAILURE PATH, SHAPE 3 — a hand-made envelope claiming ok with no values is still refused.
+  begin
+    v_num := public.stat_required_sum('{"ok":true}'::jsonb);
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an envelope claiming ok with no values produced %', v_num;
+  exception when others then
+    if position('carries no values object' in sqlerrm) = 0 then raise; end if;
+  end;
+  --       AND THE LIVE CONSUMER IS UNTOUCHED. This slice designs the replacement; it does not repair
+  --       pirate_intercept_plan_leg. If a later edit "helpfully" fixes it here, this fails.
+  select prosrc into v_plan from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+    where ns.nspname = 'public' and p.proname = 'pirate_intercept_plan_leg';
+  if v_plan is null then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: pirate_intercept_plan_leg is missing — this slice asserts it is UNCHANGED, not absent'; end if;
+  if strpos(v_plan, 'v_combined := 0;') = 0 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the 0301:545-547 fail-open handler is gone — repairing the live ambush consumer is OUT OF SCOPE for this slice'; end if;
+  if strpos(v_plan, 'stat_require_resolved') > 0 or strpos(v_plan, 'resolve_effective_stats') > 0
+     or strpos(v_plan, 'stat_required_sum') > 0 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: pirate_intercept_plan_leg carries a 0340 token — the consumer cutover is a separate, bounded sequence'; end if;
+
   -- (13) BLAST RADIUS. The out-of-scope engine bodies EXIST and carry ZERO token from this slice.
   --      This is the proof that the slice is dark: nothing calls it because nothing mentions it.
   select prosrc into v_ces  from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
@@ -2505,7 +3566,7 @@ begin
       raise exception 'STAT-FOUNDATION self-assert FAIL: RLS is not enabled on stat_definitions'; end if;
   end loop;
   foreach v_role in array array['anon','authenticated','public'] loop
-    if has_function_privilege(v_role, 'public.resolve_effective_stats(text,uuid,jsonb,timestamptz)', 'execute')
+    if has_function_privilege(v_role, 'public.resolve_effective_stats(text,uuid,jsonb,timestamptz,text)', 'execute')
        or has_function_privilege(v_role, 'public.resolve_active_buffs(text,uuid,jsonb,timestamptz)', 'execute')
        or has_function_privilege(v_role, 'public.resolve_progression(text,uuid,timestamptz)', 'execute')
        or has_function_privilege(v_role, 'public.stat_combine(jsonb,jsonb,jsonb)', 'execute')
@@ -2514,6 +3575,9 @@ begin
        or has_function_privilege(v_role, 'public.progression_level_for_xp(text,numeric)', 'execute')
        or has_function_privilege(v_role, 'public.progression_xp_for_level(text,integer)', 'execute')
        or has_function_privilege(v_role, 'public.buff_grant(text,text,uuid,uuid,timestamptz,timestamptz,numeric)', 'execute')
+       or has_function_privilege(v_role, 'public.stat_require_resolved(jsonb,text[],text)', 'execute')
+       or has_function_privilege(v_role, 'public.stat_required_sum(jsonb,text[])', 'execute')
+       or has_function_privilege(v_role, 'public.stat_registry_snapshot(text)', 'execute')
        or has_function_privilege(v_role, 'public.buff_revoke(uuid)', 'execute') then
       raise exception 'STAT-FOUNDATION self-assert FAIL: role % can EXECUTE a 0340 ENGINE function — the arithmetic leaves and the buff writers are server-only', v_role; end if;
   end loop;
@@ -2521,10 +3585,10 @@ begin
   -- draft's mistake: a foundation the owner cannot call is a foundation the owner cannot check.
   if not has_function_privilege('authenticated', 'public.get_stat_definitions()', 'execute') then
     raise exception 'STAT-FOUNDATION self-assert FAIL: authenticated cannot EXECUTE get_stat_definitions — the registry must be inspectable'; end if;
-  if not has_function_privilege('authenticated', 'public.get_my_effective_stats(text,uuid,jsonb)', 'execute') then
+  if not has_function_privilege('authenticated', 'public.get_my_effective_stats(text,uuid,jsonb,jsonb)', 'execute') then
     raise exception 'STAT-FOUNDATION self-assert FAIL: authenticated cannot EXECUTE get_my_effective_stats — the resolver must be inspectable by its owner'; end if;
   -- ...but not by anon, and the ownership scope must actually be in the body.
-  if has_function_privilege('anon', 'public.get_my_effective_stats(text,uuid,jsonb)', 'execute') then
+  if has_function_privilege('anon', 'public.get_my_effective_stats(text,uuid,jsonb,jsonb)', 'execute') then
     raise exception 'STAT-FOUNDATION self-assert FAIL: anon can EXECUTE get_my_effective_stats'; end if;
   if strpos((select prosrc from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
               where ns.nspname='public' and p.proname='get_my_effective_stats'), 'auth.uid()') = 0 then
@@ -2554,6 +3618,6 @@ begin
   if v_bad <> 0 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: % captain_instances row(s) have a cached level that disagrees with the curve', v_bad; end if;
 
-  raise notice 'STAT-FOUNDATION self-assert ok: NO feature flag introduced (asserted absent — an inert gate is not a safety device); the two inspection RPCs get_stat_definitions / get_my_effective_stats are executable by authenticated, NOT by anon, and get_my_effective_stats scopes on auth.uid(); 9 stat_definitions / 1 progression_curve / 1 progression_track / % buff_definitions seeded, buff_instances empty; scouting=max, retreat_safety=min, fleet speed=min, speed floor 0.2, cargo_capacity quarantined (no permitted source, no operation, no engine consumer, deprecation recorded); captain_v1 capped at 99 with accumulate_xp_no_level; four fail-closed registry probes were REJECTED by the table; the pure leaves carry zero RNG/clock tokens, no table reference, no write and no dynamic SQL, and the buff family never calls the stat resolver (acyclic); the deploy-time equivalence checks reproduce 0205:662 / :676 / :677 and 0177:270 on synthetic input reading no game row; modifier ORDER, additive-pct summing, breakdown reconciliation, JSONB round-trip stability and repeat determinism all proven; unknown stat / unpermitted operation / quarantined stat / non-numeric amount / duplicate contribution identity / unknown track / negative xp / invalid buff window / unknown buff stat ALL rejected; empty, single-ship, multi-ship and ineligible fleets aggregate per declared rule with an explicit non-applicable result and never a silent 0; all five stacking policies proven with their reasons; every 0340 table is RLS-on and read-only to clients and every 0340 function is server-only; calculate_expedition_stats / calculate_group_expedition_stats / combat_create_group_encounter / process_combat_ticks carry ZERO 0340 token and their byte-identity anchors (incl. the out-of-scope 0301 malformed-ship handler) survive',
+  raise notice 'STAT-FOUNDATION self-assert ok: NO feature flag introduced (asserted absent — an inert gate is not a safety device); the two inspection RPCs get_stat_definitions / get_my_effective_stats are executable by authenticated, NOT by anon, and get_my_effective_stats scopes on auth.uid(); 10 stat_definitions (3 active / 1 deprecated / 6 dormant) / 1 progression_curve / 1 progression_track / % buff_definitions seeded, buff_instances empty; the five confirmed-dead outputs (retreat_safety, scouting, mining_yield, repair, pirate_attention) are DORMANT and absent from the routine snapshot, so they are not computed on any routine path and a contribution to one is REJECTED; the routine snapshot holds exactly 4 stats and the inspection snapshot exactly 10; three-way provenance proven — a real zero, a member-resolution failure and a not-applicable are three different shapes and the four maps partition the key set; the ambush impossibility pin holds — stat_required_sum REFUSES every failure envelope, so no stat-resolution failure can become a numeric risk value, and pirate_intercept_plan_leg is asserted UNCHANGED (its 0301:545-547 fail-open handler still present, zero 0340 tokens); cargo re-ruled — cargo_capacity is DEPRECATED and non-authoritative, cargo_volume_m3 is the DORMANT canonical m3 target superseding it with an UNDEFINED conversion that the table makes structurally inert; scouting=max, retreat_safety=min, fleet speed=min, speed floor 0.2; captain_v1 capped at 99 with accumulate_xp_no_level; ten fail-closed registry probes were REJECTED by the table; the pure leaves carry zero RNG/clock tokens, no table reference, no write and no dynamic SQL, and the buff family never calls the stat resolver (acyclic); the deploy-time equivalence checks reproduce 0205:662 / :676 / :677 and 0177:270 on synthetic input reading no game row; modifier ORDER, additive-pct summing, breakdown reconciliation, JSONB round-trip stability and repeat determinism all proven; unknown stat / unpermitted operation / quarantined stat / non-numeric amount / duplicate contribution identity / unknown track / negative xp / invalid buff window / unknown buff stat ALL rejected; empty, single-ship, multi-ship and ineligible fleets aggregate per declared rule with an explicit non-applicable result and never a silent 0; all five stacking policies proven with their reasons; every 0340 table is RLS-on and read-only to clients and every 0340 function is server-only; calculate_expedition_stats / calculate_group_expedition_stats / combat_create_group_encounter / process_combat_ticks carry ZERO 0340 token and their byte-identity anchors (incl. the out-of-scope 0301 malformed-ship handler) survive',
     (select count(*) from public.buff_definitions);
 end $sfassert$;
