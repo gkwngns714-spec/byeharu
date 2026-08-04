@@ -3366,9 +3366,36 @@ begin
 
   -- (12) NO STORED EXPRESSION. Every seeded context_restriction value is a scalar or an array of
   --      scalars — walked row by row, with a cardinality guard so an empty walk cannot pass.
+  -- The guard is DERIVED from the catalog, never a hard-coded floor. The seed is now filtered to
+  -- ACTIVE stats, so a literal "at least 20" was a stale number that failed the moment the lifecycle
+  -- ruling landed — caught by the disposable full-chain apply, which is the only layer that has
+  -- rows to count. What must hold is: the catalog exists, the seed matches what the catalog implies,
+  -- and the walk is not empty.
+  select count(*) into v_bad from public.command_buff_types;
+  if v_bad < 1 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: command_buff_types is empty — the buff seed and this walk would both be vacuous'; end if;
+  select count(*) into v_bad
+    from public.command_buff_types cbt
+    join public.stat_definitions d on cbt.stats_json ? d.catalog_key
+   where jsonb_typeof(cbt.stats_json -> d.catalog_key) = 'number'
+     and d.lifecycle = 'active' and 'command_ship' = any (d.permitted_source_kinds);
   select count(*) into v_n from public.buff_definitions;
-  if v_n < 20 then
-    raise exception 'STAT-FOUNDATION self-assert FAIL: buff_definitions walk would be vacuous (% rows)', v_n; end if;
+  if v_n <> v_bad or v_n < 1 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: buff_definitions holds % row(s) but the catalog implies % (buff, ACTIVE stat) pair(s) — the walk would be vacuous or the seed has drifted', v_n, v_bad; end if;
+  -- ...and the LIFECYCLE FILTER really filtered: the catalog carries (buff, stat) pairs on non-active
+  -- stats, and none of them was seeded. Without this, "11 = 11" would also pass if the filter were
+  -- removed and the registry happened to hold no dormant stat.
+  select count(*) into v_bad
+    from public.command_buff_types cbt
+    join public.stat_definitions d on cbt.stats_json ? d.catalog_key
+   where jsonb_typeof(cbt.stats_json -> d.catalog_key) = 'number'
+     and d.lifecycle <> 'active';
+  if v_bad < 1 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the catalog names no non-active stat, so the buff seed''s lifecycle filter is unexercised and this proof is vacuous'; end if;
+  if exists (select 1 from public.buff_definitions b
+               join public.stat_definitions d on d.stat_id = b.stat_id
+              where d.lifecycle <> 'active') then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a command buff on a non-active stat was seeded anyway'; end if;
   select count(*) into v_bad
     from public.buff_definitions bd,
          lateral jsonb_each(bd.context_restriction) e(k, v)
