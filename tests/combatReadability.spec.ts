@@ -48,6 +48,30 @@ test('the SHIP roster heading no longer says the fleet twice', () => {
   )
 })
 
+test('the FLEET tab heads a fleet by its NAME, not by the slot it occupies', () => {
+  // Found 2026-08-04 while moving the Ships tab's roster. TeamRosterPanel headed every fleet
+  // `Fleet {group.group_index}` — the SLOT — while Ships, the map badges and the ship column all
+  // name a fleet through fleetLabel(group.name). A fleet renamed "Raiders" in slot 2 therefore read
+  // "Fleet 2" on the screen that carries its rename box, and "Fleet Raiders" everywhere else: two
+  // on-screen answers to one question. The index is an internal key (it addresses upsertShipGroup)
+  // and keeps that job; it is no longer a name.
+  //
+  // These are SOURCE-TEXT assertions, so a comment that QUOTES the retired markup trips them just
+  // as loudly as the markup itself would. That is deliberate and it is not a false positive: the
+  // point is that this string stops appearing in this file at all.
+  const panel = src('features/command/TeamRosterPanel.tsx')
+  expect(panel).toContain("import { fleetLabel } from './fleetLabel'")
+  expect(panel, 'the heading must not name a fleet by its slot').not.toMatch(
+    /Fleet \{group\.group_index\}/,
+  )
+  expect(panel, 'no surface may announce a fleet by its slot').not.toMatch(
+    /Rename fleet \$\{group\.group_index\}/,
+  )
+  expect(panel).toContain('{fleetLabel(group.name)}')
+  // …and it must not hand-build the prefix either — that is the "Fleet Fleet 2" defect above.
+  expect(panel, 'no hand-built prefix').not.toMatch(/`Fleet \$\{/)
+})
+
 test('the map builds a fleet name in exactly ONE place, through the ONE rule', () => {
   // STRONGER than the assertion it replaces. That one required the FOUR badge resolvers to each
   // COMPOSE fleetLabel (>= 6 call sites) — the best check available while four resolvers each built

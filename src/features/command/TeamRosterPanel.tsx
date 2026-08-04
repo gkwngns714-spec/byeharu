@@ -31,6 +31,8 @@ import {
   type RosterShip,
 } from './teamRoster'
 import { groupUpsertAvailability } from './teamMutations'
+// THE ONE WAY A FLEET IS NAMED ON SCREEN — composed here too, as of 2026-08-04. See the heading below.
+import { fleetLabel } from './fleetLabel'
 import { captainsByShip } from './teamCaptains'
 import { TeamMemberCaptains } from './TeamMemberCaptains'
 import { TeamPreviewSection } from './TeamPreviewSection'
@@ -472,15 +474,25 @@ export function TeamRosterPanel() {
             return (
               <div key={group.group_id} className="space-y-2 rounded-lg border border-edge/60 p-3">
                 <div className="flex items-center justify-between gap-2">
+                  {/* THE ONE NAMING RULE (fleetLabel), COMPOSED. This heading used to print the word
+                      "Fleet" followed by the group's SLOT INDEX — the slot it occupies, not its name — so a
+                      fleet the player renamed "Raiders" in slot 2 was headed "Fleet 2" HERE, on the
+                      very screen with its rename box, and "Fleet Raiders" on the Ships tab and the
+                      map. That is a second on-screen answer to one question, which is the shape the
+                      anti-spaghetti law exists to stop; the slot index is an internal key (it
+                      addresses upsertShipGroup below) and was never the player's word for a fleet.
+                      The index keeps doing its real job in the mutation call; it stops being a name. */}
                   <SectionLabel>
-                    Fleet {group.group_index} · {ships.length} ship{ships.length === 1 ? '' : 's'}
+                    {fleetLabel(group.name)} · {ships.length} ship{ships.length === 1 ? '' : 's'}
                   </SectionLabel>
                   <div className="flex items-center gap-1.5">
                     <input
                       value={draft}
                       onChange={(e) => setDrafts((d) => ({ ...d, [group.group_id]: e.target.value }))}
                       className="w-28 rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
-                      aria-label={`Rename fleet ${group.group_index}`}
+                      /* The field is announced by the fleet's NAME, the same word the heading above
+                         it now uses — a screen reader should not hear a slot number either. */
+                      aria-label={`Rename ${fleetLabel(group.name)}`}
                     />
                     <Button
                       size="sm"

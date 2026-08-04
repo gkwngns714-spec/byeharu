@@ -147,20 +147,48 @@ test('320px — the two panels STACK, and the page never scrolls sideways', asyn
   expect(await scrollsSideways(page)).toBe(false)
 })
 
-test('320px — nothing clips: no panel overflows its own box', async ({ page }) => {
-  await page.setViewportSize({ width: PHONE_FLOOR, height: 720 })
-  await open(page)
-  await selectShip(page, SPARROW)
-  const overflow = await page.evaluate(() => {
+/** Every container the tab lays out. A `truncate`d leaf is deliberately allowed to overflow its own
+ *  box — that is what truncation IS — so the check is on the boxes that would push the PAGE. */
+async function panelOverflow(page: Page) {
+  return page.evaluate(() => {
     const ids = ['ships-split', 'ships-fleet-rail', 'ships-ship-rail', 'fitting-roster', 'fitting-detail']
     return ids.map((id) => {
       const el = document.querySelector(`[data-testid="${id}"]`) as HTMLElement
       return { id, scroll: el.scrollWidth, client: el.clientWidth }
     })
   })
-  for (const o of overflow) {
+}
+
+test('320px — nothing clips: no panel overflows its own box', async ({ page }) => {
+  await page.setViewportSize({ width: PHONE_FLOOR, height: 720 })
+  await open(page)
+  await selectShip(page, SPARROW)
+  for (const o of await panelOverflow(page)) {
     expect(o.scroll, `${o.id} overflows its own width`).toBeLessThanOrEqual(o.client)
   }
+})
+
+// ── THE MARGIN TEST, and why it exists ──────────────────────────────────────────────────────────
+// The version of this file that first went to CI checked the line above at exactly 320px and passed
+// on the author's Windows machine with NINE pixels to spare. CI's Linux Chromium failed it twice:
+// `ships-split` wanted 291px inside 288px. Nothing was flaky and nothing was different about the
+// code — the tab's tightest row (a CardHeader: a title beside a `shrink-0` badge) had a minimum
+// width made of GLYPH WIDTHS, and glyph widths are not a constant across platforms. A 9px margin is
+// not a margin; it is a coin toss that this machine happened to win.
+//
+// So the floor is no longer measured only AT the floor. This runs the same check 10% narrower, at
+// 288px, which is 32px of proven headroom at 320 — an order of magnitude more than the ~3% the
+// platforms disagreed by. The fix that made this pass was CardHeader gaining `flex-wrap`, so a badge
+// that will not fit beside a title drops below it instead of adding its width to the row's minimum.
+// Run this against the unwrapped header and it fails, which is the whole point of keeping it.
+test('288px — the 320px floor has REAL margin, not a font-metric coin toss', async ({ page }) => {
+  await page.setViewportSize({ width: 288, height: 720 })
+  await open(page)
+  await selectShip(page, SPARROW)
+  for (const o of await panelOverflow(page)) {
+    expect(o.scroll, `${o.id} has no margin below the phone floor`).toBeLessThanOrEqual(o.client)
+  }
+  expect(await scrollsSideways(page)).toBe(false)
 })
 
 test('EVERY ROSTER ROW CLEARS THE 44px TOUCH FLOOR — at 320px and at 1280px', async ({ page }) => {
