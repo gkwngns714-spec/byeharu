@@ -67,6 +67,36 @@ export const ADDITIVE_STAT_KEYS = [
 
 export type AdditiveStatKey = (typeof ADDITIVE_STAT_KEYS)[number]
 
+// ── STAT LIFECYCLE, CLIENT SIDE ────────────────────────────────────────────────────────────────
+// DORMANT means: the server still emits the key (the deployed fold computes all of them on every
+// call), but NOTHING IN THE GAME READS IT. Verified by replaying the migration chain, not by
+// counting text: none of these five appears in a branch, a comparison or a threshold anywhere on
+// the server. `repair` in particular is not the repair verb's input — the repair economy prices off
+// repair_credits_per_hp — and `pirate_attention` is read by no pirate code path at all, even after
+// migration 20260618000331 taught four catalog surfaces to state it.
+//
+// So they are NOT RENDERED. Showing a number in a list headed "authoritative" tells the player it
+// does something; for these five that is a promise the game does not keep, and removing the promise
+// is cheaper and more honest than explaining it. They stay in ADDITIVE_STAT_KEYS because that list
+// describes WHAT THE SERVER SENDS, which is unchanged.
+//
+// This list is the client mirror of stat_definitions.lifecycle = 'dormant' in migration
+// 20260618000340, and tests/statFoundation.spec.ts pins the two together so they cannot drift.
+export const DORMANT_STAT_KEYS = [
+  'repair',
+  'scouting',
+  'mining_yield',
+  'retreat_safety',
+  'pirate_attention',
+] as const satisfies readonly AdditiveStatKey[]
+
+export type DormantStatKey = (typeof DORMANT_STAT_KEYS)[number]
+
+// The keys a player is actually shown: everything the fold emits, minus the dormant ones.
+export const EFFECTIVE_STAT_KEYS: readonly AdditiveStatKey[] = ADDITIVE_STAT_KEYS.filter(
+  (k): k is AdditiveStatKey => !(DORMANT_STAT_KEYS as readonly string[]).includes(k),
+)
+
 // Structural member shape from the RPC's members[] (only what aggregation needs). `error` is the
 // per-member failure detail migration 0165 emits alongside valid:false (a member's validation
 // raise, e.g. over-capacity) — display-only; aggregation only reads `valid`.

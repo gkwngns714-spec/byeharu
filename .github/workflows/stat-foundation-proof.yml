@@ -1,0 +1,86 @@
+name: STAT FOUNDATION — registry/resolver disposable proof (no production)
+
+# Proves migration 0340 (the canonical stat architecture foundation) on a THROWAWAY local Supabase.
+# NEVER production: no `environment:` on any job, so neither can read a production secret.
+#
+#   selftest          — DB-free. The harness is well-formed: self-rolling-back, builds its own
+#                       fixtures, guards its loops, carries every marker, and the migration
+#                       introduces no feature flag while exposing an ownership-scoped inspection RPC.
+#   disposable-matrix — `supabase start` applies the WHOLE migration chain to real Postgres. That is
+#                       the load-bearing step: it executes migration 0340's own self-asserts against
+#                       real CHECK constraints, real grants and a real planner. Then the parity /
+#                       difference harness runs the canonical resolver against the DEPLOYED authority
+#                       over constructed ships.
+#
+# TRIGGER NOTE — this is deliberately NOT branch-glob-only. Several proof suites in this repository
+# went dark for ~100 migrations because their branch globs stopped matching, and were found by
+# accident. `pull_request` catches a change before it lands; `main` catches what a PR filter misses
+# (admin-override merges, direct pushes); the globs cover slice work in progress.
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'slice-**'
+      - 'autopilot/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stat-foundation-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/stat-foundation-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # THE APPLY PROOF. If migration 0340's self-asserts fail, this step fails and the whole
+      # slice is red — which is the intended behaviour, and the only gate that cannot be bypassed.
+      - name: Start disposable local Supabase (applies the full chain incl. 0340)
+        run: supabase start
+
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+
+      - name: STAT FOUNDATION parity / difference harness
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/stat-foundation-proof.sh local
+
+      # SO THE OWNER CAN LOOK AT IT. The whole point of this slice not being dark is that the
+      # numbers are visible; printing them into the CI log means "check it" does not require a
+      # database console.
+      - name: Print the registry and a resolved fleet (owner-readable)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          echo '── the seeded stat registry ──'
+          psql "$DB_URL" -c "select stat_id, catalog_key, unit, fleet_aggregation, combat_snapshot, coalesce(engine_consumer,'(display-only)') as engine_consumer from public.stat_definitions order by display_order;"
+          echo '── the progression track and its cap ──'
+          psql "$DB_URL" -c "select t.track_id, t.entity_scope, c.coefficient, c.max_level, c.post_cap_behaviour from public.progression_tracks t join public.progression_curves c on c.curve_id=t.curve_id;"
+          echo '── the captain curve at its boundaries ──'
+          psql "$DB_URL" -c "select x as xp, public.progression_level_for_xp('captain_v1', x) as level from (values (0),(99),(100),(400),(900),(960399),(960400),(99999999)) v(x);"
+          echo '── the command-buff catalog, re-expressed as buff definitions ──'
+          psql "$DB_URL" -c "select buff_def_id, stat_id, operation, magnitude, stacking_group, stacking_policy from public.buff_definitions order by buff_def_id limit 30;"
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
