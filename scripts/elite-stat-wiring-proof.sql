@@ -528,9 +528,18 @@ begin
   select hp_max, pos_x, pos_y, unit_type_id into v_hpmax, v_px, v_py, v_ut
     from public.combat_units where encounter_id = v_enc and side='enemy';
   if v_ut <> 'pirate_synthetic' then raise exception 'ELITE PROOF FAIL FLAGOFF: enemy unit_type % (want pirate_synthetic)', v_ut; end if;
+  -- ██ RE-POINTED BY 0341, BY NAME, NEVER BY WIDENING ██ The synthetic formula moved on purpose: the
+  -- head sized the WAVE from the danger and divided that total by the body count, which meant cutting
+  -- the count concentrated the mass instead of reducing it. 0341 sizes the PIRATE from the danger ONE
+  -- body carries — danger / (band x bodies) — and the wave total is bodies x pirate. The expected
+  -- value below follows the formula rather than being loosened: it is still a closed form over the
+  -- same knobs, with the same variance of 1, and at a danger of 1 with one body it reads
+  -- base_difficulty * enemy_hp_base * (1 + (1/(band*1)) * enemy_hp_danger_scale).
   v_exp_hp := (select base_difficulty from public.locations where id = v_hunt)
               * coalesce(public.cfg_num('enemy_hp_base'),14)
-              * (1 + 1 * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;
+              * (1 + (1::double precision
+                      / (greatest(1, coalesce(public.cfg_num('enemy_synthetic_units_per_danger_band'),5)) * n_enemy))
+                     * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;
   if abs(v_hpmax - v_exp_hp) > 0.001 then raise exception 'ELITE PROOF FAIL FLAGOFF: enemy hp_max % <> the verbatim synthetic formula %', v_hpmax, v_exp_hp; end if;
 
   -- ── 0336 REPOINT OF THE POSITION CLAUSE ───────────────────────────────────────────────────────

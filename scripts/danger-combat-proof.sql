@@ -7147,9 +7147,14 @@ begin
     raise exception 'WAVEBAND FAIL: every one of the eleven rounds spawned exactly what the pre-0341 rule would have spawned — this walk is vacuous and would pass on the old body';
   end if;
 
-  -- ── THE CAP STILL BINDS. Rewind far past the third band: danger 1 + 11 cleared + 25 from the clock
-  --    = 37, which the banded ramp would answer with 8 bodies. It must answer with the cap. ────────
-  update public.combat_encounters set started_at = started_at - interval '4500 seconds' where id = v_enc;
+  -- ── THE CAP STILL BINDS. The ceiling is tested by LOWERING IT, not by rewinding the clock past it.
+  --    Deliberate: v_max_secs is coalesce(loc.max_presence_seconds, max_presence_seconds_default,
+  --    1800), so the rewind needed to reach danger 30+ (3420s, five bands past the shipped cap of 6)
+  --    would trip the FORCED EXTRACT and end the fight before the capped wave could be read — the
+  --    block would then be green on an encounter that never spawned anything. Round 12 already asks
+  --    the ramp for 3 bodies (ceil(12/5)); pulling the ceiling to 2 makes the cap the binding
+  --    constraint with no clock manipulation at all, which is exactly the property under test.
+  perform public.set_game_config('enemy_synthetic_max_units', '2'::jsonb);
   guard := 0;
   loop
     select * into enc from public.combat_encounters where id = v_enc;
@@ -7159,16 +7164,18 @@ begin
     end if;
     perform pg_temp.ae_tick(v_enc);
     guard := guard + 1;
-    if guard > 25 then raise exception 'WAVEBAND FAIL: the capped wave never cleared within 25 ticks'; end if;
+    if guard > 20 then raise exception 'WAVEBAND FAIL: the capped wave never cleared within 20 ticks'; end if;
   end loop;
-  if enc.danger_level < ceil(v_cap::double precision * v_band)::int then
-    raise exception 'WAVEBAND FAIL: the capped round ran at danger % — below cap x band (%), so the ceiling was never actually tested',
-      enc.danger_level, ceil(v_cap::double precision * v_band)::int;
+  if ceil(enc.danger_level::double precision / v_band)::int <= 2 then
+    raise exception 'WAVEBAND FAIL: at danger % the banded ramp asks for % bodies — at or under the lowered ceiling of 2, so the ceiling was never actually the binding constraint',
+      enc.danger_level, ceil(enc.danger_level::double precision / v_band)::int;
   end if;
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
-  if n <> v_cap then
-    raise exception 'WAVEBAND FAIL: at danger % the wave arrived with % pirate(s) — enemy_synthetic_max_units is % and the ceiling must still bind', enc.danger_level, n, v_cap;
+  if n <> 2 then
+    raise exception 'WAVEBAND FAIL: at danger % the wave arrived with % pirate(s) — the ramp asked for % and enemy_synthetic_max_units was pulled to 2, so the ceiling must still bind',
+      enc.danger_level, n, ceil(enc.danger_level::double precision / v_band)::int;
   end if;
+  perform public.set_game_config('enemy_synthetic_max_units', to_jsonb(v_cap));
 
   perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
   perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
@@ -7181,8 +7188,8 @@ begin
   perform public.set_game_config('wave_transition_seconds',              to_jsonb(k_wts));
   perform public.set_game_config('enemy_synthetic_units_per_danger_band', to_jsonb(k_band));
 
-  raise notice 'DZCOMBAT_PASS_WAVEBAND ok: eleven rounds walked through the real tick at the deployed band of 5 — bodies per round %, i.e. 1 for rounds 1-5, 2 for 6-10 and 3 for 11, with % of them disagreeing with the pre-0341 rule; and at danger % the ceiling still held the wave to % bodies',
-    v_seen, n_differ, enc.danger_level, v_cap;
+  raise notice 'DZCOMBAT_PASS_WAVEBAND ok: eleven rounds walked through the real tick at the deployed band of 5 — bodies per round %, i.e. 1 for rounds 1-5, 2 for 6-10 and 3 for 11, with % of them disagreeing with the pre-0341 rule; and at danger % the ceiling still held the wave to 2 bodies where the ramp asked for % (the shipped ceiling is %)',
+    v_seen, n_differ, enc.danger_level, ceil(enc.danger_level::double precision / v_band)::int, v_cap;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_SLOWGUN (0341): A GUN CANNOT FIRE ON TWO CONSECUTIVE TICKS ═════════════════

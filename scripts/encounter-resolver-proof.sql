@@ -678,9 +678,15 @@ begin
   if n <> 1 then raise exception 'ER PROOF FAIL FLAGOFF: % enemy rows (want 1)', n; end if;
   select hp_max, pos_x, pos_y into v_hpmax, v_px, v_py from public.combat_units
     where encounter_id = v_enc and side='enemy' and unit_type_id='pirate_synthetic';
+  -- ██ RE-POINTED BY 0341, BY NAME, NEVER BY WIDENING ██ The synthetic arm's sizing moved on purpose:
+  -- 0341 sizes the PIRATE from the danger ONE body carries — danger / (band x bodies) — and the wave
+  -- total is bodies x pirate, where the head sized the wave and divided by the count. Still a closed
+  -- form over the same knobs at the same variance of 1; nothing is loosened.
   v_exp_hp := (select base_difficulty from public.locations where id = v_hunt)
               * coalesce(public.cfg_num('enemy_hp_base'),14)
-              * (1 + 1 * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;
+              * (1 + (1::double precision
+                      / (greatest(1, coalesce(public.cfg_num('enemy_synthetic_units_per_danger_band'),5)) * n))
+                     * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;
   if abs(v_hpmax - v_exp_hp) > 0.001 then raise exception 'ER PROOF FAIL FLAGOFF: enemy hp_max % <> pre-E3 formula %', v_hpmax, v_exp_hp; end if;
   -- ── 0336 REPOINT: "at the location center" -> the ring the tick actually composes. ────────────
   -- NULL-PINNED FIRST: `x is distinct from NULL` is TRUE for every real number, so an unwritten
