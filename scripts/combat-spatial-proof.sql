@@ -626,9 +626,21 @@ begin
 
   -- ── THE DERIVED ARMS, one per witness, taken from the frozen PRE-MOVE snapshot. Each is the
   --    non-vacuity guard for the movement asserted immediately after it. ─────────────────────────
-  select arm_kind into v_arm_cmd  from pg_temp.cs_arm(u_cmd,  u_en);
-  select arm_kind into v_arm_arm  from pg_temp.cs_arm(u_arm,  u_en);
-  select arm_kind into v_arm_bare from pg_temp.cs_arm(u_bare, u_en);
+  -- ██ DERIVED FROM THE PRE-MOVE SNAPSHOT, WHICH IS WHAT THIS COMMENT ALWAYS CLAIMED ██
+  -- These three used pg_temp.cs_arm(unit, foe), which reads the LIVE combat_units rows — and
+  -- pg_temp.cs_tick() has already run by this line. So the "derived arm" described a hypothetical
+  -- decision taken from the POST-move world, while the engine's real decision was taken from the
+  -- frozen PRE-move one, and the failure message beside it printed the PRE-move distance. The two
+  -- happened to agree until the geometry moved, which is the definition of passing by luck.
+  -- 0339 moved it: a site fight now stands off its site so the wave arrives on a real bearing, the
+  -- armed escort's chord changed, and it KITES to its own range edge — after which a post-move
+  -- re-derivation reads 'close' (gap 4.23 -> ~5.0 against a reach of exactly 5, the boundary again).
+  -- The fix is to ask the question the engine asked, of the world the engine asked it about. This is
+  -- combat_unit_decide_move's own case ladder (0234:242-246) over the values already frozen above —
+  -- no new rule, and every unit here carries exactly one weapon, so min and max range coincide.
+  v_arm_cmd  := case when v_d_cmd0  > v_r_cmd  then 'close' when v_d_cmd0  > v_r_en then 'kite' else 'hold' end;
+  v_arm_arm  := case when v_d_arm0  > v_r_arm  then 'close' when v_d_arm0  > v_r_en then 'kite' else 'hold' end;
+  v_arm_bare := case when v_d_bare0 > v_r_bare then 'close' when v_d_bare0 > v_r_en then 'kite' else 'hold' end;
 
   -- ── KITE: the armed escort is inside its own reach and outside the wave's, so it retreats — and
   --    never past its own range edge (0234's kite step is capped at my_range - dist). ────────────
