@@ -262,6 +262,20 @@ repositioning fleet **cannot outrun its pursuers** — which is the intended hal
 too slowly, it is **one knob**: `combat_player_speed_scale`. It is deliberately NOT changed here;
 changing it in the same slice would be an unproven balance edit riding a bug fix.
 
+> ⚠️ **CORRECTED BY 0339 (2026-08-04) — the paragraph above names the WRONG KNOB.** The owner played
+> it and it does play too slowly: measured at **0.16–0.26** world units per 3 s tick (not 0.2–1.0),
+> about 1/16 px at playable zoom, ~6 minutes to cross 20 units, while pirates move 1.0–1.6 — so the
+> fleet is **4–10× slower than its pursuers**, not merely unable to outrun them.
+> `combat_player_speed_scale` **cannot** fix it: `20260618000316:761-765` (invariant f7) requires
+> `enemy_slowest >= 2 × max(base_speed) × scale`, which caps it at **≈0.38 — under 2×** — and raising
+> it also speeds every per-unit CLOSE and KITE decision, which is precisely how a player kites a
+> pirate out of the fight. Wrong lever twice over.
+> The right lever is `combat_fleet_move_speed(uuid)` (`20260618000337:133-145`), a dedicated leaf with
+> exactly one reader. 0339 adds **`combat_reposition_speed_scale`** (default **8.0**) scaling only
+> that leaf: a 20-unit reposition becomes **30–48 s** instead of 4–6 minutes, and f7's per-unit
+> economy is untouched. Anyone reading this section for the fix should follow 0339, not this
+> paragraph.
+
 ### Proof
 
 `DZCOMBAT_PASS_REPOSITION` is rewritten to prove the **journey**: the order moves nothing (this fails

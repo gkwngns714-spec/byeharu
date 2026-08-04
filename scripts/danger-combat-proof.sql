@@ -1619,6 +1619,28 @@ begin
   v_speed := public.combat_fleet_move_speed(v_enc);
   if v_speed is null or v_speed <= 0 then
     raise exception 'REPOSITION FAIL precondition: the fleet''s combat speed is % — it could not move under ANY order and every journey assert below would be vacuous', v_speed; end if;
+  -- ── 0339: THE MOVE IS PERCEPTIBLE, AND IT IS THE RIGHT LEVER THAT MAKES IT SO. ─────────────────
+  -- The owner's report was that combat movement is invisible: ~0.16-0.26 world units per 3s tick,
+  -- about 1/16 px at playable zoom and 4-10x slower than the pirates chasing the fleet. docs/DEV_LOG
+  -- named combat_player_speed_scale as the fix; it is the WRONG knob — 0316's invariant f7 caps it
+  -- at ~0.38 (under 2x) and it also speeds every per-unit CLOSE and KITE decision, which is how a
+  -- player kites a pirate out of the fight. combat_reposition_speed_scale moves ONLY this leaf.
+  -- Both asserts are RED on the deployed body, where the leaf returns the bare min and the knob does
+  -- not exist. The identity is measured against the LIVE rows, never against a quoted number.
+  declare
+    v_slowest double precision;
+    v_scale   double precision := coalesce(public.cfg_num('combat_reposition_speed_scale'), 1);
+  begin
+    select min(cu.move_speed) into v_slowest from public.combat_units cu
+     where cu.encounter_id = v_enc and cu.side = 'player' and cu.alive_count > 0;
+    if v_slowest is null or v_slowest <= 0 then
+      raise exception 'REPOSITION FAIL precondition: the fixture has no living player hull with a speed — the scaling identity below would be vacuous'; end if;
+    if abs(v_speed - v_slowest * v_scale) > 1e-9 then
+      raise exception 'REPOSITION FAIL: the fleet move leaf answers % but its slowest living hull is % at a reposition scale of % (want the product) — the ordered-move speed is not coming from the ONE leaf the knob scales', v_speed, v_slowest, v_scale; end if;
+    if ceil(20.0 / v_speed) * coalesce(public.cfg_num('combat_tick_seconds'), 3) > 60 then
+      raise exception 'REPOSITION FAIL: at % per tick this fleet needs % seconds to cross 20 world units — the owner reported that this takes MINUTES, and tens of seconds is the bar this slice set',
+        v_speed, ceil(20.0 / v_speed) * coalesce(public.cfg_num('combat_tick_seconds'), 3); end if;
+  end;
   -- 0310's auto-exit OFF through the real RPC: a damage roll must not end the fight mid-journey and
   -- turn "did it arrive?" into a coin toss. Owned precondition, set here, never assumed.
   r := pg_temp.call_as(uL, format('public.set_group_auto_exit(%L::uuid, false, 30)', gL));
@@ -2149,16 +2171,27 @@ begin
     rpx, rpy, v_speed, public.osn_distance(b_x, b_y, rpx, rpy);
 end $$;
 
--- ════════ DZCOMBAT_PASS_REPOMODE (0311): A SITE FIGHT FALLS THROUGH TO THE RETREAT — NEVER REFUSED ═══
+-- ════════ DZCOMBAT_PASS_REPOMODE (0339): A SITE FIGHT CAN BE MANOEUVRED IN ═══════════════════════
+-- ██ INVERTED BY 0339, BECAUSE THE PROPERTY IT PINNED WAS THE OWNER'S BUG ██
+-- The owner, playing the live game: "when fighting, i am not able to move my fleet."
+-- This block used to assert the OPPOSITE of the fix — that a site fight's admitted move order falls
+-- through to the RETREAT arms — and it was green on that behaviour the whole time. That is what a
+-- proof of a defect looks like from the inside, and it is worth stating plainly rather than quietly
+-- rewriting: the property was adopted from 0311, whose reposition arm required
+-- fleets.location_mode='space' because the TICK composed fleet_set_in_space, which nulls
+-- current_location_id, and 0337 recorded that interaction with a live 'present' presence as
+-- explicitly UNVERIFIED. A hunt fight is ALWAYS 'present', so the owner's every deliberate fight
+-- landed in the fall-through and the button they pressed to MANOEUVRE broke off the fight instead.
+-- 0339 verified it (fleet_set_in_space would indeed strand the presence — 0231:1146-1170) and
+-- resolved it by composition rather than by a gate: combat_fleet_track_position writes the marker
+-- only while the fleet's position is EXPRESSED in space, so a PRESENT fleet's row is never touched
+-- and the hazard is impossible. The gate then had no reason left and was deleted.
+-- SO THIS BLOCK NOW DEMANDS THE MOVE, AND IT FAILS ON THE DEPLOYED BODY at its second assert —
+-- which answers retreat_started. It also pins the half that made the old restriction necessary: the
+-- fleet row and the live presence must come through the journey untouched.
 -- Fixture: RIGFALLBACK's live hunt fight, reused — its fleet is 'present' AT the hunt location
--- (location_mode <> 'space'). Reposition is open-space-only (fleet_set_in_space nulls
--- current_location_id, and its interaction with a live 'present' location_presence is unverified),
--- so an ADMITTED in-zone order from this fleet must FALL THROUGH to the retreat arms — exactly what
--- the same order did before 0311. THE FIRST CUT REFUSED IT TYPED instead, which adversarial review
--- called correctly as a regression (every hunt site carries a zone; an in-zone-destination retreat
--- order is a capability players have today) — SO THIS BLOCK FAILS ON THE 131e027 BODY, whose
--- refusal envelope (ok:false) trips the first assert. The zone is drawn AFTER the fight opened,
--- which also proves the linkage is DERIVED live geometry, never a stored snapshot.
+-- (location_mode <> 'space'). The zone is drawn AFTER the fight opened, which also proves the
+-- linkage is DERIVED live geometry, never a stored snapshot.
 do $$
 declare
   r jsonb; n int;
@@ -2206,43 +2239,62 @@ begin
   create temp table dz_repo_u3 on commit drop as
     select cu.id, cu.pos_x, cu.pos_y from public.combat_units cu where cu.encounter_id = v_enc;
 
-  -- ── THE ADMITTED IN-ZONE ORDER: falls through to the retreat, exactly as before 0311. ───────────
+  -- ── THE OWNER'S ORDER: MOVE, INSIDE THE FIGHT'S OWN REGION. IT MUST MOVE. ─────────────────────
+  -- On the pre-0339 body this returns ok:true / retreat_started and the player who asked to
+  -- manoeuvre has broken off the fight. THAT is the defect, and this is the assert that fails on it.
   r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gM, ix, iy));
   if (r->>'ok')::boolean is not true then
-    raise exception 'REPOMODE FAIL: the admitted order was REFUSED (%) — a site fight''s in-zone order must fall through to the retreat, never a refusal (the 131e027 regression)', r; end if;
-  if (r->>'order_outcome') in ('repositioning', 'repositioned') then
-    raise exception 'REPOMODE FAIL: a site fight was repositioned — reposition is open-space-only (the presence interaction is unverified)'; end if;
-  if (r->>'order_outcome') is distinct from 'retreat_started' then
-    raise exception 'REPOMODE FAIL: the admitted order answered % (want retreat_started — today''s behaviour, preserved)', r->>'order_outcome'; end if;
-  -- the retreat is real and the fleet did not move: destination stored, authorities armed, no
-  -- restamp, no translate, no leg, fleet row otherwise byte-unchanged.
+    raise exception 'REPOMODE FAIL: the admitted order was REFUSED (%) — a site fight''s in-region order must order a MOVE, never a refusal', r; end if;
+  if (r->>'order_outcome') = 'retreat_started' then
+    raise exception 'REPOMODE FAIL: the site fight''s in-region MOVE order was silently reclassified as a RETREAT — this is the owner''s "when fighting, i am not able to move my fleet", and it is the pre-0339 behaviour exactly: the player asked to manoeuvre and broke off the fight instead'; end if;
+  if (r->>'order_outcome') is distinct from 'repositioning' then
+    raise exception 'REPOMODE FAIL: the admitted order answered % (want repositioning)', r->>'order_outcome'; end if;
+
+  -- ── THE ORDER MOVED NOTHING AND ARMED NOTHING: a course, and only a course. ────────────────────
   select * into fl from public.fleets where id = v_fleet;
-  if fl.retreat_target_x is distinct from ix or fl.retreat_target_y is distinct from iy
-     or fl.retreat_target_location_id is not null then
-    raise exception 'REPOMODE FAIL: the retreat destination was not stored (%, %, %)',
+  if fl.retreat_target_location_id is not null or fl.retreat_target_x is not null or fl.retreat_target_y is not null then
+    raise exception 'REPOMODE FAIL: a reposition wrote a retreat destination (%, %, %) — a move is never a retreat',
       fl.retreat_target_location_id, fl.retreat_target_x, fl.retreat_target_y; end if;
-  if fl.status is distinct from fl0.status or fl.location_mode is distinct from fl0.location_mode
-     or fl.current_location_id is distinct from fl0.current_location_id
-     or fl.space_x is distinct from fl0.space_x or fl.space_y is distinct from fl0.space_y then
-    raise exception 'REPOMODE FAIL: the fall-through moved the fleet (%/% at loc %)', fl.status, fl.location_mode, fl.current_location_id; end if;
   select * into e from public.combat_encounters where id = v_enc;
-  if e.status <> 'retreating' or e.retreat_started_at is null then
-    raise exception 'REPOMODE FAIL: the encounter is % after the fall-through order (want retreating — the sole authority armed)', e.status; end if;
-  if abs(e.engagement_x - (select v from dzn where k='rm_e0x')) > 1e-6
-     or abs(e.engagement_y - (select v from dzn where k='rm_e0y')) > 1e-6 then
-    raise exception 'REPOMODE FAIL: the fall-through restamped the engagement point (%,%)', e.engagement_x, e.engagement_y; end if;
+  if e.status <> 'active' then
+    raise exception 'REPOMODE FAIL: the encounter is % after a MOVE order (want active — the fight must not break)', e.status; end if;
+  if e.reposition_x is distinct from ix or e.reposition_y is distinct from iy then
+    raise exception 'REPOMODE FAIL: the course was not recorded (%,%) — the order neither moved the fleet nor gave it one', e.reposition_x, e.reposition_y; end if;
   select * into pr from public.location_presence where id = e.presence_id;
-  if pr.status <> 'retreating' or pr.retreat_requested_at is null then
-    raise exception 'REPOMODE FAIL: the presence is %/% after the fall-through order', pr.status, pr.retreat_requested_at; end if;
+  if pr.status <> 'active' or pr.retreat_requested_at is not null then
+    raise exception 'REPOMODE FAIL: the presence is %/retreat_requested % — a move armed a retreat', pr.status, pr.retreat_requested_at; end if;
   select count(*) into n
     from dz_repo_u3 b join public.combat_units cu on cu.id = b.id
    where cu.pos_x is distinct from b.pos_x or cu.pos_y is distinct from b.pos_y;
-  if n <> 0 then raise exception 'REPOMODE FAIL: % unit(s) moved across a fall-through order', n; end if;
-  select count(*) into n from public.fleet_movements where fleet_id = v_fleet;
-  if n <> n_mv0 then raise exception 'REPOMODE FAIL: the fall-through minted a leg'; end if;
+  if n <> 0 then raise exception 'REPOMODE FAIL: the ORDER moved % combat unit(s) — an order records a course, it does not perform it', n; end if;
 
-  raise notice 'DZCOMBAT_PASS_REPOMODE ok: the site fight''s ADMITTED in-zone order fell through to the retreat exactly as before 0311 — retreat_started, destination (%,%) stored, presence + encounter retreating, fleet/units/anchor unmoved, no leg, and no refusal envelope anywhere',
-    ix, iy;
+  -- ── AND THE TICK ACTUALLY CARRIES THE FIGHT, WITHOUT UN-DOCKING THE FLEET. ────────────────────
+  -- This is the half that 0337 could not verify and therefore forbade. combat_fleet_track_position
+  -- writes fleets.space_x/y ONLY while location_mode='space'; this fleet is PRESENT, so the fleet row
+  -- must come through the journey byte-identical while the FIGHT moves. A body that composed
+  -- fleet_set_in_space here would flip status to 'idle' and null current_location_id, stranding the
+  -- live presence against a placeless fleet — which is exactly why 0337 left this shut.
+  perform pg_temp.ae_tick(v_enc);
+  select * into e from public.combat_encounters where id = v_enc;
+  if e.status <> 'active' then
+    raise exception 'REPOMODE FAIL: the encounter went % on the first step of the journey', e.status; end if;
+  if abs(e.engagement_x - (select v from dzn where k='rm_e0x')) < 1e-9
+     and abs(e.engagement_y - (select v from dzn where k='rm_e0y')) < 1e-9 then
+    raise exception 'REPOMODE FAIL: after a full tick the fight has not moved at all — the order is standing and nothing is walking it, which is a course that can never be consumed'; end if;
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.status is distinct from fl0.status or fl.location_mode is distinct from fl0.location_mode
+     or fl.current_location_id is distinct from fl0.current_location_id then
+    raise exception 'REPOMODE FAIL: the journey changed the fleet row to %/% at loc % (was %/% at loc %) — a PRESENT fleet must not be un-docked by the combat mover; fleet_set_in_space nulls current_location_id and would strand the live presence',
+      fl.status, fl.location_mode, fl.current_location_id, fl0.status, fl0.location_mode, fl0.current_location_id; end if;
+  select * into pr from public.location_presence where id = e.presence_id;
+  if pr.status <> 'active' then
+    raise exception 'REPOMODE FAIL: the presence is % after the journey — the fight''s own presence must survive its fleet manoeuvring', pr.status; end if;
+  select count(*) into n from public.fleet_movements where fleet_id = v_fleet;
+  if n <> n_mv0 then raise exception 'REPOMODE FAIL: the move minted a leg'; end if;
+
+  raise notice 'DZCOMBAT_PASS_REPOMODE ok (0339): a fleet PRESENT at its hunt site — the shape every deliberate fight has — was ordered to (%,%) inside its own region and MOVED: repositioning, course recorded, nothing armed, nothing translated by the order; the tick then carried the fight from (%,%) to (%,%) while the fleet row stayed %/% at its dock and its presence stayed active. On the pre-0339 body this order answered retreat_started and broke off the fight, which is the owner''s "when fighting, i am not able to move my fleet"',
+    ix, iy, round((select v from dzn where k='rm_e0x')::numeric, 3), round((select v from dzn where k='rm_e0y')::numeric, 3),
+    round(e.engagement_x::numeric, 3), round(e.engagement_y::numeric, 3), fl.status, fl.location_mode;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_AUTOEXIT (0310): THE HP AUTO-EXIT, ON THE REAL CHAIN ═════════════════════════
@@ -6523,10 +6575,22 @@ end $$;
 -- on the bearing from the fight to the zone's own city. Some fights HAVE no such bearing, and they
 -- must fail to something sensible — never to a pile, never to a NULL coordinate, never to a raise
 -- inside the tick.
--- THE CASE THE GAME CAN ACTUALLY PRODUCE, staged here end to end: a DELIBERATE HUNT AT THE SITE.
--- combat_create_encounter hands the creator `l.x, l.y` — the location's own centre — for any fleet
--- that is not in open space (read off the DEPLOYED body, 2026-08-04), so such a fight is anchored ON
--- its city, the site and the anchor are the same point, and there is no direction to arrive from.
+-- ██ REPOINTED BY 0339, BECAUSE 0339 DELIBERATELY DESTROYS THIS BLOCK'S ORIGINAL PREMISE ██
+-- 0338 staged the no-direction case as "a deliberate hunt at the site", because
+-- combat_create_encounter handed the creator `l.x, l.y` for any fleet not in open space — so a hunt
+-- fight was anchored ON its city and had no bearing. THAT WAS THE OWNER'S BUG ("The enemy ships are
+-- not comming out from the location - snare"): it made 0338 inert on EVERY hunt, permanently. 0339
+-- fixes it by standing a site fight off the site at its own territory_radius, so a hunt now HAS a
+-- direction and this block can no longer reach the fallback that way.
+-- THE FALLBACK STILL EXISTS AND STILL MATTERS, so it is staged through the arm 0339 itself defines:
+-- A SITE WITH NO TERRITORY RADIUS HAS NO EDGE TO STAND OFF, so combat_site_standoff_point answers
+-- the site itself, the fight anchors on it, and there is no direction to arrive from. The block
+-- BORROWS locations.territory_radius for its own site and gives it back (the RSFEEL idiom), so it
+-- owns that precondition rather than inheriting it — and it is now ALSO the only runtime proof of
+-- 0339's own fail-closed arm. Everything below is 0338's, unchanged: the fallback must be the
+-- predecessor, value for value.
+-- THE GAME ANSWER IS STILL RIGHT: if you are fighting inside a city that claims no territory at all,
+-- they come at you from all around.
 -- The wave must then lay out on 0336's PLAIN RING, value for value: the same measured radius, the
 -- same per-slot stepping, and 0336's own constant phase. That is the fallback being the predecessor
 -- rather than a special case — and it is also the right game answer: if you are fighting inside the
@@ -6545,6 +6609,7 @@ declare
   ax double precision; ay double precision;
   v_rad double precision; v_rmin double precision; v_rmax double precision;
   k_ehp double precision; k_esb double precision; k_esp double precision;
+  k_trad numeric;
 begin
   select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
   select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
@@ -6559,6 +6624,18 @@ begin
   if lx is null or ly is null then
     raise exception 'NODIRECTION FAIL: the shared hunt site carries no coordinate — the anchor-equals-site precondition cannot be established';
   end if;
+
+  -- ── 0339: BORROW THE SITE'S TERRITORY RADIUS, AND GIVE IT BACK. ────────────────────────────────
+  -- The no-direction case is now exactly "a site with no edge to stand off". This block OWNS that
+  -- precondition instead of inheriting it from whatever 0217 happened to seed, and the non-vacuity
+  -- guard beneath it is the one that matters: if the site DOES carry a radius when the fight opens,
+  -- 0339 stands the fight off it, there IS a bearing, and every fallback assert below would be
+  -- measuring the wrong world.
+  select l.territory_radius into k_trad from public.locations l where l.id = v_hunt;
+  if k_trad is null then
+    raise exception 'NODIRECTION FAIL fixture: the shared hunt site already carries NO territory radius — this block must borrow a real one and give it back, or it is not proving that 0339''s fail-closed arm is what produced the fallback';
+  end if;
+  update public.locations set territory_radius = null where id = v_hunt;
 
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
@@ -6671,8 +6748,11 @@ begin
   perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
   perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+  -- give the radius back: every block after this one shares this site, and a leaked NULL would
+  -- silently repoint THEIR geometry to the pre-0339 world (the 0336 formation-ring leak lesson).
+  update public.locations set territory_radius = k_trad where id = v_hunt;
 
-  raise notice 'DZCOMBAT_PASS_NODIRECTION ok: a deliberate HUNT anchors its fight on the site itself (anchor %,% = site %,%), so there is no direction for a wave to arrive FROM — and the %-pirate wave fell back to 0336''s plain ring exactly: % distinct points, all at one measured radius of %, every one reproduced by combat_formation_point at 0336''s own constant phase, and the arrival leaf answering that constant at every slot. The fallback is the predecessor, not a special case, and it is still not a pile',
+  raise notice 'DZCOMBAT_PASS_NODIRECTION ok: a HUNT at a site that claims NO territory (0339: no edge to stand off) anchors its fight on the site itself (anchor %,% = site %,%), so there is no direction for a wave to arrive FROM — and the %-pirate wave fell back to 0336''s plain ring exactly: % distinct points, all at one measured radius of %, every one reproduced by combat_formation_point at 0336''s own constant phase, and the arrival leaf answering that constant at every slot. The fallback is the predecessor, not a special case, and it is still not a pile',
     round(ax::numeric, 3), round(ay::numeric, 3), round(lx::numeric, 3), round(ly::numeric, 3),
     n_units, n_distinct, round(v_rad::numeric, 6);
 end $$;
@@ -7719,6 +7799,208 @@ begin
 
   raise notice 'DZCOMBAT_PASS_RETREATCLEAR ok: a fleet with a recorded destination (%,%) DIED and all three retreat_target_* columns came back NULL (the head leaked them into the next sortie); the same recording on a fleet that RETREATED to completion was both cleared and USED — exactly one return leg departs for that point — and the formation ring is back at its committed %',
     dx, dy, v_ring0;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_ONEANCHOR (0339): ONE WRITER FOR WHERE A FIGHT STANDS — RE-ARMED ═════════
+-- ██ THIS BLOCK EXISTS BECAUSE A STATED INVARIANT WITH NO LIVE CHECK IS NOT AN INVARIANT ██
+-- 0301:820 declared the encounter creator's INSERT "the only write of engagement_x/engagement_y in
+-- the database", and 0301:2556-2566 shipped a schema-wide sweep that RAISES if any function's source
+-- matches `set engagement_x`. 0337:486-492 then added exactly that write inside process_combat_ticks
+-- — and the 0301 assert DOES NOT RE-RUN, so the drift landed silently and shipped.
+-- THE SWEEP IS THE SAME SWEEP. What changes is where it lives: here, against the FULLY-APPLIED
+-- CHAIN on a real Postgres, in the one suite triggered on every pull_request AND every push to main.
+-- 0339 also carries it as its own self-assert (b), which re-runs on every apply. Neither is a runtime
+-- guard on production, and that is stated rather than glossed: a BEFORE UPDATE trigger on
+-- combat_encounters would enforce it forever and was REJECTED for blast radius — it would raise on
+-- every encounter update of a live 30-player game.
+-- IT IS RED ON THE DEPLOYED BODY: on 0338's head the sweep finds process_combat_ticks, because
+-- combat_encounter_move does not exist yet.
+-- THE SECOND HALF is the spawn fork, retired by the same slice: the tick must no longer place a unit
+-- itself, and the two arms must differ ONLY in the stats they hand over.
+do $$
+declare
+  v_other text; v_code text; n int;
+begin
+  -- (1) EXACTLY ONE FUNCTION IN THE SCHEMA MAY SET engagement_x, AND IT IS THE NAMED AUTHORITY.
+  select string_agg(p.proname, ', ') into v_other
+    from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+   where ns.nspname = 'public' and p.prokind = 'f'
+     and p.proname <> 'combat_encounter_move'
+     and regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') ~* 'set[[:space:]]+engagement_x';
+  if v_other is not null then
+    raise exception 'ONEANCHOR FAIL: % writes engagement_x by UPDATE — combat_encounter_move is the ONE authority for where a fight stands. This is exactly the drift 0301''s spent assert missed when 0337 added its restamp, and finding it here is this block working', v_other;
+  end if;
+  -- NON-VACUITY: a sweep over an empty set proves nothing. The authority must itself contain the
+  -- write, or the clause above is passing because NOBODY writes the column.
+  select count(*) into n
+    from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+   where ns.nspname = 'public' and p.proname = 'combat_encounter_move'
+     and regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') ~* 'set[[:space:]]+engagement_x';
+  if n <> 1 then
+    raise exception 'ONEANCHOR FAIL: the named authority does not itself set engagement_x — the sweep above is quantifying over an empty set, which is the vacuity class this repository has been bitten by';
+  end if;
+
+  -- (2) AND IT REALLY MOVES ALL THREE, EXECUTED — not asserted from the source text. A leaf that
+  -- restamped the anchor without translating the formation would satisfy (1) and leave the fight's
+  -- ships behind, which is the three-positions-disagreeing failure it exists to prevent.
+  if to_regprocedure('public.combat_encounter_move(uuid, uuid, double precision, double precision, double precision, double precision)') is null then
+    raise exception 'ONEANCHOR FAIL: the move authority does not exist at the signature the tick composes';
+  end if;
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+   where ns.nspname = 'public' and p.proname = 'combat_encounter_move';
+  if position('combat_translate_player_formation' in v_code) = 0
+     or position('combat_fleet_track_position' in v_code) = 0 then
+    raise exception 'ONEANCHOR FAIL: the move authority does not spend its delta on the formation AND the fleet marker as well as the anchor — three positions that can disagree is the whole defect';
+  end if;
+
+  -- (3) THE TICK COMPOSES IT, AND NO LONGER MOVES ANYTHING BY HAND.
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+   where ns.nspname = 'public' and p.proname = 'process_combat_ticks';
+  if position('public.combat_encounter_move(' in v_code) = 0 then
+    raise exception 'ONEANCHOR FAIL: the tick does not compose the move authority';
+  end if;
+  if position('public.fleet_set_in_space(' in v_code) > 0 then
+    raise exception 'ONEANCHOR FAIL: the tick still writes the fleet position directly — that is how a PRESENT fleet gets silently un-docked, and it is why a site fight could never be manoeuvred in';
+  end if;
+
+  -- (4) ONE SPAWN AUTHORITY: the loop that was written twice is written once.
+  n := (length(v_code) - length(replace(v_code, 'public.combat_spawn_wave_units(', '')))
+       / length('public.combat_spawn_wave_units(');
+  if n <> 2 then
+    raise exception 'ONEANCHOR FAIL: % composition(s) of the spawn authority in the tick (want exactly 2 — the resolved arm and the synthetic arm, which legitimately differ in the STATS they pass and in nothing else)', n;
+  end if;
+  -- NOTE the concatenated needle: this harness's own selftest greps for a literal INSERT against the
+  -- unit table and treats any occurrence as the proof hand-writing engine state (the sole-writer
+  -- law). Splitting the string keeps that law's detector honest while still probing the tick.
+  if position('public.combat_formation_point(' in v_code) > 0
+     or position('public.combat_wave_arrival_phase(' in v_code) > 0
+     or position('v_formation_extent' in v_code) > 0
+     or position('insert into ' || 'combat_units' in v_code) > 0 then
+    raise exception 'ONEANCHOR FAIL: the tick still measures, places or inserts a wave unit itself — the placement loop existed TWICE and every migration since 0299 had to patch both; it must exist once';
+  end if;
+
+  raise notice 'DZCOMBAT_PASS_ONEANCHOR ok: across the whole applied schema exactly ONE function sets engagement_x and it is combat_encounter_move (the sweep 0301 shipped and that never re-ran while 0337 drifted past it), that leaf provably spends its delta on the formation and the fleet marker as well as the anchor, the tick composes it and writes no position by hand, and the enemy-spawn loop that existed TWICE is now one leaf composed exactly twice';
+end $$;
+
+-- ════════ DZCOMBAT_PASS_SITEORIGIN (0339): ON A HUNT, THE ENEMY COMES OUT OF THE CITY ════════════
+-- ██ THE OWNER'S HEADLINE BUG: "The enemy ships are not comming out from the location - snare." ██
+-- They were right, and 0338 — the migration written to make raiders arrive from the zone's own city —
+-- was INERT ON EVERY HUNT, by construction. Measured cause, off the deployed bodies: a hunt arrival
+-- leaves the fleet 'present', so combat_create_encounter stamped the anchor on the SITE'S OWN
+-- COORDINATES; the tick resolved v_anchor := coalesce(engagement_x, loc.x) with both operands the
+-- same point; combat_wave_arrival_phase hit its equality guard and returned the neutral 0.5. A plain
+-- ring, permanently, on every deliberate fight the owner opens. The ambush path only ever worked
+-- because the resolver parks the fleet in open space first.
+-- 0339 fixes the ANCHOR, not the leaf: a fight AT a site stands on the edge of that site's own
+-- territory_radius, so the site becomes a DIRECTION instead of the place you are standing.
+-- THIS BLOCK IS RED ON THE DEPLOYED BODY at its first assert: the anchor equals the site.
+-- IT IS THE MIRROR OF NODIRECTION, deliberately — that block now stages a site with NO territory and
+-- proves the fallback; this one stages the ordinary site and proves the bearing.
+do $$
+declare
+  r jsonb; n int; n_units int;
+  uS uuid; sS uuid; gS uuid;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  lx double precision; ly double precision; v_trad numeric;
+  v_mv uuid; v_enc uuid; mv record;
+  ax double precision; ay double precision;
+  v_d double precision; v_rad double precision; n_on_ray int;
+  k_ehp double precision; k_esb double precision; k_esp double precision;
+begin
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  -- the WAVERING staging law: a wave spawns and then MOVES inside one tick, so a block about where a
+  -- wave ARRIVES must freeze the close arm and keep everything alive while it measures.
+  perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_hp_base',                        '100000'::jsonb);
+
+  select l.x, l.y, l.territory_radius into lx, ly, v_trad from public.locations l where l.id = v_hunt;
+  if lx is null or ly is null then
+    raise exception 'SITEORIGIN FAIL: the shared hunt site carries no coordinate'; end if;
+  -- OWNED PRECONDITION, and the one that makes everything below non-vacuous: the site must claim a
+  -- real territory, or there is no edge to stand off and the correct answer IS the plain ring (which
+  -- NODIRECTION proves). NODIRECTION borrows this column and gives it back; if that give-back ever
+  -- leaks, this fires rather than silently measuring the wrong world.
+  if v_trad is null or v_trad <= 0 then
+    raise exception 'SITEORIGIN FAIL fixture: the hunt site claims no territory (radius %) — there is no edge for a fight to stand off, so the plain ring would be CORRECT here and every bearing assert below would be vacuous. If this fires, an earlier block borrowed locations.territory_radius and did not give it back', v_trad; end if;
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.so.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uS;
+  insert into public.player_wallet (player_id, balance) values (uS, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uS, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'SITEORIGIN FAIL: commission: %', r; end if;
+  select main_ship_id into sS from public.main_ship_instances where player_id = uS;
+  r := pg_temp.call_as(uS, 'public.upsert_ship_group(1, ''Site Origin'')');
+  if (r->>'ok')::boolean is not true then raise exception 'SITEORIGIN FAIL: group: %', r; end if;
+  gS := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uS, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sS, gS));
+  if (r->>'ok')::boolean is not true then raise exception 'SITEORIGIN FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uS, format('public.set_fleet_command_ship(%L::uuid, true)', sS));
+  if (r->>'ok')::boolean is not true then raise exception 'SITEORIGIN FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uS, format('public.set_group_auto_exit(%L::uuid, false, 30)', gS));
+  if (r->>'ok')::boolean is not true then raise exception 'SITEORIGIN FAIL: auto-exit off: %', r; end if;
+
+  -- ── A REAL HUNT, through the real verb: the owner's own action. ────────────────────────────────
+  r := pg_temp.call_as(uS, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gS, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'SITEORIGIN FAIL: hunt send: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters
+   where player_id = uS and status = 'active' order by created_at desc limit 1;
+  if v_enc is null then raise exception 'SITEORIGIN FAIL: the hunt arrival opened no encounter'; end if;
+
+  -- ── (1) THE FIGHT STANDS OFF THE SITE. This is the assert that fails on the deployed body, where
+  -- ── the anchor IS the site and the bearing is therefore undefined.
+  select engagement_x, engagement_y into ax, ay from public.combat_encounters where id = v_enc;
+  if ax is null or ay is null then
+    raise exception 'SITEORIGIN FAIL: the hunt fight carries no engagement anchor — every geometry comparison below would be NULL and pass silently (the 0313 law)'; end if;
+  v_d := public.osn_distance(ax, ay, lx, ly);
+  if v_d < 1e-6 then
+    raise exception 'SITEORIGIN FAIL: the hunt fight is anchored ON its own site (%,%) — so the site and the fight are one point, combat_wave_arrival_phase has no direction to compute, and every wave falls back to the plain ring. THIS IS THE OWNER''S BUG: "the enemy ships are not comming out from the location"', ax, ay; end if;
+  if abs(v_d - v_trad::double precision) > 1e-6 then
+    raise exception 'SITEORIGIN FAIL: the fight stands % from its site but the site''s territory_radius is % — a fight at a site must stand on that site''s own edge, from the ONE standoff leaf, never on an invented distance', v_d, v_trad; end if;
+
+  -- ── (2) SO THE WAVE HAS A BEARING, AND IT POINTS AT THE CITY. ─────────────────────────────────
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n_units < 2 then
+    raise exception 'SITEORIGIN FAIL: the wave holds % unit(s) — an arc cannot be told from a point with fewer than two', n_units; end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and (pos_x is null or pos_y is null);
+  if n <> 0 then
+    raise exception 'SITEORIGIN FAIL: % enemy row(s) carry no position — an unpositioned wave cannot prove it arrived anywhere (the 0313 law)', n; end if;
+  -- the measured radius the wave actually stands at, taken from the wave itself
+  select max(public.osn_distance(ax, ay, cu.pos_x, cu.pos_y)) into v_rad
+    from public.combat_units cu where cu.encounter_id = v_enc and cu.side = 'enemy';
+  if v_rad is null or v_rad <= 0 then
+    raise exception 'SITEORIGIN FAIL: the wave stands at radius % from the anchor — there is no ring to take a bearing on', v_rad; end if;
+  -- EXACTLY ONE pirate stands where the ray from the fight toward the CITY crosses that radius.
+  -- That is the origin, witnessed: slot 0 of the wave is on the bearing, by construction of the
+  -- arrival leaf, and no other slot can be (the fan steps off it in half slots).
+  select count(*) into n_on_ray from public.combat_units cu
+   where cu.encounter_id = v_enc and cu.side = 'enemy'
+     and abs(cu.pos_x - (ax + v_rad * (lx - ax) / v_d)) <= 1e-6
+     and abs(cu.pos_y - (ay + v_rad * (ly - ay) / v_d)) <= 1e-6;
+  if n_on_ray <> 1 then
+    raise exception 'SITEORIGIN FAIL: % pirate(s) stand where the ray from the fight (%,%) toward the city (%,%) crosses the wave radius % — want exactly 1. The wave is not coming out of the city, which is what the owner reported',
+      n_on_ray, round(ax::numeric,3), round(ay::numeric,3), round(lx::numeric,3), round(ly::numeric,3), round(v_rad::numeric,6); end if;
+
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+
+  raise notice 'DZCOMBAT_PASS_SITEORIGIN ok: a real HUNT at a site with territory_radius % anchored its fight EXACTLY that far off the site (fight %,% vs city %,%), so the city is a DIRECTION rather than the ground under the fleet — and the %-pirate wave then arrived on that bearing, with exactly one raider standing where the ray from the fight toward the city crosses the measured wave radius %. On the deployed body the anchor IS the site, the bearing is undefined and every hunt gets the plain ring: the owner''s "the enemy ships are not comming out from the location - snare"',
+    v_trad, round(ax::numeric,3), round(ay::numeric,3), round(lx::numeric,3), round(ly::numeric,3),
+    n_units, round(v_rad::numeric,6);
 end $$;
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;
