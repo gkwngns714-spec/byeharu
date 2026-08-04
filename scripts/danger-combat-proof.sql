@@ -7972,8 +7972,14 @@ begin
   -- ── (2) SO THE WAVE HAS A BEARING, AND IT POINTS AT THE CITY. ─────────────────────────────────
   perform pg_temp.ae_tick(v_enc);
   select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
-  if n_units < 2 then
-    raise exception 'SITEORIGIN FAIL: the wave holds % unit(s) — an arc cannot be told from a point with fewer than two', n_units; end if;
+  -- ONE unit is enough, and CI taught this block that: wave 1 at danger 1 is a SINGLE pirate
+  -- (least(enemy_synthetic_max_units, greatest(1, danger))), and the first cut demanded two "because
+  -- an arc cannot be told from a point". THE PROPERTY HERE IS THE ORIGIN, NOT THE ARC: slot 0 stands
+  -- on the bearing to the city whatever the wave size, and with one unit slot 0 IS the whole wave —
+  -- a stronger witness, not a weaker one, because there is nowhere else for it to be. The ARC is
+  -- owned where it belongs, by DZCOMBAT_PASS_WAVERING, which stages a wave large enough to have one.
+  if n_units < 1 then
+    raise exception 'SITEORIGIN FAIL: the fight fielded NO enemy row at all — there is no wave whose origin could be measured'; end if;
   select count(*) into n from public.combat_units
    where encounter_id = v_enc and side = 'enemy' and (pos_x is null or pos_y is null);
   if n <> 0 then
