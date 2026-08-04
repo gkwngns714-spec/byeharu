@@ -98,5 +98,13 @@ export function navGridClass(count: number): 'grid-cols-5' | 'grid-cols-6' {
  *  nothing — so the first they knew of it was a destroyed fleet in the reports. The nav is the only
  *  chrome present on every screen, so that is where the alert belongs. Exported as a constant rather
  *  than compared inline in AppShell, so this table stays the ONE authority on which destination
- *  owns combat. */
-export const COMBAT_TAB_TO = '/mission'
+ *  owns combat.
+ *
+ *  REPOINTED TO /map (2026-08-04). It was '/mission', and the battle is not DRAWN there: MapScreen
+ *  mounts <CombatMapCard> over the live <GalaxyMap> — the ships, the rounds in the air, the hull
+ *  bars and the one-click Retreat. /mission carries ActiveCombatPanel, a text summary. So the alert
+ *  that says "a battle has begun" took the player to the screen that does not show it, which is the
+ *  same defect as a camera that stops following the fight: "take me to the fight" must land ON the
+ *  fight. Pinned by tests/navTabs.spec.ts against the file that actually mounts the card, so this
+ *  cannot drift back without that proof going red. */
+export const COMBAT_TAB_TO = '/map'

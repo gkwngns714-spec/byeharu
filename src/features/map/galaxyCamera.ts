@@ -99,6 +99,38 @@ export function fitCameraToWorldPoints(points: readonly WorldCoord[]): Camera {
   return { k, tx: VIEW / 2 - k * cx, ty: VIEW / 2 - k * cy }
 }
 
+/** Are ALL of these WORLD points inside the frame the player is actually looking at, under `cam`?
+ *
+ *  The exact INVERSE of `fitCameraToWorldPoints`, asked of the same projection: the map draws a world
+ *  point at `k·worldToViewBox(p) + t` (its `<g transform="translate(t) scale(k)">`), so that is what
+ *  is tested here. Nothing re-derives a bounding box — the caller passes the points whose box it
+ *  already owns, and gets back a yes/no about the camera.
+ *
+ *  The region tested is the 0..VIEW viewBox. Under `preserveAspectRatio="xMidYMid meet"` the WHOLE
+ *  viewBox is always on screen and the long axis shows a little MORE than it, so this is the
+ *  conservative answer: everything it calls framed really is visible, and the only way it can err is
+ *  by calling something off-frame that was still inside the letterbox margin.
+ *
+ *  Non-finite points are ignored — the same rule the fit uses, so the two agree about which points
+ *  exist. NO points is vacuously framed: there is nothing to keep on screen. */
+export function worldPointsFramed(points: readonly WorldCoord[], cam: Camera): boolean {
+  for (const p of points) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue
+    const v = worldToViewBox(p)
+    const x = cam.tx + cam.k * v.x
+    const y = cam.ty + cam.k * v.y
+    if (x < 0 || x > VIEW || y < 0 || y > VIEW) return false
+  }
+  return true
+}
+
+/** VALUE equality for a camera. Exists because the camera is compared two different ways and they
+ *  mean different things: IDENTITY answers "is this still the camera we set?" (any pan/zoom builds a
+ *  new object), while this answers "would applying that camera change anything?" — the guard that
+ *  keeps a re-frame from re-setting a camera that is already exactly right. */
+export const sameCamera = (a: Camera, b: Camera): boolean =>
+  a.k === b.k && a.tx === b.tx && a.ty === b.ty
+
 // ── Deterministic focus policy (rule: documented in code + tested) ───────────────────────────────────
 //   • If the player's main ship is IN OPEN SPACE / IN TRANSIT, focus on the ship and its active
 //     movement segment (origin→target) so the player is always visible — named content is NOT mixed in.

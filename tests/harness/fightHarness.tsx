@@ -22,6 +22,7 @@ import { CombatMapCard } from '../../src/features/map/CombatMapCard'
 import { OverlayRail } from '../../src/components/ui'
 import {
   ENCOUNTER,
+  ENCOUNTER_REPOSITIONED,
   EVENTS,
   LOCATIONS,
   OTHER_ENCOUNTER,
@@ -30,15 +31,28 @@ import {
   TICKS,
   UNITS,
   UNITS_NEXT_TICK,
+  UNITS_REPOSITIONED,
 } from './fightFixtures'
 
 const noop = () => {}
 
-function Fight({ twoFights, advanced }: { twoFights: boolean; advanced: boolean }) {
-  const encounters = twoFights ? [ENCOUNTER, OTHER_ENCOUNTER] : [ENCOUNTER]
+function Fight({
+  twoFights,
+  advanced,
+  repositioned,
+}: {
+  twoFights: boolean
+  advanced: boolean
+  repositioned: boolean
+}) {
+  // `repositioned` moves the WHOLE engagement — hulls, enemies and the anchor — by one delta, which
+  // is what a 0337 in-combat reposition does to it tick after tick. It is the state in which the
+  // battle is no longer anywhere near the frame the camera took when it opened.
+  const mine = repositioned ? ENCOUNTER_REPOSITIONED : ENCOUNTER
+  const encounters = twoFights ? [mine, OTHER_ENCOUNTER] : [mine]
   // `advanced` delivers the NEXT server tick's rows — a second observation, which is the only way a
   // rendered proof can watch a step being crossed rather than a glyph standing still.
-  const base = advanced ? UNITS_NEXT_TICK : UNITS
+  const base = repositioned ? UNITS_REPOSITIONED : advanced ? UNITS_NEXT_TICK : UNITS
   const units = twoFights ? [...base, ...OTHER_UNITS] : base
   const events = twoFights ? [...EVENTS, ...OTHER_EVENTS] : EVENTS
   return (
@@ -82,10 +96,11 @@ function Harness() {
   // flips it to prove a second, higher-tick battle no longer blanks this one.
   const [twoFights, setTwoFights] = useState(false)
   const [advanced, setAdvanced] = useState(false)
+  const [repositioned, setRepositioned] = useState(false)
   return (
     <>
       <div id="map-host">
-        <Fight twoFights={twoFights} advanced={advanced} />
+        <Fight twoFights={twoFights} advanced={advanced} repositioned={repositioned} />
       </div>
       <div id="controls">
         <button data-testid="toggle-second-fight" onClick={() => setTwoFights((v) => !v)}>
@@ -93,6 +108,11 @@ function Harness() {
         </button>
         <button data-testid="advance-tick" onClick={() => setAdvanced((v) => !v)}>
           next tick: {advanced ? 'on' : 'off'}
+        </button>
+        {/* The battle MOVES (0337 reposition). Off by default, so every existing measurement is
+            taken against exactly the fight it was taken against before. */}
+        <button data-testid="reposition-fight" onClick={() => setRepositioned((v) => !v)}>
+          fight moved: {repositioned ? 'on' : 'off'}
         </button>
       </div>
     </>

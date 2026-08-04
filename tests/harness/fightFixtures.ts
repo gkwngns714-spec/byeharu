@@ -128,6 +128,30 @@ export const UNITS_NEXT_TICK: CombatUnit[] = UNITS.map((u) => {
   return { ...u, ...moved, updated_at: '2026-08-03T12:00:03.000Z' }
 })
 
+/** THE FIGHT AFTER A REPOSITION — the same battle, somewhere else.
+ *
+ *  0337 turned an in-combat reposition into a real multi-tick MOVE: `combat_translate_player_formation`
+ *  shifts every player hull, `fleet_set_in_space` shifts the fleet row, and `engagement_x/engagement_y`
+ *  are RESTAMPED to the new point, all by ONE delta (0337:486-492) — and later waves then form around
+ *  the moved anchor. This applies that same single delta to every unit and to the anchor, which is why
+ *  the enemies come with it: they are part of the engagement that moved, not a separate event.
+ *
+ *  120 × −90 world units is ~150 units of travel — at `move_speed` 4 a reposition of about 38 ticks,
+ *  and roughly 4.5 times the ~33-world-unit window the opening fit leaves. The battle is not near the
+ *  edge of the old frame; it is nowhere in it. That is the state the owner was looking at. */
+export const REPOSITION_DX = 120
+export const REPOSITION_DY = -90
+
+export const UNITS_REPOSITIONED: CombatUnit[] = UNITS.map((u) => ({
+  ...u,
+  // Every UNITS row is positioned (the `unit` builder defaults both), so `?? FIGHT_*` is unreachable
+  // and never fabricates a coordinate — it only keeps the shift total on the row's own point.
+  pos_x: (u.pos_x ?? FIGHT_X) + REPOSITION_DX,
+  pos_y: (u.pos_y ?? FIGHT_Y) + REPOSITION_DY,
+  // One tick later, so the client measures the server's own 3 s cadence for the step (combatMotion).
+  updated_at: '2026-08-03T12:00:03.000Z',
+}))
+
 const ev = (o: Partial<CombatEvent> & { id: number; event_type: CombatEvent['event_type'] }): CombatEvent => ({
   encounter_id: ENCOUNTER_ID,
   tick_number: 17,
@@ -208,6 +232,15 @@ export const ENCOUNTER: CombatEncounter = {
   ended_at: null,
   engagement_x: FIGHT_X,
   engagement_y: FIGHT_Y,
+}
+
+/** The same encounter with its anchor RESTAMPED to where the fight now is — 0337 writes
+ *  `engagement_x/engagement_y` in the same statement that moves the formation, so a fixture that
+ *  moved the hulls and left the anchor behind would be a state the server cannot produce. */
+export const ENCOUNTER_REPOSITIONED: CombatEncounter = {
+  ...ENCOUNTER,
+  engagement_x: FIGHT_X + REPOSITION_DX,
+  engagement_y: FIGHT_Y + REPOSITION_DY,
 }
 
 /** A SECOND, older fight far away and on a much higher tick — the case that used to blank the new
