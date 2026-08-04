@@ -1311,10 +1311,30 @@ begin
     if public.combat_wave_arrival_phase(10, -20, 10.4, -19.6, k) is distinct from 0.5 then
       raise exception '0339 ASSERT (e) FAIL: a sub-half-unit displacement still produced a bearing at slot % — below half a world grid cell the fight and the site are the same place', k;
     end if;
-    -- and a REAL displacement still answers the real bearing: the fix must not eat the feature
-    if public.combat_wave_arrival_phase(10, -20, 10, -8, k) is not distinct from 0.5 then
-      raise exception '0339 ASSERT (e) FAIL: a 12-unit displacement (the Snare standoff itself) fell back to the ring at slot % — the epsilon has eaten the bearing this whole slice exists to produce', k;
-    end if;
+  end loop;
+  -- AND A REAL DISPLACEMENT STILL ANSWERS THE REAL BEARING: the fix must not eat the feature.
+  -- TESTED AS A DIRECTION, NOT AS A SCALAR, and that distinction is load-bearing — CI caught the
+  -- first cut of this assert comparing the returned phase against 0.5 and failing at slot 1, because
+  -- 0.5 is a LEGAL phase that a real bearing can land on exactly (bearing 2.0 slots, fan -0.5,
+  -- minus slot 1). The fallback and a genuine answer are indistinguishable as numbers; they are
+  -- perfectly distinguishable as GEOMETRY. So this composes 0336's formation leaf at slot 0 and
+  -- demands the point sit on the ray from the anchor toward the site — 0338 assert (d)'s own shape,
+  -- at the 12-unit displacement the Snare standoff actually produces.
+  for k in 0 .. 7 loop
+    declare
+      th double precision := 2 * pi() * k / 8.0 + 0.19;
+      sx double precision := 10 + 12.0 * cos(th);
+      sy double precision := -20 + 12.0 * sin(th);
+      fx double precision; fy double precision;
+    begin
+      select fp.x, fp.y into fx, fy
+        from public.combat_formation_point(10, -20, 7.5, 0,
+               public.combat_wave_arrival_phase(10, -20, sx, sy, 0)) fp;
+      if abs(fx - (10 + 7.5 * cos(th))) > 1e-9 or abs(fy - (-20 + 7.5 * sin(th))) > 1e-9 then
+        raise exception '0339 ASSERT (e) FAIL: with the site a REAL 12 units away on bearing % rad — exactly the standoff this slice creates — slot 0 landed at (%,%) instead of on the ray toward it. The epsilon has eaten the bearing this whole slice exists to produce',
+          round(th::numeric, 4), fx, fy;
+      end if;
+    end;
   end loop;
   -- 0338's own fallbacks survive value-for-value
   if public.combat_wave_arrival_phase(10, -20, null, null, 0) is distinct from 0.5
