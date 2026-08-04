@@ -647,15 +647,7 @@ begin
        where l.id = pr.location_id;
     end if;$h1n$),
     (2, 'process_combat_ticks',
-     $h2o$  v_ring_radius            double precision;
-  v_formation_extent       double precision;
-  v_spawn_slot             integer;
-  v_slot_x                 double precision;
-  v_slot_y                 double precision;$h2o$,
-     $h2n$  v_ring_radius            double precision;
-  v_spawn_slot             integer;$h2n$),
-    (3, 'process_combat_ticks',
-     $h3o$            -- 0336 THE EXTENT THE WAVE MUST STAND CLEAR OF, MEASURED — never assumed from the knob.
+     $h2o$            -- 0336 THE EXTENT THE WAVE MUST STAND CLEAR OF, MEASURED — never assumed from the knob.
             -- Max over the LIVING player rows of their distance from the anchor: the lead sits ON it
             -- (0), escorts sit out on the escort ring, and a lone hull IS its own lead, so its extent
             -- is 0. Every player ship is therefore within v_formation_extent of the anchor, which is
@@ -674,17 +666,17 @@ begin
                and u.pos_x is not null and u.pos_y is not null;
             -- 0336: the slot counter is initialised for the WHOLE resolved wave, outside the
             -- per-archetype loop, so a plan of several unit types still lays out one ring.
-            v_spawn_slot := 0;$h3o$,
-     $h3n$            -- ██ 0339 THE MEASUREMENT MOVED INTO THE SPAWN AUTHORITY ██
+            v_spawn_slot := 0;$h2o$,
+     $h2n$            -- ██ 0339 THE MEASUREMENT MOVED INTO THE SPAWN AUTHORITY ██
             -- 0336's extent measurement stood here AND, character for character bar its indentation,
             -- in the synthetic arm below. Two copies of one measurement is how the two arms drift.
             -- It now lives once, inside combat_spawn_wave_units, beside the radius that consumes it.
             -- v_spawn_slot survives in the TICK because it is the one piece of state the fold cannot
             -- own: the resolved arm carries it ACROSS plan archetypes, so a plan of several unit
             -- types still lays out one ring instead of restarting at slot 0 per archetype.
-            v_spawn_slot := 0;$h3n$),
-    (4, 'process_combat_ticks',
-     $h4o$              -- ██ 0336 THE WAVE SPAWNS ON A RING, NOT ON ONE POINT ██
+            v_spawn_slot := 0;$h2n$),
+    (3, 'process_combat_ticks',
+     $h3o$              -- ██ 0336 THE WAVE SPAWNS ON A RING, NOT ON ONE POINT ██
               -- Every unit of a wave was inserted at the identical anchor. Production proves the effect:
               -- every encounter that ever held enemies holds them at exactly ONE distinct position. Three
               -- consequences, all bad: distance from any actor to every enemy is the same constant, so the
@@ -746,8 +738,8 @@ begin
                     'ammo_type', null, 'ammo_per_shot', 0, 'cooldown_seconds', v_enemy_cooldown,
                     'next_ready_at', null, 'ammo_remaining', null)));
                 v_spawn_slot := v_spawn_slot + 1;
-              end loop;$h4o$,
-     $h4n$              -- ██ 0339 ONE SPAWN AUTHORITY — THE LOOP WAS WRITTEN TWICE ██
+              end loop;$h3o$,
+     $h3n$              -- ██ 0339 ONE SPAWN AUTHORITY — THE LOOP WAS WRITTEN TWICE ██
               -- This block and the synthetic arm below were the SAME ~15 lines at two indentations:
               -- measure the formation extent, zero the slot, loop the count, ask combat_formation_point
               -- at (extent + range + 1) on combat_wave_arrival_phase's bearing, INSERT, bump the slot.
@@ -763,9 +755,9 @@ begin
               v_spawn_slot := public.combat_spawn_wave_units(
                 e.id, e.player_id, v_weapon->>'unit_type_id', v_enemy_count, v_enemy_unit_hp,
                 v_enemy_speed, v_enemy_range, v_enemy_proj_speed, v_enemy_unit_power, v_enemy_cooldown,
-                v_anchor_x, v_anchor_y, loc.x, loc.y, v_spawn_slot);$h4n$),
-    (5, 'process_combat_ticks',
-     $h5o$          -- ██ 0336 THE WAVE SPAWNS ON A RING, NOT ON ONE POINT ██
+                v_anchor_x, v_anchor_y, loc.x, loc.y, v_spawn_slot);$h3n$),
+    (4, 'process_combat_ticks',
+     $h4o$          -- ██ 0336 THE WAVE SPAWNS ON A RING, NOT ON ONE POINT ██
           -- Every unit of a wave was inserted at the identical anchor. Production proves the effect:
           -- every encounter that ever held enemies holds them at exactly ONE distinct position. Three
           -- consequences, all bad: distance from any actor to every enemy is the same constant, so the
@@ -845,8 +837,8 @@ begin
                 'ammo_type', null, 'ammo_per_shot', 0, 'cooldown_seconds', v_enemy_cooldown,
                 'next_ready_at', null, 'ammo_remaining', null)));
             v_spawn_slot := v_spawn_slot + 1;
-          end loop;$h5o$,
-     $h5n$          -- ██ 0339 ONE SPAWN AUTHORITY — THE LOOP WAS WRITTEN TWICE ██
+          end loop;$h4o$,
+     $h4n$          -- ██ 0339 ONE SPAWN AUTHORITY — THE LOOP WAS WRITTEN TWICE ██
           -- The other half of the fork. Identical to the resolved arm above bar its indentation and
           -- the STATS, which are the real difference and are passed as arguments: this arm derives
           -- them from loc.base_difficulty and the knobs, the resolved arm from the authored plan.
@@ -855,7 +847,15 @@ begin
           v_spawn_slot := public.combat_spawn_wave_units(
             e.id, e.player_id, 'pirate_synthetic', v_enemy_count, v_enemy_unit_hp,
             v_enemy_speed, v_enemy_range, v_enemy_proj_speed, v_enemy_unit_power, v_enemy_cooldown,
-            v_anchor_x, v_anchor_y, loc.x, loc.y, v_spawn_slot);$h5n$),
+            v_anchor_x, v_anchor_y, loc.x, loc.y, v_spawn_slot);$h4n$),
+    (5, 'process_combat_ticks',
+     $h5o$  v_ring_radius            double precision;
+  v_formation_extent       double precision;
+  v_spawn_slot             integer;
+  v_slot_x                 double precision;
+  v_slot_y                 double precision;$h5o$,
+     $h5n$  v_ring_radius            double precision;
+  v_spawn_slot             integer;$h5n$),
     (6, 'command_ship_group_go',
      $h6o$        declare
           v_rz_admits boolean := false;

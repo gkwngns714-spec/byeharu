@@ -407,12 +407,21 @@ const STEP_NEW = `        -- THE SAME CONDITIONS THE ORDER ARM ADMITTED ON, ASKE
 // THE MIGRATION
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 
+// ── HUNK ORDER IS LOAD-BEARING, AND CI PROVED IT ────────────────────────────────────────────────
+// Each row is applied with its own CREATE OR REPLACE, so EVERY INTERMEDIATE BODY must compile —
+// plpgsql validates variable references at creation time. The first cut of this file removed the
+// three dead locals (v_formation_extent, v_slot_x, v_slot_y) FIRST, while the spawn arms below still
+// referenced them, and the disposable apply-proof rejected the whole chain with
+// `"v_formation_extent" is not a known variable (SQLSTATE 42601)`. Nothing static could have caught
+// that: the FINAL body is perfectly valid, and every self-assert in this migration inspects the
+// final body. It is the apply-proof, and only the apply-proof, that runs the intermediate ones.
+// So the DECLARE removal is LAST, after the two spawn folds have deleted the last use of all three.
 const HUNKS = [
   ['h1', 'combat_create_encounter', CCE_OLD, CCE_NEW],
-  ['h2', 'process_combat_ticks', DECL_OLD, DECL_NEW],
-  ['h3', 'process_combat_ticks', EXT_OLD, EXT_NEW],
-  ['h4', 'process_combat_ticks', SPAWN_RESOLVED_OLD, SPAWN_RESOLVED_NEW],
-  ['h5', 'process_combat_ticks', SPAWN_SYNTHETIC_OLD, SPAWN_SYNTHETIC_NEW],
+  ['h2', 'process_combat_ticks', EXT_OLD, EXT_NEW],
+  ['h3', 'process_combat_ticks', SPAWN_RESOLVED_OLD, SPAWN_RESOLVED_NEW],
+  ['h4', 'process_combat_ticks', SPAWN_SYNTHETIC_OLD, SPAWN_SYNTHETIC_NEW],
+  ['h5', 'process_combat_ticks', DECL_OLD, DECL_NEW],
   ['h6', 'command_ship_group_go', ORDER_OLD, ORDER_NEW],
   ['h7', 'process_combat_ticks', STEP_OLD, STEP_NEW],
 ];
