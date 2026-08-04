@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fleet readout on the map — UI harness (test only)</title>
+    <style>
+      /* The panel is measured against the VIEWPORT, so the page carries no margin of its own: the
+         proof sets the width (288px and the 320px phone floor) and reads the rendered boxes back. */
+      html, body { margin: 0; height: 100%; }
+      #root { height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./fleetinfoHarness.tsx"></script>
+  </body>
+</html>

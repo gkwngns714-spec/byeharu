@@ -73,6 +73,14 @@ export interface FleetPresence {
   state: FleetPresenceState
   /** The one badge string: "<name> <placed>/<members>" plus the state's own clause. */
   label: string
+  /** The fleet's OWN name (fleetLabel), split out of the badge string so a panel can render the name
+   *  and the place in different places without parsing the badge back apart. */
+  name: string
+  /** The NAME of the place this fleet's state refers to — the port it is docked at, the territory it
+   *  orbits, the site its fight belongs to — or null when it stands nowhere named (deep space, in
+   *  flight, unplaceable). The badge clause above and `fleetWhereText` below are BOTH built from
+   *  this one value, so the map badge and the fleet panel can never name two different places. */
+  placeName: string | null
   /** WORLD coordinates. Null EXACTLY when `state === 'unplaced'` — never a guessed point. */
   at: { x: number; y: number } | null
   /** The port/site the fleet stands at, when its state has one. Drives per-site badge stacking only. */
@@ -80,6 +88,36 @@ export interface FleetPresence {
   memberCount: number
   /** How many members the world could place. 0 ⇔ 'unplaced'. */
   placedCount: number
+}
+
+/**
+ * WHERE THE FLEET IS, AS ONE PLAIN SENTENCE — the panel-side rendering of the same (state,
+ * placeName) pair the map badge's clause is built from.
+ *
+ * Two formats exist because two media need them: the badge is a haloed SVG label drawn at 10px over
+ * the starfield and has to stay short ("Fleet 1 1/4 · in orbit of Haven"), while a panel row reads
+ * as a sentence. They are NOT two answers — both take the state and the place off ONE presence, so
+ * the map can never draw a badge at Haven while the panel says Slagworks.
+ *
+ * Exhaustive over FLEET_PRESENCE_STATES by construction (no default arm): a state added without a
+ * phrase fails the typecheck, the same law that governs the markers.
+ */
+export function fleetWhereText(state: FleetPresenceState, placeName: string | null): string {
+  switch (state) {
+    case 'in-combat':
+      return placeName ? `In combat at ${placeName}` : 'In combat'
+    // A fleet in flight is not anywhere yet — the map's own movement line carries the path and the
+    // ETA, so naming a half-passed coordinate here would be precision the player cannot use.
+    case 'moving':
+      return 'In flight'
+    case 'in-space':
+      return placeName ? `In orbit of ${placeName}` : 'In open space'
+    case 'docked':
+      return placeName ? `Docked at ${placeName}` : 'Docked'
+    // Not "nowhere": the server itself cannot place a single member, and saying so is the answer.
+    case 'unplaced':
+      return 'Location unknown'
+  }
 }
 
 /** The location fields this module reads (MapLocation satisfies it). */
@@ -91,7 +129,7 @@ export type PresenceLocation = Pick<MapLocation, 'id' | 'name' | 'x' | 'y' | 'te
 /** get_my_fleet_positions carries the parked coordinate for the 'in_space' arm (the fleet-first read
  *  added by FLEET-GO 3c-3 and live in the deployed body). The row type is widened at its source
  *  (mainshipApi.FleetPosition); this alias documents what this module needs of it. */
-type PositionRow = Pick<FleetPosition, 'main_ship_id' | 'place' | 'location_id' | 'segment' | 'space_x' | 'space_y'>
+export type PositionRow = Pick<FleetPosition, 'main_ship_id' | 'place' | 'location_id' | 'segment' | 'space_x' | 'space_y'>
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
@@ -229,6 +267,8 @@ export function resolveFleetPresence(input: {
           groupId: g.group_id,
           state: 'in-combat',
           label: `${name} ${counts}${place ? ` · in combat at ${place.name}` : ' · in combat'}`,
+          name,
+          placeName: place?.name ?? null,
           at: { x: at.x, y: at.y },
           locationId: site?.id ?? null,
           memberCount,
@@ -244,6 +284,8 @@ export function resolveFleetPresence(input: {
         groupId: g.group_id,
         state: 'moving',
         label: `${name} ${counts}`,
+        name,
+        placeName: null,
         at: moving.point,
         locationId: null,
         memberCount,
@@ -257,6 +299,8 @@ export function resolveFleetPresence(input: {
         groupId: g.group_id,
         state: 'in-space',
         label: `${name} ${counts}${place ? ` · in orbit of ${place.name}` : ''}`,
+        name,
+        placeName: place?.name ?? null,
         at: inSpace.point,
         locationId: null,
         memberCount,
@@ -266,10 +310,14 @@ export function resolveFleetPresence(input: {
     }
     if (docked) {
       // The port's own marker is already labelled — the badge names the fleet, not the place again.
+      // The PANEL still needs the port's name (it has no marker beside it to read), so it is carried
+      // as `placeName` rather than re-looked-up by the caller.
       out.push({
         groupId: g.group_id,
         state: 'docked',
         label: `${name} ${counts}`,
+        name,
+        placeName: (docked.locationId ? locById.get(docked.locationId)?.name : undefined) ?? null,
         at: docked.point,
         locationId: docked.locationId,
         memberCount,
@@ -282,6 +330,8 @@ export function resolveFleetPresence(input: {
       groupId: g.group_id,
       state: 'unplaced',
       label: `${name} ${counts} · location unknown`,
+      name,
+      placeName: null,
       at: null,
       locationId: null,
       memberCount,

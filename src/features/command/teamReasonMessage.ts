@@ -40,7 +40,19 @@ const REASON_MESSAGES: Record<string, string> = {
   // preview/totals reads (0165/0166)
   invalid_activity: 'That activity isn’t recognized for fleet orders.',
   // FLEET-CONTROL (0204): the fleet control-model rejects (movement RPCs + assign cap + command-ship setter)
-  fleet_inactive_no_command: 'This fleet has no command ship — designate one to move, send, or hunt with it.',
+  //
+  // THE ONE SENTENCE FOR THE COMMAND-SHIP RULE (owner, 2026-08-04, playing: "i am in snare but in no
+  // fight is occuring"). This is the FIRST thing send_ship_group_hunt checks — 0330:1353-1359, before
+  // the destination is even read — and of the 77 ships live on production only 2 carry the flag
+  // (measured in 0335:5-8). So it is the likeliest reason a fleet standing on a pirate site refuses
+  // to fight, and it was being said THREE different ways: this map ("designate one"), the map's hunt
+  // section ("set one on the Fleet tab") and the roster ("Fleet inactive — set a command ship"). One
+  // rule, three wordings, and only one of them named where the fix is. Folded here, composed by all
+  // three surfaces plus the map's fleet readout — a fourth wording is the defect, not a style choice.
+  //
+  // It NAMES THE FIX because a refusal the player cannot act on is the same as no refusal at all.
+  fleet_inactive_no_command:
+    'This fleet has no command ship — set one on the Fleet tab to move, send, or hunt with it.',
   fleet_full: 'This fleet is full (8 ships max) — remove a ship or use another fleet.',
   ship_not_in_fleet: 'Add this ship to a fleet before making it a command ship.',
   // FLEET-GO 4a-1 — the UNIFIED mover/brake reject vocabulary (command_ship_group_go 0207/0208 +

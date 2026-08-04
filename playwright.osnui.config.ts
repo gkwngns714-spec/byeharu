@@ -14,7 +14,10 @@ import { defineConfig, devices } from '@playwright/test'
 // battle readout at a phone width; /nav.html — the bottom bar MEASURED at the 320px floor;
 // /assets.html — the asset ledger across every price-coverage state, proving a missing price
 // reaches the screen as words and never as a zero; /ships.html — the real Ships tab (<ShipsView> +
-// the real <FittingDetail>), MEASURED side by side at 1280px and stacked-but-unclipped at 320px.
+// the real <FittingDetail>), MEASURED side by side at 1280px and stacked-but-unclipped at 320px;
+// /fleetinfo.html — the real <FleetStatusPanel> in the real map rail: where each fleet is, what it
+// is doing, WHY it cannot fight, and the one action slot (hunt the site under its feet, or retreat
+// from the fight it is in), MEASURED at the 320px floor and 10% under it.
 // Readiness polls /dock.html because ONE entry is enough to prove the server is up; all are served
 // by it.
 export default defineConfig({

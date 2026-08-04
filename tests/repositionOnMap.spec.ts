@@ -110,14 +110,33 @@ test('ONE producer of the course sentence in all of src/ — two mounts, one imp
   // the function that produces it
   const definers = files.filter((f) => /export function resolveRepositionCourse\b/.test(src(f)))
   expect(definers).toEqual(['features/combat/repositionCourse.ts'])
-  // …read by exactly the two surfaces that draw a live fight, and no third private copy
+  // …read by exactly the surfaces below, and no third private copy.
+  //
+  // THE THIRD READER IS NOT A THIRD SURFACE. map/fleetStatusModel calls the resolver as a PREDICATE
+  // and nothing else: the map's fleet readout says "In combat — moving into position" and lets the
+  // card three inches above it print the distance. Its licence is the assertion right below this
+  // one, which holds it to strictly less than the two mounts are allowed — it may not name a column,
+  // measure a distance, or restate a single word of the sentence.
   const readers = files.filter(
     (f) => f !== 'features/combat/repositionCourse.ts' && src(f).includes('resolveRepositionCourse('),
   )
   expect(readers.sort()).toEqual([
     'features/combat/ActiveCombatPanel.tsx',
     'features/map/CombatMapCard.tsx',
+    'features/map/fleetStatusModel.ts',
   ])
+})
+
+test('the fleet readout reads the course as a PREDICATE — it prints not one word of the sentence', () => {
+  // The map's fleet panel composes the existence rule ("is a course running?") and stops there. If it
+  // ever starts printing the distance it becomes a second fight readout on a screen that already has
+  // one, which is the duplication the whole slice was written to avoid.
+  const code = codeOnly(src('features/map/fleetStatusModel.ts'))
+  for (const forbidden of ['reposition_x', 'reposition_y', 'Math.hypot', 'units to go', 'Moving to']) {
+    expect(code, `the fleet readout must not re-derive ${forbidden}`).not.toContain(forbidden)
+  }
+  // …and it never reaches for `.text`/`.remaining` off the view — the predicate is the whole use.
+  expect(code).toMatch(/resolveRepositionCourse\(encounter\)\s*\?/)
 })
 
 test('the Mission panel keeps its mount — the map is a second VIEW, not a move', () => {
