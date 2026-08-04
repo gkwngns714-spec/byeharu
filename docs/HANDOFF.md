@@ -16,12 +16,44 @@
 
 | | |
 |---|---|
-| `main` head | **`5fd74ec`** (*"DEV_LOG: record the five slices of 2026-08-04"*) |
-| Highest migration on `main` | **`0338`** (`20260618000338_enemies_come_from_the_zones_city.sql`), **323** migration files |
-| **Production migration head** | **`0338`** — `main` and production are IN SYNC |
-| Frontend on GitHub Pages | **Current with `main`.** Last `pages.yml` run was PR #384; **no commit since then touches `src/`** (verified: `git log c862c03..HEAD -- src/` is empty), so nothing is merged-but-undeployed. |
-| CI on `main` head | **All green** — including `TEAM-COMMAND`, whose long-standing `SHIELD1` red is **gone**. |
-| Open PRs | **1** — #163 only, and it is open by design. |
+| `main` head | **`38cf7e1`** (*"0340 — stats have one authority"*, PR #394) |
+| Highest migration on `main` | **`0340`** (`20260618000340_stats_have_one_authority.sql`), **325** migration files |
+| **Production migration head** | **`0340`** — `main` and production are IN SYNC |
+| Frontend on GitHub Pages | **Current with `main`** — `pages.yml` ran green on `38cf7e1`. |
+| CI on `main` head | **All green** — 12 runs on the merge commit, 0 failures. |
+| Open PRs | **3.** #163 (project map, open by design) · **#396** `346d3800` and **#397** `4d037817`, both green and both **held at an owner gate** — see below. |
+
+**⚠ Two green PRs are deliberately NOT merged. Do not merge either without explicit owner authorization.**
+
+| PR | head | what it is | why it is held |
+|---|---|---|---|
+| **#396** | `346d3800` | Dormant stats tell the truth + migration **`0342`** withdrawing the Deep-scan array from all three shops | Awaiting authorization on this exact head. Its first head (`4d10230`) was **rejected at review** — see the lesson below. |
+| **#397** | `4d037817` | Migration **`0341`** — banded wave ramp (1 body per 5 danger) + all cooldowns doubled | Explicitly outside the current authorization. Balance effect recorded, not approved. |
+
+> **`0341` is reserved by #397's branch even though it is unmerged.** #396 therefore uses **`0342`**.
+> Derive the next migration number from **every ref**, not from `main` or production alone —
+> `git ls-tree -r --name-only <branch> -- supabase/migrations`. A duplicate version is not a git
+> conflict: both files land, `schema_migrations` keys on the VERSION, and the loser is recorded
+> already-applied and **silently skipped** on production. `scripts/check-migration-versions.mjs` now
+> runs inside `build` and catches collisions *within a branch*, but it cannot see across branches.
+
+### THE LESSON OF 2026-08-04 — a disabled button is not a rule
+
+PR #396's first head marked the Deep-scan array "not currently implemented" and disabled its Buy
+button **in React only**. All three production offers were still `active = true` at 90 credits, and
+`buy_shop_offer_at_port` authorizes purchase from `port_shop_offers.active` — so an authenticated
+client calling the RPC directly would still have been sold it. The owner rejected the head at review.
+
+**The general rule this is an instance of:** when a change claims to *prevent* something, prove it at
+the **authoritative boundary**, not at the surface a player happens to touch. And prove non-mutation
+by **before/after comparison** — a returned reason string is not evidence that nothing was written.
+
+**Verified on target 2026-08-04, not taken from CI green:** `stat_definitions` returned HTTP 200 with
+its ten seeded rows (it answered `404 PGRST205` before the deploy — a real before/after, not a bare
+assertion); `game_config` was **byte-identical, 141 rows, before and after**; all eight new resolvers
+answer `42501 permission denied` when probed with their **real parameter names**. *The probe must use
+the real names — an invented argument returns `404 PGRST202` for a function that is present, because
+PostgREST resolves overloads by argument name. That 404 means "no matching signature", not "absent".*
 
 **Verified on target 2026-08-04, not taken from CI green:** production was probed over anon REST for
 `combat_wave_arrival_phase` — 0338's new leaf — using the malformed-argument technique (PostgREST
