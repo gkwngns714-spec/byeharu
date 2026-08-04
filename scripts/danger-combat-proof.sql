@@ -7966,8 +7966,15 @@ begin
   v_d := public.osn_distance(ax, ay, lx, ly);
   if v_d < 1e-6 then
     raise exception 'SITEORIGIN FAIL: the hunt fight is anchored ON its own site (%,%) — so the site and the fight are one point, combat_wave_arrival_phase has no direction to compute, and every wave falls back to the plain ring. THIS IS THE OWNER''S BUG: "the enemy ships are not comming out from the location"', ax, ay; end if;
-  if abs(v_d - v_trad::double precision) > 1e-6 then
-    raise exception 'SITEORIGIN FAIL: the fight stands % from its site but the site''s territory_radius is % — a fight at a site must stand on that site''s own edge, from the ONE standoff leaf, never on an invented distance', v_d, v_trad; end if;
+  -- 1e-5, and the bound is DERIVED not chosen: combat_site_standoff_point rounds each coordinate to
+  -- six decimals so the anchor survives the creator's v_roster jsonb round trip BIT FOR BIT (which is
+  -- what keeps a lone hull's measured formation extent exactly 0 — see the leaf's own comment and
+  -- 0339 assert (d)). That rounding moves each coordinate by at most 0.5e-6, so the radial error is
+  -- at most sqrt(2)*0.5e-6 = 7.08e-7. The previous 1e-6 here passed with only ~30% margin, which is
+  -- the zero-margin disease this repo has already been bitten by twice; 1e-5 clears the derived
+  -- bound and is still a million times finer than the integer grid the world stores positions on.
+  if abs(v_d - v_trad::double precision) > 1e-5 then
+    raise exception 'SITEORIGIN FAIL: the fight stands % from its site but the site''s territory_radius is % (error %, derived rounding bound 7.08e-7) — a fight at a site must stand on that site''s own edge, from the ONE standoff leaf, never on an invented distance', v_d, v_trad, abs(v_d - v_trad::double precision); end if;
 
   -- ── (2) SO THE WAVE HAS A BEARING, AND IT POINTS AT THE CITY. ─────────────────────────────────
   perform pg_temp.ae_tick(v_enc);

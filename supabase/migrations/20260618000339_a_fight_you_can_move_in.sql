@@ -63,6 +63,27 @@
 -- fight and the site are the same place at the resolution the world stores, and any bearing taken
 -- from less than that is float noise rather than a direction.
 --
+-- ── (3b) THE STANDOFF IS ROUNDED TO SIX DECIMALS, AND THAT IS A CORRECTNESS REQUIREMENT ──────────
+-- Moving the anchor off an integer location coordinate has a consequence CI found and no static
+-- check could: combat_create_group_encounter carries every seeded unit position out through its
+-- v_roster JSONB and reads it back with (e->>'pos_x')::double precision, while
+-- combat_encounters.engagement_x is written from the double DIRECTLY. A float8 -> jsonb numeric ->
+-- float8 round trip is lossless only while the value's decimal form fits the 15 significant digits
+-- that conversion is guaranteed to preserve, and an arbitrary site + radius*cos(theta) does not.
+-- MEASURED, NOT IMAGINED: the lead — which stands ON the anchor — came back ~5e-13 away from it, so
+-- the MEASURED formation extent of a LONE HULL was 3.7e-13 instead of 0, 0336's spawn radius read
+-- 5.00000000000037 instead of 5, and TEAM-COMMAND's premise that the wave arrives outside the
+-- weakest reach of 5 flipped. That is a structural invariant holding by luck.
+-- FIXED AT THE CAUSE, NOT ABSORBED BY A TOLERANCE. Six decimals is at most ~10 significant digits at
+-- world scale, so the anchor survives the roster round trip BIT FOR BIT; the lead's stored position
+-- IS the anchor, osn_distance(anchor, lead) is exactly 0.0, and a lone hull's extent is exactly 0 BY
+-- CONSTRUCTION — the same standard 0336 chose over raising a knob and 0338 chose for its clearance.
+-- THE RESIDUAL IS STATED WITH ITS BOUND rather than hidden: each coordinate moves by at most 0.5e-6,
+-- so the distance from the site differs from territory_radius by at most sqrt(2)*0.5e-6 = 7.08e-7.
+-- Self-assert (d) therefore tests the RADIUS to 1e-5 — an epsilon justified as geometry, with a
+-- derived bound — and asserts the ROUND TRIP as an exact identity. The inexactness moved off the
+-- invariant that decides a comparison and onto a quantity where a tolerance is honest.
+--
 -- ── (4) YOU COULD NOT MOVE YOUR FLEET, AND THE BUTTON RETREATED INSTEAD ──────────────────────────
 -- The reposition arm required an ACTIVE encounter, a zone holding both anchor and destination, and
 -- fleets.location_mode='space'. A hunt fight is 'present' and its site need not be inside any drawn
@@ -145,9 +166,11 @@
 --   (c) ONE SPAWN AUTHORITY: the fork is gone — the tick carries no formation-point call, no INSERT
 --       into combat_units on the enemy side and no extent measurement of its own, and it composes
 --       the spawn leaf exactly twice (once per arm, which is what a legitimate stat difference costs)
---   (d) THE STANDOFF, EXECUTED: a fight at a site stands exactly territory_radius from it, at a
---       bearing that is stable for one presence and different for another; and it falls back to the
---       site itself — today's behaviour — when there is no radius to stand off
+--   (d) THE STANDOFF, EXECUTED: a fight at a site stands territory_radius from it (to 1e-5, a bound
+--       DERIVED below rather than chosen), at a bearing stable for one presence and different for
+--       another; it falls back to the site itself — today's behaviour — when there is no radius; and
+--       the point SURVIVES A JSONB ROUND TRIP UNCHANGED, asserted as an exact identity because that
+--       is the property the whole rounding exists to buy (see §2b)
 --   (e) THE EPSILON, EXECUTED: a bearing taken from a sub-half-unit displacement falls back to
 --       0336's ring, while a real displacement still produces the real bearing
 --   (f) THE ADMISSION, EXECUTED: it is a pure RELAXATION of 0311 — every point 0311 admitted is
@@ -251,15 +274,40 @@ language sql
 immutable
 set search_path to 'public'
 as $fssp$
+  -- ██ ROUNDED TO SIX DECIMALS, AND THAT IS A CORRECTNESS REQUIREMENT, NOT COSMETICS ██
+  -- The anchor this returns does NOT stay in one place. combat_create_group_encounter carries every
+  -- seeded unit position out through its v_roster JSONB and reads it back with
+  -- (e->>'pos_x')::double precision, while combat_encounters.engagement_x is written from the double
+  -- DIRECTLY. A float8 -> jsonb numeric -> float8 round trip is only lossless while the value's
+  -- decimal form fits the digits that conversion preserves (15 significant, the floor Postgres can be
+  -- configured to), and an arbitrary site + radius*cos(theta) does not.
+  -- WHAT THAT COST, MEASURED IN CI RATHER THAN IMAGINED: the lead — which stands ON the anchor —
+  -- came back 5e-13 away from it, so the MEASURED formation extent of a LONE HULL was 3.7e-13
+  -- instead of 0, 0336's spawn radius read 5.00000000000037 instead of 5, and TEAM-COMMAND's premise
+  -- that the wave arrives outside the weakest reach of 5 flipped. A boundary that holds by luck.
+  -- SIX DECIMALS MAKES IT EXACT BY CONSTRUCTION. World coordinates carry at most ~4 integer digits,
+  -- so 6 decimals is at most ~10 significant digits — comfortably inside 15 — and the value therefore
+  -- survives the roster round trip BIT FOR BIT. The lead's stored position is then the anchor, so
+  -- osn_distance(anchor, lead) is exactly 0.0 and a lone hull's extent is exactly 0. That is the
+  -- property held by construction, which is what 0336 chose over raising a knob and what 0338 chose
+  -- for its clearance invariant; an epsilon is the fallback, not the goal.
+  -- WHERE THE RESIDUAL GOES, STATED WITH ITS BOUND: each coordinate moves by at most 0.5e-6, so the
+  -- distance from the site differs from territory_radius by at most sqrt(2)*0.5e-6 = 7.08e-7 world
+  -- units. Self-assert (d) tests the radius against 1e-5 for exactly that reason and says so. This is
+  -- the honest trade: the inexactness is moved OFF the invariant that decides a comparison and ONTO a
+  -- geometric quantity where it is a stated tolerance a million times finer than anything the game
+  -- can express (positions are canonicalised onto an INTEGER world grid).
+  -- THE FALLBACK ARMS ARE NOT ROUNDED: they answer the site itself, value for value, which is
+  -- today's behaviour and already exact.
   select case
            when p_site_x is null or p_site_y is null then p_site_x
            when p_radius is null or p_radius <= 0 or p_seed is null then p_site_x
-           else p_site_x + p_radius::double precision * cos(b.theta)
+           else round((p_site_x + p_radius::double precision * cos(b.theta))::numeric, 6)::double precision
          end,
          case
            when p_site_x is null or p_site_y is null then p_site_y
            when p_radius is null or p_radius <= 0 or p_seed is null then p_site_y
-           else p_site_y + p_radius::double precision * sin(b.theta)
+           else round((p_site_y + p_radius::double precision * sin(b.theta))::numeric, 6)::double precision
          end
     from (select 2 * pi()
                  * (('x' || substr(md5(coalesce(p_seed::text, '')), 1, 8))::bit(32)::bigint)::double precision
@@ -1267,9 +1315,41 @@ begin
   if ax is null or ay is null then
     raise exception '0339 ASSERT (d) FAIL: the standoff answered NULL for a real site with a real radius';
   end if;
+  -- ██ THE RADIUS IS TESTED TO 1e-5, AND THE RELAXATION IS DELIBERATE — READ WHY ██
+  -- This clause used to demand the distance equal territory_radius to 1e-9. It was tightened out of
+  -- the leaf, not loosened out of laziness: the standoff now ROUNDS its coordinates to six decimals
+  -- so the anchor survives combat_create_group_encounter's v_roster JSONB round trip BIT FOR BIT,
+  -- which is what makes a lone hull's MEASURED formation extent exactly 0 rather than 3.7e-13 (the
+  -- CI red that produced this change: 0336's spawn radius read 5.00000000000037 against a weakest
+  -- reach of 5, and a boundary comparison flipped).
+  -- SO THE INEXACTNESS MOVED, IT DID NOT APPEAR. It is no longer on the invariant that decides a
+  -- comparison; it is on the radius, where it is a stated geometric bound: each coordinate moves by
+  -- at most 0.5e-6, so the radial error is at most sqrt(2)*0.5e-6 = 7.08e-7. 1e-5 is that bound with
+  -- room, and it is still a million times finer than anything the game can express — ordered
+  -- positions are canonicalised onto an INTEGER world grid.
+  -- The pairing matters: (d1) below is an epsilon justified as GEOMETRY with a computed bound, while
+  -- the exactness it bought is asserted immediately after it as an identity. Never the other way.
   d1 := public.osn_distance(-45, 120, ax, ay);
-  if abs(d1 - 12) > 1e-9 then
-    raise exception '0339 ASSERT (d) FAIL: a fight at Snare (-45,120) with territory_radius 12 stands % from it, want exactly 12 — the whole point is that the site becomes a DIRECTION rather than the place you are standing', d1;
+  if abs(d1 - 12) > 1e-5 then
+    raise exception '0339 ASSERT (d) FAIL: a fight at Snare (-45,120) with territory_radius 12 stands % from it (error %, bound 7.08e-7 from the six-decimal rounding) — the whole point is that the site becomes a DIRECTION rather than the place you are standing', d1, abs(d1 - 12);
+  end if;
+  -- ██ AND THE THING THE ROUNDING EXISTS FOR, ASSERTED AS AN IDENTITY, NOT AN EPSILON ██
+  -- The anchor must survive a float8 -> jsonb -> float8 round trip UNCHANGED, because that is the
+  -- exact path combat_create_group_encounter puts every seeded unit position through (v_roster, read
+  -- back as (e->>'pos_x')::double precision) while engagement_x is written from the double directly.
+  -- If these two ever disagree again, a lone hull's extent stops being 0 and 0336's structural
+  -- clearance turns back into a coin flip. This is the assert that fails FIRST if anyone removes the
+  -- rounding, and it is exact on purpose.
+  -- The probe is the CREATOR'S OWN SHAPE, not an approximation of it: jsonb_build_object then
+  -- ->>key, which is exactly what v_roster does with 'pos_x'/'pos_y'. (An earlier draft wrote
+  -- to_jsonb(ax)->>0 — array indexing on a scalar, which answers NULL and would have made this
+  -- assert fire on a correct system. Probing the real shape is the point.)
+  if (jsonb_build_object('pos_x', ax)->>'pos_x')::double precision is distinct from ax
+     or (jsonb_build_object('pos_y', ay)->>'pos_y')::double precision is distinct from ay then
+    raise exception '0339 ASSERT (d) FAIL: the standoff point (%,%) does not survive the creator''s jsonb round trip — it comes back (%,%). The lead is seeded THROUGH that round trip, so its position would differ from the anchor, a lone hull''s measured formation extent would stop being exactly 0, and 0336''s spawn radius would sit off the boundary every comparison against it assumes',
+      ax, ay,
+      (jsonb_build_object('pos_x', ax)->>'pos_x')::double precision,
+      (jsonb_build_object('pos_y', ay)->>'pos_y')::double precision;
   end if;
   -- STABLE for one presence: the same seed must answer the same point, or a fight would wander.
   select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, 12, s1) p;
@@ -1281,8 +1361,12 @@ begin
   if abs(v_bx - ax) < 1e-9 and abs(v_by - ay) < 1e-9 then
     raise exception '0339 ASSERT (d) FAIL: two different presences got the same standoff point — two fleets hunting one site would stack';
   end if;
-  if abs(public.osn_distance(-45, 120, v_bx, v_by) - 12) > 1e-9 then
-    raise exception '0339 ASSERT (d) FAIL: the second presence does not stand on the same radius';
+  if abs(public.osn_distance(-45, 120, v_bx, v_by) - 12) > 1e-5 then
+    raise exception '0339 ASSERT (d) FAIL: the second presence does not stand on the same radius (error %) — same 7.08e-7 rounding bound as above', abs(public.osn_distance(-45, 120, v_bx, v_by) - 12);
+  end if;
+  if (jsonb_build_object('pos_x', v_bx)->>'pos_x')::double precision is distinct from v_bx
+     or (jsonb_build_object('pos_y', v_by)->>'pos_y')::double precision is distinct from v_by then
+    raise exception '0339 ASSERT (d) FAIL: the second presence''s standoff point does not survive a jsonb round trip — the exactness must hold for EVERY bearing, not the one this assert happened to sample first';
   end if;
   -- FAIL CLOSED to today's behaviour: no radius, no edge, so the fight anchors ON the site.
   select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, null, s1) p;
