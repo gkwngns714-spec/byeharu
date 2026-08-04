@@ -1,4 +1,10 @@
 import { salvageWalletDisplay, clampSellQty } from './salvageMarket'
+import {
+  LEGACY_MARKER,
+  standingOfCatalogKey,
+  statByCatalogKey,
+  type StatStanding,
+} from '../stats/statLifecycle'
 
 // PORT-SHOP — PURE, framework-free types + client mirrors for the port outfitter (dark UI).
 //
@@ -36,39 +42,118 @@ export interface ShopOffer {
 }
 
 // ── stat display (compact, point-of-sale) ────────────────────────────────────────────────────────
-// Human labels for the module stats_json contribution keys the fitting adapter reads (0111/0183/
-// 0202: attack/defense/repair/cargo/scan/mining/evasion + speed_mult_bonus). Matched to the
-// player-facing meaning (defense contributes to SURVIVAL, mining to MINING YIELD — the adapter
-// output names) so the shop label reads the same as the fitting preview.
-const STAT_LABELS: Record<string, string> = {
-  attack: 'Attack',
-  defense: 'Survival',
-  repair: 'Repair',
-  cargo: 'Cargo',
-  scan: 'Scan',
-  mining: 'Mining yield',
-  evasion: 'Evasion',
+// THE RULING THIS OBEYS (owner, 2026-08-04): "A dormant stat must not be represented as an effective
+// player benefit," and for this surface in particular: "A player must not spend resources on a
+// benefit the engine does not apply."
+//
+// SPAGHETTI, NAMED AND RIPPED OUT: this file used to carry STAT_LABELS — a second, hand-written
+// vocabulary of stat names, with `mining: 'Mining yield'` advertising a stat NOTHING in the game
+// reads. Both the NAME and the LIFECYCLE now come from the ONE registry projection of migration
+// 0340's stat_definitions (src/features/stats/statLifecycle.ts), joined on catalog_key — the key a
+// module's stats_json actually writes (0340:271-273). A key the registry does not know is UNKNOWN
+// and fails closed exactly like a dormant one: it is not shown as a benefit.
+//
+// WHAT THIS DOES NOT DO: it activates nothing, changes no price, no ownership, no fitted module and
+// no inventory, and it invents no replacement behaviour. It stops the shop CLAIMING an effect.
+
+/** One effect chip at point of sale. `standing` is the registry's lifecycle verdict, so the panel
+ *  can mark a legacy value without re-deciding what legacy means. */
+export interface OfferChip {
+  readonly key: string
+  readonly label: string
+  readonly standing: StatStanding
+}
+
+/** Format one stat contribution. speed_mult_bonus is a FRACTION of hull base speed (0111) → percent;
+ *  every other registered key is a flat signed number. */
+function chipLabel(catalogKey: string, name: string, value: number): string {
+  if (catalogKey === 'speed_mult_bonus') {
+    return `${name} ${value > 0 ? '+' : ''}${Math.round(value * 100)}%`
+  }
+  return `${name} ${value > 0 ? '+' : ''}${value}`
 }
 
 /** Compact effect chips for an offer: the module's stat contributions + its combat reach, or the
- *  item's category — the attributes the outfitter surfaces at point of sale (the coordinator's
- *  "surface those same attributes"). Pure; deterministic order. */
-export function offerStatChips(offer: ShopOffer): string[] {
-  const chips: string[] = []
-  const stats = offer.stats_json ?? {}
-  for (const key of Object.keys(STAT_LABELS)) {
-    const v = stats[key]
-    if (typeof v === 'number' && v !== 0) chips.push(`${STAT_LABELS[key]} ${v > 0 ? '+' : ''}${v}`)
+ *  item's category — the attributes the outfitter surfaces at point of sale. Pure; deterministic
+ *  order (the registry's display_order, then the non-stat attributes).
+ *
+ *  DORMANT AND UNKNOWN CONTRIBUTIONS ARE OMITTED. They are not hidden to make the row look better —
+ *  a chip IS the claim, and the game applies nothing for them. Range and Power are NOT stats (0340
+ *  deliberately registers no range stat, :512-515) and are unaffected. */
+export function offerStatChips(offer: ShopOffer): OfferChip[] {
+  const chips: OfferChip[] = []
+  for (const [catalogKey, value] of statContributions(offer)) {
+    const def = statByCatalogKey(catalogKey)
+    const standing = standingOfCatalogKey(catalogKey)
+    // Fail closed: no registry row → no name we are entitled to invent, and no claim we may make.
+    if (def === null || standing === 'dormant' || standing === 'unknown') continue
+    chips.push({ key: catalogKey, label: chipLabel(catalogKey, def.displayName, value), standing })
   }
-  // speed_mult_bonus is a fraction of hull base speed (0111) → show as a percent.
-  const spd = stats['speed_mult_bonus']
-  if (typeof spd === 'number' && spd !== 0) {
-    chips.push(`Speed ${spd > 0 ? '+' : ''}${Math.round(spd * 100)}%`)
+  if (typeof offer.range === 'number' && offer.range > 0) {
+    chips.push({ key: 'range', label: `Range ${offer.range}`, standing: 'effective' })
   }
-  if (typeof offer.range === 'number' && offer.range > 0) chips.push(`Range ${offer.range}`)
-  if (typeof offer.power === 'number' && offer.power > 0) chips.push(`Power ${offer.power}`)
+  if (typeof offer.power === 'number' && offer.power > 0) {
+    chips.push({ key: 'power', label: `Power ${offer.power}`, standing: 'effective' })
+  }
   return chips
 }
+
+/** The offer's non-zero stats_json contributions, in the registry's display_order. Unregistered
+ *  keys sort last, deterministically by key, and are still YIELDED — the caller decides what to do
+ *  with an unknown, so "fail closed" happens in exactly one place. */
+function statContributions(offer: ShopOffer): [string, number][] {
+  const stats = offer.stats_json ?? {}
+  const out: [string, number][] = []
+  for (const [key, value] of Object.entries(stats)) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value === 0) continue
+    out.push([key, value])
+  }
+  const order = (k: string) => statByCatalogKey(k)?.displayOrder ?? Number.MAX_SAFE_INTEGER
+  return out.sort((a, b) => order(a[0]) - order(b[0]) || a[0].localeCompare(b[0], 'en'))
+}
+
+/** Whether an offer's advertised effects are things the engine actually applies.
+ *
+ *   'ok'               — at least one claimed effect is live (an active or legacy stat), OR the
+ *                        offer surfaces a non-stat attribute the engine reads, OR it claims no stat
+ *                        effect at all (ammo and other plain items).
+ *   'no_live_effect'   — the offer claims at least one stat effect and EVERY one of them is dormant
+ *                        or unknown. Nothing the player buys it for will happen.
+ *
+ * SCOPE, deliberately narrow (the owner's rule 2): an offer with any other live effect is NEVER
+ * marked — a module is not withdrawn because one of its chips went quiet. Today that distinction is
+ * load-bearing on the live catalog, verified against production on 2026-08-04:
+ *   · mining_rig_extension  stats_json {"mining": 8} → DORMANT, but range 120 is READ: mining_extract
+ *     takes the radius from max(mt.range) over fitted mining modules
+ *     (20260618000229_module_combat_attributes.sql:309-321) and module_range_attributes_enabled is
+ *     TRUE in production (lit by 20260618000300_lights_on.sql:53). It keeps its live effect, so only
+ *     its dormant chip disappears — it stays on sale.
+ *   · deep_scan_sensor_array  stats_json {"scan": 8} → `scouting`, DORMANT, with range and power
+ *     explicitly NULL (0229:134). Its only claimed effect is dormant, and it changes no scan radius:
+ *     every scan reads the flat cfg key exploration_scan_radius (0099:176, 0146:136, 0172:149,
+ *     0221:642) and no module contributes to it. This is the offer rule 3 is about. */
+export type OfferEffectStanding = 'ok' | 'no_live_effect'
+
+export function offerEffectStanding(offer: ShopOffer): OfferEffectStanding {
+  const contributions = statContributions(offer)
+  if (contributions.length === 0) return 'ok'
+  const hasLiveAttribute =
+    (typeof offer.range === 'number' && offer.range > 0) ||
+    (typeof offer.power === 'number' && offer.power > 0)
+  if (hasLiveAttribute) return 'ok'
+  for (const [key] of contributions) {
+    const standing = standingOfCatalogKey(key)
+    if (standing === 'effective' || standing === 'legacy') return 'ok'
+  }
+  return 'no_live_effect'
+}
+
+/** The marker a chip carries when its stat is legacy. Re-exported so the panel never spells it. */
+export { LEGACY_MARKER }
+
+/** The line shown on an offer whose only claimed effects are dormant. Existing product language
+ *  (the shop's other honest-unavailability lines are plain sentences, not codes) and no jargon. */
+export const NO_LIVE_EFFECT_NOTE = 'Not currently implemented — this does nothing in the game yet.'
 
 // ── buy availability mirror (the 0235 reject order) ──────────────────────────────────────────────
 export type BuyReason =

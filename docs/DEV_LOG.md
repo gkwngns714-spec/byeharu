@@ -5,6 +5,62 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-04 — DORMANT STATS TELL THE TRUTH (`slice-dormant-stats-tell-the-truth`, client-only)
+
+**The ruling.** Migration 0340 gave stats a lifecycle — `active` / `dormant` / `deprecated` — and one
+law: *a dormant stat must not be represented as an effective player benefit*. Two places still broke
+it. The port shop sold **"Mining yield +8"** on the mining rig (`portShop.ts:49`) and the World Editor
+offered a **"Mining yield"** zone effect with nothing saying it does nothing (`zoneEffects.ts:48`).
+`mining_yield` is seeded **dormant**: no engine consumer, no presentation consumer, nothing in the
+game reads it.
+
+**The spaghetti, named and ripped out.** The previous slice fixed a leak by *adding a list* —
+`DORMANT_STAT_KEYS` in `teamSkillset.ts`, a hand-typed copy of `stat_definitions.lifecycle = 'dormant'`.
+A second file deciding "is this stat in play?" is exactly what 0340 exists to delete. It is gone, with
+`ADDITIVE_STAT_KEYS` and `portShop.ts`'s `STAT_LABELS`. There is now **one** client authority:
+`src/features/stats/statRegistry.generated.ts`, generated from 0340's seed, behind
+`statLifecycle.ts`. A spec re-derives the projection from the migration and **byte-compares**, and a
+second spec **scans `src/`** and fails on any re-introduced stat vocabulary.
+
+**Access path, established rather than assumed.** `get_stat_definitions()` is **revoked** from client
+roles (probed on prod: `42501`). The **table** is readable. And it is Reference/Config — migration-seeded,
+no runtime writer ever — so a build-time projection is as authoritative as a read, and cannot fail open.
+
+**Port shop, narrowest truthful treatment.** Verified against the live catalog:
+`mining_rig_extension` claims `mining` (dormant) **but its `range` 120 is real** — `mining_extract`
+takes the mining radius from `max(mt.range)` over fitted mining modules (0229:309-321) and
+`module_range_attributes_enabled` is **true** in production. It **keeps its Range/Power chips and
+stays on sale**; only the dead chip disappears. `deep_scan_sensor_array` claims `scan` (dormant) with
+`range`/`power` explicitly NULL and changes **no** scan radius (every scan reads the flat
+`exploration_scan_radius`), so its row now says *"Not currently implemented — this does nothing in the
+game yet."* and its Buy is withdrawn. Nothing was deleted, no price, ownership, fitting or inventory
+moved, and **no new flag was created**.
+
+**World Editor, exposed but honest.** The mining effect is still offered and still authorable; its row
+now carries a **Dormant** marker and states there is no gameplay consumer today. An effect naming a
+stat the registry does not know **fails closed** — marked, not waved through.
+
+**Unknown fails closed everywhere.** An unrecognised lifecycle, an unregistered stat id and an
+unregistered catalog key are all treated as dormant, never as active — the client mirror of
+`stat_lifecycle_in_scope` (0340:791-801).
+
+**Proof.** `tsc -b` clean, `vite build` clean, pure suite **1968 → 2008**, zero regressions; rendered
+suite 130 passed including a new `shop.html` proof measured at **288px and 320px**. Every new test was
+watched **failing** with the source reverted.
+
+**Found and deliberately NOT built.** `shipTraits.ts`'s `STAT_KEY_ORDER` is the second unshared stat
+vocabulary, and `traitEffects()` — shared by ship traits, command buffs and module detail — still
+renders dormant keys as green benefits (production carries `steady_rigger {"mining":4,"repair":2}`,
+`keen_arrays {"scan":5}`, `ill_omened {"evasion":6}` and eight command buffs). Same bug class; hiding
+those empties whole trait cards, which is a UX decision on trait/captain surfaces this slice is scoped
+out of. It is **pinned as a named baseline** in `statLifecycle.spec.ts` so it cannot grow or spread.
+The shop's Buy button is `size="sm"` and measures **24px**, under the house 44px touch floor — that is
+pre-existing, shop-wide, unrelated to lifecycle, and is pinned rather than silently changed.
+
+**No migration. No gameplay calculation changed. No production state touched.**
+
+---
+
 ## 2026-08-04 — HUNT FROM WHERE YOU STAND (`slice-hunt-from-where-you-stand`, client-only)
 
 **The owner, twice:** *"i am in combat zone, and the fight does not start."*

@@ -25,6 +25,13 @@
 // round-trip; the zone_effect_pirate_intercept CHECK constraints are the authority, and they are
 // strictly stronger (they also reject NaN and the infinities, which Postgres orders above all reals).
 
+import {
+  DORMANT_MARKER,
+  DORMANT_NOTE,
+  standingOfStatId,
+  type StatStanding,
+} from '../stats/statLifecycle'
+
 /** The effect kinds that exist. Grows ONE sibling at a time, each with its own table, its own runtime
  *  gate and its own slice — adding a kind never edits an existing one.
  *  Named for the BEHAVIOUR, not the zone's identity: 'pirate' is faction language, while
@@ -47,6 +54,48 @@ export const ZONE_EFFECT_LABELS: Record<ZoneEffectKind, string> = {
   combat: 'Combat encounters',
   mining: 'Mining yield',
   exploration: 'Exploration rewards',
+}
+
+// ── LIFECYCLE TRUTH IN THE AUTHORING SURFACE ────────────────────────────────────────────────────
+// THE RULING (owner, 2026-08-04): "A dormant stat must not be represented as an effective player
+// benefit." The owner-facing editor MAY keep showing dormant definitions — authoring and diagnostics
+// need them, and nothing here is removed — but it must render the lifecycle truth explicitly: a
+// Dormant marker, the statement that there is no gameplay consumer today, and never a label that
+// reads as an active effect.
+//
+// 'Mining yield' was exactly such a label. The stat it names, `mining_yield`, is seeded DORMANT in
+// migration 0340 (stat_definitions, display_order 70, engine_consumer null, presentation_consumer
+// null), so the editor row said "Mining yield" as though authoring one would do something.
+//
+// WHAT THIS MAP IS, AND IS NOT: it joins two vocabularies that genuinely differ — the zone-effect
+// KIND (a `zone_effect_<name>` table) and the stat_definitions stat_id that effect's value is
+// expressed in. It carries NO lifecycle judgement of its own; the standing is looked up in the ONE
+// registry every time. An effect kind that is not about a registered stat is simply absent from the
+// map and reports no stat standing at all, which is different from reporting that it is fine.
+
+/** The stat_definitions stat_id a zone effect's value is denominated in, where one exists.
+ *  pirate_intercept and combat are not denominated in a single registered stat (the pirate chain
+ *  reads combat_power + survival together — 0340:494-496), so they carry no entry. */
+export const ZONE_EFFECT_STAT_ID: Partial<Record<ZoneEffectKind, string>> = {
+  mining: 'mining_yield',
+}
+
+/** What the editor may say about a zone effect's stat, straight from the 0340 registry.
+ *  `null` = this effect is not denominated in a registered stat, so no stat standing is claimed. */
+export function zoneEffectStatStanding(kind: ZoneEffectKind): StatStanding | null {
+  const statId = ZONE_EFFECT_STAT_ID[kind]
+  return statId === undefined ? null : standingOfStatId(statId)
+}
+
+/** The marker an authoring row shows beside a dormant (or unknown-lifecycle) effect, and the one
+ *  sentence that says why — or null when the effect names no registered stat, or names a live one.
+ *  UNKNOWN FAILS CLOSED: it is marked exactly like dormant, never left unmarked. */
+export function zoneEffectDormantNote(kind: ZoneEffectKind): { marker: string; note: string } | null {
+  const standing = zoneEffectStatStanding(kind)
+  if (standing === 'dormant' || standing === 'unknown') {
+    return { marker: DORMANT_MARKER, note: DORMANT_NOTE }
+  }
+  return null
 }
 
 // ── the pirate-interception effect ──────────────────────────────────────────────────────────────

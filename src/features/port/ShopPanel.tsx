@@ -7,9 +7,12 @@ import {
   buyBlocks,
   buyTotal,
   clampBuyQty,
+  offerEffectStanding,
   offerStatChips,
   portShopReasonMessage,
   shopWalletDisplay,
+  LEGACY_MARKER,
+  NO_LIVE_EFFECT_NOTE,
   type ShopOffer,
 } from './portShop'
 import { salvageStickyLit } from './salvageMarket'
@@ -151,7 +154,10 @@ export function ShopPanel({
 }
 
 // One offer row: identity + attribute chips + description + price + (ammo) qty stepper + Buy.
-function ShopRow({
+// EXPORTED for the rendered-DOM proof (tests/shopTellsTheTruth.uispec.ts) — the shop's own fetch is
+// not injectable, and "the dormant chip is gone from the SCREEN" is a claim only a real render can
+// settle. Nothing else imports it.
+export function ShopRow({
   offer,
   qty,
   setQty,
@@ -177,6 +183,14 @@ function ShopRow({
   const chips = offerStatChips(offer)
   const badge = isModule ? (offer.slot_type ?? 'module') : (offer.category ?? 'item')
 
+  // TRUTH IN PRESENTATION (owner ruling, 2026-08-04): "A player must not spend resources on a
+  // benefit the engine does not apply." When EVERY effect an offer claims is dormant, the row says
+  // so plainly and the Buy affordance is withdrawn. This is presentation only — the server is
+  // untouched and still authoritative, no flag was created, and an offer with any other live effect
+  // is never marked (mining_rig_extension keeps its live Range 120; see portShop.ts).
+  const effectStanding = offerEffectStanding(offer)
+  const noLiveEffect = effectStanding === 'no_live_effect'
+
   const avail = buyAvailability({
     flagOn: true, // by construction: rendered only under the lit gate
     quantity: effectiveQty,
@@ -201,11 +215,26 @@ function ShopRow({
           {chips.length > 0 && (
             <div className="mt-0.5 flex flex-wrap gap-1">
               {chips.map((c) => (
-                <span key={c} className="rounded bg-surface px-1 text-[10px] font-mono tabular-nums text-ink-muted">
-                  {c}
+                <span
+                  key={c.key}
+                  data-testid={`shop-chip-${offer.ref_id}-${c.key}`}
+                  className="rounded bg-surface px-1 text-[10px] font-mono tabular-nums text-ink-muted"
+                >
+                  {c.label}
+                  {/* A deprecated stat keeps its existing display readers but is never offered as a
+                      live effect — so where it still shows, it is marked. */}
+                  {c.standing === 'legacy' && <span className="ml-1 text-ink-faint">{LEGACY_MARKER}</span>}
                 </span>
               ))}
             </div>
+          )}
+          {noLiveEffect && (
+            <p
+              data-testid={`shop-no-effect-${offer.ref_id}`}
+              className="mt-0.5 text-[10px] leading-tight text-warning"
+            >
+              {NO_LIVE_EFFECT_NOTE}
+            </p>
           )}
           {offer.description && <p className="mt-0.5 text-[10px] leading-tight text-ink-faint">{offer.description}</p>}
         </div>
@@ -259,7 +288,10 @@ function ShopRow({
             variant="primary"
             size="sm"
             data-testid={`shop-buy-${offer.ref_id}`}
-            disabled={buyBlocks(avail.reason)}
+            // Two independent questions, composed HERE and answered nowhere else: buyAvailability
+            // stays the untouched mirror of the server's 0235 reject order, and noLiveEffect is the
+            // presentation-truth gate above. Neither re-implements the other.
+            disabled={buyBlocks(avail.reason) || noLiveEffect}
             busy={pending}
             busyLabel="Buying…"
             onClick={() => onBuy(effectiveQty)}
