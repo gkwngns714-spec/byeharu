@@ -60,7 +60,16 @@ begin
   end if;
   if strpos(v_tick, 'resolve_location_encounter(e.location_id, e.id::text)') = 0
      or strpos(v_tick, 'v_resolver_engaged') = 0
-     or strpos(v_tick, 'v_enemy_count  := least(coalesce(cfg_num(''enemy_synthetic_max_units''),6)::integer, greatest(1, v_danger));') = 0
+     -- ██ RE-POINTED BY 0341, BY NAME, NEVER BY WIDENING ██ This pinned the synthetic wave's sizing
+     -- line so 0272 could not have quietly moved it. 0341 changed that line on purpose — the wave
+     -- gains a body per BAND of danger steps instead of per step, and the danger scales are applied
+     -- to the danger ONE body carries. The pin follows the line rather than being deleted, and is
+     -- STRICTLY STRONGER than the old form: it now names all three of the sizing's parts (the cap,
+     -- the banded ramp and the per-pirate danger), so a future migration can move none of them
+     -- silently. This proof is still about the tick OWNING the synthetic sizing, which 0341 keeps.
+     or strpos(v_tick, 'least(coalesce(cfg_num(''enemy_synthetic_max_units''),6)::integer,') = 0
+     or strpos(v_tick, 'greatest(1, ceil(v_danger::double precision / v_band)::integer)') = 0
+     or strpos(v_tick, 'v_pirate_danger := v_danger::double precision / (v_band * v_enemy_count);') = 0
      -- ██ RE-POINTED BY 0339, BY NAME, NEVER BY WIDENING ██ This pinned the wave's weapons_json
      -- delivery shape inside the tick. 0339 folded the enemy-spawn loop — which existed TWICE,
      -- differing only in indentation, and which every migration since 0299 had to patch in lockstep

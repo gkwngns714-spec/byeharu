@@ -240,6 +240,16 @@
 --   DZCOMBAT_PASS_RETREATCLEAR — (0336) all four terminal arms consume fleets.retreat_target_*: the
 --                              DEATH arm (which leaked on the head) clears it, and the SETTLE arm
 --                              still both clears it and USES it.
+--   DZCOMBAT_PASS_WAVEBAND   — (0341) the owner's sentence, run through the real tick: eleven waves
+--                              are cleared back to back at the SHIPPED band of 5 and the wave that
+--                              arrives carries 1 body for rounds 1-5, 2 for rounds 6-10 and 3 for
+--                              round 11 — and the cap still binds at a danger far past it.
+--   DZCOMBAT_PASS_SLOWGUN    — (0341) a gun cannot fire on two consecutive ticks: every fitted gun in
+--                              the DEPLOYED catalog needs two ticks to become ready, and a wave that
+--                              fires arms every one of its weapons past the moment the NEXT tick
+--                              runs. now() is txn-frozen, so the assertion is tick-RELATIVE
+--                              (next_ready_at > now() + combat_tick_seconds) — the only form that
+--                              can tell the new 4s cooldown apart from the old 2s one.
 --
 -- Self-rolling-back (begin;…rollback;, no COMMIT); every dark flag flipped ONLY inside the txn;
 -- provisioning is 100% real-RPC; group_sortie_members and combat_units are NEVER hand-written.
@@ -347,6 +357,14 @@ update public.game_config set value='true'::jsonb where key='fleet_movement_unif
 update public.game_config set value='false'::jsonb where key='combat_telegraph_enabled';
 update public.game_config set value='false'::jsonb where key='timed_docking_enabled';
 
+-- 0341: THE DEPLOYED WAVE BAND, CAPTURED BEFORE THE TUNING BELOW OVERWRITES IT. The tuning block
+-- pins enemy_synthetic_units_per_danger_band to 1 so the ten blocks that need three or more bodies
+-- on the field keep working, which means the SHIPPED value cannot be read back later. WAVEBAND has
+-- to assert what the migration actually deployed rather than what this file would like it to be, so
+-- the value is taken here, first, and read from this table there.
+create temp table dzc_deployed on commit drop as
+  select public.cfg_num('enemy_synthetic_units_per_danger_band') as wave_band;
+
 -- tuning knobs (revertible by ROLLBACK). The DETERMINISTIC-AMBUSH knobs: risk=1.0 for any crossing.
 do $$
 begin
@@ -375,6 +393,15 @@ begin
   perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
   perform public.set_game_config('enemy_hp_base',                   '1000'::jsonb);   -- pirate survives tick 1
   perform public.set_game_config('max_active_fleets',               '50'::jsonb);
+  -- 0341 BAND = 1 FOR EVERY LEGACY BLOCK, DELIBERATELY AND ONCE. Ten blocks below stage a danger
+  -- and then derive how many pirates that danger buys with the pre-0341 rule
+  -- (least(cap, greatest(1, danger))), because several of them need THREE OR MORE bodies on the
+  -- field to say anything at all (a ring cannot be told apart from a point with one unit; a
+  -- three-gun ship cannot be shown to re-aim). 0341 made that a KNOB — a body per BAND of danger
+  -- steps — and band=1 is exactly the old rule, so those blocks keep asserting what they were
+  -- written to assert instead of being widened or weakened. The band's own behaviour is owned by
+  -- the WAVEBAND block below, which sets it to the shipped 5 and puts it back.
+  perform public.set_game_config('enemy_synthetic_units_per_danger_band', '1'::jsonb);
 end $$;
 
 -- ════════ DZCOMBAT_PASS_OWNWORLD (0336): THE PROOF OWNS ITS ZONE WORLD — NO RANDOM BLOB IN IT ═══════
@@ -2905,7 +2932,10 @@ begin
     from public.combat_encounters ce join public.locations l on l.id = ce.location_id
    where ce.id = v_enc;
   if v_bd is null or v_bd <= 0 then raise exception 'RSFEEL FAIL: base_difficulty %', v_bd; end if;
-  v_scale := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- 0341: the inverse of the engine's sizing is now (1 + scale) * bodies rather than
+  -- (1 + danger * scale) — the pirate carries the danger and the wave is bodies x pirate. This keeps
+  -- BOTH the wave total and the per-hit share exactly where this block sized them.
+  v_scale := (1 + coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25)) * n_exp;
   select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
   v_eab := round(((0.24 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * v_scale))::numeric, 6);
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
@@ -4576,8 +4606,14 @@ begin
   if n_exp <> 1 then
     raise exception 'DEADFIRE FAIL: staging derives % pirate(s) for the mutual kill (want exactly 1)', n_exp;
   end if;
-  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
-  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- 0341 RE-POINTED, NOT WIDENED. These two lines exist to invert the engine's own sizing so the
+  -- staged base yields a chosen PER-UNIT hp/power. The engine used to divide a danger-scaled WAVE
+  -- total by the body count; it now scales the PIRATE by the danger one body carries and multiplies
+  -- up, so the inverse is (1 + scale) * bodies instead of (1 + danger * scale). At danger 1 with one
+  -- body the two are identical, so this block's numbers are unchanged — the edit keeps them that way
+  -- for the blocks below where they are not.
+  v_hpsc  := (1 + coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6)) * n_exp;
+  v_atksc := (1 + coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25)) * n_exp;
   -- the pirate dies to ONE player shot: half the player's own weapon power, spread over one unit.
   perform public.set_game_config('enemy_hp_base',
     to_jsonb(round(((0.5 * v_pw) / (v_bd * v_hpsc))::numeric, 9)));
@@ -4817,8 +4853,9 @@ begin
   if n_exp < 3 then
     raise exception 'DEADFIRE FAIL: staging derives only % pirate(s) — with fewer than 3 there are too few survivors to prove the living still act', n_exp;
   end if;
-  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
-  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- 0341: the inverse of the engine's sizing is now (1 + scale) * bodies. See DEADFIRE arm A above.
+  v_hpsc  := (1 + coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6)) * n_exp;
+  v_atksc := (1 + coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25)) * n_exp;
   -- each pirate dies to ONE player shot (unit hp = half the player's weapon power) …
   perform public.set_game_config('enemy_hp_base',
     to_jsonb(round(((0.5 * v_pw * n_exp) / (v_bd * v_hpsc))::numeric, 9)));
@@ -5278,10 +5315,20 @@ begin
   --    compared against each other (never against a hard-coded tick length): while every weapon's
   --    cooldown is at or under the tick, each fires once per tick and the volley ordering IS the dps
   --    ordering. A future long-cooldown weapon fails here loudly rather than making this claim false.
+  --    0341 RE-DERIVED IT RATHER THAN TRUSTED IT, EXACTLY AS THE MESSAGE BELOW DEMANDED. Both guns'
+  --    cooldowns were doubled past the tick (2 -> 4, 2.5 -> 5), so "fires once per tick" is no longer
+  --    true of either. What the claim actually needs is that the two compared guns share a CADENCE —
+  --    then the volley ordering is still the dps ordering. Cadence is ticks-to-ready, ceil(cooldown /
+  --    tick): 4 and 5 both round to 2, exactly as 2 and 2.5 both rounded to 1. NOT re-pointed to a
+  --    literal per-second dps ratio, which would INVERT the claim: mk2 is already the slower gun
+  --    (2.5 vs 2 before, 5 vs 4 now), so wE/cd_mk2 < wA/cd_bat is possible while wE > wA is true.
   v_tick_secs := coalesce(public.cfg_num('combat_tick_seconds'), 3);
-  if t_bat.cooldown_seconds > v_tick_secs or t_mk2.cooldown_seconds > v_tick_secs then
-    raise exception 'ONEPOWER FAIL (5): a compared weapon''s cooldown (% / %) exceeds the combat tick (%) — it no longer fires once per tick, so a volley comparison is not a dps comparison and this assertion must be re-derived rather than trusted',
-      t_bat.cooldown_seconds, t_mk2.cooldown_seconds, v_tick_secs; end if;
+  if v_tick_secs is null or v_tick_secs <= 0 then
+    raise exception 'ONEPOWER FAIL (5): combat_tick_seconds is % — no cadence can be derived from it', v_tick_secs; end if;
+  if ceil(t_bat.cooldown_seconds / v_tick_secs::numeric) is distinct from ceil(t_mk2.cooldown_seconds / v_tick_secs::numeric) then
+    raise exception 'ONEPOWER FAIL (5): the compared weapons no longer share a firing cadence — % and % seconds against a %s tick are % and % ticks to ready, so a volley comparison is not a dps comparison and this assertion must be re-derived rather than trusted',
+      t_bat.cooldown_seconds, t_mk2.cooldown_seconds, v_tick_secs,
+      ceil(t_bat.cooldown_seconds / v_tick_secs::numeric), ceil(t_mk2.cooldown_seconds / v_tick_secs::numeric); end if;
   if pE <= pA then
     raise exception 'ONEPOWER FAIL (5): the mk2 hull folds to % against the battery hull''s % — the stronger gun did not produce a stronger card and the ordering test has no direction', pE, pA; end if;
   if wE <= wA then
@@ -6278,8 +6325,9 @@ begin
   if n_exp <= 3 then
     raise exception 'VOLLEY FAIL: staging derives % pirate(s) for a THREE-gun ship — the wave must hold strictly more pirates than the ship has guns, or the last gun has nothing left to re-aim at and the whole property is vacuous', n_exp;
   end if;
-  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
-  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- 0341: the inverse of the engine's sizing is now (1 + scale) * bodies. See DEADFIRE arm A above.
+  v_hpsc  := (1 + coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6)) * n_exp;
+  v_atksc := (1 + coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25)) * n_exp;
   -- each pirate dies to ONE gun's shot (unit hp = half a single gun's share) …
   perform public.set_game_config('enemy_hp_base',
     to_jsonb(round(((0.5 * v_pw * n_exp) / (v_bd * v_hpsc))::numeric, 9)));
@@ -6861,8 +6909,9 @@ begin
               + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
                       / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
   n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
-  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
-  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- 0341: the inverse of the engine's sizing is now (1 + scale) * bodies. See DEADFIRE arm A above.
+  v_hpsc  := (1 + coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6)) * n_exp;
+  v_atksc := (1 + coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25)) * n_exp;
   perform public.set_game_config('enemy_hp_base',
     to_jsonb(round(((0.5 * v_pw * n_exp) / (v_bd * v_hpsc))::numeric, 9)));
   perform public.set_game_config('enemy_attack_base',
@@ -6935,6 +6984,396 @@ begin
 
   raise notice 'DZCOMBAT_PASS_RETREATNOSPAWN ok: the fleet cleared its wave (waves_cleared %), the transition window was PROVEN closed (next wave due %, now %), Retreat was pressed through the real request_retreat path — and the retreat tick raised NO wave_spawned event, left the enemy side at % row(s) and 0 living units, and moved neither waves_cleared (%) nor wave_number (%): on the head this is where a bigger wave arrived to shoot at a fleet that could not shoot back',
     v_wc0, v_nwa, now(), v_rows0, enc.waves_cleared, enc.wave_number;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_WAVEBAND (0341): ONE MORE PIRATE EVERY FIVE ROUNDS, NOT EVERY ROUND ════════
+-- THE OWNER, VERBATIM: "right each round? new fleets are made and fight is made +1, meaning 1 ship,
+-- 2 ships, 3 ships and so on. Reduce this. round 1~5 should be only 1, then round 5~10 should be 2."
+-- This block runs that sentence through the REAL tick at the SHIPPED band of 5 — the one place in
+-- the suite where the band is not pulled to 1 — and reads the answer off combat_units.
+-- RED ON THE PRE-0341 BODY BY CONSTRUCTION: on the head, round 3 arrives with THREE pirates and this
+-- block fails at the first band it checks. The final pin makes that explicit rather than implicit —
+-- at least one observed round must disagree with the pre-0341 rule, or the walk proved nothing.
+-- THE STAGING ISOLATES THE COUNT AND NOTHING ELSE. enemy_hp_danger_scale is pulled to 0 so every
+-- pirate in every round is the SAME size (one player shot), which makes the only thing that can move
+-- across eleven rounds the number of bodies. Pirates are frozen (speed 0) at a 0.1 reach and deal no
+-- damage, so the fleet is immortal, no terminal arm can fire, and the walk cannot end early.
+-- wave_transition_seconds is 0 because now() is frozen: any positive window would leave the tick
+-- taking the next_wave_incoming pause forever and the walk would never see round 2.
+do $$
+declare
+  r jsonb; n int; w int; guard int; v_expect int; v_cap int; v_band double precision;
+  uW uuid; sW uuid; gW uuid;
+  o_x double precision; o_y double precision;
+  v_mv uuid; v_enc uuid; mv record; pi record; enc record;
+  v_pw double precision; v_bd double precision; v_uhp double precision;
+  v_seen int[] := '{}'; v_old int; n_differ int := 0;
+  k_ring double precision; k_ehp double precision; k_ehds double precision; k_eatk double precision;
+  k_erb double precision; k_erp double precision; k_esb double precision; k_esp double precision;
+  k_wts double precision; k_band double precision;
+begin
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6)                 into k_ehds;
+  select coalesce(public.cfg_num('enemy_attack_base'), 1.0)                     into k_eatk;
+  select coalesce(public.cfg_num('enemy_synthetic_range_base'), 3.6)            into k_erb;
+  select coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 0.04) into k_erp;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  select coalesce(public.cfg_num('wave_transition_seconds'), 3)                 into k_wts;
+  select coalesce(public.cfg_num('enemy_synthetic_units_per_danger_band'), 5)   into k_band;
+
+  -- THE ONE BLOCK THAT RUNS THE SHIPPED BAND. Taken from dzc_deployed — the value read off
+  -- game_config BEFORE the global tuning pinned it to 1 — so this asserts what the migration
+  -- DEPLOYED, not what this file would like it to be.
+  select wave_band into v_band from dzc_deployed;
+  if v_band is distinct from 5 then
+    raise exception 'WAVEBAND FAIL: the deployed band is % — 0341 ships 5, and the owner''s "round 1~5 / round 5~10" sentence is a statement about that number', v_band;
+  end if;
+  perform public.set_game_config('enemy_synthetic_units_per_danger_band', to_jsonb(v_band));
+  v_cap := coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int;
+  if v_cap < 3 then
+    raise exception 'WAVEBAND FAIL: the unit cap is % — below 3 the third band cannot be told apart from the second and this walk is vacuous', v_cap;
+  end if;
+
+  perform public.set_game_config('spatial_formation_ring_radius',        '1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_base',           '0.1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_attack_base',                    '0'::jsonb);
+  perform public.set_game_config('enemy_hp_danger_scale',                '0'::jsonb);
+  perform public.set_game_config('wave_transition_seconds',              '0'::jsonb);
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.wb.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uW;
+  insert into public.player_wallet (player_id, balance) values (uW, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uW, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'WAVEBAND FAIL: commission: %', r; end if;
+  select main_ship_id into sW from public.main_ship_instances where player_id = uW;
+  r := pg_temp.call_as(uW, 'public.upsert_ship_group(1, ''Wave Band'')');
+  if (r->>'ok')::boolean is not true then raise exception 'WAVEBAND FAIL: group: %', r; end if;
+  gW := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uW, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sW, gW));
+  if (r->>'ok')::boolean is not true then raise exception 'WAVEBAND FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uW, format('public.set_fleet_command_ship(%L::uuid, true)', sW));
+  if (r->>'ok')::boolean is not true then raise exception 'WAVEBAND FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uW, format('public.set_group_auto_exit(%L::uuid, false, 30)', gW));
+  if (r->>'ok')::boolean is not true then raise exception 'WAVEBAND FAIL: auto-exit off: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uW and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gW
+   limit 1;
+  if o_x is null then raise exception 'WAVEBAND FAIL: could not resolve the docked origin'; end if;
+  r := pg_temp.call_as(uW, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gW, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'WAVEBAND FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'WAVEBAND FAIL: no pending ambush on the leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uW and status = 'active';
+  if v_enc is null then raise exception 'WAVEBAND FAIL: the ambush opened no encounter'; end if;
+
+  -- EVERY PIRATE DIES TO ONE SHOT, IN EVERY ROUND. With enemy_hp_danger_scale pinned at 0 the engine's
+  -- per-pirate hp is base_difficulty * enemy_hp_base flat, so this one number holds for all eleven.
+  select max((wj->>'power')::double precision) into v_pw
+    from public.combat_units cu9, jsonb_array_elements(cu9.weapons_json) wj
+   where cu9.encounter_id = v_enc and cu9.side = 'player';
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id where ce.id = v_enc;
+  if v_pw is null or v_pw <= 0 or v_bd is null or v_bd <= 0 then
+    raise exception 'WAVEBAND FAIL: weapon power % / base_difficulty % cannot size the wave', v_pw, v_bd;
+  end if;
+  perform public.set_game_config('enemy_hp_base', to_jsonb(round(((0.5 * v_pw) / v_bd)::numeric, 9)));
+
+  -- ── THE WALK: eleven rounds, back to back, reading the size of each wave off the record. ────────
+  -- THE WAVE IS COUNTED AFTER IT IS CLEARED, NOT WHILE IT STANDS, and that is deliberate: with the
+  -- ring at 1 and the pirates' own reach at 0.1 the wave lands well inside the player's gun, so a
+  -- ONE-body wave is spawned and destroyed inside a single tick and there is no moment at which it
+  -- can be observed alive. Its rows survive as wrecks until the NEXT spawn deletes them, so counting
+  -- them the instant waves_cleared reaches w reads exactly the wave that was just fought — and it
+  -- reads the same number for a wave that took three ticks to kill.
+  for w in 1 .. 11 loop
+    guard := 0;
+    loop
+      select * into enc from public.combat_encounters where id = v_enc;
+      exit when enc.waves_cleared >= w;
+      if enc.status <> 'active' then
+        raise exception 'WAVEBAND FAIL: the encounter reached % at round % — the walk ended early and the later bands are unobserved', enc.status, w;
+      end if;
+      perform pg_temp.ae_tick(v_enc);
+      guard := guard + 1;
+      if guard > 20 then
+        select max(ship_hp) into v_uhp from public.combat_units where encounter_id = v_enc and side = 'enemy';
+        raise exception 'WAVEBAND FAIL: round % did not clear within 20 ticks (a pirate carries % hull against a shot of %) — the walk stalled and every later round is unobserved', w, v_uhp, v_pw;
+      end if;
+    end loop;
+    if enc.waves_cleared <> w then
+      raise exception 'WAVEBAND FAIL: after round % the encounter reports % wave(s) cleared — the rounds and the danger have come apart', w, enc.waves_cleared;
+    end if;
+    -- danger comes from waves_cleared alone here: now() is frozen, so the time term is 0 and round w
+    -- IS danger w. Asserted rather than assumed, because the whole table below is indexed by it.
+    if enc.danger_level is distinct from w then
+      raise exception 'WAVEBAND FAIL: round % ran at danger % — the time term moved and the band table below is indexed by the wrong number', w, enc.danger_level;
+    end if;
+
+    -- the wave that was just fought: every enemy row belongs to it until the next spawn deletes them
+    select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+    v_seen := v_seen || n;
+
+    -- THE OWNER'S SENTENCE, LITERALLY.
+    if w between 1 and 5 then v_expect := 1;
+    elsif w between 6 and 10 then v_expect := 2;
+    else v_expect := 3;
+    end if;
+    if n <> v_expect then
+      raise exception 'WAVEBAND FAIL: round % arrived with % pirate(s), want % — "round 1~5 should be only 1, then round 5~10 should be 2"', w, n, v_expect;
+    end if;
+    -- and it disagrees with the rule the head used, which is what makes this walk worth running
+    v_old := least(v_cap, greatest(1, w));
+    if n <> v_old then n_differ := n_differ + 1; end if;
+  end loop;
+
+  if n_differ = 0 then
+    raise exception 'WAVEBAND FAIL: every one of the eleven rounds spawned exactly what the pre-0341 rule would have spawned — this walk is vacuous and would pass on the old body';
+  end if;
+
+  -- ── THE CAP STILL BINDS. Rewind far past the third band: danger 1 + 11 cleared + 25 from the clock
+  --    = 37, which the banded ramp would answer with 8 bodies. It must answer with the cap. ────────
+  update public.combat_encounters set started_at = started_at - interval '4500 seconds' where id = v_enc;
+  guard := 0;
+  loop
+    select * into enc from public.combat_encounters where id = v_enc;
+    exit when enc.waves_cleared >= 12;
+    if enc.status <> 'active' then
+      raise exception 'WAVEBAND FAIL: the encounter reached % before the capped round could be read', enc.status;
+    end if;
+    perform pg_temp.ae_tick(v_enc);
+    guard := guard + 1;
+    if guard > 25 then raise exception 'WAVEBAND FAIL: the capped wave never cleared within 25 ticks'; end if;
+  end loop;
+  if enc.danger_level < ceil(v_cap::double precision * v_band)::int then
+    raise exception 'WAVEBAND FAIL: the capped round ran at danger % — below cap x band (%), so the ceiling was never actually tested',
+      enc.danger_level, ceil(v_cap::double precision * v_band)::int;
+  end if;
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> v_cap then
+    raise exception 'WAVEBAND FAIL: at danger % the wave arrived with % pirate(s) — enemy_synthetic_max_units is % and the ceiling must still bind', enc.danger_level, n, v_cap;
+  end if;
+
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_hp_danger_scale',                to_jsonb(k_ehds));
+  perform public.set_game_config('enemy_attack_base',                    to_jsonb(k_eatk));
+  perform public.set_game_config('enemy_synthetic_range_base',           to_jsonb(k_erb));
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', to_jsonb(k_erp));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+  perform public.set_game_config('wave_transition_seconds',              to_jsonb(k_wts));
+  perform public.set_game_config('enemy_synthetic_units_per_danger_band', to_jsonb(k_band));
+
+  raise notice 'DZCOMBAT_PASS_WAVEBAND ok: eleven rounds walked through the real tick at the deployed band of 5 — bodies per round %, i.e. 1 for rounds 1-5, 2 for 6-10 and 3 for 11, with % of them disagreeing with the pre-0341 rule; and at danger % the ceiling still held the wave to % bodies',
+    v_seen, n_differ, enc.danger_level, v_cap;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_SLOWGUN (0341): A GUN CANNOT FIRE ON TWO CONSECUTIVE TICKS ═════════════════
+-- THE OWNER, VERBATIM: "and make fire rate also slower, 2 times slower".
+-- WHY THIS NEEDED A NEW SHAPE OF ASSERT. 0314 armed every weapon with now() + its own cooldown and
+-- the readiness gate is now() >= next_ready_at — but combat_tick_seconds is 3 and every live cooldown
+-- was 2 or 2.5, so the gate reopened every tick and the cooldown was INERT. 0341 doubles all four
+-- (2 -> 4, 2.5 -> 5) which is the first time any of them exceeds the tick.
+-- AND now() IS FROZEN FOR THIS WHOLE TRANSACTION, so "the next tick is silent" is true of ANY
+-- positive cooldown and proves nothing about the 3-vs-4 boundary — RSFEEL's 3600s block already
+-- passes on the old body. The assertion that CAN tell them apart is tick-RELATIVE: after a weapon
+-- fires, is it still on cooldown at the moment the next tick will run? next_ready_at > now() + tick.
+-- At 2s it is not (2 <= 3, ready); at 4s it is. That inequality is RED on the pre-0341 catalog and
+-- on the pre-0341 knob, and it is asserted on BOTH sides: the DEPLOYED player catalog (which this
+-- proof never touches) and a live pirate wave.
+do $$
+declare
+  r jsonb; n int; i int; n_armed int; n_late int; n_alive2 int;
+  uS uuid; sS uuid; gS uuid;
+  o_x double precision; o_y double precision;
+  v_mv uuid; v_enc uuid; mv record; pi record; enc record;
+  v_pool double precision; v_pdef double precision; v_defb double precision; v_bd double precision;
+  v_danger int; v_atksc double precision; n_exp int;
+  v_tick_secs double precision; v_cd double precision; v_fired boolean := false; v_t1 int; v_t2 int;
+  t_bat record; t_mk2 record;
+  k_ecd double precision; k_ehp double precision; k_eatk double precision;
+  k_esb double precision; k_esp double precision; k_ps double precision;
+begin
+  v_tick_secs := coalesce(public.cfg_num('combat_tick_seconds'), 3);
+  if v_tick_secs is null or v_tick_secs <= 0 then
+    raise exception 'SLOWGUN FAIL: combat_tick_seconds is % — no cadence can be derived from it', v_tick_secs;
+  end if;
+
+  -- ── (1) THE DEPLOYED PLAYER CATALOG. This file never writes module_types, so these are the values
+  --    0341 shipped, read back. Two ticks to ready is exactly "half as often" against a 3s tick. ───
+  select * into t_bat from public.module_types where id = 'autocannon_battery';
+  select * into t_mk2 from public.module_types where id = 'autocannon_battery_mk2';
+  if t_bat is null or t_mk2 is null then
+    raise exception 'SLOWGUN FAIL: the compared guns are not in the catalog';
+  end if;
+  if t_bat.cooldown_seconds <= v_tick_secs or t_mk2.cooldown_seconds <= v_tick_secs then
+    raise exception 'SLOWGUN FAIL: a fitted gun''s cooldown (% / %) is at or under the %s tick — the readiness gate reopens every tick and the gun fires exactly as often as it did before 0341',
+      t_bat.cooldown_seconds, t_mk2.cooldown_seconds, v_tick_secs;
+  end if;
+  if ceil(t_bat.cooldown_seconds / v_tick_secs::numeric) <> 2
+     or ceil(t_mk2.cooldown_seconds / v_tick_secs::numeric) <> 2 then
+    raise exception 'SLOWGUN FAIL: the fitted guns need % and % ticks to become ready — the owner asked for TWICE as slow, which against a %s tick is exactly 2',
+      ceil(t_bat.cooldown_seconds / v_tick_secs::numeric), ceil(t_mk2.cooldown_seconds / v_tick_secs::numeric), v_tick_secs;
+  end if;
+
+  -- ── (2) A LIVE PIRATE WAVE ARMS PAST THE NEXT TICK. ────────────────────────────────────────────
+  select coalesce(public.cfg_num('enemy_synthetic_cooldown_seconds'), 2)       into k_ecd;
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                         into k_ehp;
+  select coalesce(public.cfg_num('enemy_attack_base'), 1.0)                    into k_eatk;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)           into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  select coalesce(public.cfg_num('combat_player_speed_scale'), 0.2)            into k_ps;
+  -- The global staging above ZEROED this knob so the multi-tick fire blocks can run, so it cannot be
+  -- read back here. It is restored to the value 0341 deploys — and that the DEPLOYED row really
+  -- carries 4 is asserted by 0341's own self-assert (b), which runs in this same chain apply.
+  v_cd := 4;
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', to_jsonb(v_cd));
+  perform public.set_game_config('enemy_synthetic_speed_base',           '2'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('combat_player_speed_scale',            '0'::jsonb);
+  if v_cd <= v_tick_secs then
+    raise exception 'SLOWGUN FAIL: the pirate cooldown under test is % against a %s tick — at or under the tick this block asserts nothing 0314 did not already give it', v_cd, v_tick_secs;
+  end if;
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.sg.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uS;
+  insert into public.player_wallet (player_id, balance) values (uS, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uS, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'SLOWGUN FAIL: commission: %', r; end if;
+  select main_ship_id into sS from public.main_ship_instances where player_id = uS;
+  r := pg_temp.call_as(uS, 'public.upsert_ship_group(1, ''Slow Gun'')');
+  if (r->>'ok')::boolean is not true then raise exception 'SLOWGUN FAIL: group: %', r; end if;
+  gS := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uS, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sS, gS));
+  if (r->>'ok')::boolean is not true then raise exception 'SLOWGUN FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uS, format('public.set_fleet_command_ship(%L::uuid, true)', sS));
+  if (r->>'ok')::boolean is not true then raise exception 'SLOWGUN FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uS, format('public.set_group_auto_exit(%L::uuid, false, 30)', gS));
+  if (r->>'ok')::boolean is not true then raise exception 'SLOWGUN FAIL: auto-exit off: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uS and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gS
+   limit 1;
+  if o_x is null then raise exception 'SLOWGUN FAIL: could not resolve the docked origin'; end if;
+  r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gS, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'SLOWGUN FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'SLOWGUN FAIL: no pending ambush on the leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uS and status = 'active';
+  if v_enc is null then raise exception 'SLOWGUN FAIL: the ambush opened no encounter'; end if;
+
+  -- the wave survives its own volley and costs the hull ~2% of its pool, so nothing terminal fires.
+  select hp_current + coalesce(shield_current, 0), coalesce(defense_snapshot, 0)
+    into v_pool, v_pdef from public.combat_units where encounter_id = v_enc and side = 'player';
+  v_defb := coalesce(public.cfg_num('defense_curve_base'), 100);
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id where ce.id = v_enc;
+  if v_pool is null or v_pool <= 0 or v_bd is null or v_bd <= 0 or v_defb <= 0 then
+    raise exception 'SLOWGUN FAIL: hull pool % / base_difficulty % / defense base % cannot size the wave', v_pool, v_bd, v_defb;
+  end if;
+  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
+              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
+                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
+  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int,
+                 greatest(1, ceil(v_danger::double precision
+                                  / greatest(1, coalesce(public.cfg_num('enemy_synthetic_units_per_danger_band'), 5)))::int));
+  v_atksc := (1 + coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25)) * n_exp;
+  perform public.set_game_config('enemy_hp_base', '100000'::jsonb);   -- pirates outlive every tick here
+  perform public.set_game_config('enemy_attack_base',
+    to_jsonb(round((((0.02 * v_pool) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+
+  -- drive ticks until the wave has actually FIRED (it arrives silent and must close first)
+  for i in 1..12 loop
+    perform pg_temp.ae_tick(v_enc);
+    select count(*) into n from public.combat_events
+     where encounter_id = v_enc and source = 'pirate' and event_type in ('missile_salvo', 'hull_damage');
+    if n > 0 then v_fired := true; exit; end if;
+    select * into enc from public.combat_encounters where id = v_enc;
+    if enc.status <> 'active' then exit; end if;
+  end loop;
+  if not v_fired then
+    raise exception 'SLOWGUN FAIL: the wave never fired within 12 ticks — nothing was armed and every assertion below would be vacuous';
+  end if;
+  select tick_number into v_t1 from public.combat_encounters where id = v_enc;
+
+  -- THE ASSERTION. Every armed pirate weapon must still be on cooldown at the moment the NEXT tick
+  -- runs — now() + combat_tick_seconds. This is the inequality the old 2s cooldown FAILED.
+  select count(*) into n_armed
+    from public.combat_units u, jsonb_array_elements(u.weapons_json) wj
+   where u.encounter_id = v_enc and u.side = 'enemy'
+     and nullif(wj->>'next_ready_at','') is not null;
+  if n_armed = 0 then
+    raise exception 'SLOWGUN FAIL: not one pirate weapon carries a next_ready_at after a volley — nothing was armed and this block asserts nothing';
+  end if;
+  select count(*) into n_late
+    from public.combat_units u, jsonb_array_elements(u.weapons_json) wj
+   where u.encounter_id = v_enc and u.side = 'enemy'
+     and nullif(wj->>'next_ready_at','') is not null
+     and (wj->>'next_ready_at')::timestamptz > now() + make_interval(secs => v_tick_secs);
+  if n_late <> n_armed then
+    raise exception 'SLOWGUN FAIL: % of % armed pirate weapons are still on cooldown when the next tick runs (now() + %s) — a gun that is ready again on the very next tick fires exactly as often as it did before 0341',
+      n_late, n_armed, v_tick_secs;
+  end if;
+  -- and stated as the comparison that makes it a CHANGE: the pre-0341 cooldown would have been ready.
+  if now() + make_interval(secs => 2) > now() + make_interval(secs => v_tick_secs) then
+    raise exception 'SLOWGUN FAIL: the pre-0341 cooldown of 2s already exceeded the %s tick — this block is not testing a change', v_tick_secs;
+  end if;
+
+  -- and the next tick is in fact silent on the pirate side (necessary, not sufficient — see header)
+  perform pg_temp.ae_tick(v_enc);
+  select tick_number into v_t2 from public.combat_encounters where id = v_enc;
+  if v_t2 <> v_t1 + 1 then
+    raise exception 'SLOWGUN FAIL: the tick after the volley did not advance (% -> %)', v_t1, v_t2;
+  end if;
+  select count(*) into n_alive2 from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  if n_alive2 = 0 then
+    raise exception 'SLOWGUN FAIL: no pirate is alive on the tick after the volley — silence would be trivial';
+  end if;
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and tick_number = v_t2 and source = 'pirate'
+     and event_type in ('missile_salvo', 'hull_damage');
+  if n <> 0 then
+    raise exception 'SLOWGUN FAIL: % pirate fire event(s) on tick % — the wave fired on two consecutive ticks through an unelapsed %s cooldown', n, v_t2, v_cd;
+  end if;
+
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds',      to_jsonb(k_ecd));
+  perform public.set_game_config('enemy_hp_base',                         to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_attack_base',                     to_jsonb(k_eatk));
+  perform public.set_game_config('enemy_synthetic_speed_base',            to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty',  to_jsonb(k_esp));
+  perform public.set_game_config('combat_player_speed_scale',             to_jsonb(k_ps));
+
+  raise notice 'DZCOMBAT_PASS_SLOWGUN ok: the deployed catalog needs 2 ticks to ready both fitted guns (% and %s against a %s tick), and all % armed weapons of a wave that fired at tick % are still on cooldown at now()+%s — the moment tick % ran, and it ran pirate-silent with % still alive',
+    t_bat.cooldown_seconds, t_mk2.cooldown_seconds, v_tick_secs, n_armed, v_t1, v_tick_secs, v_t2, n_alive2;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_NOWEDGE (0336): A TERMINAL-ARM MISMATCH CONCLUDES — IT DOES NOT WEDGE ═══════

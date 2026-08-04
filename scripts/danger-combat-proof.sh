@@ -61,7 +61,14 @@ SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 # NOTE that 0339 adds no marker for the REPOMODE inversion or the NODIRECTION repoint: both are
 # EXISTING markers whose blocks were repointed in place, because the properties they pinned were
 # themselves the defects 0339 fixes. Their pins below moved with them.
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOHOLD DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR DZCOMBAT_PASS_NODIRECTION DZCOMBAT_PASS_ONEANCHOR DZCOMBAT_PASS_SITEORIGIN"
+# 0341 APPENDS TWO, and re-points several existing blocks IN PLACE rather than adding markers for
+# them: the global staging now pins enemy_synthetic_units_per_danger_band to 1 (the pre-0341 ramp) so
+# every block that needs three or more bodies on the field keeps asserting what it was written to
+# assert, and the four blocks that invert the engine's sizing to choose a per-unit hp now invert the
+# new form. WAVEBAND is the one block that runs the SHIPPED band of 5, and SLOWGUN is the one block
+# that asserts a cooldown tick-RELATIVELY (the only form that can tell 4s from 2s under a frozen
+# now()). Union, always: appended, never replaced.
+MARKERS="DZCOMBAT_PASS_WAVEBAND DZCOMBAT_PASS_SLOWGUN DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOHOLD DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR DZCOMBAT_PASS_NODIRECTION DZCOMBAT_PASS_ONEANCHOR DZCOMBAT_PASS_SITEORIGIN"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -116,7 +123,13 @@ if [ "$MODE" = "selftest" ]; then
   # proceed unless each substitution matches exactly once. That is the whole reason this one needs a
   # generator rather than a hand-written migration. EIGHTEEN generators now. Same law as every line
   # above: a missing or unrun generator is a HARD FAIL, never a skip.
-  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn gen-0331-one-authority-for-attack gen-0332-a-wreck-can-always-come-home gen-0333-items-live-at-ports gen-0336-combat-engine-repairs gen-0337-reposition-is-a-move gen-0339-a-fight-you-can-move-in"
+  # 0341 joins: TWO hunks inside process_combat_ticks — the DECLARE working set (sliced from 0339's
+  # own emitted h5n, the migration that owns that region's deployed text) and the synthetic wave's
+  # SIZING lines (sliced from 0299, whose bytes no surgeon has ever re-emitted there). It makes a
+  # wave gain one body per FIVE danger steps instead of one per step, and re-derives what the wave's
+  # split is fed so that fewer pirates is a lighter wave rather than a tankier one. NINETEEN
+  # generators now. Same law: a missing or unrun generator is a HARD FAIL, never a skip.
+  GENERATORS="gen-0305-sortie-authority gen-0306-dock-authority gen-0307-loot-secures-on-arrival gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0311-reposition-in-zone gen-0312-no-living-ships gen-0314-runescape-combat-feel gen-0315-every-fleet-has-a-lead gen-0316-combat-five-times-tighter gen-0317-the-dead-do-not-shoot gen-0319-drawn-zones-stay-drawn gen-0331-one-authority-for-attack gen-0332-a-wreck-can-always-come-home gen-0333-items-live-at-ports gen-0336-combat-engine-repairs gen-0337-reposition-is-a-move gen-0339-a-fight-you-can-move-in gen-0341-fights-you-can-keep-up-with"
   if command -v node >/dev/null 2>&1; then
     # DIRECTION 1 — nothing on disk may be unregistered. This is the half that would have caught 0307
     # on the day the gate was written, and it needs no maintenance to keep working.

@@ -212,7 +212,15 @@ update public.game_config set value='false'::jsonb where key='combat_telegraph_e
 -- these EXACT values). Pirates are frozen (speed 0) with a long range (they HOLD + fire in place), deal
 -- ZERO damage (attack 0 → players are immortal, so the lifecycle never derails into an accidental
 -- defeat — pirate damage/aggro-screening is the sibling single-pirate proof's job); enemy_hp_base is set
--- below, once the chosen location's base_difficulty is known, so each wave's TOTAL hp is a fixed 120.
+-- below, once the chosen location's base_difficulty is known, so each PIRATE's hp is a fixed 120.
+-- 0341 RE-STATED THIS PRECONDITION HONESTLY. With enemy_hp_danger_scale pinned at 0 the engine's
+-- danger term vanishes, and 0341 moved the sizing from "a danger-scaled wave total, divided by the
+-- bodies" to "a pirate, multiplied by the bodies". So the fixed quantity is now the PIRATE (120 hp
+-- at every wave) and the wave total is 120 x count — where it used to be a fixed wave total of 120
+-- split 120/60/40. No single constant can reproduce the old per-pirate curve, because the new model
+-- deliberately makes a pirate a pirate. Every assertion below is unaffected: each pirate still
+-- outlives its own spawn tick (120 > the 20 focused dps) and each wave still clears well inside its
+-- guard (6, 12 and 18 ticks against guards of 30, 30 and 40).
 do $tune$
 begin
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);   -- determinism (variance≡1)
@@ -241,13 +249,21 @@ begin
   perform public.set_game_config('enemy_synthetic_range_base', '500'::jsonb); -- >> ring → pirates HOLD & fire in place
   perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_max_units', '6'::jsonb);    -- cap; danger 1/2/3 → 1/2/3 units
+  -- 0341 made "how many danger steps before another body joins" a knob (shipped at 5, so danger
+  -- 1/2/3 would all be ONE pirate and this whole three-wave lifecycle would have nothing to count).
+  -- band=1 IS the pre-0341 rule — a body per danger step — so the three assertions below keep
+  -- asserting exactly what they were written to assert. RE-POINTED, NOT WIDENED: the band's own
+  -- behaviour is owned by danger-combat-proof's WAVEBAND block, which runs it at the shipped 5.
+  perform public.set_game_config('enemy_synthetic_units_per_danger_band', '1'::jsonb);
   perform public.set_game_config('spatial_formation_ring_radius', '30'::jsonb);
   perform public.set_game_config('wave_transition_seconds', '3'::jsonb);
 end $tune$;
 
--- choose the hunt location, set enemy_hp_base so each wave's TOTAL hp = 120 (per-pirate 120/1, 60/2,
--- 40/3 — all > the 20 focused player dps/tick, so a fresh wave always survives its own spawn tick and
--- pirates die one-per-tick over several observable ticks), then provision the three teams.
+-- choose the hunt location, set enemy_hp_base so each PIRATE's hp = 120 (0341: with the danger scale
+-- pinned at 0 the engine sizes the pirate and multiplies by the count, so wave totals are 120/240/360
+-- across the three waves — 120 is > the 20 focused player dps/tick, so a fresh wave always survives
+-- its own spawn tick and pirates die one per six ticks over many observable ticks), then provision
+-- the three teams.
 do $prov$
 declare v_hunt uuid; v_bd double precision; gA uuid; gF uuid; gG uuid;
 begin
@@ -255,13 +271,13 @@ begin
     where activity_type='hunt_pirates' and status='active' order by min_power_required asc, base_difficulty asc limit 1;
   if v_hunt is null then raise exception 'PROV FAIL: no active hunt_pirates location'; end if;
   insert into mp values ('v_hunt', v_hunt);
-  perform public.set_game_config('enemy_hp_base', to_jsonb(120.0 / v_bd));   -- wave total = base_diff * (120/base_diff) = 120
+  perform public.set_game_config('enemy_hp_base', to_jsonb(120.0 / v_bd));   -- per-pirate = base_diff * (120/base_diff) = 120
 
   gA := pg_temp.provision_team((select v from mp where k='uA'), 2, 2);   -- 2 ships, both armed (20 dps focused)
   gF := pg_temp.provision_team((select v from mp where k='uF'), 1, 0);   -- 1 unarmed (control: constraint boundary only)
   gG := pg_temp.provision_team((select v from mp where k='uG'), 1, 0);   -- 1 (non-spatial parity)
   insert into mp values ('gA', gA), ('gF', gF), ('gG', gG);
-  raise notice 'MPLIFE provision: hunt=% base_diff=% wave_total_hp=120; teams gA(2 armed)/gF(1)/gG(1) formed', v_hunt, v_bd;
+  raise notice 'MPLIFE provision: hunt=% base_diff=% per_pirate_hp=120 (wave total = 120 x count); teams gA(2 armed)/gF(1)/gG(1) formed', v_hunt, v_bd;
 end $prov$;
 
 -- ════════ SECTION A (static half): schema & identity invariants the whole lifecycle leans on ═════════

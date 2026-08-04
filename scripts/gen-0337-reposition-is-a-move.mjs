@@ -84,9 +84,11 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // stated reason (0337:355-361, "UNVERIFIED") it verified and removed. It touches NONE of the
   // retreat arms below that gate — deliberately checked, because 0339 was briefly scoped to remove
   // the retreat feature and that scope was CANCELLED before anything was cut.
+  // 0341 JOINS BY NAME: it rewrites the DECLARE working set and the synthetic wave's SIZING lines.
+  // It touches no reposition step, no order arm and no retreat arm — read before naming.
   guard('process_combat_ticks', '20260618000299',
     new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000336',
-             '20260618000338', '20260618000339']));
+             '20260618000338', '20260618000339', '20260618000341']));
   guard('command_ship_group_go', '20260618000330', new Set(['20260618000339']));
 }
 

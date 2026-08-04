@@ -88,7 +88,14 @@ begin
   -- combat_spawn_wave_units, so the literal now lives once, in that leaf. The pin follows it: the
   -- tick must still own the SYNTHETIC WAVE'S SIZING (which is what this proof is actually about, and
   -- which 0339 does not touch), and the one spawn authority must still carry the delivery shape.
-  if strpos(v_tick, 'v_enemy_count  := least(coalesce(cfg_num(''enemy_synthetic_max_units''),6)::integer, greatest(1, v_danger));') = 0
+  -- ██ RE-POINTED BY 0341, BY NAME, NEVER BY WIDENING ██ 0341 rewrote the sizing line deliberately:
+  -- a wave gains a body per BAND of danger steps rather than per step, and the two danger scales are
+  -- applied to the danger ONE body carries so fewer pirates is a lighter wave rather than a tankier
+  -- one. The pin follows the line and names all three parts of the sizing (cap, banded ramp,
+  -- per-pirate danger) — strictly stronger than the single literal it replaces.
+  if strpos(v_tick, 'least(coalesce(cfg_num(''enemy_synthetic_max_units''),6)::integer,') = 0
+     or strpos(v_tick, 'greatest(1, ceil(v_danger::double precision / v_band)::integer)') = 0
+     or strpos(v_tick, 'v_pirate_danger := v_danger::double precision / (v_band * v_enemy_count);') = 0
      or strpos(v_tick, 'public.combat_spawn_wave_units(') = 0
      or strpos((select p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
                  where n.nspname = 'public' and p.proname = 'combat_spawn_wave_units'),

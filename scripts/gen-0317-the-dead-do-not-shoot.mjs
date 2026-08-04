@@ -88,8 +88,12 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // `alive_count > 0` site to that loop (its own use is inside combat_spawn_wave_units, a separate
   // function), so assert (d)'s site count here is unaffected. Naming it keeps this gate live for
   // 0340 and after.
+  // 0341 JOINS BY NAME: it rewrites the DECLARE block and the synthetic wave's SIZING lines
+  // (v_enemy_hp / v_enemy_attack / v_enemy_count). Neither region contains an `alive_count > 0`
+  // site, a firing gate or any dead-unit predicate, so assert (d)'s site count here is unaffected.
   const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000332', '20260618000336',
-                                         '20260618000337', '20260618000338', '20260618000339']);
+                                         '20260618000337', '20260618000338', '20260618000339',
+                                         '20260618000341']);
   const reHunkRow = /\(\s*\d+\s*,\s*'process_combat_ticks'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000299'
     && !KNOWN_LATER_REWRITERS.has(version(f))

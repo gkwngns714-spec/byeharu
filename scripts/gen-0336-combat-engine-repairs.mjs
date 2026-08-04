@@ -87,7 +87,9 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // unaffected and this file's --check still passes byte-for-byte against the migration on disk.
   guard('process_combat_ticks', '20260618000299',
     new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000337', '20260618000338',
-             '20260618000339']));
+             // 0341 by name: it rewrites the DECLARE block and the synthetic wave's SIZING lines,
+             // both of which sit ABOVE every region this file slices (the spawn loops and below).
+             '20260618000339', '20260618000341']));
   guard('combat_create_group_encounter', '20260618000301',
     new Set(['20260618000308', '20260618000315', '20260618000316', '20260618000331']));
 }

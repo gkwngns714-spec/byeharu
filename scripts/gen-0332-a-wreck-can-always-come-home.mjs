@@ -78,8 +78,11 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // and 0339 touches no terminal arm, no retreat path and no member loop at all — checked
   // deliberately, because 0339 was briefly scoped to remove the retreat feature and that scope was
   // CANCELLED before anything was cut. Naming it keeps this gate live for 0340 and after.
+  // 0341 JOINS BY NAME: it rewrites the DECLARE block and the synthetic wave's SIZING lines. It
+  // touches no terminal arm, no retreat path, no wreck handling and no member loop.
   const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000336',
-                                         '20260618000337', '20260618000338', '20260618000339']);
+                                         '20260618000337', '20260618000338', '20260618000339',
+                                         '20260618000341']);
   const reHunkRow = /\(\s*\d+\s*,\s*'process_combat_ticks'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000299'
     && !KNOWN_LATER_REWRITERS.has(version(f))
