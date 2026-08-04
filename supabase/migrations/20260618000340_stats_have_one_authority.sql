@@ -1248,6 +1248,11 @@ $$;
 -- Member entries are `{entity_id, status, stats}` for a resolved member and
 -- `{entity_id, status:'unresolved', failure:{...}}` for a failed one. `status` is REQUIRED: an entry
 -- that does not say whether it resolved is itself a resolution failure, not a resolved empty ship.
+--
+-- A member's `stats` carries every value it RESOLVED, effective and (under inspection) dormant
+-- alike. LIFECYCLE ROUTING HAPPENS HERE, not in the member: the fleet rule for a stat lives in the
+-- registry, so this fold must see the member's whole answer or a dormant stat would resolve per ship
+-- and then quietly become not_applicable for the fleet.
 create function public.stat_aggregate_fleet(
   p_member_stats jsonb,
   p_registry     jsonb)
@@ -2168,10 +2173,17 @@ begin
         -- the member is exactly how a min becomes too high and a sum becomes too low.
         begin
           v_one := public.resolve_effective_stats('ship', v_member, p_context, p_resolved_at, p_lifecycle_scope);
+          -- A member reports its RESOLVED VALUES — effective, plus (under inspection only) dormant.
+          -- Lifecycle routing is the AGGREGATOR's job, not the member's: the fleet rule for a stat
+          -- lives in the registry, so the fold must see every value the member produced or a dormant
+          -- stat would silently become not_applicable at fleet scope while resolving fine per ship.
+          -- On a routine call `dormant` is always empty, so this adds exactly nothing.
           v_memberout := v_memberout || jsonb_build_array(jsonb_build_object(
             'entity_id', v_member,
             'status',    'resolved',
-            'stats',     v_one -> 'stats'));
+            'stats',     (v_one -> 'stats') || coalesce((
+                           select jsonb_object_agg(k, v_one -> 'dormant' -> k -> 'value')
+                             from jsonb_object_keys(v_one -> 'dormant') k), '{}'::jsonb)));
         exception when others then
           get stacked diagnostics v_err = returned_sqlstate, v_errdetail = message_text;
           v_memberout := v_memberout || jsonb_build_array(jsonb_build_object(
