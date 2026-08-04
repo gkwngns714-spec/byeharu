@@ -5,6 +5,59 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-04 — FIGHTS YOU CAN KEEP UP WITH (`slice-fights-you-can-keep-up-with`, migration 0341)
+
+**The owner, verbatim:** *"right each round? new fleets are made and fight is made +1, meaning 1
+ship, 2 ships, 3 ships and so on. Reduce this. round 1~5 should be only 1, then round 5~10 should be
+2. and make fire rate also slower, 2 times slower"*
+
+**The ramp.** `v_enemy_count := least(cap, greatest(1, v_danger))` — a body per danger step — becomes
+`least(cap, ceil(danger / band))`: **1 body for rounds 1–5, 2 for 6–10, +1 per five, still capped at
+6**. Implemented as the general banded rule, not two hard-coded ranges. The band **width** is a new
+knob (`enemy_synthetic_units_per_danger_band` = 5, and `1` restores the old ramp in one command); the
+banded **shape** is structure and stays in the body. The resolver arm's authored counts are untouched.
+
+**The trap, paid for rather than shipped.** `0299:762-763` divides the wave total by the body count,
+and that total is a function of danger **alone** — so cutting the count moves no mass and no damage,
+it **concentrates** them. At Snare, danger 5 would have become **one 560-hp pirate** instead of five
+112-hp ones, and with sequential focus fire the damage taken per wave rises by `(N+1)/2N`: 0.6 → 1.0,
+a **1.67× nerf** on a calmer-looking screen. And the fire-rate halving cannot pay for it — halving
+both sides doubles the wall clock and leaves damage-per-wave **exactly** invariant. So the **pirate
+became the primitive**: the two danger scales are applied to `danger / (band × bodies)` and the wave
+total is `bodies × pirate`. The two `/ v_enemy_count` lines are byte-unchanged.
+
+**The fire rate, both sides, 2×.** Cooldown was **inert** — 0314 arms `now() + cooldown` but the tick
+is 3s and every live cooldown was 2 or 2.5, so the gate reopened every tick. `module_types` 2 → 4 and
+2.5 → 5, `combat_player_fallback_weapon_cooldown_seconds` 2 → 4, `enemy_synthetic_cooldown_seconds`
+2 → 4. All four now exceed the tick for the first time: one shot every two ticks.
+
+**Result at Snare (difficulty 10).** Damage taken per wave **0.37×–0.70×** at every danger and never
+harsher; clear time moves only −20%/+40% despite guns firing half as often. Against 0310's 30%
+auto-exit that is roughly **twice as many waves cleared** and **twice as long a sortie**. One named
+regression: wave 1 is ~30% lighter (157 hp vs 224); `enemy_hp_base` 14 → 20 restores it.
+
+**Spaghetti named, not folded.** The danger formula is written twice (`0299:647` spatial,
+`0299:1035` aggregate) — but the aggregate arm is the dark 0228 byte-parity path and no encounter can
+be created into it today, so it is one live copy plus dead legacy. Folding it would add a function
+and two hunks to a live 30-player game for no live benefit. It goes when that arm goes.
+
+**Proof:** `tsc -b` clean · `vite build` clean · pure suite **1968 passed, zero regressions** ·
+danger-combat selftest ALL PASSED · the disposable full-chain apply proof (the only layer that runs
+every migration self-assert against real Postgres). Proofs re-pointed **by name**: the global staging
+pins the band to 1 for the ten blocks that need three or more bodies; four blocks invert the engine's
+new sizing form; ONEPOWER's cooldown guard re-derived on ticks-to-ready exactly as its own message
+demanded; elite-stat-wiring and encounter-resolver pin all three parts of the new sizing and re-derive
+their flag-off hp closed form. **New:** `DZCOMBAT_PASS_WAVEBAND` walks eleven real rounds at the
+shipped band and reads body counts off `combat_units`; `DZCOMBAT_PASS_SLOWGUN` asserts
+**tick-relatively** (`next_ready_at > now() + combat_tick_seconds`) — the only form that can tell 4s
+from 2s under a txn-frozen `now()`.
+
+**Blast radius:** total and immediate — the tick is re-read every 3s, so the next tick of every
+running fight for every player runs the new body. Rollback for the fire rate and the band width is
+knobs; the split is a body change and needs a follow-up migration. **Not merged, not deployed.**
+
+---
+
 ## 2026-08-04 — HUNT FROM WHERE YOU STAND (`slice-hunt-from-where-you-stand`, client-only)
 
 **The owner, twice:** *"i am in combat zone, and the fight does not start."*
