@@ -1617,7 +1617,7 @@ begin
       join public.module_instances mi on mi.id = f.module_instance_id
       join public.module_types mt on mt.id = mi.module_type_id
      where f.main_ship_id = v_ship.main_ship_id
-     order by mi.module_instance_id
+     order by mi.id
   loop
     select v_contrib || coalesce(jsonb_agg(jsonb_build_object(
              'stat_id', d.stat_id, 'source_kind', 'module', 'source_id', v_r.module_instance_id::text,
