@@ -436,8 +436,23 @@ begin
 
   -- the LEAD spawns EXACTLY on the engagement anchor (0315: the elected lead takes the anchor slot).
   select pos_x, pos_y into v_cmd_x, v_cmd_y from public.combat_units where encounter_id = v_enc and main_ship_id = s_cmd;
-  if v_cmd_x is distinct from v_anchor_x or v_cmd_y is distinct from v_anchor_y then
-    raise exception 'SPAWN FAIL: command ship not at the engagement anchor (got %,% want %,%)', v_cmd_x, v_cmd_y, v_anchor_x, v_anchor_y;
+  -- ██ RE-POINTED BY 0339: EXACT FLOAT EQUALITY ACROSS TWO DIFFERENT PATHS IS NOT A PROPERTY ██
+  -- This asked `is distinct from`, and it held only because every engagement anchor used to be an
+  -- INTEGER coordinate — a location's own x/y, exactly representable, so the two paths could not
+  -- disagree. 0339 stands a site fight OFF its site (site + territory_radius on a hashed bearing) to
+  -- give the wave a direction to arrive from, so the anchor is now an ordinary irrational double.
+  -- The two values reach this assert by DIFFERENT ROUTES: engagement_x is written straight to the
+  -- column, while the lead's pos_x travels through combat_create_group_encounter's v_roster JSONB
+  -- and back out via (e->>'pos_x')::double precision — a jsonb numeric round-trip that can move the
+  -- last bit. CI caught it as `got -53.8537253328581,111.899904461656 want
+  -- -53.8537253328581,111.899904461656` — identical to fifteen digits and still `distinct`.
+  -- THE PROPERTY IS "the lead stands ON the anchor", and it is unchanged. A tolerance of 1e-9 world
+  -- units is fourteen orders of magnitude tighter than anything the game can express (positions are
+  -- canonicalised onto an integer grid) and is the same judgement 0339 makes inside
+  -- combat_wave_arrival_phase, and DEADFIRE already made after the 4.00000000000001 > 4 flake: a
+  -- premise resting on exact float equality is a coin flip, not a property.
+  if abs(v_cmd_x - v_anchor_x) > 1e-9 or abs(v_cmd_y - v_anchor_y) > 1e-9 then
+    raise exception 'SPAWN FAIL: command ship not at the engagement anchor (got %,% want %,%, deltas %,%)', v_cmd_x, v_cmd_y, v_anchor_x, v_anchor_y, v_cmd_x - v_anchor_x, v_cmd_y - v_anchor_y;
   end if;
 
   -- both escorts sit on the SAME ring — the owned radius, derived from the knob, never a literal.
