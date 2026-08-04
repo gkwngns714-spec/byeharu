@@ -62,25 +62,31 @@ begin
   -- three ships, one group. Inserted DIRECTLY (never via the commission path) so no traits are
   -- rolled and the fixture is exactly what this script says it is.
   insert into public.main_ship_instances
-    (player_id, hull_type_id, name, status, spatial_state, hp, max_hp, cargo_capacity,
+    -- NOTE: main_ship_instances.spatial_state / space_x / space_y were DROPPED by 0231 §6, so this
+    -- fixture must not name them. status 'home' is still in the current CHECK (0231:1552-1556).
+    (player_id, hull_type_id, name, status, hp, max_hp, cargo_capacity,
      cargo_capacity_m3, support_capacity, captain_slots, module_slots, group_id)
-  select u1, h.hull_type_id, 'SF '||h.hull_type_id, 'stationary', 'at_location',
+  select u1, h.hull_type_id, 'SF '||h.hull_type_id, 'home',
          h.base_hp, h.base_hp, h.base_cargo_capacity, h.base_cargo_capacity_m3,
          h.base_support_capacity, h.base_captain_slots, h.base_module_slots, g1
     from public.main_ship_hull_types h where h.hull_type_id = 'sf_hull_a'
   returning main_ship_id into s1;
   insert into public.main_ship_instances
-    (player_id, hull_type_id, name, status, spatial_state, hp, max_hp, cargo_capacity,
+    -- NOTE: main_ship_instances.spatial_state / space_x / space_y were DROPPED by 0231 §6, so this
+    -- fixture must not name them. status 'home' is still in the current CHECK (0231:1552-1556).
+    (player_id, hull_type_id, name, status, hp, max_hp, cargo_capacity,
      cargo_capacity_m3, support_capacity, captain_slots, module_slots, group_id)
-  select u1, h.hull_type_id, 'SF '||h.hull_type_id, 'stationary', 'at_location',
+  select u1, h.hull_type_id, 'SF '||h.hull_type_id, 'home',
          h.base_hp, h.base_hp, h.base_cargo_capacity, h.base_cargo_capacity_m3,
          h.base_support_capacity, h.base_captain_slots, h.base_module_slots, g1
     from public.main_ship_hull_types h where h.hull_type_id = 'sf_hull_b'
   returning main_ship_id into s2;
   insert into public.main_ship_instances
-    (player_id, hull_type_id, name, status, spatial_state, hp, max_hp, cargo_capacity,
+    -- NOTE: main_ship_instances.spatial_state / space_x / space_y were DROPPED by 0231 §6, so this
+    -- fixture must not name them. status 'home' is still in the current CHECK (0231:1552-1556).
+    (player_id, hull_type_id, name, status, hp, max_hp, cargo_capacity,
      cargo_capacity_m3, support_capacity, captain_slots, module_slots, group_id)
-  select u1, h.hull_type_id, 'SF '||h.hull_type_id, 'stationary', 'at_location',
+  select u1, h.hull_type_id, 'SF '||h.hull_type_id, 'home',
          h.base_hp, h.base_hp, h.base_cargo_capacity, h.base_cargo_capacity_m3,
          h.base_support_capacity, h.base_captain_slots, h.base_module_slots, g1
     from public.main_ship_hull_types h where h.hull_type_id = 'sf_hull_c'
