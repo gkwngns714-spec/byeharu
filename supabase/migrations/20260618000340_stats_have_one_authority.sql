@@ -1591,8 +1591,13 @@ begin
     raise exception 'STAT-FOUNDATION stat_required_sum: refusing to produce a number from a failed stat resolution (%). A resolution failure is not a value — it is not zero, not a minimum and not a maximum.',
       coalesce(p_envelope ->> 'reason', p_envelope ->> 'error', 'no envelope');
   end if;
-  if jsonb_typeof(p_envelope -> 'values') <> 'object' then
-    raise exception 'STAT-FOUNDATION stat_required_sum: envelope claims ok but carries no values object';
+  -- coalesce, not a bare comparison: jsonb_typeof(NULL) is NULL, and `NULL <> 'object'` is NULL, so
+  -- an envelope with NO `values` key at all would fall THROUGH this guard and be refused later by a
+  -- vaguer message. A three-valued comparison used as a two-valued guard is how a fail-closed check
+  -- quietly stops being one. Caught by the disposable full-chain apply.
+  if coalesce(jsonb_typeof(p_envelope -> 'values'), 'absent') <> 'object' then
+    raise exception 'STAT-FOUNDATION stat_required_sum: envelope claims ok but carries no values object (got %)',
+      coalesce(jsonb_typeof(p_envelope -> 'values'), 'absent');
   end if;
   v_ids := coalesce(p_stats, (select coalesce(array_agg(k order by k), array[]::text[])
                                 from jsonb_object_keys(p_envelope -> 'values') k));
@@ -3574,11 +3579,24 @@ begin
     if position('refusing to produce a number from a failed stat resolution' in sqlerrm) = 0 then raise; end if;
   end;
   --       FAILURE PATH, SHAPE 3 — a hand-made envelope claiming ok with no values is still refused.
+  --       Both shapes: values ABSENT, and values present but not an object.
   begin
     v_num := public.stat_required_sum('{"ok":true}'::jsonb);
     raise exception 'STAT-FOUNDATION self-assert FAIL: an envelope claiming ok with no values produced %', v_num;
   exception when others then
     if position('carries no values object' in sqlerrm) = 0 then raise; end if;
+  end;
+  begin
+    v_num := public.stat_required_sum('{"ok":true,"values":7}'::jsonb);
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an envelope whose values is a NUMBER produced %', v_num;
+  exception when others then
+    if position('carries no values object' in sqlerrm) = 0 then raise; end if;
+  end;
+  begin
+    v_num := public.stat_required_sum('{"ok":true,"values":{}}'::jsonb);
+    raise exception 'STAT-FOUNDATION self-assert FAIL: an EMPTY values object produced %', v_num;
+  exception when others then
+    if position('no stats to sum' in sqlerrm) = 0 then raise; end if;
   end;
   --       AND THE LIVE CONSUMER IS UNTOUCHED. This slice designs the replacement; it does not repair
   --       pirate_intercept_plan_leg. If a later edit "helpfully" fixes it here, this fails.

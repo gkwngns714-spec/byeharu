@@ -355,6 +355,13 @@ test('a stat-resolution failure cannot become a numeric risk value', () => {
   expect(migration).toContain('this is exactly the 0301:545-547 fail-open defect')
   expect(migration).toContain('an empty fleet produced the numeric risk input')
   expect(migration).toContain('an envelope claiming ok with no values produced')
+  expect(migration).toContain('an envelope whose values is a NUMBER produced')
+  expect(migration).toContain('an EMPTY values object produced')
+  // ...and the guard is NULL-safe: jsonb_typeof(NULL) is NULL, and a three-valued comparison used
+  // as a two-valued guard is how a fail-closed check quietly stops being one.
+  expect(migration).toMatch(
+    /coalesce\(jsonb_typeof\(p_envelope -> 'values'\), 'absent'\) <> 'object'/,
+  )
   // a genuinely weak fleet still resolves — to a REAL zero. That is the distinction the live
   // consumer cannot make.
   expect(migration).toContain('a genuinely weak (real zero) fleet was not resolvable to 0')
