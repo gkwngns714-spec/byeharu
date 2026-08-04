@@ -38,7 +38,7 @@ import {
 import { territoryAt } from './territoryAt'
 import { isDockablePortForDisplay, type MapLocation } from './mapTypes'
 import type { DangerZoneLite } from './pirateApi'
-import { zoneAtPoint, zoneHuntSite } from './zoneInfoModel'
+import { resolveFleetStandingHunts, type FleetStandingHunt } from './fleetStandingHunt'
 
 // ── THE ONE selection source (charter: kill the two-selection-source spaghetti) ───────────────────
 // MapScreen owns this union: a double-tap yields 'point' (GalaxyMap's onDoubleTapPoint → the RAW world
@@ -81,21 +81,12 @@ export interface FleetCommandDockRow {
  * to the site lived four steps away (double-tap → hub → What's here → zone panel → the button), and
  * the map's idle prompt described the gesture in prose without saying one was under their feet.
  *
- * It carries NO wire of its own. `locationId` is handed back to the map's marker selection, exactly
- * as tapping that marker would — which swings the hub onto its fleet stage and renders the EXISTING
- * hunt section, with its two-click armed confirm and its return-port picker. One hunt control,
- * reached from one more place; never a second path to the hunt RPC (tests/howAFightStarts.spec.ts
- * proves there is still exactly one submit site in src/).
+ * THE DERIVATION IS NO LONGER HERE. The owner asked (2026-08-04, third report — "i am in snare but
+ * in no fight is occuring") for the same offer on the map's fleet readout, and two models deciding
+ * "is this fleet standing on a fight?" is exactly the N-copies-of-one-rule shape this codebase
+ * refuses. It lives in map/fleetStandingHunt.ts now; this row IS that type, composed.
  */
-export interface FleetCommandZoneHuntRow {
-  groupId: string
-  name: string
-  /** The SITE to select — never the zone: a zone is not a destination (howAFightStarts). */
-  locationId: string
-  siteName: string
-  /** The signpost's words, from the ONE hunt-copy authority (huntSiteActionLabel). */
-  label: string
-}
+export type FleetCommandZoneHuntRow = FleetStandingHunt
 
 export interface FleetCommandHuntRow {
   groupId: string
@@ -217,24 +208,15 @@ export function buildFleetCommandModel(input: FleetCommandModelInput): FleetComm
     return [{ groupId: g.group_id, name: g.name, portId: orbit.id, portName: orbit.name, wire: { locationId: orbit.id } }]
   })
 
-  // 4b · STANDING HUNT — "i am in combat zone, and the fight does not start" (owner, 2026-08-04,
-  // the second time). Shaped as the DOCK row above on purpose: state-predicated, target-independent,
-  // over fleets parked in space, decided by an EXISTING pure containment test. Nothing here is new
-  // geometry and nothing here is a new verb.
-  //   · containment  — zoneAtPoint, the map's own ray-cast (the same one that answers "What's here"
-  //                    for a double-tap and mirrors the server's PostGIS zone test).
-  //   · huntability  — zoneHuntSite, the ONE authority the zone panel asks (teamDestinationKind).
-  // HONEST AT THE EDGES, the dock guards verbatim: a fleet in flight is not standing anywhere, a
-  // docked fleet is not in space, and a fleet with no coordinates is nowhere this can speak about.
-  const zoneHuntRows: FleetCommandZoneHuntRow[] = groups.flatMap((g) => {
-    const fleet = input.unifiedFleets.find((f) => f.group_id === g.group_id)
-    if (!fleet || fleet.status === 'moving' || fleet.location_mode !== 'space') return []
-    if (fleet.space_x === null || fleet.space_y === null) return []
-    const zone = zoneAtPoint({ x: fleet.space_x, y: fleet.space_y }, input.dangerZones)
-    if (!zone) return []
-    const site = zoneHuntSite(zone, locations)
-    if (!site) return [] // a zone with no huntable site offers nothing at all
-    return [{ groupId: g.group_id, name: g.name, locationId: site.locationId, siteName: site.name, label: site.label }]
+  // 4b · STANDING HUNT — "i am in combat zone, and the fight does not start" (owner, 2026-08-04).
+  // State-predicated and target-independent, like the dock rows above. The derivation itself is the
+  // ONE authority in map/fleetStandingHunt.ts — the map's fleet readout offers the same fight from
+  // the same answer, so neither surface owns the rule.
+  const zoneHuntRows: FleetCommandZoneHuntRow[] = resolveFleetStandingHunts({
+    groups,
+    unifiedFleets: input.unifiedFleets,
+    dangerZones: input.dangerZones,
+    locations,
   })
 
   // 2/3/5 · the target-dependent sections. A port target is resolved through the ONE destination

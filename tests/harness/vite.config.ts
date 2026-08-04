@@ -20,9 +20,13 @@ import { join } from 'node:path'
 //   ships.html  — the real Ships tab (<ShipsView> with the real <FittingDetail> in its ship
 //                 column): the fleet panel and the ship panel MEASURED side by side at 1280px, and
 //                 stacked without clipping or sideways scroll at the 320px phone floor
-// The tailwind plugin serves the harnesses that MEASURE rendered pixels — fight.html, nav.html and
-// assets.html — which have to load the app design system rather than approximate it. Those three
-// import ./harness.css (NOT src/index.css directly): with `root: tests/harness`, Tailwind v4's
+//   fleetinfo.html — the real <FleetStatusPanel> inside the real top-left <OverlayRail>: where each
+//                 fleet is, what it is doing, WHY it cannot fight, and the one action slot (into the
+//                 fight under its feet, or out of the one it is in), MEASURED at 320px and at 288px
+// The tailwind plugin serves the harnesses that MEASURE rendered pixels — fight.html, nav.html,
+// assets.html, ships.html, fleet.html and fleetinfo.html — which have to load the app design system
+// rather than approximate it. Each of those
+// imports ./harness.css (NOT src/index.css directly): with `root: tests/harness`, Tailwind v4's
 // source auto-detection sees only tests/harness/**, so harness.css's explicit `@source '../../src'`
 // is what makes the app's own utilities exist at all. Importing src/index.css directly yields a
 // stylesheet with none of the app's classes in it, and a measurement taken against that is

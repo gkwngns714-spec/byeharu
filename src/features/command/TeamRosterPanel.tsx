@@ -525,7 +525,9 @@ export function TeamRosterPanel() {
                     </p>
                   ) : (
                     <Notice tone="warning" data-testid={`fleet-inactive-${group.group_id}`}>
-                      Fleet inactive — set a command ship to move, send, or hunt with this fleet.
+                      {/* The ONE command-ship sentence (teamReasonMessage) — this Notice used to
+                          carry a third wording of the same rule. */}
+                      {teamReasonMessage('fleet_inactive_no_command')}
                     </Notice>
                   ))}
 

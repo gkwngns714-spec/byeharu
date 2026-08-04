@@ -467,10 +467,13 @@ export function FleetCommandPanel({
                         Hunt here
                       </Button>
                     </div>
-                    {/* FLEET-CONTROL (0204): dark → cmdActive is always true and this never renders. */}
+                    {/* FLEET-CONTROL (0204): dark → cmdActive is always true and this never renders.
+                        The sentence is the ONE command-ship copy (teamReasonMessage) — this surface
+                        used to carry its own wording of the same rule, which is how the same refusal
+                        came to be phrased three different ways in three places. */}
                     {r.memberCount > 0 && !r.cmdActive && (
                       <p className="mt-1 text-xs text-warning/90" data-testid={`team-inactive-${r.groupId}`}>
-                        This fleet has no command ship — set one on the Fleet tab to move, send, or hunt.
+                        {teamReasonMessage('fleet_inactive_no_command')}
                       </p>
                     )}
                     {r.readyHint && <p className="mt-1 text-xs text-ink-faint">{r.readyHint}</p>}

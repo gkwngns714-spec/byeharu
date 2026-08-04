@@ -100,7 +100,11 @@ jobs:
       # shipsSideBySide.uispec.ts (the real Ships tab: the fleet panel and the selected ship's panel
       # MEASURED as two columns at 1280px and as a stack at the 320px floor, with no clipping and no
       # sideways scroll — "side by side" is a claim about where two boxes are, and prose cannot fail
-      # when a class changes underneath it).
+      # when a class changes underneath it), and fleetInfoOnMap.uispec.ts (the real
+      # <FleetStatusPanel> in the real map rail — the owner asked to see where each fleet is, what it
+      # is doing, and to be able to start or leave a fight from there; it MEASURES that the reason a
+      # fleet cannot fight reaches the SCREEN, that the one action slot toggles between the hunt and
+      # the retreat, and that nothing clips or scrolls sideways at 320px and at 288px).
       - name: Rendered UI proofs (tests/*.uispec.ts)
         run: npx playwright test --config playwright.osnui.config.ts
 

@@ -14,6 +14,7 @@ import type { MiningField } from '../mining/miningTypes'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 import { TelegraphBanner } from '../combat/TelegraphBanner'
 import { CombatMapCard } from './CombatMapCard'
+import { FleetStatusPanel } from './FleetStatusPanel'
 import { ambushEncounterNotices } from './ambushEncounterNotice'
 import { nearMissNotices, NEAR_MISS_MAP_WINDOW_MS } from './nearMissNotice'
 import { distance } from '../../game/movement/travelPreview'
@@ -393,6 +394,33 @@ export function MapScreen() {
                 ticks={combat.ticks}
                 autoExit={combat.autoExit}
                 onChanged={() => void combat.refresh()}
+              />
+              {/* MY FLEETS, ON THE MAP (owner, 2026-08-04, playing: "in map, i want to see
+                  information regarding fleet, where it is, stats, what it is currently doing. I am
+                  in snare but in no fight is occuring, i want also a toggle combat on map…").
+
+                  It rides THIS rail — the map's information corner — and sits BELOW the combat card
+                  on purpose: while a battle is running, the fight's readout is the more urgent thing
+                  and must keep the top of the rail. Props only, from reads the shell already polls:
+                  no new fetch, no new poll, no state of its own.
+
+                  The hunt handoff is the SAME one the command panel and the zone panel use —
+                  `handleSelect`, the map's own marker-selection path — so a fleet parked on top of a
+                  fight reaches the EXISTING hunt control by exactly the route a tap on that site's
+                  marker takes. No second hunt path, no new RPC. */}
+              <FleetStatusPanel
+                groups={teamGroups}
+                membership={teamGroupMap}
+                positions={fleetPositions}
+                locations={locations}
+                movements={movements}
+                unifiedFleets={unifiedGroupFleets}
+                dangerZones={dangerZones}
+                encounters={combat.encounters}
+                units={combat.units}
+                fleetControlEnabled={fleetControlEnabled}
+                onSelectHuntSite={(locationId) => handleSelect(locationId)}
+                onCombatChanged={() => void combat.refresh()}
               />
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
