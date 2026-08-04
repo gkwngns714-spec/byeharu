@@ -1,0 +1,23 @@
+# ── LF IS NOT A STYLE PREFERENCE HERE — IT IS A DEPLOY PRECONDITION ─────────────────────────────
+#
+# WHY THIS FILE EXISTS (audit, 2026-08-04):
+# 293 of 323 migrations were CRLF in the Windows working tree while LF in the index, because
+# core.autocrlf=true and nothing pinned them. That is not cosmetic. Migrations since 0299 rewrite
+# deployed function bodies by SLICING them: a literal `old_t` must match text returned by
+# pg_get_functiondef(), and Postgres returns LF-only. A CRLF `old_t` matches ZERO occurrences, the
+# migration's own guard raises "guard text occurs 0 time(s)", and the whole deploy rolls back.
+#
+# It fails loudly rather than silently, which is the one mercy — and it only bites a local
+# `supabase db push` from Windows, because CI checks out the LF index and never sees it. That is
+# exactly why it survived: the machine that hits it is the machine with no CI to catch it.
+#
+# One line closes the entire class. It did not exist until now.
+*.sql text eol=lf
+
+# The generators read migration text and normalise on read, then git handed the file straight back
+# as CRLF. Pin them for the same reason.
+*.mjs text eol=lf
+*.sh  text eol=lf
+
+# Everything else: normalise in the repo, let git decide the checkout.
+* text=auto

@@ -35,6 +35,14 @@ jobs:
         run: npm run lint --if-present
         continue-on-error: true
 
+      # A duplicate migration version deploys as a SILENT NO-OP: schema_migrations keys on the
+      # version, so the second file is recorded already-applied and skipped, with everything green.
+      # It has happened four times and was caught by hand every time. This guard lives in `build`
+      # deliberately — as of 2026-08-04 it is the ONLY required status check on main, so it is the
+      # only place a check can actually block a merge rather than merely notify.
+      - name: Migration versions are unique
+        run: node scripts/check-migration-versions.mjs
+
       - name: Typecheck (tsc -b)
         run: npx tsc -b
 
