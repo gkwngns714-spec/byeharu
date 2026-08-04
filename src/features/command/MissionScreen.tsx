@@ -2,6 +2,7 @@ import { useShellState } from '../../app/shellState'
 import { PortEntryPanel } from '../portentry/PortEntryPanel'
 import { FirstOrdersCard } from '../onboarding/FirstOrdersCard'
 import { ActiveCombatPanel } from '../combat/ActiveCombatPanel'
+import { foldRetreatDelaySeconds } from '../combat/retreatCountdown'
 import { ReportsSection } from '../combat/ReportsSection'
 import { RankingPanel } from '../ranking/RankingPanel'
 import { useAuthStore } from '../../store/authStore'
@@ -78,7 +79,16 @@ export function MissionScreen() {
                 unitTypes={game.unitTypes}
                 events={combat.events.filter((e) => e.encounter_id === enc.id)}
                 ticks={combat.ticks.filter((t) => t.encounter_id === enc.id)}
-                retreatDelaySeconds={game.config['retreat_delay_seconds'] ?? 20}
+                retreatDelaySeconds={
+                  // THE RETREAT WINDOW, OR NOTHING. This used to read `?? 20`, and production's
+                  // value is 8 (20260617000028_retreat_delay_8s.sql set the row; every tick since
+                  // coalesces to 8) — a confident countdown 2.5x longer than the real escape
+                  // window, shown at the one moment the player is deciding whether they can get
+                  // out. fetchGameConfig omits a key entirely on a partial read, so `??` could not
+                  // tell "missing" from "never fetched". The fold answers null and the panel then
+                  // says nothing about timing — an unknown is never a plausible number.
+                  foldRetreatDelaySeconds(game.config['retreat_delay_seconds'])
+                }
                 autoExit={combat.autoExit[enc.id]}
                 onChanged={() => {
                   void combat.refresh()

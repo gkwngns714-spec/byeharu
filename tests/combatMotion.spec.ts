@@ -1,4 +1,7 @@
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   STEP_DEFAULT_MS,
   STEP_MAX_MS,
@@ -468,6 +471,57 @@ test('the flight is the SERVER’s impact_delay_ms — a faster round lands firs
   // …and the fast round is down while the slow one is still crossing.
   expect(at(fastSeen, [salvo({ impact_delay_ms: 100 })], T0 + 450)).toHaveLength(0)
   expect(at(slowSeen, [salvo({ impact_delay_ms: 200 })], T0 + 450)).toHaveLength(1)
+})
+
+// ── A SERVER 0 IS AN ANSWER, NOT A GAP ────────────────────────────────────────────────────────────
+// The tick writes `round(1000 * dist / projectile_speed)::integer` (0234:820, carried to 0299:876),
+// and 0316 cut every combat distance by five — so production's delays are 0-120 ms and a
+// point-blank shot legitimately writes 0. The client used to guard on `impact_delay_ms > 0` and,
+// failing it, re-run the server's own formula over its INTERPOLATED endpoints. This is that branch,
+// with the geometry chosen so the two answers cannot be confused: the shooter and the target are 40
+// world units apart with a 60 u/s gun, so the client's copy would have computed 1000*40/60 = 667 ms
+// → ×4 → clamped to SHOT_MAX_MS (900), while honouring the server's 0 gives the SHOT_MIN_MS floor.
+
+test('THE SERVER’S ZERO IS HONOURED: a point-blank delay lands at the floor, not on the client’s formula', () => {
+  const events = [salvo({ impact_delay_ms: 0 })]
+  // still on screen just before the playback floor…
+  expect(shotWorld(events, [shooter, target], T0 + SHOT_MIN_MS - 20)).toHaveLength(1)
+  // …and DOWN immediately after it. Under the old `> 0` guard the client's own
+  // 1000*dist/projectile_speed put this round at 900 ms and it would still be crossing here.
+  expect(shotWorld(events, [shooter, target], T0 + SHOT_MIN_MS + 1)).toHaveLength(0)
+  expect(shotWorld(events, [shooter, target], T0 + 600)).toHaveLength(0)
+})
+
+test('a zero-delay round ARRIVES at the floor — the damage number is not held back by client geometry', () => {
+  const rows = [shooter, target]
+  const events = [salvo({ id: 10, seq: 0, impact_delay_ms: 0 })]
+  const arrivals = resolveShotArrivals({
+    events,
+    latestTick: latestTickByEncounter(events, isSpatialSalvo),
+    endpoints: endpointsOf(rows),
+    units: rows,
+    sightings: observeShots({}, events, T0),
+  })
+  expect(arrivals.get('u2#0')).toBe(T0 + SHOT_MIN_MS)
+})
+
+test('a row with NO delay at all gets the floor too — never a duration computed from client geometry', () => {
+  const events = [salvo({ impact_delay_ms: null })]
+  expect(shotWorld(events, [shooter, target], T0 + SHOT_MIN_MS - 20)).toHaveLength(1)
+  expect(shotWorld(events, [shooter, target], T0 + SHOT_MIN_MS + 1)).toHaveLength(0)
+})
+
+test('THE COPY CANNOT COME BACK: the flight formula lives on the server and nowhere in this module', () => {
+  const motion = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/features/map/combatMotion.ts'), 'utf8')
+  const code = motion
+    .split('\n')
+    .filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('//') && !l.trimStart().startsWith('/*'))
+    .join('\n')
+  // `1000 * dist / projectile_speed` in any spelling is the server's formula, copied.
+  expect(code, 'the flight time must not be re-derived from the gun’s speed').not.toContain('profile.speed')
+  expect(code, 'no client-side distance/speed flight math').not.toMatch(/1000\s*\*\s*dist/)
+  // …and the guard must never go back to treating a real 0 as a missing value.
+  expect(code, 'a 0 delay is a real answer').not.toMatch(/impact_delay_ms\s*>\s*0/)
 })
 
 test('a round already in flight is NOT restarted when the same tick arrives on the next poll', () => {

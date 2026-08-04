@@ -198,9 +198,10 @@ export function smoothCombatUnits(
 //   • WHICH GUN — `combat_events.projectile_type` is written as the firing weapon's own
 //     `module_type_id`, so the shot names its weapon; that entry is then found in the firing unit's
 //     `weapons_json`.
-//   • HOW LONG IT FLIES — `combat_events.impact_delay_ms` is the server's own
-//     `1000 * distance / projectile_speed`. A faster gun's round arrives sooner because its round
-//     IS faster; nothing here re-derives that.
+//   • HOW LONG IT FLIES — `combat_events.impact_delay_ms`, ALWAYS, including when it is 0 (the
+//     server rounds to an integer, so a point-blank shot legitimately lands immediately). A faster
+//     gun's round arrives sooner because its round IS faster; nothing here re-derives that, and a
+//     row that carries no delay at all gets the playback floor rather than a computed duration.
 //   • HOW HEAVY IT IS — the weapon's share of its ship's volley, `power_i / Σ power`, which is
 //     exactly what 0331 defines `weapons_json[i].power` to be. Dimensionless by construction, so it
 //     needs no invented reference scale: one gun throws the whole volley in one round, two guns
@@ -291,7 +292,10 @@ export function resolveEncounterLead(
 
 /** What a round is made of, and where that description came from. */
 export interface OrdnanceProfile {
-  /** world units per second — the gun's own `projectile_speed`. */
+  /** world units per second — the gun's own `projectile_speed`, carried through as part of WHAT the
+   *  round is (it is also what makes a `weapons_json` entry ordnance at all: `usableWeapon`). It is
+   *  NOT used to time the flight — the server's `impact_delay_ms` is the sole authority for that,
+   *  see `flightMs`. Deriving a duration from this field again would be the copy coming back. */
   speed: number
   /** this gun's share of its ship's volley, `power_i / Σ power` (0331), in [0,1]. 1 for a lone gun. */
   share: number
@@ -363,15 +367,33 @@ export interface OrdnanceView {
   profileSource: 'own' | 'lead'
 }
 
-const flightMs = (e: CombatEvent, profile: OrdnanceProfile, dist: number): number => {
-  // The server's own number first. A row without one (or with 0, which is a point-blank shot) falls
-  // back to the SAME formula the server used — 1000 * distance / projectile_speed — never to a
-  // constant pulled out of the air.
-  const raw = finite(e.impact_delay_ms) && e.impact_delay_ms > 0
-    ? e.impact_delay_ms
-    : (1000 * dist) / profile.speed
-  const scaled = finite(raw) ? raw * SHOT_TIME_SCALE : SHOT_MIN_MS
-  return Math.max(SHOT_MIN_MS, Math.min(SHOT_MAX_MS, scaled))
+/**
+ * HOW LONG THE ROUND IS IN THE AIR — the SERVER's `impact_delay_ms`, and nothing else.
+ *
+ * MEASURED DEFECT (fixed here): the guard used to be `impact_delay_ms > 0`, and failing it the
+ * client re-computed `1000 * dist / profile.speed` — the server's own formula, copied. That branch
+ * was NOT a legacy fallback, it was reachable in ordinary play:
+ *   · the tick writes `round(1000 * v_target_dist / nullif(v_w_pspeed,0))::integer`
+ *     (20260618000234_combat_spatial_tick.sql:820, carried forward to 0299:876-884) — an INTEGER,
+ *   · and 0316 cut every combat distance by five, so production's measured delays are 0-120 ms
+ *     (0316:153 says so in those words).
+ *   So a point-blank shot writes exactly 0 — a REAL answer meaning "it lands immediately" — the
+ *   `> 0` guard read that as missing, and the copy ran instead, over the client's own Math.hypot of
+ *   the INTERPOLATED (smoothed, mid-flight) endpoints, which is not the distance the server fired
+ *   at. Two authorities for one number, and in a close fight the wrong one won.
+ *
+ * ZERO IS HONOURED. It clamps up to SHOT_MIN_MS the same way any too-short flight does, because a
+ * round still has to be on screen for a few frames — that is playback (SHOT_TIME_SCALE's own
+ * decision, stated above), not a re-derived stat. A row carrying NO delay (null / non-finite) is
+ * the only genuine unknown, and it gets the same floor: the salvo row proves the shot happened so
+ * it is still drawn, but nothing about its duration is computed from data the client does not have.
+ * `dist` and the profile's speed are deliberately NOT parameters any more — there is no arithmetic
+ * path from client geometry to a flight time. Pinned by tests/combatMotion.spec.ts.
+ */
+const flightMs = (e: CombatEvent): number => {
+  const serverMs = finite(e.impact_delay_ms) && e.impact_delay_ms >= 0 ? e.impact_delay_ms : null
+  if (serverMs === null) return SHOT_MIN_MS
+  return Math.max(SHOT_MIN_MS, Math.min(SHOT_MAX_MS, serverMs * SHOT_TIME_SCALE))
 }
 
 /** The positioned view a round needs of its two endpoints — structurally the map layer's
@@ -429,14 +451,13 @@ export function resolveOrdnance(args: {
       e.projectile_type,
     )
     if (!profile) continue // nothing to describe the round with → draw none
-    const dist = Math.hypot(tgt.x - src.x, tgt.y - src.y)
     const seg: TimedSegment = {
       fromX: src.x,
       fromY: src.y,
       toX: tgt.x,
       toY: tgt.y,
       startMs: seen,
-      endMs: seen + flightMs(e, profile, dist),
+      endMs: seen + flightMs(e),
     }
     const t = segmentProgress(seg, args.nowMs)
     const now = interpolateSegment(seg, args.nowMs)
@@ -513,8 +534,7 @@ export function resolveShotArrivals(args: {
     if (!profile) continue
     const k = perTarget.get(targetId) ?? 0
     perTarget.set(targetId, k + 1)
-    const dist = Math.hypot(tgt.x - src.x, tgt.y - src.y)
-    out.set(`${targetId}#${k}`, seen + flightMs(e, profile, dist))
+    out.set(`${targetId}#${k}`, seen + flightMs(e))
   }
   return out
 }

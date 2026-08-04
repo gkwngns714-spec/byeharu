@@ -18,6 +18,26 @@
 // below is read off the encounter row the client already has; no capacity is re-derived, no hp is
 // re-summed, and nothing here computes combat.
 //
+// ── A KNOWING SECOND COPY, STATED RATHER THAN HIDDEN ───────────────────────────────────────────────
+// `hull = cap * (pct / 100)` below IS the server's own exit threshold expression, written twice —
+// once in the tick (0310:449, `v_hp_after <= v_ae_cap * (v_ae_pct / 100.0)`) and once here. It stays
+// only because the server does not expose the RESOLVED number anywhere a client can read it, which
+// was checked rather than assumed:
+//   · 0310 computes the threshold INSIDE process_combat_ticks, in local variables, and persists
+//     nothing — it calls presence_request_leave and the value is gone (0310:427-450).
+//   · 0310's only function is set_group_auto_exit, a WRITER (0310:267); it returns the two raw
+//     inputs it just stored (:304), never a threshold.
+//   · no view, no read RPC and no column anywhere in supabase/migrations returns an auto-exit
+//     threshold — `grep -n auto_exit supabase/migrations/*.sql` finds exactly the six sites above.
+//   · so the client's only readable surfaces are the raw columns (combatApi.fetchAutoExitByEncounter
+//     selects `auto_exit_enabled, auto_exit_hp_pct`) plus `combat_encounters.player_integrity_max`.
+// Composing a resolved threshold would therefore mean inventing a server change, which this slice
+// will not do. The mitigation is the one already in place: the denominator is COMPOSED, not
+// re-derived (player_integrity_max is 0310's live denominator exactly, per 0331:579), and this one
+// multiplication lives in ONE module that both combat surfaces call — pinned by
+// tests/autoExitLine.spec.ts, which fails if either surface starts doing `pct / 100` itself. If the
+// server ever publishes the threshold, delete the multiplication and read it.
+//
 // PURE. No React, no fetch, no clock. It states what the row and the setting already say.
 
 /** The fleet's 0310 setting, as `ship_groups` stores it. */
