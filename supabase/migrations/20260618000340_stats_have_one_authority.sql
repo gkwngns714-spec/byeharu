@@ -2035,9 +2035,17 @@ begin
     raise exception 'STAT-FOUNDATION self-assert FAIL: the live-reader coherence CHECK is missing'; end if;
   -- SNAPSHOT POLICY: exactly the two frozen combat stats today, and no stat claims `live` without
   -- naming its re-reader (the CHECK guarantees the second half; this pins the first).
+  -- THREE, not two. combat_power and survival freeze as attack_snapshot / defense_snapshot
+  -- (0301:742-744), and `speed` freezes as move_speed (0301:754, scaled by
+  -- combat_player_speed_scale). An earlier draft of this assert said two and was caught by the
+  -- disposable full-chain apply — the seed was right and the assertion was wrong, which is exactly
+  -- the direction a deploy-time assert is supposed to fail in.
   select count(*) into v_n from public.stat_definitions where combat_snapshot = 'frozen';
-  if v_n <> 2 then
-    raise exception 'STAT-FOUNDATION self-assert FAIL: % stat(s) registered frozen, want exactly 2 (combat_power, survival)', v_n; end if;
+  if v_n <> 3 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: % stat(s) registered frozen, want exactly 3 (combat_power, survival, speed)', v_n; end if;
+  if (select count(*) from public.stat_definitions
+       where combat_snapshot = 'frozen' and stat_id in ('combat_power','survival','speed')) <> 3 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the three frozen stats are not combat_power/survival/speed'; end if;
   select count(*) into v_n from public.stat_definitions where combat_snapshot = 'live';
   if v_n <> 0 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: % stat(s) registered live — this slice introduces NO new live re-read', v_n; end if;
