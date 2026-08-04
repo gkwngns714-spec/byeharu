@@ -1,6 +1,25 @@
 # Byeharu — Canonical Stat Architecture: the IMPLEMENTATION CONTRACT
 
-> **Status: DESIGN ONLY. Nothing here is built.** This is Phase 2 (Step 2) of the owner's
+> ## ⚠ READ §15 FIRST — THIS DOCUMENT HAS BEEN AMENDED (2026-08-04)
+>
+> S1–S5 are **built**, as one migration (`20260618000340_stats_have_one_authority.sql`, PR #394),
+> and the owner issued further rulings *after* this contract was written. **§15 supersedes any
+> statement in §0–§14 that contradicts it.** In particular:
+>
+> - **§14 D3 and D4 are superseded.** D4's "recommended (A)" was re-ruled after the live census:
+>   cargo modules, captain effects and cargo traits **are** intended to affect real ship-bound volume
+>   capacity, so m³ becomes the canonical **target**, not merely the only surviving authority
+>   (§15.5). D3's two corrections are kept but are now **dormant**, not shipped as live rules
+>   (§15.3).
+> - **Every stat now carries a LIFECYCLE** — `active` / `dormant` / `deprecated` — and *dormant means
+>   not computed*, not "computed and ignored" (§15.3).
+> - **"Zero engine consumers" is no longer a footnote.** Five outputs are seeded **dormant** rather
+>   than as active canonical gameplay stats (§15.3). §0 correction 3 is refined by §15.2.
+> - **Provenance is three-way**, not two (§15.4).
+> - **A caller count is never a textual-occurrence count.** §15.1 replaces the "~15 call sites" and
+>   "16 executable sites" figures with a replayed census, and §15.7 gives the procedure.
+
+> **Status of §0–§14: DESIGN, partly built.** This is Phase 2 (Step 2) of the owner's
 > canonical-stat directive — the contract to be approved *before* any code is written.
 > Phase 1 was the read-only audit; every load-bearing claim below was re-verified against the
 > repository on **2026-08-04** and is cited `file:line`. Where a Phase-1 finding turned out to be
@@ -1196,6 +1215,290 @@ cargo authority appears the next time someone needs one.
 
 ---
 
+## §15 — AMENDMENT (2026-08-04): the live census, the owner's later rulings, and the retirement sequence
+
+Everything in this section was verified by **replaying the migration chain**, not by grepping. Where
+it contradicts §0–§14, **this section wins**.
+
+### 15.1 The classification taxonomy — how a "call site" is counted
+
+The single most expensive error in the earlier drafts was treating a **textual occurrence** as a
+**caller**. `calculate_group_expedition_stats` appears **19 times** across the migrations; it has
+**six** live callers. `fleet_get_power` appears in 19 function bodies; **one** is live. Every
+implementation of a duplicated quantity is therefore classified as exactly one of:
+
+| Class | Meaning | What you may do with it |
+|---|---|---|
+| **canonical candidate** | The implementation the architecture will keep or become. | Build on it. |
+| **live consumer-local duplicate** | A second implementation inside a live consumer, reachable today. | Must be folded onto the canonical one, in a named step, with its semantic delta stated. |
+| **compatibility projection** | Re-expresses a canonical value in another shape for an existing reader. | Keep until its reader is retired; never treat as an authority. |
+| **dead code** | Defined, reachable by nothing. | **Never migrate it.** Delete it or leave it; do not port it. |
+| **historical superseded body** | A call site inside a function body a later migration re-created or dropped. | Not a call site at all. Never counted. |
+
+**A zero-caller function is never migrated into the new architecture.** `fleet_combat_stats`
+(`20260616000013_fleet_combat_fns.sql:6`) has **zero callers anywhere** — its three call sites all
+sit in superseded `process_combat_ticks` / `combat_create_encounter` heads, no `src/` file calls it,
+no test and no script references it. It is dead code. Porting it would have invented a fifth power
+authority out of nothing.
+
+### 15.2 The live census (replaces the "~15 call sites" and "16 executable sites" figures)
+
+See the PR #394 body for the full appendix with per-row citations. The load-bearing counts:
+
+- **`calculate_group_expedition_stats` — 6 live callers, 3 key shapes.** `command_ship_group_go`
+  (`0330:777`), `command_ship_group_dock` (`0330:1018`, value discarded), `pirate_intercept_plan_leg`
+  (`0301:542`), `process_pirate_route_legs` (`0301:2387`), `pirate_intercept_preview_route`
+  (`0233:1295`, EXECUTE revoked at `0309:161-162` — defined but unreachable),
+  `get_my_group_expedition_totals` (`0166:206`). `pirate_intercept_evaluate_leg` was **dropped** at
+  `0301:2457`; its five call sites are dead. The three shapes are `totals.speed` (min),
+  `totals.combat_power + totals.survival` (sum of two sums), and the whole envelope.
+- **`combat_fleet_move_speed`'s owner is `20260618000339_a_fight_you_can_move_in.sql:637`**, not
+  `0337:133-146`. 0339 re-created it with a `combat_reposition_speed_scale` multiplier. The §0
+  evidence index entry pointing at 0337 is **stale** and is corrected here. It is also **not** a
+  duplicate of the fold's speed: it is world-units-per-*tick*, the fold's is per-second.
+- **Six power calculations**, of which two are canonical, two are compatibility projections, one is a
+  live consumer-local duplicate and one is dead: `calculate_expedition_stats`' per-ship
+  `combat_power` (`0205:315`, canonical incumbent) · `calculate_group_expedition_stats`' fleet sum
+  (`0166:119`, canonical incumbent) · `fleet_get_power` (`20260616000006:101`, compatibility
+  projection, one live caller left at `0301:935`) · `fleet_combat_stats` (`20260616000013:6`, **dead
+  code**) · `combat_encounter_side_power` (`0299:273`, canonical for a combat side) · 0331's weapon
+  share-weight split (`0331:626-632`, compatibility projection) · plus the client's
+  `aggregateTeamStats` (`teamSkillset.ts:93-123`, live consumer-local duplicate, display-only by its
+  own header).
+- **The docking/port checks.** `0306:50-55` names "the remaining SIX copies of the docked test"; the
+  replayed inventory is **nine live implementations of the question plus one dead and one adjacent**:
+  `fleet_docked_location` (`0306:63`, **canonical**) · `mainship_space_validate_context`'s
+  `at_location` arm (`0221:203-212`, adds a `location_presence` coherence conjunct) ·
+  `mainship_resolve_docked_location` (`0210:278-306`, widest consumer set: market, hold, store,
+  invest, haul, salvage) · `get_my_fleet_positions`' docked arm (`0231:1060-1076`, **omits
+  `location_mode`**) · `mainship_port_of_ship` (`0334:220`, now partly folded onto the canonical one;
+  sole gate of `repair_ship_hull` at `0335:284-286`) · `fleet_in_territory` (`0218:167-189`, a
+  *radius* question, canonical for "which port am I orbiting") · `group_sortie_is_open`
+  (`0305:104-141`, the anti-dock gate) · `command_ship_group_dock`'s PARKED guard (`0330:989-994`,
+  the inverse predicate in a different vocabulary) · `dockServices.ts:53-55` (compatibility
+  projection). Dead: `move_ship_group_to_location`'s block (`0231:1486`, function dropped at
+  `0232:264`). Adjacent, different question: `mainship_space_location_target_legal` (`0067:60`).
+  `0335:44-52` records the live disagreement verbatim: a **berthed** ship reads as "at a port" for
+  recovery and `not_docked` for mending, on the same tick.
+- **The five dead outputs.** `retreat_safety`, `scouting`, `mining_yield`, `repair`,
+  `pirate_attention` — written by five source kinds, re-summed by `0166:121-126`, rendered by
+  `TeamPreviewSection.tsx:136-159`, and read by **no branch, comparison or threshold anywhere**.
+  `repair` is specifically **not** the repair verb's input: `20260618000335_one_way_to_repair.sql`
+  and `20260618000336_combat_engine_repairs.sql` contain no `repair` stat key, and the repair economy
+  prices off `repair_credits_per_hp`. §0 correction 3 said "zero *engine* consumers, but a real
+  display read path"; §15.3 rules on what that means.
+- **Both cargo representations.** The unitless integer is a **column**
+  (`main_ship_instances.cargo_capacity`, `20260617000043:56`), written only at commission
+  (`0043:80`, `0080:108`, `0222:247/:268`) with **no runtime writer**, read by `0205:676`,
+  `0166:125`, `0159:179`, and six TS surfaces. The m³ authority is `fleet_hold_capacity_m3` /
+  `fleet_hold_used_m3` (`0333:402-438`), read by `transfer_items`, `get_my_hold` and
+  `get_my_docked_store`, over the column `main_ship_instances.cargo_capacity_m3` (`0076`). A **third**
+  hold — the trade-lot sum at `0089:142` / `0092:184` — is deliberately left byte-untouched
+  (`0333:430-431`).
+
+### 15.3 Stat lifecycle — the owner's ruling, and what "dormant" means
+
+Every `stat_definitions` row declares a **lifecycle**. There is **no default** and the CHECK is
+closed, so an undeclared or unrecognised value is rejected at insert time.
+
+| Lifecycle | Definition | Behaviour, enforced |
+|---|---|---|
+| `active` | Has an approved **gameplay** (`engine_consumer`) or **presentation** (`presentation_consumer`) consumer. | In the routine registry snapshot; computed on every resolution. The table **refuses** an active row that names neither. |
+| `dormant` | Catalogued, **no** consumer of any kind. | **Absent from the routine snapshot.** Nothing gathers a contribution to it, nothing folds it, nothing emits it, and a contribution aimed at it is *rejected as an unknown stat* rather than ignored. Resolvable **only** through an explicitly requested, authorized inspection call, and even then the value lands in a separate `dormant` map marked `effective: false`. The table **refuses** a dormant row that names any consumer. |
+| `deprecated` | Legacy compatibility only. | Still computed for its existing readers; `engine_consumer` is **forbidden by CHECK**, so it can never acquire a new gameplay consumer. Requires a `deprecated_reason`, and a reason may not be attached to a non-deprecated row. |
+
+This **replaces** the `is_active boolean` of the first draft. Two columns answering one question —
+"is this stat in play?" — is spaghetti, and a boolean cannot express three standings. The rule itself
+lives in exactly one function (`stat_lifecycle_in_scope`), read through the snapshot; the gatherers
+filter on snapshot membership and never on a second predicate over the table.
+
+**The ruling, applied.** The five confirmed-dead outputs are seeded **dormant**, not as active
+canonical gameplay stats — *"Do not automatically seed these as active canonical gameplay stats
+merely because old functions or catalogs mention them… Prior implementation effort does not create
+gameplay semantics."*
+
+**`pirate_attention` is dormant despite 0331.** Migration `20260618000331_one_authority_for_attack.sql`
+taught **four catalog surfaces** to state it — ship traits (`:471-475`), command buffs (`:493-496`),
+modules (`:500-508`) and captains (`:511-519`), the four its own assert loop enumerates at `:749-759`
+— plus the hull `base_stats_json` at `:454`. The pirate chain is `pirate_intercept_plan_leg`
+(`0301:484`) → `pirate_intercept_compute_risk` (`0233:335-355`) → `typed_zone_pirate_candidates_v1`
+(`0279:108`), and every one of them takes `combat_power + survival` and **nothing else**. 0331 itself
+records at `:123` that no seeded catalog row even carries the key. So what shipped was four surfaces
+**promising an effect that does not exist**. Those promises are withdrawn: the registry row is
+dormant, and the client rows that rendered these five under a heading labelled *authoritative* are
+removed (`teamSkillset.ts` `DORMANT_STAT_KEYS`, `TeamPreviewSection.tsx:134-140`).
+
+§14 **D3 stands as decided but is now inert**: `scouting → max` and `retreat_safety → min` are
+recorded in the seed so the decision survives, and they are unreachable until a consumer justifies
+promotion. Promotion is a migration, not a catalog edit.
+
+### 15.4 Three-way provenance
+
+A structure in which **a real zero**, **a resolution failure** and **not applicable** all read `0` is
+the defect this architecture exists to eliminate. Every resolver result therefore carries four
+**disjoint** maps indexed by one `provenance` object:
+
+| Status | Map | Meaning |
+|---|---|---|
+| `resolved` | `stats` | A real number. **A real zero is this**, flagged `is_real_zero: true`. |
+| `not_applicable` | `not_applicable` | No value exists for this entity (empty fleet, no eligible member, not defined at this scope). No number is invented. |
+| `unresolved` | `unresolved` | **Resolution failed.** The value is unknown — not zero, not minimum, not maximum. Carries a structured diagnostic. It may never hold a number. |
+| `dormant` | `dormant` | Inspection-only, `effective: false`. |
+
+`stats` therefore contains **only** effective resolved numbers, at every scope, forever.
+`stat_assert_provenance_partition` proves the four maps partition the provenance key set exactly and
+**raises** — a violated invariant must not be ignorable by not reading a boolean.
+
+**A member whose own resolution failed poisons the whole aggregate, deliberately.** Every fleet rule
+— sum, min, max, average, weighted average, primary ship — is a statement about the **whole** roster.
+An aggregate over the members that happened to resolve is not a smaller-but-honest answer, it is a
+confident wrong one. One unresolved member ⇒ every stat `unresolved`, naming the failed members.
+
+### 15.5 Cargo — the RE-RULING (supersedes §4.3 and §14 D4)
+
+After the census the owner re-ruled: **cargo modules, captain effects and cargo traits are intended
+to affect real ship-bound volume capacity.** The canonical future cargo stat is **ship-bound volume
+in m³**. In *this* slice:
+
+- The canonical target is **modelled with provenance** — `cargo_volume_m3` names the stat it
+  supersedes and bases on the ship's real `cargo_capacity_m3` column — and the **conversion is not
+  activated**.
+- **The existing `+25` is NOT copied into the volume field.** No unit conversion is defined and
+  inventing one is forbidden.
+- **No live hold size changes.**
+- The unitless integer stays **deprecated / non-authoritative**, never a second gameplay stat.
+
+This is enforced **structurally**, in the 0333 tradition. `20260618000333:1926-1929` forbids the m³
+authority from reading the dead integer columns with an executed check:
+
+```sql
+  if position('cargo_capacity ' in v_cap) <> 0 or position('cargo_used' in v_cap) <> 0 then
+    raise exception '0333 (f) FAIL: fleet_hold_capacity_m3 reads the dead 0043 cargo columns';
+  end if;
+```
+
+The registry goes one step further and makes it **unrepresentable** rather than merely detected:
+`unit_conversion` is a **closed enum** (so an undefined conversion cannot be faked with prose), and
+`stat_definitions_undefined_conversion_accepts_nothing` forces both permitted lists empty while it is
+NULL. A contribution aimed at the volume stat is therefore refused by `stat_combine` whatever its
+origin. `intended_source_kinds` records that modules, captains and traits *will* feed it, and
+`stat_definitions_permitted_within_intended` guarantees nothing can be permitted that was never
+declared intended.
+
+**Belongs to a separate migration:** the conversion factor, hold-size changes, the treatment of
+already-fitted modules, and the player-impact proof.
+
+### 15.6 The ambush contract (design only — the live consumer is NOT repaired here)
+
+`pirate_intercept_plan_leg` (`0301:484`) sums `combat_power + survival` at `:542` and **fails open**:
+
+```sql
+  exception when others then
+    v_combined := 0;                       -- 0301:545-547
+```
+
+`pirate_intercept_compute_risk` (`0233:345-354`) then computes a stat term
+`stat_reference / (stat_reference + greatest(combined, 0))`, strictly decreasing in `combined`, whose
+supremum **1.0 is reached at exactly `combined = 0`**. A malformed stat graph therefore produces the
+**highest risk the system can generate**, and a genuinely weak fleet produces the same gameplay value
+as a broken one. A `pirate_intercepts` row is written (`:590-602`) off a risk the engine had no basis
+to compute. The comment calls `0` "the conservative choice"; it is the opposite.
+
+**The replacement contract, which this slice ships as code and pins:**
+
+1. **Success and stat-resolution-failure are different answers.** There is exactly **one** way to get
+   a number out of a resolution — `stat_required_sum` — and it refuses any envelope that is not `ok`.
+   No failure can become a numeric risk input by any route: not maximum, not minimum, not a default,
+   not a clamp.
+2. **On failure: no safe passage and no ambush roll.** No intercept row, no leg advance, no movement
+   mutation.
+3. **Reject or defer at the nearest atomic boundary, preserving prior valid state.** Interactive path:
+   the whole `command_ship_group_go` statement (`0330:226`, intercept call at `:866`) — reject the
+   command, leave the fleet as it was. Scheduled path: the per-fleet block inside
+   `process_pirate_route_legs` (`0301:2376`) — skip that fleet, retry next tick, and **do not delete
+   the fleet's remaining route** (the deployed handler at `0301:2386-2397` does exactly that on a
+   speed-fold failure, with no player-visible notice; "we could not read the stats" is not evidence
+   about the route).
+4. **Emit a structured diagnostic:** fleet, failing resolver, stat and source where known, resolver
+   version.
+5. **Return an actionable error** — a named reason a caller can branch on, never a bare zero.
+
+The live consumer is **left alone**, and a self-assert pins it: the fail-open handler must still be
+present and `pirate_intercept_plan_leg` must carry zero 0340 tokens. Cutting it over is step 6 of
+§15.8.
+
+### 15.7 Lineage procedure — mandatory before any parity claim
+
+For **every** function whose behaviour is being preserved or compared:
+
+1. Resolve the **latest surviving definition**: grep every `create [or replace] function` **and**
+   every `drop function` for the name; take the highest-numbered surviving one.
+2. Confirm **no later migration replaces or drops it**, including text-surgery migrations that patch
+   a body in place (`0330`, `0331`, `0336`, `0337`, `0339` all do this).
+3. Base parity on **that body**, never on an earlier one that still reads plausibly.
+4. **Record the owning migration** in the artefact that depends on it — `file:line`, in the migration
+   or the contract, so the next reader does not have to re-derive it.
+
+A call site inside a superseded body is a **historical superseded body**, not a caller. Never report
+a raw textual-occurrence count as a caller count.
+
+### 15.8 The ten-step consumer-retirement sequence
+
+Replaces §9's ordering with the per-step obligations the owner requires. **Step 0 is done** (PR #394).
+For each step: the authority introduced · consumers moved · what the old authority is still required
+for afterwards · the proof required · the intended semantic change · the rollback/disable boundary ·
+and the confirmation that **no consumer points at a function whose meaning changed underneath it**.
+
+| # | Step | Authority introduced | Consumers moved | Old authority still required for | Proof required | Intended semantic change | Rollback / disable boundary | No-meaning-drift confirmation |
+|---|---|---|---|---|---|---|---|---|
+| 0 | **Foundation** (done, PR #394) | registry + 3 resolvers + lifecycle + provenance + consumer contract | none | everything | disposable full-chain apply; parity harness on constructed ships; pure suite | none (the client stops rendering 5 dormant stats) | drop the new objects; nothing reads them | blast-radius assert: every live engine body carries zero 0340 token |
+| 1 | **First reader** — `get_my_expedition_preview` (`0159:185`) | — | 1 (writes nothing, envelope-wrapped, one client call site) | all engine paths | side-by-side diff RPC over real ships; one page load shows a divergence | none intended | revert the one function body | assert `calculate_expedition_stats` unchanged |
+| 2 | **Display fleet totals** — `get_my_group_expedition_totals` (`0166:206`) | — | 1 | all movement/combat paths | envelope-shape parity, key for key | none intended (dormant keys disappear from the envelope) | revert one body | assert the fold's byte anchors survive |
+| 3 | **Client vocabulary** — delete the three disagreeing TS copies | `get_stat_definitions()` | `portShop.ts:43-51` (7 keys), `shipTraits.ts:57` (8 keys), `teamSkillset.ts:55-66` (10 keys) — **three implementations of one vocabulary; this is spaghetti and step 3 is where it is ripped out** | nothing | rendered-UI proof that the same chips render from the registry | none | ship the old constants behind a build flag for one release | a registry-driven label cannot drift from the seed by construction |
+| 4 | **Speed** — `command_ship_group_go` (`0330:777`) and `command_ship_group_dock` (`0330:1018`) | — | 2 | intercept, cron | movement smoke on a disposable chain; travel-time diff table | **§14 D2 must be answered first** — live travel times may change | `speed_resolver_v2` gate, per-command | `resolve_fleet_movement_speed` (dead chain) must not be revived; `combat_fleet_move_speed` (`0339:637`) is a *different unit* and is not touched |
+| 5 | **Scheduled speed** — `process_pirate_route_legs` (`0301:2387`) | — | 1 | intercept risk | cron-tick proof; the route-deletion path must become a skip | **the route is no longer deleted on a stat failure** | revert one body; the cron is idempotent | confirm no other caller depends on the delete |
+| 6 | **Ambush** — `pirate_intercept_plan_leg` (`0301:542`) | `stat_require_resolved` / `stat_required_sum` (already shipped) | 1 | none for this shape | the impossibility pin; an injected malformed member must produce a refusal and **zero** `pirate_intercepts` rows | **fail-open becomes fail-closed** — the single riskiest behavioural change in the program | gate per call site; the enclosing statement rolls back | `pirate_intercept_compute_risk` is *not* modified; only its input path is |
+| 7 | **Combat snapshot** — `combat_create_group_encounter` (`0301:661`) | — | 1 (three insert sites; only the player-ship one) | the enemy-wave and legacy builders | encounter-creation parity on constructed fleets; `attack_snapshot` / `defense` byte-for-byte | the `0301:804-806` concealment handler is replaced by an explicit refusal | flag per encounter creation | `process_combat_ticks` must not be re-emitted in the same slice |
+| 8 | **Progression** — retire the cached `captain_instances.level` column | `resolve_progression` | every level reader | nothing | the deploy assert that every row agrees with the curve (already shipping) | none | keep the column, stop writing it, drop it a slice later | `captainProgress.ts` must be deleted in the same slice or it becomes the last uncapped copy |
+| 9 | **Retire the predecessor** — drop `calculate_group_expedition_stats` and `calculate_expedition_stats` | — | none left | — | zero-caller proof by replay (not by grep count) | none | the drop is the rollback boundary; do it alone | re-run §15.7 on both before dropping |
+| 10 | **Cargo conversion** (separate program) | `cargo_volume_m3` with an activated `unit_conversion` | the cargo readers | the legacy integer for display | player-impact proof: every ship's hold before/after | **live hold sizes change** | its own migration, its own gate | already-fitted modules must be handled explicitly, not implicitly |
+
+### 15.9 The six deviations from §0–§14 taken by PR #394 — preserved, not reverted
+
+Each was argued in the migration body and is accepted. They are recorded here so a later reader does
+not "restore" the contract and undo them.
+
+1. **S1–S5 land as ONE migration**, not five. §10 lists five; splitting a foundation with no
+   consumers into five chain entries adds four failure points and no safety.
+2. **No feature flag.** An earlier draft seeded `stat_resolver_enabled = false`; it gated nothing, so
+   it was a flag that meant "false" about nothing at all. The migration now **asserts its absence**.
+3. **Two client-facing inspection RPCs ship with the foundation** (`get_stat_definitions`,
+   `get_my_effective_stats`), against §12's "dark" framing. The owner's ruling: *"don't make anything
+   dark, make it so that i can check."* Unchanged ≠ hidden.
+4. **Ranges are deliberately absent from the registry**, at either scope — `0336:35-40` is a shipped
+   defect caused by aggregating them. Any future range stat must carry `fleet_aggregation = 'none'`.
+5. **The fold emits every stat in its supplied vocabulary**, not only those with a contribution: a
+   ship with no sensor has a scouting of 0, which is a fact, and the deployed fold agrees
+   (`0205:666-685`). **Reconciled with the dormant ruling at the SNAPSHOT, not in the fold** — the
+   routine snapshot simply does not contain dormant stats, so there is nothing dormant to emit and no
+   contribution to one is ever gathered. Both rules hold, in full.
+6. **The cargo quarantine is structural, not documentary** — empty permitted lists, later strengthened
+   by §15.5's conversion constraint — rather than the "declare `engine_consumer = null`" of §14 D4-A.
+
+### 15.10 Still-unfolded spaghetti, named plainly
+
+Named here because the house rule is to say it, and bounded here because the authorization for PR
+#394 is repository work only.
+
+- **Three client stat vocabularies** — `portShop.ts:43-51` (7 keys), `shipTraits.ts:57` (8 keys),
+  `teamSkillset.ts:55-66` (10 keys) — three implementations of one concept that already disagree
+  about which keys exist. Folded in **step 3**; folding them now would be a consumer cutover.
+- **Nine live docking predicates** (§15.2), already disagreeing in production (`0335:44-52`). Owned by
+  the port-authority program, not this one.
+- **Six power calculations** (§15.2), two of them canonical for *different* questions.
+
+---
+
 ## Appendix — evidence index
 
 Every claim above traces to one of these. All paths are relative to `C:\Users\디폴리스\byeharu`.
@@ -1210,7 +1513,7 @@ Every claim above traces to one of these. All paths are relative to `C:\Users\�
 | Fleet fold (the predecessor authority) | `supabase/migrations/20260618000166_slice_d0_group_stats_authority.sql:58-151` |
 | Fleet-speed min, three inline copies | `supabase/migrations/20260618000330_the_mover_is_in_the_repo.sql:1473, :1715, :1790` |
 | Raw-hull speed resolver | `supabase/migrations/20260618000051_resolve_fleet_movement_speed.sql:32-61` |
-| Combat fleet move speed (min) | `supabase/migrations/20260618000337_reposition_is_a_move.sql:133-146` |
+| Combat fleet move speed (min × `combat_reposition_speed_scale`) — **LIVE OWNER** | `supabase/migrations/20260618000339_a_fight_you_can_move_in.sql:637-650` (`0337:133-146` is a **superseded body**; see §15.2) |
 | Weapon share-weight formula | `supabase/migrations/20260618000331_one_authority_for_attack.sql:626-635`; column redefined `:679-686` |
 | Player snapshot insert | `supabase/migrations/20260618000301_intercept_fires_at_zone_entry.sql:839-853` |
 | The concealment handler | `supabase/migrations/20260618000301_intercept_fires_at_zone_entry.sql:804-806` |

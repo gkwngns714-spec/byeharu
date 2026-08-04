@@ -103,9 +103,31 @@ test('the lifecycle column has NO DEFAULT and a closed CHECK — an undeclared l
     /lifecycle\s+text not null check \(lifecycle in \('active','dormant','deprecated'\)\)/,
   )
   expect(migration).not.toMatch(/lifecycle\s+text not null default/)
-  // And the migration EXECUTES the illegal insert rather than trusting the CHECK exists.
+  // And the migration EXECUTES both illegal inserts rather than trusting the CHECK exists:
+  // an UNKNOWN value, and an OMITTED one (the second is what "no default" actually means, and it
+  // is the probe the disposable full-chain apply proved was needed).
   expect(migration).toContain("'experimental'")
   expect(migration).toContain('the lifecycle vocabulary does not fail closed')
+  expect(migration).toContain(
+    'a stat with NO lifecycle was ACCEPTED — the column has a default it must not have',
+  )
+  expect(migration).toContain('exception when not_null_violation then null;')
+})
+
+test('every fail-closed probe declares a lifecycle, or it fails for the wrong reason', () => {
+  // A probe that aborts on a not-null violation instead of the CHECK it names is a probe wearing a
+  // passing coat. Each registry probe must state a lifecycle AND an intent superset of what it
+  // permits, so only the constraint under test can fire. (Found by the apply proof, not by review.)
+  const start = migration.indexOf('__sf_probe_blanket_sum__')
+  const end = migration.indexOf('probe row(s) survived')
+  expect(start).toBeGreaterThan(-1)
+  expect(end).toBeGreaterThan(start)
+  const probes = migration.slice(start, end)
+  const inserts = (probes.match(/insert into public\.stat_definitions \(/g) ?? []).length
+  const lifecycles = (probes.match(/lifecycle, (?:engine_consumer, )?(?:deprecated_reason, )?(?:supersedes_stat_id, )?registered_in\)/g) ?? []).length
+  // every probe but the deliberate no-lifecycle one names the column
+  expect(inserts).toBeGreaterThanOrEqual(10)
+  expect(lifecycles).toBe(inserts - 1)
 })
 
 test('active REQUIRES a consumer, dormant FORBIDS one, deprecated may never hold a gameplay one', () => {

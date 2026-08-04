@@ -2838,10 +2838,12 @@ begin
     insert into public.stat_definitions (
       stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
       numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
-      permitted_operations, permitted_source_kinds, fleet_aggregation, combat_snapshot, registered_in)
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, lifecycle, registered_in)
     values ('__sf_probe_blanket_sum__', '__sf_probe_bs__', 'probe', 999001, 'both', 'multiplier', 'fraction',
             'numeric', 2, 'none', null, 'multiplier_bonus',
-            array['flat']::text[], array['module']::text[], 'sum', 'not_applicable', '0340-probe');
+            array['flat']::text[], array['module']::text[], array['module']::text[],
+            'sum', 'not_applicable', 'dormant', '0340-probe');
     raise exception 'STAT-FOUNDATION self-assert FAIL: a multiplier stat with fleet_aggregation=sum was ACCEPTED — blanket summing is not actually unrepresentable';
   exception when check_violation then null;
   end;
@@ -2849,10 +2851,12 @@ begin
     insert into public.stat_definitions (
       stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
       numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
-      permitted_operations, permitted_source_kinds, fleet_aggregation, combat_snapshot, registered_in)
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, lifecycle, registered_in)
     values ('__sf_probe_bad_op__', '__sf_probe_bo__', 'probe', 999002, 'both', 'flat', 'points',
             'numeric', 2, 'none', null, 'additive',
-            array['flat','evaluate_sql']::text[], array['module']::text[], 'sum', 'not_applicable', '0340-probe');
+            array['flat','evaluate_sql']::text[], array['module']::text[], array['module']::text[],
+            'sum', 'not_applicable', 'dormant', '0340-probe');
     raise exception 'STAT-FOUNDATION self-assert FAIL: an unknown operation was ACCEPTED into permitted_operations';
   exception when check_violation then null;
   end;
@@ -2860,10 +2864,12 @@ begin
     insert into public.stat_definitions (
       stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
       numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
-      permitted_operations, permitted_source_kinds, fleet_aggregation, combat_snapshot, registered_in)
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, lifecycle, registered_in)
     values ('__sf_probe_bad_scope__', '__sf_probe_bsc__', 'probe', 999003, 'galaxy', 'flat', 'points',
             'numeric', 2, 'none', null, 'additive',
-            array['flat']::text[], array['module']::text[], 'sum', 'not_applicable', '0340-probe');
+            array['flat']::text[], array['module']::text[], array['module']::text[],
+            'sum', 'not_applicable', 'dormant', '0340-probe');
     raise exception 'STAT-FOUNDATION self-assert FAIL: an invalid scope was ACCEPTED';
   exception when check_violation then null;
   end;
@@ -2871,12 +2877,32 @@ begin
     insert into public.stat_definitions (
       stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
       numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
-      permitted_operations, permitted_source_kinds, fleet_aggregation, combat_snapshot, registered_in)
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, lifecycle, registered_in)
     values ('__sf_probe_bad_agg__', '__sf_probe_ba__', 'probe', 999004, 'both', 'flat', 'points',
             'numeric', 2, 'none', null, 'additive',
-            array['flat']::text[], array['module']::text[], 'median', 'not_applicable', '0340-probe');
+            array['flat']::text[], array['module']::text[], array['module']::text[],
+            'median', 'not_applicable', 'dormant', '0340-probe');
     raise exception 'STAT-FOUNDATION self-assert FAIL: an invalid fleet aggregation rule was ACCEPTED';
   exception when check_violation then null;
+  end;
+  -- LIFECYCLE FAIL-CLOSED, PROBE 0: an OMITTED lifecycle is refused. There is no default, so a row
+  -- that forgets to state its standing cannot be silently promoted to a live gameplay stat. This is
+  -- the probe the disposable full-chain apply discovered was needed: the four registry probes above
+  -- predate this column and were aborting on exactly this violation instead of the CHECK each meant
+  -- to exercise. It is now a probe in its own right rather than an accident.
+  begin
+    insert into public.stat_definitions (
+      stat_id, catalog_key, display_name, display_order, applies_to_scope, value_kind, unit,
+      numeric_domain, round_to, ship_base_source, ship_base_ref, combination_class,
+      permitted_operations, permitted_source_kinds, intended_source_kinds,
+      fleet_aggregation, combat_snapshot, registered_in)
+    values ('__sf_probe_no_life__', '__sf_probe_nl__', 'probe', 999000, 'both', 'flat', 'points',
+            'numeric', 2, 'none', null, 'additive',
+            array['flat']::text[], array['module']::text[], array['module']::text[],
+            'sum', 'not_applicable', '0340-probe');
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a stat with NO lifecycle was ACCEPTED — the column has a default it must not have';
+  exception when not_null_violation then null;
   end;
   -- LIFECYCLE FAIL-CLOSED, PROBE 1: an UNKNOWN lifecycle value is refused by the table. This is the
   -- owner's "fail closed on anything else", executed rather than asserted in prose.
@@ -3618,6 +3644,6 @@ begin
   if v_bad <> 0 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: % captain_instances row(s) have a cached level that disagrees with the curve', v_bad; end if;
 
-  raise notice 'STAT-FOUNDATION self-assert ok: NO feature flag introduced (asserted absent — an inert gate is not a safety device); the two inspection RPCs get_stat_definitions / get_my_effective_stats are executable by authenticated, NOT by anon, and get_my_effective_stats scopes on auth.uid(); 10 stat_definitions (3 active / 1 deprecated / 6 dormant) / 1 progression_curve / 1 progression_track / % buff_definitions seeded, buff_instances empty; the five confirmed-dead outputs (retreat_safety, scouting, mining_yield, repair, pirate_attention) are DORMANT and absent from the routine snapshot, so they are not computed on any routine path and a contribution to one is REJECTED; the routine snapshot holds exactly 4 stats and the inspection snapshot exactly 10; three-way provenance proven — a real zero, a member-resolution failure and a not-applicable are three different shapes and the four maps partition the key set; the ambush impossibility pin holds — stat_required_sum REFUSES every failure envelope, so no stat-resolution failure can become a numeric risk value, and pirate_intercept_plan_leg is asserted UNCHANGED (its 0301:545-547 fail-open handler still present, zero 0340 tokens); cargo re-ruled — cargo_capacity is DEPRECATED and non-authoritative, cargo_volume_m3 is the DORMANT canonical m3 target superseding it with an UNDEFINED conversion that the table makes structurally inert; scouting=max, retreat_safety=min, fleet speed=min, speed floor 0.2; captain_v1 capped at 99 with accumulate_xp_no_level; ten fail-closed registry probes were REJECTED by the table; the pure leaves carry zero RNG/clock tokens, no table reference, no write and no dynamic SQL, and the buff family never calls the stat resolver (acyclic); the deploy-time equivalence checks reproduce 0205:662 / :676 / :677 and 0177:270 on synthetic input reading no game row; modifier ORDER, additive-pct summing, breakdown reconciliation, JSONB round-trip stability and repeat determinism all proven; unknown stat / unpermitted operation / quarantined stat / non-numeric amount / duplicate contribution identity / unknown track / negative xp / invalid buff window / unknown buff stat ALL rejected; empty, single-ship, multi-ship and ineligible fleets aggregate per declared rule with an explicit non-applicable result and never a silent 0; all five stacking policies proven with their reasons; every 0340 table is RLS-on and read-only to clients and every 0340 function is server-only; calculate_expedition_stats / calculate_group_expedition_stats / combat_create_group_encounter / process_combat_ticks carry ZERO 0340 token and their byte-identity anchors (incl. the out-of-scope 0301 malformed-ship handler) survive',
+  raise notice 'STAT-FOUNDATION self-assert ok: NO feature flag introduced (asserted absent — an inert gate is not a safety device); the two inspection RPCs get_stat_definitions / get_my_effective_stats are executable by authenticated, NOT by anon, and get_my_effective_stats scopes on auth.uid(); 10 stat_definitions (3 active / 1 deprecated / 6 dormant) / 1 progression_curve / 1 progression_track / % buff_definitions seeded, buff_instances empty; the five confirmed-dead outputs (retreat_safety, scouting, mining_yield, repair, pirate_attention) are DORMANT and absent from the routine snapshot, so they are not computed on any routine path and a contribution to one is REJECTED; the routine snapshot holds exactly 4 stats and the inspection snapshot exactly 10; three-way provenance proven — a real zero, a member-resolution failure and a not-applicable are three different shapes and the four maps partition the key set; the ambush impossibility pin holds — stat_required_sum REFUSES every failure envelope, so no stat-resolution failure can become a numeric risk value, and pirate_intercept_plan_leg is asserted UNCHANGED (its 0301:545-547 fail-open handler still present, zero 0340 tokens); cargo re-ruled — cargo_capacity is DEPRECATED and non-authoritative, cargo_volume_m3 is the DORMANT canonical m3 target superseding it with an UNDEFINED conversion that the table makes structurally inert; scouting=max, retreat_safety=min, fleet speed=min, speed floor 0.2; captain_v1 capped at 99 with accumulate_xp_no_level; ELEVEN fail-closed registry probes were REJECTED by the table (including an OMITTED lifecycle, an unknown lifecycle value, an active stat with no consumer, a dormant stat with a consumer, a deprecated stat with a gameplay consumer, a superseding stat accepting a contribution while its unit conversion is undefined, and a permitted source that was never declared intended); the pure leaves carry zero RNG/clock tokens, no table reference, no write and no dynamic SQL, and the buff family never calls the stat resolver (acyclic); the deploy-time equivalence checks reproduce 0205:662 / :676 / :677 and 0177:270 on synthetic input reading no game row; modifier ORDER, additive-pct summing, breakdown reconciliation, JSONB round-trip stability and repeat determinism all proven; unknown stat / unpermitted operation / quarantined stat / non-numeric amount / duplicate contribution identity / unknown track / negative xp / invalid buff window / unknown buff stat ALL rejected; empty, single-ship, multi-ship and ineligible fleets aggregate per declared rule with an explicit non-applicable result and never a silent 0; all five stacking policies proven with their reasons; every 0340 table is RLS-on and read-only to clients and every 0340 function is server-only; calculate_expedition_stats / calculate_group_expedition_stats / combat_create_group_encounter / process_combat_ticks carry ZERO 0340 token and their byte-identity anchors (incl. the out-of-scope 0301 malformed-ship handler) survive',
     (select count(*) from public.buff_definitions);
 end $sfassert$;
