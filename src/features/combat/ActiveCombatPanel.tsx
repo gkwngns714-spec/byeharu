@@ -7,6 +7,7 @@ import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './com
 import { combatUnitLabel } from './combatLabels'
 import { selectCombatPhase, nextWaveSeconds, nextWaveText } from './combatPhase'
 import { resolveAutoExitLine, type AutoExitSetting } from './autoExitLine'
+import { resolveRetreatCountdown } from './retreatCountdown'
 import { resolveRepositionCourse } from './repositionCourse'
 import { resolveRewardEntries } from './rewardPayload'
 import { Card, Notice, Meter, SectionLabel, type MeterTone } from '../../components/ui'
@@ -32,7 +33,9 @@ export function ActiveCombatPanel({
   unitTypes: UnitType[]
   events: CombatEvent[]
   ticks: CombatTick[]
-  retreatDelaySeconds: number
+  /** the server's `retreat_delay_seconds`, or NULL when it could not be read — in which case this
+   *  panel states no duration at all rather than a plausible one (retreatCountdown.ts). */
+  retreatDelaySeconds: number | null
   /** the fleet's 0310 safety line, if it could be read. Absent → nothing is said about it. */
   autoExit?: AutoExitSetting
   onChanged: () => void
@@ -68,10 +71,16 @@ export function ActiveCombatPanel({
     return e.length ? `Lost: ${e.map(([k, v]) => `${v} ${typeName(k)}`).join(', ')}` : 'Hull damaged, no ships destroyed.'
   }
 
-  let retreatLeft = 0
-  if (retreating && encounter.retreat_started_at) {
-    retreatLeft = Math.ceil(retreatDelaySeconds - (now - new Date(encounter.retreat_started_at).getTime()) / 1000)
-  }
+  // THE RETREAT SENTENCE — the ONE derivation (retreatCountdown.ts). The countdown used to be
+  // computed here from a `?? 20` fallback two and a half times production's real 8-second window;
+  // an unreadable config now reaches this panel as null and the resolver states no duration at all.
+  const retreat = retreating
+    ? resolveRetreatCountdown({
+        retreatStartedAt: encounter.retreat_started_at,
+        delaySeconds: retreatDelaySeconds,
+        nowMs: now,
+      })
+    : null
 
   // THE SAFETY LINE (0310) — the ONE derivation, shared with the map card. Null when the setting is
   // unknown or off, and then this panel says nothing about it rather than implying there is none.
@@ -103,10 +112,9 @@ export function ActiveCombatPanel({
         />
       </div>
 
-      {retreating && (
-        <Notice tone="warning" className="mb-4 text-xs">
-          Retreating — fleet breaks away in {retreatLeft > 0 ? `${retreatLeft}s` : 'a moment…'}.
-          Warning: it can still take damage until it escapes.
+      {retreat && (
+        <Notice tone="warning" className="mb-4 text-xs" data-testid="combat-panel-retreat-countdown">
+          {retreat.text}
         </Notice>
       )}
 
