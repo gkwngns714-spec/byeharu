@@ -17,6 +17,9 @@ import { join } from 'node:path'
 //                 label clipping), which is what replaced navTabs.ts's unrendered width estimate
 //   assets.html — the real <AssetsLedgerView>: that an item no port buys reaches the screen as
 //                 "No price here" and never as a 0, across every price-coverage state
+//   ships.html  — the real Ships tab (<ShipsView> with the real <FittingDetail> in its ship
+//                 column): the fleet panel and the ship panel MEASURED side by side at 1280px, and
+//                 stacked without clipping or sideways scroll at the 320px phone floor
 // The tailwind plugin serves the harnesses that MEASURE rendered pixels — fight.html, nav.html and
 // assets.html — which have to load the app design system rather than approximate it. Those three
 // import ./harness.css (NOT src/index.css directly): with `root: tests/harness`, Tailwind v4's

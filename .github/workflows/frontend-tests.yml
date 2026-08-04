@@ -96,7 +96,11 @@ jobs:
       # assetsLedger.uispec.ts (the real <AssetsLedgerView> across every price-coverage state,
       # proving an item no port buys reaches the SCREEN as "No price here" and never as a 0 — a
       # fabricated valuation is the worst thing an assets screen can render, and only a DOM proof
-      # can catch a null becoming a zero on its way out of the model).
+      # can catch a null becoming a zero on its way out of the model), and
+      # shipsSideBySide.uispec.ts (the real Ships tab: the fleet panel and the selected ship's panel
+      # MEASURED as two columns at 1280px and as a stack at the 320px floor, with no clipping and no
+      # sideways scroll — "side by side" is a claim about where two boxes are, and prose cannot fail
+      # when a class changes underneath it).
       - name: Rendered UI proofs (tests/*.uispec.ts)
         run: npx playwright test --config playwright.osnui.config.ts
 
