@@ -75,10 +75,19 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // guard. The disjointness is also structural: those two call sites did not exist before 0336
   // CREATED them, so no slice this file takes from the 0299 head can overlap them. Naming it here
   // keeps the gate live for 0339 and after.
+  // 0339 IS EXEMPTED BY NAME on BOTH functions, and on the strongest terms available: the regions it
+  // rewrites are THIS MIGRATION'S OWN EMITTED TEXT — the reposition step inside the tick (this
+  // file's hunk 5) and the reposition arm inside the mover (this file's hunk 1) — plus 0336's spawn
+  // arms. None of that exists in the 0299 or 0330 heads sliced below, so the disjointness is
+  // structural. What 0339 changes there: it composes combat_encounter_move instead of writing the
+  // formation, the fleet row and the anchor by hand, and it deletes the open-space-only gate whose
+  // stated reason (0337:355-361, "UNVERIFIED") it verified and removed. It touches NONE of the
+  // retreat arms below that gate — deliberately checked, because 0339 was briefly scoped to remove
+  // the retreat feature and that scope was CANCELLED before anything was cut.
   guard('process_combat_ticks', '20260618000299',
     new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000336',
-             '20260618000338']));
-  guard('command_ship_group_go', '20260618000330', new Set());
+             '20260618000338', '20260618000339']));
+  guard('command_ship_group_go', '20260618000330', new Set(['20260618000339']));
 }
 
 const F330 = load('20260618000330_the_mover_is_in_the_repo.sql');

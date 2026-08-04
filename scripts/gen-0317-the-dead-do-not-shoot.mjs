@@ -79,8 +79,17 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // Those two call sites did not exist before 0336 CREATED them, so no slice this file takes from a
   // pre-0336 head can overlap them: the disjointness is structural, not a judgement. 0338 moves no
   // radius, no knob, no guard and no branch. Naming it here keeps this gate live for 0339 and after.
+  // 0339 JOINS THE EXEMPTION — by name, never by widening the window. Its five hunks in this
+  // function are ALL in text that 0336 or 0337 CREATED: 0336's added declare locals, 0336's
+  // resolved-arm extent measurement, the two 0336 spawn loops (as 0338 later edited them) and
+  // 0337's reposition step. None of that text exists in the 0299 head, so no slice this file takes
+  // from 0299 — the actor-liveness guard at the TOP of the spatial per-unit loop — can overlap any
+  // of them; the disjointness is structural rather than a judgement. 0339 also adds no
+  // `alive_count > 0` site to that loop (its own use is inside combat_spawn_wave_units, a separate
+  // function), so assert (d)'s site count here is unaffected. Naming it keeps this gate live for
+  // 0340 and after.
   const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000332', '20260618000336',
-                                         '20260618000337', '20260618000338']);
+                                         '20260618000337', '20260618000338', '20260618000339']);
   const reHunkRow = /\(\s*\d+\s*,\s*'process_combat_ticks'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000299'
     && !KNOWN_LATER_REWRITERS.has(version(f))

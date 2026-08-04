@@ -61,7 +61,17 @@ begin
   if strpos(v_tick, 'resolve_location_encounter(e.location_id, e.id::text)') = 0
      or strpos(v_tick, 'v_resolver_engaged') = 0
      or strpos(v_tick, 'v_enemy_count  := least(coalesce(cfg_num(''enemy_synthetic_max_units''),6)::integer, greatest(1, v_danger));') = 0
-     or strpos(v_tick, '''module_type_id'', ''pirate_synthetic_weapon'', ''range'', v_enemy_range,') = 0
+     -- ██ RE-POINTED BY 0339, BY NAME, NEVER BY WIDENING ██ This pinned the wave's weapons_json
+     -- delivery shape inside the tick. 0339 folded the enemy-spawn loop — which existed TWICE,
+     -- differing only in indentation, and which every migration since 0299 had to patch in lockstep
+     -- — into combat_spawn_wave_units, so the literal now lives in that leaf. The pin FOLLOWS it
+     -- rather than being deleted or loosened: the tick must COMPOSE the one spawn authority, and the
+     -- authority must still carry the shape. Strictly stronger than the old form, which was
+     -- satisfiable by either of two copies while the other drifted.
+     or strpos(v_tick, 'public.combat_spawn_wave_units(') = 0
+     or strpos((select p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                 where n.nspname = 'public' and p.proname = 'combat_spawn_wave_units'),
+               '''module_type_id'', ''pirate_synthetic_weapon'', ''range'', p_range,') = 0
      or strpos(v_tick, 'v_reward_metal := round(coalesce(cfg_num(''reward_metal_base''),10) * greatest(loc.reward_tier,1)') = 0 then
     raise exception 'ELITE PROOF FAIL SOURCE: a pinned process_combat_ticks anchor is gone (the tick must be untouched by 0272)';
   end if;

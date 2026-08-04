@@ -82,9 +82,18 @@ begin
   select pg_get_functiondef(oid) into v_res    from pg_proc where proname='resolve_location_encounter'    and pronamespace='public'::regnamespace;
 
   -- the VERBATIM pre-E3 synthetic-wave lines survive as the flag-OFF fallback.
+  -- ██ RE-POINTED BY 0339, BY NAME, NEVER BY WIDENING ██ The weapons_json delivery literal used to
+  -- live in the tick TWICE — once per spawn arm, differing only in indentation — and this pin could
+  -- be satisfied by either copy while the other drifted. 0339 folded the placement loop into
+  -- combat_spawn_wave_units, so the literal now lives once, in that leaf. The pin follows it: the
+  -- tick must still own the SYNTHETIC WAVE'S SIZING (which is what this proof is actually about, and
+  -- which 0339 does not touch), and the one spawn authority must still carry the delivery shape.
   if strpos(v_tick, 'v_enemy_count  := least(coalesce(cfg_num(''enemy_synthetic_max_units''),6)::integer, greatest(1, v_danger));') = 0
-     or strpos(v_tick, '''module_type_id'', ''pirate_synthetic_weapon'', ''range'', v_enemy_range,') = 0 then
-    raise exception 'ER PROOF FAIL: the verbatim synthetic-wave lines are gone from process_combat_ticks';
+     or strpos(v_tick, 'public.combat_spawn_wave_units(') = 0
+     or strpos((select p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                 where n.nspname = 'public' and p.proname = 'combat_spawn_wave_units'),
+               '''module_type_id'', ''pirate_synthetic_weapon'', ''range'', p_range,') = 0 then
+    raise exception 'ER PROOF FAIL: the verbatim synthetic-wave lines are gone from process_combat_ticks / its spawn authority';
   end if;
   -- the VERBATIM :898-899 reward formula survives as the flag-OFF reward fallback.
   if strpos(v_tick, 'v_reward_metal := round(coalesce(cfg_num(''reward_metal_base''),10) * greatest(loc.reward_tier,1)') = 0

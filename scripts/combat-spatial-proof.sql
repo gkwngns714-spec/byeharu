@@ -436,8 +436,28 @@ begin
 
   -- the LEAD spawns EXACTLY on the engagement anchor (0315: the elected lead takes the anchor slot).
   select pos_x, pos_y into v_cmd_x, v_cmd_y from public.combat_units where encounter_id = v_enc and main_ship_id = s_cmd;
+  -- ██ THIS STAYS EXACT, AND 0339 IS WHY IT CAN ██ The lead stands ON the anchor — an identity, not
+  -- an approximation — and this assert is deliberately kept as `is distinct from` rather than given
+  -- a tolerance. It held originally only because every engagement anchor was an INTEGER location
+  -- coordinate, so the two paths into this comparison could not disagree. They are genuinely
+  -- different paths: engagement_x is written straight to its column, while the lead's pos_x travels
+  -- through combat_create_group_encounter's v_roster JSONB and back out as
+  -- (e->>'pos_x')::double precision.
+  -- 0339 stands a site fight OFF its site to give the wave a bearing, which made the anchor an
+  -- ordinary irrational double and broke that exactness — CI caught it here as
+  -- `got -53.8537253328581,111.899904461656 want -53.8537253328581,111.899904461656`, identical to
+  -- fifteen digits and still distinct. The first response was to widen this to 1e-9. That was WRONG
+  -- and it was reverted: it would have hidden a real numeric hazard behind a tolerance, and the same
+  -- lost bits went on to make a LONE HULL's measured formation extent 3.7e-13 instead of 0, flipping
+  -- a 0336 clearance boundary in TEAM-COMMAND.
+  -- FIXED AT THE SOURCE INSTEAD: combat_site_standoff_point rounds to six decimals, so the anchor
+  -- survives the roster round trip BIT FOR BIT and this identity is true again BY CONSTRUCTION.
+  -- Keeping it exact is what makes this assert the tripwire if that rounding is ever removed.
+  -- NOTE for whoever changes this fixture: exactness here depends on the anchor being round-trip
+  -- stable. An AMBUSH anchor is not — it comes from PostGIS — which is why the ambush path's
+  -- equivalent assert (danger-combat-proof, DZCOMBAT_PASS_ENGAGEMENT) carries 1e-6 and should.
   if v_cmd_x is distinct from v_anchor_x or v_cmd_y is distinct from v_anchor_y then
-    raise exception 'SPAWN FAIL: command ship not at the engagement anchor (got %,% want %,%)', v_cmd_x, v_cmd_y, v_anchor_x, v_anchor_y;
+    raise exception 'SPAWN FAIL: command ship not at the engagement anchor (got %,% want %,%, deltas %,% — if these print identically the anchor has stopped surviving the v_roster jsonb round trip; see combat_site_standoff_point''s six-decimal rounding)', v_cmd_x, v_cmd_y, v_anchor_x, v_anchor_y, v_cmd_x - v_anchor_x, v_cmd_y - v_anchor_y;
   end if;
 
   -- both escorts sit on the SAME ring — the owned radius, derived from the knob, never a literal.
@@ -606,9 +626,21 @@ begin
 
   -- ── THE DERIVED ARMS, one per witness, taken from the frozen PRE-MOVE snapshot. Each is the
   --    non-vacuity guard for the movement asserted immediately after it. ─────────────────────────
-  select arm_kind into v_arm_cmd  from pg_temp.cs_arm(u_cmd,  u_en);
-  select arm_kind into v_arm_arm  from pg_temp.cs_arm(u_arm,  u_en);
-  select arm_kind into v_arm_bare from pg_temp.cs_arm(u_bare, u_en);
+  -- ██ DERIVED FROM THE PRE-MOVE SNAPSHOT, WHICH IS WHAT THIS COMMENT ALWAYS CLAIMED ██
+  -- These three used pg_temp.cs_arm(unit, foe), which reads the LIVE combat_units rows — and
+  -- pg_temp.cs_tick() has already run by this line. So the "derived arm" described a hypothetical
+  -- decision taken from the POST-move world, while the engine's real decision was taken from the
+  -- frozen PRE-move one, and the failure message beside it printed the PRE-move distance. The two
+  -- happened to agree until the geometry moved, which is the definition of passing by luck.
+  -- 0339 moved it: a site fight now stands off its site so the wave arrives on a real bearing, the
+  -- armed escort's chord changed, and it KITES to its own range edge — after which a post-move
+  -- re-derivation reads 'close' (gap 4.23 -> ~5.0 against a reach of exactly 5, the boundary again).
+  -- The fix is to ask the question the engine asked, of the world the engine asked it about. This is
+  -- combat_unit_decide_move's own case ladder (0234:242-246) over the values already frozen above —
+  -- no new rule, and every unit here carries exactly one weapon, so min and max range coincide.
+  v_arm_cmd  := case when v_d_cmd0  > v_r_cmd  then 'close' when v_d_cmd0  > v_r_en then 'kite' else 'hold' end;
+  v_arm_arm  := case when v_d_arm0  > v_r_arm  then 'close' when v_d_arm0  > v_r_en then 'kite' else 'hold' end;
+  v_arm_bare := case when v_d_bare0 > v_r_bare then 'close' when v_d_bare0 > v_r_en then 'kite' else 'hold' end;
 
   -- ── KITE: the armed escort is inside its own reach and outside the wave's, so it retreats — and
   --    never past its own range edge (0234's kite step is capped at my_range - dist). ────────────
