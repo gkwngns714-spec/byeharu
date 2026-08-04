@@ -53,9 +53,10 @@
 -- ROOT CAUSE: ONE DATUM DOING TWO JOBS — locations.x/y is at once WHERE THE FIGHT IS and WHERE THE
 -- ENEMY COMES FROM. The leaf is correct; the ANCHOR is what is wrong.
 -- RESOLVED: combat_site_standoff_point is the ONE answer to "where does a fight AT a site stand" —
--- on the edge of that site's own territory_radius (0217), on a bearing hashed from the presence so
--- two fleets hunting one site do not stack. Composed by combat_create_encounter's else branch and
--- by nothing else: no inline branch in the tick, no second spawn path.
+-- on the edge of that site's own territory_radius (0217), on a bearing hashed from THE SITE'S OWN
+-- COORDINATES — deterministic and world-owned, never an identifier (see 3c). Composed by
+-- combat_create_encounter's else branch and by nothing else: no inline branch in the tick, no
+-- second spawn path.
 -- AND THE EXACT FLOAT EQUALITY AT 0338:199 IS FIXED. A fight one ulp off the site computed a REAL
 -- bearing from a sub-unit displacement — an arbitrary direction that flips with the last bit of a
 -- subtraction. It is now a separation test against HALF A WORLD UNIT: ordered coordinates are
@@ -83,6 +84,21 @@
 -- Self-assert (d) therefore tests the RADIUS to 1e-5 — an epsilon justified as geometry, with a
 -- derived bound — and asserts the ROUND TRIP as an exact identity. The inexactness moved off the
 -- invariant that decides a comparison and onto a quantity where a tolerance is honest.
+--
+-- ── (3c) THE BEARING IS DERIVED FROM THE WORLD, NOT FROM AN IDENTIFIER ──────────────────────────
+-- The first cut hashed the standoff bearing off the PRESENCE uuid, so that two fleets hunting one
+-- site would not stand on the same point. CI proved that wrong in the most direct way available:
+-- presence ids are gen_random_uuid(), so every site fight's geometry differed on EVERY RUN, and any
+-- proof measuring a bearing-dependent quantity became a coin flip instead of a property —
+-- COMBAT-SPATIAL's escort-to-wave chord came back 9.56 against a 5 reach on one such run. That is
+-- the 0041 determinism law, broken by the anchor, and no amount of re-premising fixtures could have
+-- fixed it: they would pass and fail at random.
+-- THE BEARING NOW COMES FROM THE SITE'S OWN INTEGER COORDINATES. One site, one standoff point, the
+-- same in production and in every CI run and every replay, forever. Two fleets hunting one site DO
+-- share a standing point — deliberate, and harmless: their encounters are separate rows with
+-- separate combat_units and no spatial interaction, so the fights never see each other. Determinism
+-- is worth far more than that cosmetic, and assert (d) pins both halves: the same site always
+-- answers the same point, and five different sites do not all face the same way.
 --
 -- ── (4) YOU COULD NOT MOVE YOUR FLEET, AND THE BUTTON RETREATED INSTEAD ──────────────────────────
 -- The reposition arm required an ACTIVE encounter, a zone holding both anchor and destination, and
@@ -151,7 +167,7 @@
 --   drop function public.combat_encounter_move(uuid, uuid, double precision, double precision, double precision, double precision);
 --   drop function public.combat_fleet_track_position(uuid, double precision, double precision);
 --   drop function public.combat_encounter_admits_point(uuid, double precision, double precision);
---   drop function public.combat_site_standoff_point(double precision, double precision, numeric, uuid);
+--   drop function public.combat_site_standoff_point(double precision, double precision, numeric);
 --   delete from public.game_config where key = 'combat_reposition_speed_scale';
 -- Nothing else to unwind: no combat row, no player state, no other config.
 --
@@ -257,9 +273,13 @@ end $pre$;
 -- On the EDGE of the site's own territory, so the site is a DIRECTION rather than the place you are
 -- standing. That is the whole of the owner's "the enemy ships are not comming out from the location":
 -- an anchor ON the site leaves combat_wave_arrival_phase nothing to point at.
--- THE BEARING IS HASHED FROM THE PRESENCE, not rolled: the world must be reproducible (the 0041
--- determinism law), two fleets hunting one site must not stack on one point, and the same fight must
--- answer the same way if this is ever recomputed. md5 is IMMUTABLE, so this whole leaf is.
+-- THE BEARING IS HASHED FROM THE SITE'S OWN COORDINATES, not from any identifier and never rolled.
+-- The world must be REPRODUCIBLE (the 0041 determinism law): one site, one standoff point, the same
+-- in production and in every CI run. An earlier cut hashed the presence uuid so two fleets would not
+-- stack; CI proved that wrong — presence ids are gen_random_uuid(), so every site fight's geometry
+-- changed on every run and every bearing-dependent proof became a coin flip. Two fleets at one site
+-- now share a standing point, which is harmless: their encounters are separate rows with separate
+-- combat_units and no spatial interaction. md5 is IMMUTABLE, so this whole leaf is.
 -- FAIL CLOSED TO TODAY'S BEHAVIOUR: no radius, a non-positive radius or a NULL seed means there is no
 -- edge to stand off, so it answers the site itself and the wave falls back to 0336's plain ring —
 -- exactly what every fight does today. NULL site coordinates stay NULL, which is the shape the
@@ -267,8 +287,7 @@ end $pre$;
 create or replace function public.combat_site_standoff_point(
   p_site_x  double precision,
   p_site_y  double precision,
-  p_radius  numeric,
-  p_seed    uuid)
+  p_radius  numeric)
 returns table(x double precision, y double precision)
 language sql
 immutable
@@ -301,20 +320,21 @@ as $fssp$
   -- today's behaviour and already exact.
   select case
            when p_site_x is null or p_site_y is null then p_site_x
-           when p_radius is null or p_radius <= 0 or p_seed is null then p_site_x
+           when p_radius is null or p_radius <= 0 then p_site_x
            else round((p_site_x + p_radius::double precision * cos(b.theta))::numeric, 6)::double precision
          end,
          case
            when p_site_x is null or p_site_y is null then p_site_y
-           when p_radius is null or p_radius <= 0 or p_seed is null then p_site_y
+           when p_radius is null or p_radius <= 0 then p_site_y
            else round((p_site_y + p_radius::double precision * sin(b.theta))::numeric, 6)::double precision
          end
     from (select 2 * pi()
-                 * (('x' || substr(md5(coalesce(p_seed::text, '')), 1, 8))::bit(32)::bigint)::double precision
+                 * (('x' || substr(md5(round(p_site_x::numeric, 6)::text || ',' ||
+                                       round(p_site_y::numeric, 6)::text), 1, 8))::bit(32)::bigint)::double precision
                  / 4294967296.0 as theta) b;
 $fssp$;
 
-comment on function public.combat_site_standoff_point(double precision, double precision, numeric, uuid) is
+comment on function public.combat_site_standoff_point(double precision, double precision, numeric) is
   'THE ONE AUTHORITY for "where does a fight AT a site stand" (0339). A fleet present at a location '
   'fights on the EDGE of that location''s territory_radius (0217), at a bearing hashed from the '
   'presence id — deterministic, stable, and different for two fleets at one site. That is what gives '
@@ -323,8 +343,8 @@ comment on function public.combat_site_standoff_point(double precision, double p
   'SITE ITSELF (today''s behaviour) when there is no radius to stand off, and NULL for a vanished '
   'site. Composed by combat_create_encounter and by nothing else.';
 
-revoke all on function public.combat_site_standoff_point(double precision, double precision, numeric, uuid) from public;
-revoke all on function public.combat_site_standoff_point(double precision, double precision, numeric, uuid) from anon, authenticated;
+revoke all on function public.combat_site_standoff_point(double precision, double precision, numeric) from public;
+revoke all on function public.combat_site_standoff_point(double precision, double precision, numeric) from anon, authenticated;
 
 -- ── 1b. combat_encounter_admits_point — ONE ADMISSION over BOTH kinds of region ──────────────────
 -- The owner's law is that only an order OUT of the region breaks combat. 0311 answered that for a
@@ -691,7 +711,7 @@ begin
       -- is the shape the creator has always produced in that case.
       select p.x, p.y into v_eng_x, v_eng_y
         from locations l
-        cross join lateral public.combat_site_standoff_point(l.x, l.y, l.territory_radius, p_presence) p
+        cross join lateral public.combat_site_standoff_point(l.x, l.y, l.territory_radius) p
        where l.id = pr.location_id;
     end if;$h1n$),
     (2, 'process_combat_ticks',
@@ -1182,7 +1202,7 @@ declare
 begin
   for r in
     select * from (values
-      ('combat_site_standoff_point',   'public.combat_site_standoff_point(double precision, double precision, numeric, uuid)', 'i', false),
+      ('combat_site_standoff_point',   'public.combat_site_standoff_point(double precision, double precision, numeric)', 'i', false),
       ('combat_encounter_admits_point','public.combat_encounter_admits_point(uuid, double precision, double precision)',        's', true),
       ('combat_fleet_track_position',  'public.combat_fleet_track_position(uuid, double precision, double precision)',          'v', true),
       ('combat_encounter_move',        'public.combat_encounter_move(uuid, uuid, double precision, double precision, double precision, double precision)', 'v', true),
@@ -1307,11 +1327,9 @@ do $d$
 declare
   ax double precision; ay double precision;
   v_bx double precision; v_by double precision;
-  s1 uuid := '11111111-1111-4111-8111-111111111111'::uuid;
-  s2 uuid := '22222222-2222-4222-8222-222222222222'::uuid;
   d1 double precision;
 begin
-  select p.x, p.y into ax, ay from public.combat_site_standoff_point(-45, 120, 12, s1) p;
+  select p.x, p.y into ax, ay from public.combat_site_standoff_point(-45, 120, 12) p;
   if ax is null or ay is null then
     raise exception '0339 ASSERT (d) FAIL: the standoff answered NULL for a real site with a real radius';
   end if;
@@ -1351,33 +1369,50 @@ begin
       (jsonb_build_object('pos_x', ax)->>'pos_x')::double precision,
       (jsonb_build_object('pos_y', ay)->>'pos_y')::double precision;
   end if;
-  -- STABLE for one presence: the same seed must answer the same point, or a fight would wander.
-  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, 12, s1) p;
+  -- ██ DETERMINISTIC, AND DERIVED FROM THE WORLD RATHER THAN FROM AN IDENTIFIER ██
+  -- The first cut hashed this bearing off the PRESENCE uuid so two fleets hunting one site would not
+  -- stack. That was wrong, and CI is how it was found: presence ids are gen_random_uuid(), so every
+  -- site fight's geometry differed on EVERY RUN, and any proof measuring anything bearing-dependent
+  -- became a coin flip rather than a property (COMBAT-SPATIAL's escort chord came back 9.56 against
+  -- a 5 reach on one run). That is the 0041 determinism law, broken by the anchor.
+  -- THE BEARING NOW COMES FROM THE SITE'S OWN COORDINATES, which are integers the world owns: one
+  -- site, one standoff point, the same in production and in every CI run, forever. Two fleets
+  -- hunting the same site DO now share a standing point, and that is deliberate and harmless —
+  -- their encounters are separate rows with separate combat_units and no spatial interaction; the
+  -- fights never see each other. Determinism is worth far more than that cosmetic.
+  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, 12) p;
   if v_bx is distinct from ax or v_by is distinct from ay then
-    raise exception '0339 ASSERT (d) FAIL: the standoff is not deterministic for one presence';
+    raise exception '0339 ASSERT (d) FAIL: the standoff is not deterministic for one site — it must depend on the SITE alone, never on an identifier, or every CI run and every replay gets a different world';
   end if;
-  -- DIFFERENT for another presence: two fleets hunting one site must not stack on one point.
-  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, 12, s2) p;
-  if abs(v_bx - ax) < 1e-9 and abs(v_by - ay) < 1e-9 then
-    raise exception '0339 ASSERT (d) FAIL: two different presences got the same standoff point — two fleets hunting one site would stack';
-  end if;
-  if abs(public.osn_distance(-45, 120, v_bx, v_by) - 12) > 1e-5 then
-    raise exception '0339 ASSERT (d) FAIL: the second presence does not stand on the same radius (error %) — same 7.08e-7 rounding bound as above', abs(public.osn_distance(-45, 120, v_bx, v_by) - 12);
-  end if;
+  -- and the bearing is not a CONSTANT direction: different sites must not all line their fights up
+  -- the same way, or the origin carries no information and the arc is decorative.
+  declare
+    n_dist integer;
+  begin
+    select count(distinct atan2(p.y - g.sy, p.x - g.sx))
+      into n_dist
+      from (values (-45.0, 120.0), (-135.0, 120.0), (195.0, 165.0), (0.0, 0.0), (40.0, -80.0)) as g(sx, sy),
+           lateral public.combat_site_standoff_point(g.sx, g.sy, 12) p;
+    if n_dist < 4 then
+      raise exception '0339 ASSERT (d) FAIL: five distinct sites produced only % distinct standoff bearing(s) — the hash has collapsed and every fight in the world would face the same way', n_dist;
+    end if;
+  end;
+
+  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(195, 165, 35) p;
   if (jsonb_build_object('pos_x', v_bx)->>'pos_x')::double precision is distinct from v_bx
      or (jsonb_build_object('pos_y', v_by)->>'pos_y')::double precision is distinct from v_by then
-    raise exception '0339 ASSERT (d) FAIL: the second presence''s standoff point does not survive a jsonb round trip — the exactness must hold for EVERY bearing, not the one this assert happened to sample first';
+    raise exception '0339 ASSERT (d) FAIL: a second site''s standoff point does not survive the creator''s jsonb round trip — the exactness must hold for EVERY bearing, not the one this assert happened to sample first';
   end if;
   -- FAIL CLOSED to today's behaviour: no radius, no edge, so the fight anchors ON the site.
-  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, null, s1) p;
+  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, null) p;
   if v_bx is distinct from -45::double precision or v_by is distinct from 120::double precision then
     raise exception '0339 ASSERT (d) FAIL: a site with NO territory radius must answer the site itself (today''s behaviour), got (%,%)', v_bx, v_by;
   end if;
-  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, 0, s1) p;
+  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, 0) p;
   if v_bx is distinct from -45::double precision or v_by is distinct from 120::double precision then
     raise exception '0339 ASSERT (d) FAIL: a ZERO territory radius must answer the site itself, got (%,%)', v_bx, v_by;
   end if;
-  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(null, null, 12, s1) p;
+  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(null, null, 12) p;
   if v_bx is not null or v_by is not null then
     raise exception '0339 ASSERT (d) FAIL: a vanished site must answer NULL — the shape the creator has always produced';
   end if;
