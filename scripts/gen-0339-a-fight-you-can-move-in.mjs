@@ -1212,7 +1212,7 @@ end $c$;
 do $d$
 declare
   ax double precision; ay double precision;
-  bx double precision; by double precision;
+  v_bx double precision; v_by double precision;
   s1 uuid := '11111111-1111-4111-8111-111111111111'::uuid;
   s2 uuid := '22222222-2222-4222-8222-222222222222'::uuid;
   d1 double precision;
@@ -1226,29 +1226,29 @@ begin
     raise exception '0339 ASSERT (d) FAIL: a fight at Snare (-45,120) with territory_radius 12 stands % from it, want exactly 12 — the whole point is that the site becomes a DIRECTION rather than the place you are standing', d1;
   end if;
   -- STABLE for one presence: the same seed must answer the same point, or a fight would wander.
-  select p.x, p.y into bx, by from public.combat_site_standoff_point(-45, 120, 12, s1) p;
-  if bx is distinct from ax or by is distinct from ay then
+  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, 12, s1) p;
+  if v_bx is distinct from ax or v_by is distinct from ay then
     raise exception '0339 ASSERT (d) FAIL: the standoff is not deterministic for one presence';
   end if;
   -- DIFFERENT for another presence: two fleets hunting one site must not stack on one point.
-  select p.x, p.y into bx, by from public.combat_site_standoff_point(-45, 120, 12, s2) p;
-  if abs(bx - ax) < 1e-9 and abs(by - ay) < 1e-9 then
+  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, 12, s2) p;
+  if abs(v_bx - ax) < 1e-9 and abs(v_by - ay) < 1e-9 then
     raise exception '0339 ASSERT (d) FAIL: two different presences got the same standoff point — two fleets hunting one site would stack';
   end if;
-  if abs(public.osn_distance(-45, 120, bx, by) - 12) > 1e-9 then
+  if abs(public.osn_distance(-45, 120, v_bx, v_by) - 12) > 1e-9 then
     raise exception '0339 ASSERT (d) FAIL: the second presence does not stand on the same radius';
   end if;
   -- FAIL CLOSED to today's behaviour: no radius, no edge, so the fight anchors ON the site.
-  select p.x, p.y into bx, by from public.combat_site_standoff_point(-45, 120, null, s1) p;
-  if bx is distinct from -45::double precision or by is distinct from 120::double precision then
-    raise exception '0339 ASSERT (d) FAIL: a site with NO territory radius must answer the site itself (today''s behaviour), got (%,%)', bx, by;
+  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, null, s1) p;
+  if v_bx is distinct from -45::double precision or v_by is distinct from 120::double precision then
+    raise exception '0339 ASSERT (d) FAIL: a site with NO territory radius must answer the site itself (today''s behaviour), got (%,%)', v_bx, v_by;
   end if;
-  select p.x, p.y into bx, by from public.combat_site_standoff_point(-45, 120, 0, s1) p;
-  if bx is distinct from -45::double precision or by is distinct from 120::double precision then
-    raise exception '0339 ASSERT (d) FAIL: a ZERO territory radius must answer the site itself, got (%,%)', bx, by;
+  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(-45, 120, 0, s1) p;
+  if v_bx is distinct from -45::double precision or v_by is distinct from 120::double precision then
+    raise exception '0339 ASSERT (d) FAIL: a ZERO territory radius must answer the site itself, got (%,%)', v_bx, v_by;
   end if;
-  select p.x, p.y into bx, by from public.combat_site_standoff_point(null, null, 12, s1) p;
-  if bx is not null or by is not null then
+  select p.x, p.y into v_bx, v_by from public.combat_site_standoff_point(null, null, 12, s1) p;
+  if v_bx is not null or v_by is not null then
     raise exception '0339 ASSERT (d) FAIL: a vanished site must answer NULL — the shape the creator has always produced';
   end if;
 end $d$;
