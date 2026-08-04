@@ -17,7 +17,11 @@ import { defineConfig, devices } from '@playwright/test'
 // the real <FittingDetail>), MEASURED side by side at 1280px and stacked-but-unclipped at 320px;
 // /fleetinfo.html — the real <FleetStatusPanel> in the real map rail: where each fleet is, what it
 // is doing, WHY it cannot fight, and the one action slot (hunt the site under its feet, or retreat
-// from the fight it is in), MEASURED at the 320px floor and 10% under it.
+// from the fight it is in), MEASURED at the 320px floor and 10% under it; /shop.html — the real
+// <ShopRow> over the real production module catalog, proving a DORMANT stat is not advertised at
+// point of sale: the dead chip is off the SCREEN, the live ones are not, a legacy one is marked,
+// and the one offer whose every claimed effect is dormant says so in words and cannot be bought.
+// Only a render can show that nothing downstream put the claim back.
 // Readiness polls /dock.html because ONE entry is enough to prove the server is up; all are served
 // by it.
 export default defineConfig({

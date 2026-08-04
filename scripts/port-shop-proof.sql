@@ -117,7 +117,10 @@ begin
   raise notice 'SHOP_PASS_DARK_GATE ok: buy + read rejected port_shop_disabled, zero writes (no receipt/wallet/instance delta)';
 end $$;
 
--- ════════ P1 — SEED pins: the flag key, the two new catalog rows, the wired ammo, and 3×8 active offers. ════════
+-- ════════ P1 — SEED pins: the flag key, the two new catalog rows, the wired ammo, and 3×7 active offers. ════════
+-- 0342 WITHDREW the deep-scan array on the SERVER: its three offer rows survive, priced 90, with
+-- active = false, so the 0235 beginner outfit of 8 is now 7 on sale + 1 withdrawn. The count is
+-- pinned at the new exact number in BOTH directions — an outfit that drifted either way goes red.
 do $$
 declare v_n int; r jsonb;
 begin
@@ -129,22 +132,37 @@ begin
     raise exception 'P1 FAIL: shield_generator module missing/mis-shaped'; end if;
   if not exists (select 1 from public.module_types where id='autocannon_battery' and ammo_type='autocannon_rounds') then
     raise exception 'P1 FAIL: autocannon ammo_type not wired'; end if;
-  -- exactly 8 active offers at each starter port, Mk-II excluded.
+  -- exactly 7 active offers at each starter port, Mk-II excluded (8 seeded − the 0342 withdrawal).
   select count(*) into v_n from unnest(array[(select v from ps1 where k='haven'),(select v from ps1 where k='slag'),(select v from ps1 where k='drift')]) p
-    where (select count(*) from public.port_shop_offers o where o.location_id=p and o.active) <> 8;
-  if v_n <> 0 then raise exception 'P1 FAIL: % starter port(s) not carrying exactly 8 active offers', v_n; end if;
+    where (select count(*) from public.port_shop_offers o where o.location_id=p and o.active) <> 7;
+  if v_n <> 0 then raise exception 'P1 FAIL: % starter port(s) not carrying exactly 7 active offers', v_n; end if;
   if exists (select 1 from public.port_shop_offers where ref_id in ('autocannon_battery_mk2','shield_lattice_mk2')) then
     raise exception 'P1 FAIL: a Mk-II tier is on sale (beginner shop only)'; end if;
-  -- the EXACT beginner outfit at Haven: 7 modules + 1 ammo item, no more, no less.
+  -- 0342: the withdrawal is a DEACTIVATION, never a delete. All three deep-scan rows are still
+  -- there, still priced 90, and every one of them is inactive — that is what makes the rollback a
+  -- one-line flip and what keeps the buy RPC's own `no_offer` the thing doing the refusing.
+  select count(*) into v_n from public.port_shop_offers
+    where ref_id='deep_scan_sensor_array' and active is false and price=90 and kind='module';
+  if v_n <> 3 then raise exception 'P1 FAIL: % deep_scan_sensor_array rows inactive-at-90 (want 3)', v_n; end if;
+  select count(*) into v_n from public.port_shop_offers where ref_id='deep_scan_sensor_array' and active;
+  if v_n <> 0 then raise exception 'P1 FAIL: % deep_scan_sensor_array offer(s) are still active', v_n; end if;
+  -- …and NOTHING ELSE was withdrawn with it: the other 7 refs are active at all 3 ports (21 rows).
+  select count(*) into v_n from public.port_shop_offers
+    where active and ref_id in ('autocannon_battery','shield_generator','shield_lattice','vector_thruster_kit',
+                                'expanded_cargo_lattice','mining_rig_extension','autocannon_rounds');
+  if v_n <> 21 then raise exception 'P1 FAIL: % active non-deep-scan offers (want 7 refs x 3 ports = 21)', v_n; end if;
+  -- the EXACT beginner outfit at Haven: 6 modules + 1 ammo item on sale, no more, no less.
   select count(*) into v_n from public.port_shop_offers o
     where o.location_id=(select v from ps1 where k='haven') and o.active
       and o.ref_id not in ('autocannon_battery','shield_generator','shield_lattice','vector_thruster_kit',
-                           'deep_scan_sensor_array','expanded_cargo_lattice','mining_rig_extension','autocannon_rounds');
+                           'expanded_cargo_lattice','mining_rig_extension','autocannon_rounds');
   if v_n <> 0 then raise exception 'P1 FAIL: % unexpected offer ref(s) at Haven (outfit drifted)', v_n; end if;
-  -- the gated read now lists exactly the 8 offers at Haven.
+  -- the gated read now lists exactly the 7 live offers at Haven, and the deep-scan is not among them.
   r := pg_temp.call_as((select v from ps1 where k='uB'), format('public.get_port_shop(%L::uuid)', (select v from ps1 where k='haven')));
-  if (r->>'ok')::boolean is not true or jsonb_array_length(r->'offers') <> 8 then raise exception 'P1 FAIL get_port_shop: %', r; end if;
-  raise notice 'SHOP_PASS_SEED ok: flag key present; autocannon_rounds + shield_generator seeded + ammo wired; 3x8 active offers (Mk-II excluded); get_port_shop lists 8';
+  if (r->>'ok')::boolean is not true or jsonb_array_length(r->'offers') <> 7 then raise exception 'P1 FAIL get_port_shop: %', r; end if;
+  if r->'offers' @> '[{"ref_id":"deep_scan_sensor_array"}]'::jsonb then
+    raise exception 'P1 FAIL: the shop read still lists the withdrawn deep_scan_sensor_array'; end if;
+  raise notice 'SHOP_PASS_SEED ok: flag key present; autocannon_rounds + shield_generator seeded + ammo wired; 3x7 active offers + 3 inactive deep-scan rows preserved at 90 (Mk-II excluded); get_port_shop lists 7 and never the deep-scan';
 end $$;
 
 -- ════════ P2 — BUY MODULE: buy autocannon_battery (120cr) → wallet −120, ONE instance minted, ONE receipt. ════════
@@ -269,6 +287,147 @@ begin
   raise notice 'SHOP_PASS_GUARDS ok: invalid_quantity (0/2.5), no_offer, module_qty_must_be_one, broke insufficient_credits — all zero-write';
 end $$;
 
-select 'PORT-SHOP PROOF PASSED (dark gate; seeded outfit + wired ammo; buy module exact debit + minted instance + receipt; buy ammo exact debit + the docked port''s base_items store + receipt; idempotent replay; quantity/offer/module-qty/dock/credit guards)' as result;
+-- ════════ P6 — 0342: THE DEEP-SCAN ARRAY CANNOT BE BOUGHT, AT ANY OF THE THREE PORTS. ════════
+--   THE VERDICT (owner, 2026-08-04): "A disabled React button is not purchase prevention." The
+--   previous slice withdrew the Buy affordance in React while all three offers stayed active = true
+--   at 90 credits, so the RPC would still have sold it. 0342 sets those three rows inactive, and
+--   THIS block calls the REAL buy RPC at EACH port — not one representative — and requires the
+--   server's own `no_offer`.
+--
+--   A RETURNED REASON STRING IS NOT PROOF THAT NOTHING WAS WRITTEN. The wallet, the module-instance
+--   pool, the deep-scan instance count, the receipts and the per-port item stores are all measured
+--   BEFORE the three attempts and again AFTER, and compared. The offer rows are re-checked too: a
+--   refused purchase must not touch the catalog it was refused by.
+--
+--   FIXTURE SURGERY (the fleetgo-proof idiom, and it is stated rather than hidden): no live
+--   single-ship mover survives at this chain head, so uB's dock is relocated by writing its OWN
+--   present fleet + that fleet's active presence + its berth, then CONFIRMED through the real
+--   shared resolver (mainship_resolve_docked_location) before any probe — a relocation that did not
+--   take would otherwise make all three probes the same Haven probe wearing three names. Rolled
+--   back with everything else.
+do $$
+declare
+  r jsonb; uB uuid := (select v from ps1 where k='uB');
+  v_ship uuid; v_fleet uuid; v_port uuid; sk text;
+  v_bal0 numeric; n_inst0 int; n_rec0 int; n_deep0 int; n_items0 numeric; n_probes int := 0;
+begin
+  select main_ship_id into v_ship from public.main_ship_instances where player_id=uB;
+  select balance into v_bal0 from public.player_wallet where player_id=uB;
+  select count(*) into n_inst0 from public.module_instances where player_id=uB;
+  select count(*) into n_deep0 from public.module_instances where player_id=uB and module_type_id='deep_scan_sensor_array';
+  select count(*) into n_rec0 from public.port_shop_receipts where main_ship_id=v_ship;
+  select coalesce(sum(bi.quantity),0) into n_items0
+    from public.base_items bi join public.bases b on b.id=bi.base_id where b.player_id=uB;
+  if n_deep0 <> 0 then raise exception 'P6 SETUP FAIL: uB already owns a deep-scan array — the non-mutation assert would be vacuous'; end if;
+
+  foreach sk in array array['haven','slag','drift'] loop
+    v_port := (select v from ps1 where ps1.k = sk);
+    v_fleet := public.mainship_resolve_fleet(v_ship);
+    if v_fleet is null then raise exception 'P6 SETUP FAIL: uB has no resolvable fleet'; end if;
+    update public.fleets
+       set current_location_id = v_port, current_base_id = null, location_mode = 'location', updated_at = now()
+     where id = v_fleet;
+    update public.location_presence
+       set location_id = v_port, status = 'active', updated_at = now()
+     where fleet_id = v_fleet;
+    -- berth follows the dock for an UNGROUPED ship only: 0216's CHECK is the XOR
+    -- (group_id is null) = (berth_location_id is not null), so writing a berth onto a grouped
+    -- ship would violate it. The dock answer itself comes from fleet+presence, never berth.
+    update public.main_ship_instances set berth_location_id = v_port
+     where main_ship_id = v_ship and group_id is null;
+    -- ESTABLISHED, NOT ASSUMED: the REAL docked resolver — the one the buy RPC itself calls — must
+    -- agree that uB is docked at this port, or the probe below proves nothing about this port.
+    if public.mainship_resolve_docked_location(v_ship) is distinct from v_port then
+      raise exception 'P6 SETUP FAIL: uB is not docked at % after relocation', sk; end if;
+
+    -- the catalog row is present-but-withdrawn at THIS port…
+    if not exists (select 1 from public.port_shop_offers
+                    where location_id=v_port and ref_id='deep_scan_sensor_array'
+                      and active is false and price=90 and kind='module') then
+      raise exception 'P6 FAIL %: the deep-scan offer row is not present-inactive-at-90', sk; end if;
+
+    -- …the REAL purchase RPC refuses it with the SERVER's own reason…
+    r := pg_temp.call_as(uB, format('public.buy_shop_offer_at_port(%L::uuid, %L, %s, %L::uuid)', v_ship, 'deep_scan_sensor_array', 1, gen_random_uuid()));
+    if (r->>'ok')::boolean is not false then raise exception 'P6 FAIL % : the deep-scan buy SUCCEEDED: %', sk, r; end if;
+    if (r->>'reason') is distinct from 'no_offer' then raise exception 'P6 FAIL % : deep-scan buy not refused no_offer: %', sk, r; end if;
+
+    -- …and the gated READ does not list it at this port either (7 live offers, none of them it).
+    r := pg_temp.call_as(uB, format('public.get_port_shop(%L::uuid)', v_port));
+    if (r->>'ok')::boolean is not true or jsonb_array_length(r->'offers') <> 7 then
+      raise exception 'P6 FAIL % read: %', sk, r; end if;
+    if r->'offers' @> '[{"ref_id":"deep_scan_sensor_array"}]'::jsonb then
+      raise exception 'P6 FAIL %: the shop read still lists the withdrawn deep-scan array', sk; end if;
+
+    -- the refusal did not touch the row it was refused by.
+    if not exists (select 1 from public.port_shop_offers
+                    where location_id=v_port and ref_id='deep_scan_sensor_array' and active is false and price=90) then
+      raise exception 'P6 FAIL %: the refused purchase moved the offer row', sk; end if;
+    n_probes := n_probes + 1;
+  end loop;
+  if n_probes <> 3 then raise exception 'P6 FAIL: % ports probed (want 3)', n_probes; end if;
+
+  -- ── NON-MUTATION, MEASURED. Nothing was charged, minted, deposited or receipted. ──
+  if (select balance from public.player_wallet where player_id=uB) <> v_bal0 then
+    raise exception 'P6 FAIL: a refused deep-scan buy moved the wallet'; end if;
+  if (select count(*) from public.module_instances where player_id=uB) <> n_inst0 then
+    raise exception 'P6 FAIL: a refused deep-scan buy minted a module instance'; end if;
+  if (select count(*) from public.module_instances where player_id=uB and module_type_id='deep_scan_sensor_array') <> 0 then
+    raise exception 'P6 FAIL: a deep-scan instance exists after three refusals'; end if;
+  if (select count(*) from public.port_shop_receipts where main_ship_id=v_ship) <> n_rec0 then
+    raise exception 'P6 FAIL: a refused deep-scan buy wrote a receipt'; end if;
+  if (select coalesce(sum(bi.quantity),0) from public.base_items bi join public.bases b on b.id=bi.base_id
+       where b.player_id=uB) <> n_items0 then
+    raise exception 'P6 FAIL: a refused deep-scan buy moved a per-port item store'; end if;
+
+  -- put uB back at Haven for P7, and CONFIRM it through the real resolver.
+  v_port := (select v from ps1 where k='haven');
+  v_fleet := public.mainship_resolve_fleet(v_ship);
+  update public.fleets set current_location_id = v_port, current_base_id = null, location_mode='location', updated_at=now() where id = v_fleet;
+  update public.location_presence set location_id = v_port, status='active', updated_at=now() where fleet_id = v_fleet;
+  update public.main_ship_instances set berth_location_id = v_port where main_ship_id = v_ship and group_id is null;
+  if public.mainship_resolve_docked_location(v_ship) is distinct from v_port then
+    raise exception 'P6 FAIL: uB was not restored to Haven'; end if;
+
+  raise notice 'SHOP_PASS_DEEP_SCAN_WITHDRAWN ok: buy_shop_offer_at_port -> no_offer at ALL THREE starter ports; get_port_shop lists 7 and never the deep-scan; wallet, module instances, deep-scan instances, receipts and per-port item stores all unchanged; the inactive-at-90 offer rows untouched';
+end $$;
+
+-- ════════ P7 — 0342 DID NOT OVERREACH: the mining rig still PASSES the availability gate. ════════
+--   The mining rig claims the same dormant `mining` key, and it deliberately stays on sale: its
+--   range 120 is REAL — mining_extract takes the mining radius from max(mt.range) over fitted
+--   mining modules — so it has a live effect. "We withdrew the dead one" is only true if the live
+--   one survived, so this buys it through the SAME RPC and requires an ok with the exact debit.
+--   (The dormant chip staying hidden in the player-facing shop row is a presentation claim, proven
+--   on the real component by the rendered shop proof; it is not a server property.)
+do $$
+declare
+  r jsonb; uB uuid := (select v from ps1 where k='uB'); v_ship uuid; v_bal0 numeric; v_inst uuid;
+  n int; v_req uuid := gen_random_uuid();
+begin
+  select main_ship_id into v_ship from public.main_ship_instances where player_id=uB;
+  select balance into v_bal0 from public.player_wallet where player_id=uB;
+
+  -- catalogued and on sale at all three ports, at its 0235 price…
+  select count(*) into n from public.port_shop_offers where ref_id='mining_rig_extension' and active and price=110;
+  if n <> 3 then raise exception 'P7 FAIL: % active mining_rig_extension offers at 110 (want 3)', n; end if;
+  -- …with its LIVE attribute intact (the reason it is not withdrawn).
+  if not exists (select 1 from public.module_types where id='mining_rig_extension' and range=120 and power=8) then
+    raise exception 'P7 FAIL: mining_rig_extension lost its live range 120 / power 8'; end if;
+
+  r := pg_temp.call_as(uB, format('public.buy_shop_offer_at_port(%L::uuid, %L, %s, %L::uuid)', v_ship, 'mining_rig_extension', 1, v_req));
+  if (r->>'reason') is not distinct from 'no_offer' then
+    raise exception 'P7 FAIL: the mining rig was withdrawn too — 0342 overreached: %', r; end if;
+  if (r->>'ok')::boolean is not true then raise exception 'P7 FAIL buy: %', r; end if;
+  if (r->>'total_price')::numeric <> 110 or (r->>'quantity')::int <> 1 then raise exception 'P7 FAIL price/qty: %', r; end if;
+  v_inst := (r->>'instance_id')::uuid;
+  if v_inst is null then raise exception 'P7 FAIL: no instance_id in the envelope: %', r; end if;
+  if v_bal0 - (select balance from public.player_wallet where player_id=uB) <> 110 then
+    raise exception 'P7 FAIL wallet delta (want -110)'; end if;
+  if not exists (select 1 from public.module_instances where id=v_inst and player_id=uB and module_type_id='mining_rig_extension') then
+    raise exception 'P7 FAIL: the returned instance is not an owned mining_rig_extension'; end if;
+
+  raise notice 'SHOP_PASS_MINING_RIG_ON_SALE ok: mining_rig_extension still passes the availability gate — buy_shop_offer_at_port returned ok (never no_offer), wallet -110, one owned instance; catalogued active at 110 x3 ports with range 120 / power 8 intact';
+end $$;
+
+select 'PORT-SHOP PROOF PASSED (dark gate; seeded outfit + wired ammo; buy module exact debit + minted instance + receipt; buy ammo exact debit + the docked port''s base_items store + receipt; idempotent replay; quantity/offer/module-qty/dock/credit guards; the 0342 deep-scan withdrawal refused at all three ports with zero writes; the mining rig still sold)' as result;
 
 rollback;   -- leave ZERO persisted state: no wallet, inventory, instance, receipt, ship, flag flip, or fixture user.

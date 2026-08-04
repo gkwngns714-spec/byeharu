@@ -3,13 +3,18 @@ import { runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivity
 import { getWalletBalance } from '../map/tradeApi'
 import { buyShopOfferAtPort, getPortShop } from './shopApi'
 import {
+  buyActionable,
   buyAvailability,
   buyBlocks,
   buyTotal,
   clampBuyQty,
+  offerEffectStanding,
+  offeredRefIds,
   offerStatChips,
   portShopReasonMessage,
   shopWalletDisplay,
+  LEGACY_MARKER,
+  NO_LIVE_EFFECT_NOTE,
   type ShopOffer,
 } from './portShop'
 import { salvageStickyLit } from './salvageMarket'
@@ -107,6 +112,12 @@ export function ShopPanel({
   if (!enabled || offers == null || locationId == null || mainShipId == null) return null
 
   const knownCredits = typeof wallet === 'number' ? wallet : null
+  // SERVER-AUTHORITATIVE AVAILABILITY (0342): what this port will actually sell is the set of refs
+  // the server's gated read just returned — get_port_shop selects `where … and o.active`, so an
+  // offer withdrawn by a migration is simply absent. Derived from the answer, never assumed from the
+  // fact that we are rendering a row: a row whose ref is not in the current answer fails closed onto
+  // the server's own `no_offer` instead of showing a Buy the RPC would refuse.
+  const offeredNow = offeredRefIds(offers)
 
   return (
     <Card tone="accent" data-testid="shop-panel">
@@ -135,6 +146,7 @@ export function ShopPanel({
             <ShopRow
               key={offer.ref_id}
               offer={offer}
+              offered={offeredNow.has(offer.ref_id)}
               qty={offer.kind === 'item' ? (qty[offer.ref_id] ?? 1) : 1}
               setQty={(n) => setQty((prev) => ({ ...prev, [offer.ref_id]: clampBuyQty(n, null) }))}
               pending={pending === offer.ref_id}
@@ -151,8 +163,12 @@ export function ShopPanel({
 }
 
 // One offer row: identity + attribute chips + description + price + (ammo) qty stepper + Buy.
-function ShopRow({
+// EXPORTED for the rendered-DOM proof (tests/shopTellsTheTruth.uispec.ts) — the shop's own fetch is
+// not injectable, and "the dormant chip is gone from the SCREEN" is a claim only a real render can
+// settle. Nothing else imports it.
+export function ShopRow({
   offer,
+  offered,
   qty,
   setQty,
   pending,
@@ -162,6 +178,9 @@ function ShopRow({
   onBuy,
 }: {
   offer: ShopOffer
+  /** Is this ref in the SERVER's current offer answer (get_port_shop's `active` filter)? Required,
+   *  never defaulted: a row that cannot say where its availability came from must not be sellable. */
+  offered: boolean
   qty: number
   setQty: (n: number) => void
   pending: boolean
@@ -177,15 +196,28 @@ function ShopRow({
   const chips = offerStatChips(offer)
   const badge = isModule ? (offer.slot_type ?? 'module') : (offer.category ?? 'item')
 
+  // TRUTH IN PRESENTATION (owner ruling, 2026-08-04): "A player must not spend resources on a
+  // benefit the engine does not apply." When EVERY effect an offer claims is dormant, the row says
+  // so plainly and the Buy affordance is withdrawn. This is presentation only — the server is
+  // untouched and still authoritative, no flag was created, and an offer with any other live effect
+  // is never marked (mining_rig_extension keeps its live Range 120; see portShop.ts).
+  const effectStanding = offerEffectStanding(offer)
+  const noLiveEffect = effectStanding === 'no_live_effect'
+
   const avail = buyAvailability({
     flagOn: true, // by construction: rendered only under the lit gate
     quantity: effectiveQty,
     isModule,
     shipResolved: true,
     docked: true,
-    offerExists: true,
+    // NOT a literal `true` any more. Availability is the server's, and this is where it enters the
+    // row: `offered` is membership in get_port_shop's answer, which the server built with its own
+    // `active` filter. A row the server did not send answers `no_offer` — the RPC's own word for it.
+    offerExists: offered,
     affordable,
   })
+  // The two questions, composed in ONE place (portShop.ts) instead of inline in the markup.
+  const actionable = buyActionable(avail.reason, noLiveEffect)
 
   return (
     <li className="rounded-lg border border-edge bg-surface-2 px-2 py-1.5" data-testid={`shop-offer-${offer.ref_id}`}>
@@ -201,11 +233,26 @@ function ShopRow({
           {chips.length > 0 && (
             <div className="mt-0.5 flex flex-wrap gap-1">
               {chips.map((c) => (
-                <span key={c} className="rounded bg-surface px-1 text-[10px] font-mono tabular-nums text-ink-muted">
-                  {c}
+                <span
+                  key={c.key}
+                  data-testid={`shop-chip-${offer.ref_id}-${c.key}`}
+                  className="rounded bg-surface px-1 text-[10px] font-mono tabular-nums text-ink-muted"
+                >
+                  {c.label}
+                  {/* A deprecated stat keeps its existing display readers but is never offered as a
+                      live effect — so where it still shows, it is marked. */}
+                  {c.standing === 'legacy' && <span className="ml-1 text-ink-faint">{LEGACY_MARKER}</span>}
                 </span>
               ))}
             </div>
+          )}
+          {noLiveEffect && (
+            <p
+              data-testid={`shop-no-effect-${offer.ref_id}`}
+              className="mt-0.5 text-[10px] leading-tight text-warning"
+            >
+              {NO_LIVE_EFFECT_NOTE}
+            </p>
           )}
           {offer.description && <p className="mt-0.5 text-[10px] leading-tight text-ink-faint">{offer.description}</p>}
         </div>
@@ -259,7 +306,7 @@ function ShopRow({
             variant="primary"
             size="sm"
             data-testid={`shop-buy-${offer.ref_id}`}
-            disabled={buyBlocks(avail.reason)}
+            disabled={!actionable}
             busy={pending}
             busyLabel="Buying…"
             onClick={() => onBuy(effectiveQty)}
@@ -272,6 +319,15 @@ function ShopRow({
 
       {avail.reason === 'insufficient_credits' && (
         <p className="mt-0.5 text-[10px] text-ink-muted">{portShopReasonMessage('insufficient_credits')}</p>
+      )}
+      {/* A row that is BLOCKED says why, in the server's own vocabulary through the ONE mapper. In
+          the live panel this is unreachable (every rendered row came from the server's answer, at a
+          docked port, under the lit gate) — it exists so that a row which is NOT on sale explains
+          itself instead of showing a dead button with no reason beside it. */}
+      {buyBlocks(avail.reason) && (
+        <p data-testid={`shop-blocked-${offer.ref_id}`} className="mt-0.5 text-[10px] text-ink-muted">
+          {portShopReasonMessage(avail.reason)}
+        </p>
       )}
       {note && (
         <p data-testid={`shop-note-${offer.ref_id}`} className="mt-0.5 text-[10px] text-accent">

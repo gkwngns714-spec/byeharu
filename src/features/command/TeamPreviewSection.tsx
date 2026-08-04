@@ -8,6 +8,7 @@ import {
 } from './teamApi'
 import { teamReasonMessage } from './teamReasonMessage'
 import { EFFECTIVE_STAT_KEYS, aggregateTeamStats, groupPreviewAvailability } from './teamSkillset'
+import { LEGACY_MARKER, isLegacyStatId } from '../stats/statLifecycle'
 import { isPreviewActivity, PREVIEW_ACTIVITY_TYPES } from './teamCaptains'
 
 // TEAM-COMMAND Slice C1 — per-team expedition PREVIEW (dark UI). Rendered ONLY from TeamRosterPanel,
@@ -28,6 +29,12 @@ import { isPreviewActivity, PREVIEW_ACTIVITY_TYPES } from './teamCaptains'
 
 // Pretty label for a stats key ('captain_slots_used' → 'captain slots used').
 const statLabel = (k: string) => k.replace(/_/g, ' ')
+
+// A DEPRECATED stat may keep its existing display readers, but it must never read as a live effect:
+// migration 0340 calls cargo_capacity a "legacy display integer, non-authoritative" that "drives no
+// decision" and forbids it a gameplay consumer forever. So where it is still shown, it is marked.
+// The mark comes from the registry's lifecycle, never from a name check.
+const legacyHint = (k: string) => (isLegacyStatId(k) ? `(${LEGACY_MARKER})` : undefined)
 
 export function TeamPreviewSection({
   groupId,
@@ -131,14 +138,15 @@ export function TeamPreviewSection({
             {currentTotals.member_count === 1 ? '' : 's'} · authoritative
           </p>
           <dl className="space-y-0.5 text-xs">
-            {/* Only the keys the D0 authority folds AND that something actually reads. The five
-                DORMANT keys (repair, scouting, mining_yield, retreat_safety, pirate_attention) are
-                still sent by the server and are deliberately NOT rendered: no gameplay path
-                consumes any of them, so printing them under "authoritative" promises an effect the
-                game does not deliver. See DORMANT_STAT_KEYS in teamSkillset.ts. Captain-slot
-                bookkeeping keys are preview-only and never appear in totals. */}
+            {/* Only the keys the D0 authority folds AND that the REGISTRY says may carry a number.
+                The DORMANT keys are still sent by the server and are deliberately NOT rendered: no
+                gameplay path consumes any of them, so printing them under "authoritative" promises
+                an effect the game does not deliver. Which keys those are is decided by
+                stat_definitions.lifecycle (migration 0340) through EFFECTIVE_STAT_KEYS — never by a
+                list kept here. Captain-slot bookkeeping keys are preview-only and never appear in
+                totals. */}
             {EFFECTIVE_STAT_KEYS.filter((k) => typeof currentTotals.totals[k] === 'number').map((k) => (
-              <StatRow key={k} label={statLabel(k)} value={currentTotals.totals[k]} />
+              <StatRow key={k} label={statLabel(k)} value={currentTotals.totals[k]} hint={legacyHint(k)} />
             ))}
             <StatRow
               label="speed"
@@ -158,9 +166,9 @@ export function TeamPreviewSection({
               {agg.memberCount} member{agg.memberCount === 1 ? '' : 's'} · estimate, display-only
             </p>
             <dl className="space-y-0.5 text-xs">
-              {/* Dormant keys are omitted here for the same reason as above. */}
+              {/* Dormant keys are omitted here for the same reason as above, by the same registry. */}
               {EFFECTIVE_STAT_KEYS.map((k) => (
-                <StatRow key={k} label={statLabel(k)} value={agg.totals[k]} />
+                <StatRow key={k} label={statLabel(k)} value={agg.totals[k]} hint={legacyHint(k)} />
               ))}
               <StatRow
                 label="slowest speed"

@@ -11,6 +11,11 @@
 // (calculate_expedition_stats, migration 0122) already computed into a client-side summary for
 // rendering. No I/O — unit-tested in tests/teamSkillset.spec.ts.
 
+import {
+  LEGACY_ENVELOPE_STAT_IDS,
+  isPlayerVisibleStatId,
+} from '../stats/statLifecycle'
+
 export type GroupPreviewReason =
   | 'ok'
   | 'gate_dark'
@@ -50,51 +55,43 @@ export interface MemberStats {
   speed?: number
 }
 
-// The additive numeric keys summed across valid members (the 0122 output's numeric stat keys,
-// minus `speed`). Kept as a const list so totals always carry every key, zeroed when absent.
-export const ADDITIVE_STAT_KEYS = [
-  'combat_power',
-  'survival',
-  'repair',
-  'cargo_capacity',
-  'scouting',
-  'mining_yield',
-  'retreat_safety',
-  'pirate_attention',
-  'captain_slots_used',
-  'captain_slots_limit',
-] as const
+export type AdditiveStatKey = Exclude<keyof MemberStats, 'speed'>
 
-export type AdditiveStatKey = (typeof ADDITIVE_STAT_KEYS)[number]
+// The two captain-slot counters are BOOKKEEPING, not stats. The 0122 fold emits them in the same
+// jsonb envelope, but they have no stat_definitions row and claim no gameplay benefit — a slot
+// count is a fact about a roster, not a number that promises an effect — so they are named here
+// rather than derived. This is not a lifecycle list and tests/statLifecycle.spec.ts's scan proves
+// it carries no registered stat identifier.
+const CAPTAIN_SLOT_KEYS = ['captain_slots_used', 'captain_slots_limit'] as const
 
-// ── STAT LIFECYCLE, CLIENT SIDE ────────────────────────────────────────────────────────────────
-// DORMANT means: the server still emits the key (the deployed fold computes all of them on every
-// call), but NOTHING IN THE GAME READS IT. Verified by replaying the migration chain, not by
-// counting text: none of these five appears in a branch, a comparison or a threshold anywhere on
-// the server. `repair` in particular is not the repair verb's input — the repair economy prices off
-// repair_credits_per_hp — and `pirate_attention` is read by no pirate code path at all, even after
-// migration 20260618000331 taught four catalog surfaces to state it.
+// ── STAT LIFECYCLE, CLIENT SIDE — ONE AUTHORITY, NOT A LIST ───────────────────────────────────────
+// SPAGHETTI, NAMED AND RIPPED OUT: this module used to carry DORMANT_STAT_KEYS, a hand-written
+// mirror of `stat_definitions.lifecycle = 'dormant'`, plus a hand-written ADDITIVE_STAT_KEYS. Two
+// files independently deciding which stats are in play is exactly the duplicate authority migration
+// 0340 exists to delete, and the owner's ruling forbids it outright: "The frontend must not
+// independently maintain a conflicting active-stat allowlist." Both lists are gone. Membership and
+// ORDER now come from the registry projection (src/features/stats/statLifecycle.ts), which comes
+// from 0340's seed and nowhere else.
 //
-// So they are NOT RENDERED. Showing a number in a list headed "authoritative" tells the player it
-// does something; for these five that is a promise the game does not keep, and removing the promise
-// is cheaper and more honest than explaining it. They stay in ADDITIVE_STAT_KEYS because that list
-// describes WHAT THE SERVER SENDS, which is unchanged.
-//
-// This list is the client mirror of stat_definitions.lifecycle = 'dormant' in migration
-// 20260618000340, and tests/statFoundation.spec.ts pins the two together so they cannot drift.
-export const DORMANT_STAT_KEYS = [
-  'repair',
-  'scouting',
-  'mining_yield',
-  'retreat_safety',
-  'pirate_attention',
-] as const satisfies readonly AdditiveStatKey[]
+// WHAT DORMANT MEANS, and why these keys are still summed but never rendered: the server emits them
+// on every call (the deployed fold computes all of them) and NOTHING IN THE GAME READS THEM. Showing
+// a number under a heading that says "authoritative" tells the player it does something; for a
+// dormant stat that is a promise the game does not keep.
 
-export type DormantStatKey = (typeof DORMANT_STAT_KEYS)[number]
+// The additive numeric keys summed across valid members: what the 0122 envelope actually CARRIES,
+// which is a question about the wire shape, not about lifecycle. Registry-derived in display_order,
+// plus the two slot counters. Totals always carry every key, zeroed when absent.
+export const ADDITIVE_STAT_KEYS: readonly AdditiveStatKey[] = [
+  ...LEGACY_ENVELOPE_STAT_IDS,
+  ...CAPTAIN_SLOT_KEYS,
+] as readonly AdditiveStatKey[]
 
-// The keys a player is actually shown: everything the fold emits, minus the dormant ones.
+// The keys a player is actually shown: the ones the registry says may carry a number at all —
+// 'active' (a working benefit) and 'deprecated' (legacy, kept for its existing readers and labelled
+// so). Dormant and unknown lifecycles fall out here, at ONE predicate, and can never be re-added by
+// editing a list because there is no list. The slot counters are not stats and pass through.
 export const EFFECTIVE_STAT_KEYS: readonly AdditiveStatKey[] = ADDITIVE_STAT_KEYS.filter(
-  (k): k is AdditiveStatKey => !(DORMANT_STAT_KEYS as readonly string[]).includes(k),
+  (k) => (CAPTAIN_SLOT_KEYS as readonly string[]).includes(k) || isPlayerVisibleStatId(k),
 )
 
 // Structural member shape from the RPC's members[] (only what aggregation needs). `error` is the

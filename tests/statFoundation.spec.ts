@@ -3,11 +3,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { levelForXp, xpForLevel, XP_LEVEL_BASE } from '../src/features/captains/captainProgress.ts'
-import {
-  ADDITIVE_STAT_KEYS,
-  DORMANT_STAT_KEYS,
-  EFFECTIVE_STAT_KEYS,
-} from '../src/features/command/teamSkillset.ts'
+import { ADDITIVE_STAT_KEYS, EFFECTIVE_STAT_KEYS } from '../src/features/command/teamSkillset.ts'
+import { DORMANT_STAT_IDS } from '../src/features/stats/statLifecycle.ts'
 
 // STAT FOUNDATION (0340) — pure structural + curve proofs.
 //
@@ -173,18 +170,22 @@ test('a dormant value never reaches `stats`, and is marked effective=false when 
   expect(migration).toContain('a dormant stat reached `stats` under inspection')
 })
 
-test('the client lifecycle list and the migration seed cannot drift', () => {
+test('the client lifecycle answer IS the migration seed — there is no second list to drift', () => {
+  // The client used to carry DORMANT_STAT_KEYS, a hand-written mirror of this seed. It is gone:
+  // DORMANT_STAT_IDS is DERIVED from the generated projection of this very INSERT, so the two
+  // cannot disagree — and the assertion below is the proof that the derivation is faithful.
   const seededDormant = stats
     .filter((s) => s.lifecycle === 'dormant')
     .map((s) => s.statId)
-    // cargo_volume_m3 is a dormant CANONICAL TARGET the client fold never receives — the server
-    // does not emit it in the legacy envelope — so it is not part of the client mirror.
-    .filter((k) => k !== 'cargo_volume_m3')
     .sort()
-  expect([...DORMANT_STAT_KEYS].sort()).toEqual(seededDormant)
-  // and none of them is rendered as an effective total
-  for (const k of DORMANT_STAT_KEYS) {
-    expect(EFFECTIVE_STAT_KEYS, `${k} is still rendered as an effective total`).not.toContain(k)
+  expect([...DORMANT_STAT_IDS].sort()).toEqual(seededDormant)
+  // cargo_volume_m3 is a dormant CANONICAL TARGET the legacy fold never emits, so it is absent from
+  // the client's per-member envelope — but it is still, correctly, a dormant registry row.
+  expect(DORMANT_STAT_IDS).toContain('cargo_volume_m3')
+  expect(ADDITIVE_STAT_KEYS as readonly string[]).not.toContain('cargo_volume_m3')
+  // and no dormant stat is rendered as an effective total
+  for (const k of DORMANT_STAT_IDS) {
+    expect(EFFECTIVE_STAT_KEYS as readonly string[], `${k} is still rendered as an effective total`).not.toContain(k)
   }
   // ...while the effective list is still a subset of what the server actually sends
   for (const k of EFFECTIVE_STAT_KEYS) {
@@ -204,10 +205,10 @@ test('pirate_attention stays dormant DESPITE 0331 widening it across four catalo
   expect(context).toContain(':511-519') // captains
 })
 
-test('every OUTPUT key the client still hard-codes has a registry row', () => {
-  // ADDITIVE_STAT_KEYS is one of the four hand-written client copies this architecture exists to
-  // delete. Until it is deleted it must not drift from the registry. The two slot counters are not
-  // stats and are deliberately excluded.
+test('every OUTPUT key the client folds has a registry row', () => {
+  // ADDITIVE_STAT_KEYS was one of the four hand-written client copies this architecture exists to
+  // delete. It is now DERIVED from the registry; this keeps proving the invariant that made it
+  // dangerous. The two slot counters are not stats and are deliberately excluded.
   const clientStatKeys = ADDITIVE_STAT_KEYS.filter(
     (k) => k !== 'captain_slots_used' && k !== 'captain_slots_limit',
   )

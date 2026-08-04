@@ -14,16 +14,17 @@
 --     • the RPCs + their downward leaves exist via to_regprocedure — the REAL signatures;
 --     • the DEPLOYED buy RPC is the 0235 head, prosrc-pinned: it carries the gate reject
 --       (port_shop_disabled) BEFORE any read;
---     • ██ THE SEEDED OFFER TABLE (accept, do NOT re-seed) ██: the 3 starter ports each carry exactly 8
---       ACTIVE offers. This script REFERENCES the seeded prices; it never rewrites them (a price retune is
---       a separate migration/reseed, per the 0235 charter);
+--     • ██ THE SEEDED OFFER TABLE (accept, do NOT re-seed) ██: the 3 starter ports each carry exactly 7
+--       ACTIVE offers (0235 seeded 8; 0342 withdrew the inert deep_scan_sensor_array server-side, leaving
+--       its 3 rows in place at price 90 with active = false). This script REFERENCES the seeded prices; it
+--       never rewrites them (a price retune is a separate migration/reseed, per the 0235 charter);
 --     • the 'port_shop_enabled' key exists (0235 seeds it false). Its VALUE is not asserted false — a
 --       RE-RUN after success is a supported no-op.
 --   STAGE 1 — the switch (the ONE flag write, via the owned set_game_config writer):
 --     port_shop_enabled → true. Both RPCs dark-gate on cfg_bool('port_shop_enabled') FIRST and reject
 --     port_shop_disabled while false — they physically cannot buy/debit/mint dark.
 --   SMOKE (read-only + a zero-write gate probe): flag committed (raw + cfg_bool); the offer table is
---     populated (24 active rows across the 3 ports); the buy RPC no longer gate-rejects — called under a
+--     populated (21 active rows across the 3 ports — the 24 seeded minus 0342's 3 withdrawn deep-scan rows); the buy RPC no longer gate-rejects — called under a
 --     TRANSACTION-LOCAL fake JWT with a valid ref/qty/request but a random subject that owns NO ship, so it
 --     advances PAST the gate to ship_not_found (NOT port_shop_disabled), proving the gate opened while
 --     writing nothing; port_shop_receipts selectable.
@@ -96,12 +97,14 @@ begin
     raise exception 'PRECONDITION FAIL: the deployed buy_shop_offer_at_port lacks the dark gate reject (deploy 0235)';
   end if;
 
-  -- ██ THE SEEDED OFFER TABLE ██ — each starter port carries exactly 8 ACTIVE offers (referenced, NEVER
-  -- re-seeded here).
+  -- ██ THE SEEDED OFFER TABLE ██ — each starter port carries exactly 7 ACTIVE offers (referenced, NEVER
+  -- re-seeded here). 0235 seeded 8; migration 0342 withdrew the inert deep_scan_sensor_array on the
+  -- server (its 3 rows survive at price 90 with active = false), so 7 is the current exact number.
+  -- Restated rather than relaxed: this precondition exists to catch drift, so it stays an equality.
   select count(*) into n from unnest(array[c_haven, c_slag, c_drift]) p
-    where (select count(*) from public.port_shop_offers o where o.location_id = p and o.active) <> 8;
+    where (select count(*) from public.port_shop_offers o where o.location_id = p and o.active) <> 7;
   if n <> 0 then
-    raise exception 'PRECONDITION FAIL: % starter port(s) do not carry exactly 8 active offers (the 0235 seed drifted — re-seed via a migration, not this script)', n;
+    raise exception 'PRECONDITION FAIL: % starter port(s) do not carry exactly 7 active offers (the 0235 seed as amended by 0342 drifted — re-seed via a migration, not this script)', n;
   end if;
 
   if not exists (select 1 from public.game_config where key = 'port_shop_enabled') then
@@ -113,7 +116,7 @@ begin
     raise exception 'PRECONDITION FAIL: buy_shop_offer_at_port ACL drifted (want authenticated-only, never anon)';
   end if;
 
-  raise notice 'ACTIVATE_PORTSHOP_PASS_PRECONDITIONS ok: head %, 0235 recorded, tables present, RPCs + leaves present (real signatures), buy body gate-pinned, 3 ports × 8 active offers seeded (referenced not re-seeded), key present, ACL authenticated-only', v_head;
+  raise notice 'ACTIVATE_PORTSHOP_PASS_PRECONDITIONS ok: head %, 0235 recorded, tables present, RPCs + leaves present (real signatures), buy body gate-pinned, 3 ports × 7 active offers (0235 seeded 8, 0342 withdrew the deep-scan array; referenced not re-seeded), key present, ACL authenticated-only', v_head;
 end $$;
 
 -- ══════════ STAGE 1 — the switch (the ONE flag write, via the owned set_game_config writer) ══════════
@@ -138,8 +141,8 @@ begin
     raise exception 'SMOKE FAIL: cfg_bool(port_shop_enabled) still false'; end if;
 
   select count(*) into n from public.port_shop_offers where active;
-  if n < 24 then
-    raise exception 'SMOKE FAIL: only % active offer rows (want >= 24 — the 3×8 seeded outfit)', n; end if;
+  if n < 21 then
+    raise exception 'SMOKE FAIL: only % active offer rows (want >= 21 — the 3×8 seeded outfit minus 0342''s 3 withdrawn deep-scan rows)', n; end if;
   raise notice 'smoke: % active port_shop_offers rows', n;
 
   -- THE GATE OPENED (zero-write probe): the buy RPC no longer rejects port_shop_disabled. Called under a

@@ -22,7 +22,12 @@
 // afternoon. Every disabled row here carries a `reason` naming the actual blocker, and a test
 // asserts no reason blames the owner for shell state.
 
-import { ZONE_EFFECT_KINDS, ZONE_EFFECT_LABELS, type ZoneEffectKind } from './zoneEffects'
+import {
+  ZONE_EFFECT_KINDS,
+  ZONE_EFFECT_LABELS,
+  zoneEffectDormantNote,
+  type ZoneEffectKind,
+} from './zoneEffects'
 
 /** What the shell may dispatch for one effect row. Intents, never calls. */
 export type ZoneEffectAction = 'add' | 'edit' | 'remove'
@@ -39,6 +44,14 @@ export interface ZoneEffectRow {
   readonly reason: string | null
   /** May this row offer removal? Only when present AND authoring is live. */
   readonly canRemove: boolean
+  /** The lifecycle marker for an effect denominated in a DORMANT (or unknown-lifecycle) stat, from
+   *  migration 0340's registry — null when the effect names a live stat or names no registered stat
+   *  at all. The row is still OFFERED: the owner's editor keeps dormant definitions for authoring
+   *  and audit. It just may never read as an active effect, so wherever the label goes, this goes
+   *  with it. Unknown lifecycles fail closed and are marked exactly like dormant. */
+  readonly dormantMarker: string | null
+  /** The one sentence beside the marker: there is currently no gameplay consumer. */
+  readonly dormantNote: string | null
 }
 
 export interface ZoneEffectPanelInput {
@@ -81,6 +94,8 @@ export function buildZoneEffectPanel(input: ZoneEffectPanelInput): ZoneEffectPan
   const carried = new Set(input.carried)
   const rows: ZoneEffectRow[] = ZONE_EFFECT_KINDS.map((effect) => {
     const present = carried.has(effect)
+    // The registry decides this, every time — the panel keeps no list of its own.
+    const dormant = zoneEffectDormantNote(effect)
     return {
       effect,
       label: ZONE_EFFECT_LABELS[effect],
@@ -89,6 +104,8 @@ export function buildZoneEffectPanel(input: ZoneEffectPanelInput): ZoneEffectPan
       enabled: blocker === null,
       reason: blocker,
       canRemove: present && blocker === null,
+      dormantMarker: dormant?.marker ?? null,
+      dormantNote: dormant?.note ?? null,
     }
   })
 

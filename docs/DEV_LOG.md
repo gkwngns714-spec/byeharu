@@ -5,6 +5,122 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-04 — THE SHOP STOPS SELLING THE DEEP-SCAN ARRAY (migration **0342**, same slice, revised head)
+
+**The verdict that sent the entry below back.** *"A disabled React button is not purchase
+prevention."* The slice below withdrew the Deep-Scan Sensor Array's **Buy button in React only**.
+Probed on production the same day: all **three** `deep_scan_sensor_array` offers were `active = true`
+at **90 credits**. `buy_shop_offer_at_port` would still have sold it to anything that reached the RPC
+— a stale tab, a replayed request, a direct call. The PR contained no migration and changed nothing
+under `supabase/`.
+
+**The gate already existed and was not used.** `port_shop_offers.active` **is** the server-side
+availability switch, and both RPCs already read it: the buy answers its own `no_offer` (0235:258-260)
+and `get_port_shop` filters its list (0235:355-358). The table is Reference/Config — migration-seeded,
+**no runtime writer** — so a forward migration is the only thing that can move it.
+
+**Migration `20260618000342`.** Sets `active = false` on **exactly** the three seeded offers, one per
+starter port. Guarded fail-closed *before* it writes — three offers, all active, all priced 90, at
+exactly the three audited locations, no fourth anywhere, **and both RPC bodies proven to read
+`active`** (a switch is worth throwing only once it is proven wired). Snapshots the whole offer table
+and diffs it after (the 0273 idiom): exactly 3 rows changed, `active` the only column that moved,
+`true → false` only, every unrelated offer byte-identical. Nothing deleted, no price touched, no
+refund, no player state read or written. **Rollback** is a forward migration setting the same three
+rows back to `active = true`.
+
+**Deliberately NOT withdrawn.** `mining_rig_extension` claims the same dormant `mining` key, but its
+`range` 120 is real, so it keeps its live effect and stays on sale — asserted in the migration and
+bought through the real RPC in the proof.
+
+**Client — derived, never hardcoded.** `ShopRow` used to pass `offerExists: true` as a literal, so the
+client's mirror of the server's reject order could never reach `no_offer` whatever the server said. It
+now takes availability from the server's own answer (`offeredRefIds(offers)` — `get_port_shop` builds
+that list with its `active` filter, so **inclusion IS the availability verdict**). The two questions —
+server availability and the 0340 lifecycle verdict — are composed in **one** exported function,
+`buyActionable`, instead of an expression in the markup. **No rule anywhere names the item.**
+
+**A note on what the answer does and does not carry.** `port_shop_offers.active` is publicly readable
+as a *table* row, but `get_port_shop` does **not** return the column — it filters on it. The client
+therefore reads availability off the answer set and deliberately does **not** fetch the table to look
+at `active`: that would be a second client-side availability authority free to disagree with the RPC.
+
+**Proof.** `tsc -b` clean, `vite build` clean. Pure suite **2008 → 2019**, zero regressions. Rendered
+suite **130 → 132**, including a real-DOM row the server did not offer, whose Buy is dead and which
+says *"This port does not stock that."* — measured at the 288px and 320px floors. The disposable
+full-chain proof gained two stages: the withdrawn array refused `no_offer` by the **real** buy RPC at
+**all three** ports with wallet / module instances / receipts / per-port item stores **measured**
+unchanged before and after (a returned reason string is not proof that nothing was written), and the
+mining rig proven to still pass the gate with its exact −110 debit. Every new proof was watched
+**failing** with the change reverted: migration removed → 4 red; `offerExists: true` restored → 1 spec
++ 2 rendered red; lifecycle half of the composition dropped → 2 spec + 2 rendered red; the three-port
+loop shrunk to one port → the harness selftest red.
+
+**Owned instances — honestly, not established.** `module_instances` and `ship_module_fittings` are
+RLS-scoped and return nothing to the anon key, so **I could not establish how many players own or
+have fitted a Deep-Scan array.** A `service_role` key or the production `DB_URL` would settle it in
+one `select count(*)`. Nothing in this change deletes, unfits, refunds or alters an owned instance;
+an owned array stays owned, stays fitted, and keeps doing what it always did, which is nothing.
+
+**Not deployed.** Production remains at **0340**.
+
+---
+
+## 2026-08-04 — DORMANT STATS TELL THE TRUTH (`slice-dormant-stats-tell-the-truth`, client-only)
+
+**The ruling.** Migration 0340 gave stats a lifecycle — `active` / `dormant` / `deprecated` — and one
+law: *a dormant stat must not be represented as an effective player benefit*. Two places still broke
+it. The port shop sold **"Mining yield +8"** on the mining rig (`portShop.ts:49`) and the World Editor
+offered a **"Mining yield"** zone effect with nothing saying it does nothing (`zoneEffects.ts:48`).
+`mining_yield` is seeded **dormant**: no engine consumer, no presentation consumer, nothing in the
+game reads it.
+
+**The spaghetti, named and ripped out.** The previous slice fixed a leak by *adding a list* —
+`DORMANT_STAT_KEYS` in `teamSkillset.ts`, a hand-typed copy of `stat_definitions.lifecycle = 'dormant'`.
+A second file deciding "is this stat in play?" is exactly what 0340 exists to delete. It is gone, with
+`ADDITIVE_STAT_KEYS` and `portShop.ts`'s `STAT_LABELS`. There is now **one** client authority:
+`src/features/stats/statRegistry.generated.ts`, generated from 0340's seed, behind
+`statLifecycle.ts`. A spec re-derives the projection from the migration and **byte-compares**, and a
+second spec **scans `src/`** and fails on any re-introduced stat vocabulary.
+
+**Access path, established rather than assumed.** `get_stat_definitions()` is **revoked** from client
+roles (probed on prod: `42501`). The **table** is readable. And it is Reference/Config — migration-seeded,
+no runtime writer ever — so a build-time projection is as authoritative as a read, and cannot fail open.
+
+**Port shop, narrowest truthful treatment.** Verified against the live catalog:
+`mining_rig_extension` claims `mining` (dormant) **but its `range` 120 is real** — `mining_extract`
+takes the mining radius from `max(mt.range)` over fitted mining modules (0229:309-321) and
+`module_range_attributes_enabled` is **true** in production. It **keeps its Range/Power chips and
+stays on sale**; only the dead chip disappears. `deep_scan_sensor_array` claims `scan` (dormant) with
+`range`/`power` explicitly NULL and changes **no** scan radius (every scan reads the flat
+`exploration_scan_radius`), so its row now says *"Not currently implemented — this does nothing in the
+game yet."* and its Buy is withdrawn. Nothing was deleted, no price, ownership, fitting or inventory
+moved, and **no new flag was created**.
+
+**World Editor, exposed but honest.** The mining effect is still offered and still authorable; its row
+now carries a **Dormant** marker and states there is no gameplay consumer today. An effect naming a
+stat the registry does not know **fails closed** — marked, not waved through.
+
+**Unknown fails closed everywhere.** An unrecognised lifecycle, an unregistered stat id and an
+unregistered catalog key are all treated as dormant, never as active — the client mirror of
+`stat_lifecycle_in_scope` (0340:791-801).
+
+**Proof.** `tsc -b` clean, `vite build` clean, pure suite **1968 → 2008**, zero regressions; rendered
+suite 130 passed including a new `shop.html` proof measured at **288px and 320px**. Every new test was
+watched **failing** with the source reverted.
+
+**Found and deliberately NOT built.** `shipTraits.ts`'s `STAT_KEY_ORDER` is the second unshared stat
+vocabulary, and `traitEffects()` — shared by ship traits, command buffs and module detail — still
+renders dormant keys as green benefits (production carries `steady_rigger {"mining":4,"repair":2}`,
+`keen_arrays {"scan":5}`, `ill_omened {"evasion":6}` and eight command buffs). Same bug class; hiding
+those empties whole trait cards, which is a UX decision on trait/captain surfaces this slice is scoped
+out of. It is **pinned as a named baseline** in `statLifecycle.spec.ts` so it cannot grow or spread.
+The shop's Buy button is `size="sm"` and measures **24px**, under the house 44px touch floor — that is
+pre-existing, shop-wide, unrelated to lifecycle, and is pinned rather than silently changed.
+
+**No migration. No gameplay calculation changed. No production state touched.**
+
+---
+
 ## 2026-08-04 — HUNT FROM WHERE YOU STAND (`slice-hunt-from-where-you-stand`, client-only)
 
 **The owner, twice:** *"i am in combat zone, and the fight does not start."*
