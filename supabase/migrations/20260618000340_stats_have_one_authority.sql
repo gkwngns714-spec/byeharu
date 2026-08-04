@@ -1609,7 +1609,10 @@ begin
 
   -- ── MODULES (step 40) + the module speed PENALTY.
   for v_r in
-    select mi.module_instance_id, mt.stats_json, mt.slot_type, mt.slot_cost
+    -- module_instances' primary key is `id`, NOT `module_instance_id` (0108:43) — only
+    -- ship_module_fittings names the column module_instance_id. Aliased here so the contribution's
+    -- source_id still reads as the module instance it is.
+    select mi.id as module_instance_id, mt.stats_json, mt.slot_type, mt.slot_cost
       from public.ship_module_fittings f
       join public.module_instances mi on mi.id = f.module_instance_id
       join public.module_types mt on mt.id = mi.module_type_id
