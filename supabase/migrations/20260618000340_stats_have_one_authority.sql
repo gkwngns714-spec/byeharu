@@ -2674,6 +2674,7 @@ declare
   v_env   jsonb;
   v_num   numeric;
   v_plan  text;
+  v_part  text;
   v_stk   jsonb;
   v_ces   text;
   v_cges  text;
@@ -3028,8 +3029,27 @@ begin
     raise exception 'STAT-FOUNDATION self-assert FAIL: a pure leaf carries a session-clock or session-RNG token'; end if;
 
   -- The pure leaves really are table-free: no FROM over a public table, no write.
-  if strpos(v_comb, 'public.') > 0 or strpos(v_aggf, 'public.') > 0 then
+  --
+  -- ONE schema-qualified call is permitted, and only one: stat_assert_provenance_partition. The
+  -- provenance law must hold at BOTH scopes, and inlining it into both leaves would be two copies
+  -- of one rule — the exact spaghetti this architecture exists to end. So the allowance is
+  -- explicit, narrow, and paid for: the callee is itself proven table-free and write-free
+  -- immediately below, so "provable on an empty database" survives the composition.
+  select prosrc into v_part from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+    where ns.nspname = 'public' and p.proname = 'stat_assert_provenance_partition';
+  if v_part is null then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: stat_assert_provenance_partition is missing — the provenance law has no implementation'; end if;
+  if strpos(v_part, 'public.') > 0 or strpos(v_part, 'insert into') > 0
+     or strpos(v_part, 'update ') > 0 or strpos(v_part, 'delete from') > 0
+     or strpos(v_part, 'random(') > 0 or strpos(v_part, 'now(') > 0 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: the provenance law reads a table, writes, or is non-deterministic — the pure leaves may not call it'; end if;
+  if strpos(replace(v_comb, 'public.stat_assert_provenance_partition', ''), 'public.') > 0
+     or strpos(replace(v_aggf, 'public.stat_assert_provenance_partition', ''), 'public.') > 0 then
     raise exception 'STAT-FOUNDATION self-assert FAIL: a pure fold leaf references a table — it is no longer provable on an empty database'; end if;
+  -- ...and both leaves DO enforce the law, so the allowance is not merely tolerated, it is used.
+  if strpos(v_comb, 'stat_assert_provenance_partition') = 0
+     or strpos(v_aggf, 'stat_assert_provenance_partition') = 0 then
+    raise exception 'STAT-FOUNDATION self-assert FAIL: a fold leaf returns a result without enforcing the provenance partition law'; end if;
   if strpos(v_comb, 'insert into') > 0 or strpos(v_comb, 'update ') > 0 or strpos(v_comb, 'delete from') > 0
      or strpos(v_aggf, 'insert into') > 0 or strpos(v_aggf, 'update ') > 0 or strpos(v_aggf, 'delete from') > 0
      or strpos(v_res, 'insert into') > 0 or strpos(v_res, 'delete from') > 0
