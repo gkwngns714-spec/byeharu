@@ -155,6 +155,37 @@ export { LEGACY_MARKER }
  *  (the shop's other honest-unavailability lines are plain sentences, not codes) and no jargon. */
 export const NO_LIVE_EFFECT_NOTE = 'Not currently implemented — this does nothing in the game yet.'
 
+// ── server-authoritative availability (0342) ─────────────────────────────────────────────────────
+// THE VERDICT THIS OBEYS (owner, 2026-08-04): "A disabled React button is not purchase prevention."
+//
+// A withdrawn offer is withdrawn on the SERVER: migration 0342 sets port_shop_offers.active = false,
+// and both RPCs already read that column — buy_shop_offer_at_port answers its own `no_offer`
+// (0235:258-260) and get_port_shop filters its list (0235:355-358). This module's job is not to
+// re-decide availability; it is to make sure the panel never CLAIMS more availability than the
+// server's answer contains.
+//
+// WHERE AVAILABILITY LIVES IN THE ANSWER, stated precisely because the distinction matters:
+// `port_shop_offers.active` is publicly readable as a TABLE row (0235:140-141), but get_port_shop
+// does NOT return the column — it filters on it. So INCLUSION IN THE ANSWER *IS* the availability
+// verdict, and the client reads it there. It deliberately does NOT fetch the table itself to look at
+// `active`: that would be a second client-side availability authority sitting beside the RPC's own,
+// free to disagree with it — the exact duplicate-authority shape this codebase deletes on sight.
+//
+// NOTHING HERE NAMES AN ITEM. A ref is unavailable because the server did not send it, never because
+// a client rule recognised its id.
+
+/** The refs this port is offering RIGHT NOW: exactly the ref_ids the server's gated read returned. */
+export function offeredRefIds(offers: readonly ShopOffer[]): ReadonlySet<string> {
+  return new Set(offers.map((o) => o.ref_id))
+}
+
+/** Is this ref in the server's current answer? A row rendered from anything else — a stale list, a
+ *  cached page, a future surface that composes offers from more than one read — is NOT on sale, and
+ *  fails closed onto the server's own `no_offer`. */
+export function isOfferedByServer(offers: readonly ShopOffer[], refId: string): boolean {
+  return offeredRefIds(offers).has(refId)
+}
+
 // ── buy availability mirror (the 0235 reject order) ──────────────────────────────────────────────
 export type BuyReason =
   | 'ok'
@@ -205,6 +236,21 @@ export function buyAvailability(input: {
  *  a module qty != 1. */
 export function buyBlocks(reason: BuyReason): boolean {
   return reason !== 'ok' && reason !== 'insufficient_credits'
+}
+
+/** THE ONE PLACE the shop's two independent questions are composed into "may this row be clicked":
+ *
+ *   1. `reason` — the mirror of the SERVER's reject order (0235), whose `no_offer` arm is now fed by
+ *      the server's own answer set. This is the question that matters: the purchase is prevented at
+ *      the boundary whether or not this returns the right thing.
+ *   2. `noLiveEffect` — the 0340 lifecycle verdict: every effect this offer claims is dormant or
+ *      unknown, so buying it would spend credits on nothing.
+ *
+ *  Neither re-implements the other and neither is allowed to overrule the other into MORE
+ *  actionability — both must say yes. Composed here rather than in JSX so it can be exercised
+ *  without a browser and so there is exactly one answer to "is the Buy live". */
+export function buyActionable(reason: BuyReason, noLiveEffect: boolean): boolean {
+  return !buyBlocks(reason) && !noLiveEffect
 }
 
 /** Display price math: qty × unit price (what the buy WOULD debit — the server computes the

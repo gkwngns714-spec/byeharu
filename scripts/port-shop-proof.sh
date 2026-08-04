@@ -16,7 +16,7 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/port-shop-proof.sql"
 
 # the property PASS markers and the final PASS line this proof must exercise.
-MARKERS="SHOP_PASS_DARK_GATE SHOP_PASS_SEED SHOP_PASS_BUY_MODULE SHOP_PASS_BUY_ITEM SHOP_PASS_IDEMPOTENT SHOP_PASS_GUARDS"
+MARKERS="SHOP_PASS_DARK_GATE SHOP_PASS_SEED SHOP_PASS_BUY_MODULE SHOP_PASS_BUY_ITEM SHOP_PASS_IDEMPOTENT SHOP_PASS_GUARDS SHOP_PASS_DEEP_SCAN_WITHDRAWN SHOP_PASS_MINING_RIG_ON_SALE"
 PASS_LINE="PORT-SHOP PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -65,10 +65,31 @@ if [ "$MODE" = "selftest" ]; then
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.port_shop_receipts' "$SQL" && fail "harness writes port_shop_receipts directly (the RPC is the sole writer)" || true
   grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.port_shop_offers'   "$SQL" && fail "harness writes port_shop_offers (Reference/Config — migration-seeded only)" || true
 
-  # ── the exact-delta economics are pinned: the −120 module debit, the −20 ammo debit, the 3×8 table. ─
+  # ── the exact-delta economics are pinned: the −120 module debit, the −20 ammo debit, the 3×7 table. ─
   grep -q "want -120" "$SQL"            || fail "harness does not pin the exact -120 module wallet delta"
   grep -q "want -20" "$SQL"             || fail "harness does not pin the exact -20 ammo wallet delta"
-  grep -q "exactly 8 active offers" "$SQL" || fail "harness does not pin the 3x8 exact offer table"
+  grep -q "exactly 7 active offers" "$SQL" || fail "harness does not pin the 3x7 exact offer table (0235's 8 minus the 0342 deep-scan withdrawal)"
+
+  # ── 0342 — THE PURCHASE GATE, NOT A DISABLED BUTTON. ──────────────────────────────────────────────
+  #    The verdict this closes: "A disabled React button is not purchase prevention." The proof must
+  #    call the REAL buy RPC for the withdrawn ref at ALL THREE starter ports, and must MEASURE the
+  #    non-mutation rather than infer it from the returned reason string.
+  grep -q "want -110" "$SQL" || fail "harness does not pin the exact -110 mining-rig wallet delta (the not-withdrawn arm)"
+  grep -qE "buy_shop_offer_at_port\(.*'deep_scan_sensor_array'" "$SQL" \
+    || fail "harness never calls the REAL buy RPC for the withdrawn deep_scan_sensor_array"
+  grep -qE "foreach sk in array array\['haven','slag','drift'\]" "$SQL" \
+    || fail "harness does not probe the withdrawal at all three starter ports (one representative port is not the claim)"
+  grep -q "n_probes <> 3" "$SQL" \
+    || fail "harness does not assert that all three port probes actually ran (a skipped loop would pass vacuously)"
+  grep -q "mainship_resolve_docked_location" "$SQL" \
+    || fail "harness does not CONFIRM each relocation through the real docked resolver — the three probes could all be the same port"
+  for w in "moved the wallet" "minted a module instance" "wrote a receipt" "moved a per-port item store"; do
+    grep -q "$w" "$SQL" || fail "harness does not measure non-mutation: '$w'"
+  done
+  grep -qE "buy_shop_offer_at_port\(.*'mining_rig_extension'" "$SQL" \
+    || fail "harness never calls the REAL buy RPC for mining_rig_extension (the did-not-overreach arm)"
+  grep -q "0342 overreached" "$SQL" \
+    || fail "harness does not fail when the mining rig is withdrawn along with the deep-scan array"
 
   # ── every property PASS marker is present. ────────────────────────────────────────────────────────
   for m in $MARKERS; do
@@ -78,7 +99,7 @@ if [ "$MODE" = "selftest" ]; then
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "PORT-SHOP SELFTEST: ALL PASSED (self-rolling-back; flag inside txn only; real-RPC provisioning; exact 3x8 offer table + wired ammo; buy-module/buy-item/replay properties; full reject-envelope coverage)"
+  echo "PORT-SHOP SELFTEST: ALL PASSED (self-rolling-back; flag inside txn only; real-RPC provisioning; exact 3x7 offer table + 3 withdrawn deep-scan rows + wired ammo; buy-module/buy-item/replay properties; full reject-envelope coverage; the 0342 withdrawal probed at all three ports with measured non-mutation, and the mining rig proven still sold)"
   exit 0
 fi
 

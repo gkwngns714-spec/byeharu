@@ -88,6 +88,38 @@ test('the deep-scan array — whose ONLY claimed effect is dormant — says so a
   await expect(page.getByTestId('shop-buy-deep_scan_sensor_array')).toBeDisabled()
 })
 
+// ── AVAILABILITY IS THE SERVER'S, ON THE SCREEN (0342) ──────────────────────────────────────────
+// THE VERDICT (owner, 2026-08-04): "A disabled React button is not purchase prevention." The gate is
+// migration 0342 setting port_shop_offers.active = false; these two tests prove the SCREEN never
+// contradicts it — a row the server's answer does not contain has a dead Buy and says why, and it
+// gets there with no client rule that recognises a particular item id.
+
+test('A ROW THE SERVER DID NOT OFFER CANNOT BE BOUGHT — dead Buy, and it says why', async ({ page }) => {
+  await open(page, 390)
+  const row = page.getByTestId('shop-offer-autocannon_battery_mk2')
+  await expect(row).toBeVisible()
+  // it is a full, attractive row with a LIVE effect — nothing about its content withholds it…
+  await expect(page.getByTestId('shop-chip-autocannon_battery_mk2-attack')).toHaveText(/Combat Power \+18/)
+  await expect(page.getByTestId('shop-no-effect-autocannon_battery_mk2')).toHaveCount(0)
+  // …and it is still not for sale here, because the server's answer does not carry it.
+  await expect(page.getByTestId('shop-buy-autocannon_battery_mk2')).toBeDisabled()
+  await expect(page.getByTestId('shop-blocked-autocannon_battery_mk2')).toHaveText(
+    'This port does not stock that.',
+  )
+})
+
+test('the two refusals are INDEPENDENT — a live-effect row is withheld with no lifecycle verdict, and vice versa', async ({ page }) => {
+  await open(page, 390)
+  // withdrawn-by-the-server: blocked line, NO not-implemented sentence.
+  await expect(page.getByTestId('shop-blocked-autocannon_battery_mk2')).toBeVisible()
+  await expect(page.getByTestId('shop-no-effect-autocannon_battery_mk2')).toHaveCount(0)
+  // dormant-only-but-offered: not-implemented sentence, NO blocked line. If these ever collapse into
+  // one answer, one of the two purchase-prevention paths has quietly stopped existing.
+  await expect(page.getByTestId('shop-no-effect-deep_scan_sensor_array')).toBeVisible()
+  await expect(page.getByTestId('shop-blocked-deep_scan_sensor_array')).toHaveCount(0)
+  await expect(page.getByTestId('shop-buy-deep_scan_sensor_array')).toBeDisabled()
+})
+
 test('every other offer is still buyable — nothing was withdrawn by accident', async ({ page }) => {
   await open(page, 390)
   for (const ref of [

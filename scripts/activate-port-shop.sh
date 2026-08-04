@@ -5,7 +5,7 @@
 # (flag flip + a zero-write gate probe), port-shop domain. Modes:
 #   selftest — DB-free static safety: the operation writes game_config ONLY, via the owned set_game_config
 #              writer, on exactly ONE approved key (port_shop_enabled -> true); is one timed UTC
-#              BEGIN..COMMIT gated on 0235 recorded + the buy-RPC gate prosrc pin + the seeded 3×8 offer
+#              BEGIN..COMMIT gated on 0235 recorded + the buy-RPC gate prosrc pin + the seeded offer
 #              table (referenced, NOT re-seeded); smokes the buy RPC's gate under a transaction-local fake
 #              JWT (advances to ship_not_found for a no-ship subject — the gate opened, zero writes);
 #              contains NO psql meta-command; keeps its ROLLBACK commented out.
@@ -42,7 +42,7 @@ if [ "$MODE" = "selftest" ]; then
 
   printf '%s' "$CLEAN" | grep -qF "port_shop_disabled" || fail "operation must prosrc-pin the buy-RPC dark gate (0235)"
   printf '%s' "$CLEAN" | grep -qF "from public.port_shop_offers" || fail "operation must reference the seeded offer table"
-  printf '%s' "$CLEAN" | grep -qF "do not carry exactly 8 active offers" || fail "operation must precondition on the seeded 3×8 offers (accept, not re-seed)"
+  printf '%s' "$CLEAN" | grep -qF "do not carry exactly 7 active offers" || fail "operation must precondition on the seeded offer table as amended by 0342 (accept, not re-seed)"
 
   # writes: exactly ONE set_game_config on the approved key; NEVER a table DML or DDL.
   n="$(printf '%s' "$CLEAN" | grep -o "set_game_config('" | wc -l | tr -d ' ')"

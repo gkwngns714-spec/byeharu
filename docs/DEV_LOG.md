@@ -5,6 +5,66 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-04 — THE SHOP STOPS SELLING THE DEEP-SCAN ARRAY (migration **0342**, same slice, revised head)
+
+**The verdict that sent the entry below back.** *"A disabled React button is not purchase
+prevention."* The slice below withdrew the Deep-Scan Sensor Array's **Buy button in React only**.
+Probed on production the same day: all **three** `deep_scan_sensor_array` offers were `active = true`
+at **90 credits**. `buy_shop_offer_at_port` would still have sold it to anything that reached the RPC
+— a stale tab, a replayed request, a direct call. The PR contained no migration and changed nothing
+under `supabase/`.
+
+**The gate already existed and was not used.** `port_shop_offers.active` **is** the server-side
+availability switch, and both RPCs already read it: the buy answers its own `no_offer` (0235:258-260)
+and `get_port_shop` filters its list (0235:355-358). The table is Reference/Config — migration-seeded,
+**no runtime writer** — so a forward migration is the only thing that can move it.
+
+**Migration `20260618000342`.** Sets `active = false` on **exactly** the three seeded offers, one per
+starter port. Guarded fail-closed *before* it writes — three offers, all active, all priced 90, at
+exactly the three audited locations, no fourth anywhere, **and both RPC bodies proven to read
+`active`** (a switch is worth throwing only once it is proven wired). Snapshots the whole offer table
+and diffs it after (the 0273 idiom): exactly 3 rows changed, `active` the only column that moved,
+`true → false` only, every unrelated offer byte-identical. Nothing deleted, no price touched, no
+refund, no player state read or written. **Rollback** is a forward migration setting the same three
+rows back to `active = true`.
+
+**Deliberately NOT withdrawn.** `mining_rig_extension` claims the same dormant `mining` key, but its
+`range` 120 is real, so it keeps its live effect and stays on sale — asserted in the migration and
+bought through the real RPC in the proof.
+
+**Client — derived, never hardcoded.** `ShopRow` used to pass `offerExists: true` as a literal, so the
+client's mirror of the server's reject order could never reach `no_offer` whatever the server said. It
+now takes availability from the server's own answer (`offeredRefIds(offers)` — `get_port_shop` builds
+that list with its `active` filter, so **inclusion IS the availability verdict**). The two questions —
+server availability and the 0340 lifecycle verdict — are composed in **one** exported function,
+`buyActionable`, instead of an expression in the markup. **No rule anywhere names the item.**
+
+**A note on what the answer does and does not carry.** `port_shop_offers.active` is publicly readable
+as a *table* row, but `get_port_shop` does **not** return the column — it filters on it. The client
+therefore reads availability off the answer set and deliberately does **not** fetch the table to look
+at `active`: that would be a second client-side availability authority free to disagree with the RPC.
+
+**Proof.** `tsc -b` clean, `vite build` clean. Pure suite **2008 → 2019**, zero regressions. Rendered
+suite **130 → 132**, including a real-DOM row the server did not offer, whose Buy is dead and which
+says *"This port does not stock that."* — measured at the 288px and 320px floors. The disposable
+full-chain proof gained two stages: the withdrawn array refused `no_offer` by the **real** buy RPC at
+**all three** ports with wallet / module instances / receipts / per-port item stores **measured**
+unchanged before and after (a returned reason string is not proof that nothing was written), and the
+mining rig proven to still pass the gate with its exact −110 debit. Every new proof was watched
+**failing** with the change reverted: migration removed → 4 red; `offerExists: true` restored → 1 spec
++ 2 rendered red; lifecycle half of the composition dropped → 2 spec + 2 rendered red; the three-port
+loop shrunk to one port → the harness selftest red.
+
+**Owned instances — honestly, not established.** `module_instances` and `ship_module_fittings` are
+RLS-scoped and return nothing to the anon key, so **I could not establish how many players own or
+have fitted a Deep-Scan array.** A `service_role` key or the production `DB_URL` would settle it in
+one `select count(*)`. Nothing in this change deletes, unfits, refunds or alters an owned instance;
+an owned array stays owned, stays fitted, and keeps doing what it always did, which is nothing.
+
+**Not deployed.** Production remains at **0340**.
+
+---
+
 ## 2026-08-04 — DORMANT STATS TELL THE TRUTH (`slice-dormant-stats-tell-the-truth`, client-only)
 
 **The ruling.** Migration 0340 gave stats a lifecycle — `active` / `dormant` / `deprecated` — and one

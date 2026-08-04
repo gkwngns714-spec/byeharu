@@ -3,11 +3,13 @@ import { runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivity
 import { getWalletBalance } from '../map/tradeApi'
 import { buyShopOfferAtPort, getPortShop } from './shopApi'
 import {
+  buyActionable,
   buyAvailability,
   buyBlocks,
   buyTotal,
   clampBuyQty,
   offerEffectStanding,
+  offeredRefIds,
   offerStatChips,
   portShopReasonMessage,
   shopWalletDisplay,
@@ -110,6 +112,12 @@ export function ShopPanel({
   if (!enabled || offers == null || locationId == null || mainShipId == null) return null
 
   const knownCredits = typeof wallet === 'number' ? wallet : null
+  // SERVER-AUTHORITATIVE AVAILABILITY (0342): what this port will actually sell is the set of refs
+  // the server's gated read just returned — get_port_shop selects `where … and o.active`, so an
+  // offer withdrawn by a migration is simply absent. Derived from the answer, never assumed from the
+  // fact that we are rendering a row: a row whose ref is not in the current answer fails closed onto
+  // the server's own `no_offer` instead of showing a Buy the RPC would refuse.
+  const offeredNow = offeredRefIds(offers)
 
   return (
     <Card tone="accent" data-testid="shop-panel">
@@ -138,6 +146,7 @@ export function ShopPanel({
             <ShopRow
               key={offer.ref_id}
               offer={offer}
+              offered={offeredNow.has(offer.ref_id)}
               qty={offer.kind === 'item' ? (qty[offer.ref_id] ?? 1) : 1}
               setQty={(n) => setQty((prev) => ({ ...prev, [offer.ref_id]: clampBuyQty(n, null) }))}
               pending={pending === offer.ref_id}
@@ -159,6 +168,7 @@ export function ShopPanel({
 // settle. Nothing else imports it.
 export function ShopRow({
   offer,
+  offered,
   qty,
   setQty,
   pending,
@@ -168,6 +178,9 @@ export function ShopRow({
   onBuy,
 }: {
   offer: ShopOffer
+  /** Is this ref in the SERVER's current offer answer (get_port_shop's `active` filter)? Required,
+   *  never defaulted: a row that cannot say where its availability came from must not be sellable. */
+  offered: boolean
   qty: number
   setQty: (n: number) => void
   pending: boolean
@@ -197,9 +210,14 @@ export function ShopRow({
     isModule,
     shipResolved: true,
     docked: true,
-    offerExists: true,
+    // NOT a literal `true` any more. Availability is the server's, and this is where it enters the
+    // row: `offered` is membership in get_port_shop's answer, which the server built with its own
+    // `active` filter. A row the server did not send answers `no_offer` — the RPC's own word for it.
+    offerExists: offered,
     affordable,
   })
+  // The two questions, composed in ONE place (portShop.ts) instead of inline in the markup.
+  const actionable = buyActionable(avail.reason, noLiveEffect)
 
   return (
     <li className="rounded-lg border border-edge bg-surface-2 px-2 py-1.5" data-testid={`shop-offer-${offer.ref_id}`}>
@@ -288,10 +306,7 @@ export function ShopRow({
             variant="primary"
             size="sm"
             data-testid={`shop-buy-${offer.ref_id}`}
-            // Two independent questions, composed HERE and answered nowhere else: buyAvailability
-            // stays the untouched mirror of the server's 0235 reject order, and noLiveEffect is the
-            // presentation-truth gate above. Neither re-implements the other.
-            disabled={buyBlocks(avail.reason) || noLiveEffect}
+            disabled={!actionable}
             busy={pending}
             busyLabel="Buying…"
             onClick={() => onBuy(effectiveQty)}
@@ -304,6 +319,15 @@ export function ShopRow({
 
       {avail.reason === 'insufficient_credits' && (
         <p className="mt-0.5 text-[10px] text-ink-muted">{portShopReasonMessage('insufficient_credits')}</p>
+      )}
+      {/* A row that is BLOCKED says why, in the server's own vocabulary through the ONE mapper. In
+          the live panel this is unreachable (every rendered row came from the server's answer, at a
+          docked port, under the lit gate) — it exists so that a row which is NOT on sale explains
+          itself instead of showing a dead button with no reason beside it. */}
+      {buyBlocks(avail.reason) && (
+        <p data-testid={`shop-blocked-${offer.ref_id}`} className="mt-0.5 text-[10px] text-ink-muted">
+          {portShopReasonMessage(avail.reason)}
+        </p>
       )}
       {note && (
         <p data-testid={`shop-note-${offer.ref_id}`} className="mt-0.5 text-[10px] text-accent">

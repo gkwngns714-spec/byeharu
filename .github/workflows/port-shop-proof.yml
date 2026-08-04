@@ -6,11 +6,15 @@ name: PORT-SHOP — port outfitter (buy modules + ammo) disposable proof (no pro
 #      never a direct module_instances / player_inventory / port_shop_receipts / port_shop_offers
 #      insert — and ends in ROLLBACK with NO COMMIT, so it persists nothing and leaves the committed
 #      flag = false);
-#   2. a disposable local Supabase (the full chain incl. 0235) running the real-chain matrix: dark
-#      gate (buy + read reject, zero writes) → seed pins (flag key, autocannon_rounds + shield_generator
-#      + wired ammo, 3×8 active offers, Mk-II excluded) → buy MODULE (exact debit + minted instance +
-#      receipt) → buy ITEM/ammo (exact debit + inventory + receipt) → idempotent replay → the guard
-#      envelope (invalid_quantity / no_offer / module_qty_must_be_one / not_docked / insufficient_credits).
+#   2. a disposable local Supabase (the full chain incl. 0235 and 0342) running the real-chain matrix:
+#      dark gate (buy + read reject, zero writes) → seed pins (flag key, autocannon_rounds +
+#      shield_generator + wired ammo, 3×7 active offers + the 3 withdrawn deep-scan rows preserved at
+#      90, Mk-II excluded) → buy MODULE (exact debit + minted instance + receipt) → buy ITEM/ammo
+#      (exact debit + inventory + receipt) → idempotent replay → the guard envelope (invalid_quantity /
+#      no_offer / module_qty_must_be_one / not_docked / insufficient_credits) → 0342's PURCHASE GATE:
+#      the withdrawn deep_scan_sensor_array refused `no_offer` by the REAL buy RPC at ALL THREE
+#      starter ports with wallet/instances/receipts/item-stores measured unchanged, and the mining rig
+#      proven to still pass the gate (0342 withdrew the dead module, not the live one).
 # The proof flips NO committed flag. No `environment:` on any job — none can read production secrets.
 # Disposable local Supabase only. (Modeled on repair-econ-proof.yml / salvage-market flow, reusing
 # scripts/lib/trade-proof-lib.sh.)
