@@ -255,6 +255,113 @@
 -- overlaps any of the ten regions below, and none of them contains any text a hunk here matches;
 -- assert (b) re-proves that by requiring 0343's own fold to be intact after this surgery.
 --
+-- ── EVERY NEEDLE, MEASURED — NOT REASONED ──────────────────────────────────────────────────────
+-- The first version of this file refused to apply on all 22 disposable legs:
+--
+--     ERROR: 0344 PRECONDITION FAIL: 2 copy(ies) of the synthetic BODY-COUNT sizer
+--     greatest(1, v_danger) (want exactly 1)
+--
+-- The needle was the bare substring "greatest(1, v_danger)", which is shared by TWO DISTINCT
+-- CONCEPTS — the body-count sizer and the aggregate arm's laser_burst projectile_count — so it
+-- counted 2 while asserting 1. The migration failing closed was correct. The needle was not.
+--
+-- THE DEFECT CLASS, NAMED SO IT IS NOT REPEATED: a needle that is a substring of more than one
+-- concept, or an expected count arrived at by READING THE CODE AND THINKING rather than by
+-- counting against the real text. This repo has burned four consecutive CI rounds on exactly that
+-- class, one instance per round. So every needle in this file was then counted against the actual
+-- text of all three bodies — production's dump, the body after 0343 applies (which is what this
+-- migration is handed), and the body after this migration's own surgery. 39 needles, all measured:
+--
+--   block  needle                                                      body     want  PROD  P0343  P0344
+--   pre    1 + e.waves_cleared + floor(v_secs_inside                   P0343~     2     2      2      0
+--   pre    least(coalesce(cfg_num('enemy_synthetic_max_units'),6)…)    P0343~     1     1      1      0
+--   pre    'laser', greatest(1, v_danger), 600)                        P0343~     1     1      1      0
+--   pre    pirate_loot_for_wave(v_wave_num, v_danger)                  P0343~     2     2      2      0
+--   pre    waves_cleared            = waves_cleared + (case when …     P0343~     2     2      2      2
+--   pre    combat_encounter_wreck                          (raw, present)         8 occurrences
+--   pre    combat_pressure_step                            (raw, absent)          0 occurrences
+--   a      e.waves_cleared                                             P0344~     0     5      5      0
+--   a      v_danger                                                    P0344~     0    27     27      0
+--   a      enemy_hp_danger_scale / enemy_attack_danger_scale           P0344~     0     3      3      0
+--   a      reward_danger_scale / danger_time_divisor_seconds           P0344~     0     2      2      0
+--   a      enemy_synthetic_max_units                                   P0344~     0     1      1      0
+--   a      pirate_loot_for_wave                                        P0344~     0     2      2      0
+--   a      resolve_encounter_reward_inputs                             P0344~     0     1      1      0
+--   b      public.combat_pressure_step(e.id, v_tick, … v_log_events)   P0344~     2     0      0      2
+--   b      combat_pressure_step(                                       P0344~     2     0      0      2
+--   b      public.site_loot_for_kill(                                  P0344~     2     0      0      2
+--   b      public.combat_encounter_wreck(e.id, v_tick)                 P0344~     3     0      3      3
+--   c      if v_e_before <= 0 then                                     P0344~     0     1      1      0
+--   c      if e.enemy_integrity_current <= 0 then                      P0344~     0     1      1      0
+--   d      next_reinforcement_at / s.cadence / s.cap                   leaf~   present  2 / 2 / 3
+--   d      coalesce(e.next_reinforcement_at, e.started_at)             leaf~   present  1
+--   d      waves_cleared / wave_number / danger / secs_inside          leaf~      0     0
+--   d      loop                                                        leaf~      0     0
+--   d      s.cadence * (v_missed + 1)   /   next_reinforcement_at =    leaf~      1     1
+--   e      combat_spawn_wave_units(                                    P0344~     0     2      2      0
+--   e      combat_spawn_wave_units(                                    leaf~      1     1
+--
+-- (~ = comment-stripped, which is the form every count above is taken on except the two raw
+-- position checks. The surgery's own hunk matching is on the RAW definition, because a hunk's
+-- source text is mostly comments.)
+--
+-- ██ THE RULE THAT WOULD HAVE PREVENTED THE RED, STATED SO IT BINDS THE NEXT SLICE ██
+--
+--     A BROAD needle may only carry an ABSENCE check. A PRESENCE or EXACT-COUNT check must name
+--     exactly one concept.
+--
+-- That is the whole defect in one line. "greatest(1, v_danger)" is a broad needle and it was used
+-- for an exact-count presence check, so a second concept sharing the substring made it count 2.
+-- Broad-for-absence is not merely safe, it is STRONGER: a wider substring catches more of what
+-- must not be there. Broad-for-presence is always a latent lie.
+--
+-- The 37 needles this file extracts to were then swept for substring relationships: 32 exist, and
+-- every one obeys the rule above. Each pair is a broad ABSENCE needle beside a specific
+-- PRESENCE/COUNT needle, and in most cases they also read different bodies:
+--   "v_danger" (absence, post-0344 tick)      vs the three specific v_danger expressions
+--                                                (presence-counts, post-0343 tick)
+--   "waves_cleared" (absence, the authority)  vs "e.waves_cleared" (absence, the tick)
+--                                                and the exact write statement (count 2, the tick)
+--   "danger" (absence, the authority)         vs "enemy_hp_danger_scale" etc (absence, the tick)
+--   "pirate_loot_for_wave" (absence, tick)    vs "pirate_loot_for_wave(v_wave_num, v_danger)"
+--                                                (presence-count 2, post-0343 tick)
+--   "combat_pressure_step" (absence, pre)     vs "combat_pressure_step(" (count 2) vs the full
+--                                                argument form (count 2) — a deliberate LADDER:
+--                                                if a third call appeared in a different shape the
+--                                                broad count would move to 3 while the specific
+--                                                stayed 2, and assert (b) would fire. That is the
+--                                                guard working, not an ambiguity.
+--   "s.cadence" (presence, authority)         vs "s.cadence * (v_missed + 1)" (count 1) — both
+--                                                specific, both this file's own bytes.
+-- Two entries in that sweep are catalog identifiers, not text needles at all: the two function
+-- signatures in (h) are cast to regprocedure and never matched against a body.
+--
+-- ── WHICH NEEDLES ARE SENSITIVE TO "PROD BODY ≠ CI-CHAIN BODY", STATED PLAINLY ─────────────────
+-- 0343's own header records that the body the CHAIN builds is not required to be byte-equal to
+-- production's, and that this could not be verified from the machine these were written on (no
+-- local Docker). Every measurement above was taken against production's dump with 0343 replayed
+-- onto it offline. So:
+--
+--   * SENSITIVE — every hunk pre-image (11) and every precondition count (5). If the chain's body
+--     differs anywhere inside a hunk's bytes, that hunk matches 0 times and this migration ABORTS
+--     naming the hunk. That is the designed behaviour and it is why no count is written as ">= 1"
+--     or "1 or 2": an assert that tolerates both worlds proves nothing about either. Exposure is
+--     proportional to bytes matched, and it is concentrated: [P1] 13,404 chars / 170 lines and
+--     [P5] 1,985 chars / 33 lines carry 94% of it; the other nine hunks are 28-1,772 chars, six of
+--     them single lines.
+--   * NOT SENSITIVE — every assert in (a), (b), (c), (e). They read the body AFTER this file's own
+--     surgery has succeeded, and the surgery cannot succeed unless every anchor matched exactly
+--     once. If the chain body differed, the deploy would already have aborted above.
+--   * NOT SENSITIVE — every needle in (d). The authority is created by this file, so its body is
+--     this file's own bytes in every world.
+--   * NOT SENSITIVE — (f), (g), (h). They read rows and catalogs, not text.
+--
+-- Verified against the chain rather than assumed, for the two asserts whose expected values are
+-- world facts rather than text: no migration in the chain sets any pirate_hunt location's status
+-- away from 'active' (so (f)'s "at least 3 sites" cannot fail on a correct world), and no existing
+-- game_config key matches (g)'s sweep — the many real worldstate_pressure_* and event_pressure_*
+-- keys do NOT match '%pressure_step%', which is why that pattern is narrow rather than '%pressure%'.
+--
 -- ── THE SELF-ASSERT (what fails the deploy) ─────────────────────────────────────────────────────
 -- Every count over the tick is taken on a COMMENT-STRIPPED copy of the deployed prosrc, because
 -- this file's own hunk banners name the very identifiers being asserted absent — the 0222 vacuity
@@ -369,10 +476,25 @@ begin
   if v_n <> 2 then
     raise exception '0344 PRECONDITION FAIL: % copy(ies) of the kill-escalation term "1 + e.waves_cleared + floor(v_secs_inside ..." (want exactly 2: the spatial arm and the aggregate arm). The body has drifted from the parity source and this rewrite would land on the wrong text', v_n;
   end if;
-  v_n := (length(v_code) - length(replace(v_code, 'greatest(1, v_danger)', '')))
-         / length('greatest(1, v_danger)');
+  -- ONE NEEDLE, ONE CONCEPT. The bare substring "greatest(1, v_danger)" was the first draft of
+  -- this check and it was WRONG: it is shared by TWO distinct concepts — the body-count sizer here
+  -- and the aggregate arm's laser_burst projectile_count — so it counted 2 while asserting 1 and
+  -- refused to apply on all 22 disposable legs. Each concept now carries its own needle, its own
+  -- expected count and its own message. The rule that produced the bug: a needle whose expected
+  -- count was REASONED rather than counted against the real text. Every count in this file has now
+  -- been measured against the actual post-0343 body; the table is in the header.
+  v_n := (length(v_code) - length(replace(v_code, 'least(coalesce(cfg_num(''enemy_synthetic_max_units''),6)::integer, greatest(1, v_danger))', '')))
+         / length('least(coalesce(cfg_num(''enemy_synthetic_max_units''),6)::integer, greatest(1, v_danger))');
   if v_n <> 1 then
-    raise exception '0344 PRECONDITION FAIL: % copy(ies) of the synthetic BODY-COUNT sizer greatest(1, v_danger) (want exactly 1). That line is the literal "+1 enemy per kill" and it must be present to be deleted', v_n;
+    raise exception '0344 PRECONDITION FAIL: % copy(ies) of the synthetic BODY-COUNT sizer least(cfg_num(''enemy_synthetic_max_units''), greatest(1, v_danger)) (want exactly 1). That line is the literal "+1 enemy per kill" — the thing the owner rejected three times — and it must be present to be deleted', v_n;
+  end if;
+  -- THE SECOND CONCEPT THAT SHARES THAT SUBSTRING, counted in its own right: the aggregate arm's
+  -- laser_burst projectile_count, which drew a denser beam the better the player fought. It is a
+  -- COSMETIC, not a sizer, and conflating the two is what made the first needle ambiguous.
+  v_n := (length(v_code) - length(replace(v_code, '''laser'', greatest(1, v_danger), 600)', '')))
+         / length('''laser'', greatest(1, v_danger), 600)');
+  if v_n <> 1 then
+    raise exception '0344 PRECONDITION FAIL: % copy(ies) of the laser_burst projectile_count greatest(1, v_danger) (want exactly 1 — the aggregate arm''s cosmetic escalation counter, hunk [PA]). It is a different concept from the body-count sizer above and is counted separately on purpose', v_n;
   end if;
   v_n := (length(v_code) - length(replace(v_code, 'pirate_loot_for_wave(v_wave_num, v_danger)', '')))
          / length('pirate_loot_for_wave(v_wave_num, v_danger)');
