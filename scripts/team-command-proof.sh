@@ -774,6 +774,12 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lost the ONE authority for spending a live wave (pg_temp.spend_wave)"
   n="$(grep -c 'perform pg_temp\.spend_wave(' "$SQL" || true)"
   [ "$n" = "2" ] || fail "expected exactly 2 pg_temp.spend_wave() call sites (wipe_tick + TEAMHUNT's give-back), found $n"
+  # ── 0344: wipe_tick MUST ASK FOR ITS LETHAL BODY — the deleted respawn arrow will not supply one ──
+  # This helper spent the live wave and relied on "the enemy side is wiped -> spawn" to roll a fresh
+  # one at the boosted knob. 0344 deletes that branch on both arms, so the field stayed EMPTY, nothing
+  # shot the fleet, and both callers' "the ship is DEAD" assert read a fleet that was never attacked.
+  grep -qF "perform pg_temp.pressure_refill(p_enc, 1)" "$SQL" \
+    || fail "pg_temp.wipe_tick no longer ASKS the pressure authority for its replacement body — after 0344 spending the wave leaves an empty field and no number of ticks refills it (now() is frozen), so both callers assert a death that cannot happen"
   grep -qF "enemy row(s) survived the wave spend" "$SQL" \
     || fail "harness does not ASSERT that TEAMHUNT's give-back really removed the field minted at the borrowed enemy_hp_base (the original 'two waves not cleared' root cause)"
   grep -qF "the lethal wave never closed into its own range" "$SQL" \

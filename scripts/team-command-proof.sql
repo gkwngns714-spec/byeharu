@@ -371,9 +371,12 @@ end $$;
 --     every branch since — taking the 7 blocks behind it (~23% of the file) with it.
 --
 -- THE REPOINT (the "follow the game" arm of proofs-never-assert-ambient-defaults): a mid-fight raise
--- only bites on a wave the engine actually SPAWNS, so spend the live wave and let the next tick roll a
--- fresh one at the CURRENT knob. That is the game's own escalation path (0299:659 spatial / :1043
--- aggregate — the same `enemy side is wiped -> spawn` branch in both arms), not a shortcut around it.
+-- only bites on a wave the engine actually SPAWNS, so spend the live wave and get a fresh one at the
+-- CURRENT knob. That USED to be the game's own escalation path (0299:659 spatial / :1043 aggregate —
+-- the same `enemy side is wiped -> spawn` branch in both arms). (0344) That branch is DELETED: a body
+-- now arrives only from public.combat_pressure_step when the site's clock makes a slot due, so the
+-- replacement is ASKED FOR through the shared pg_temp.pressure_refill. Still the game's own path —
+-- the same spawn authority, the same placement, the same knobs — just no longer a reward for a wipe.
 -- Using it at BOTH wipe sites also leaves ONE authority for "make the next tick lethal" instead of two
 -- spellings whose difference nobody could see.
 --
@@ -422,6 +425,21 @@ begin
   -- exactly the same shape as the attack, and restored with it.
   perform public.set_game_config('enemy_hp_base', '100000'::jsonb);
   perform pg_temp.spend_wave(p_enc);
+  -- ── ██ (0344) THE REPLACEMENT WAVE HAS TO BE ASKED FOR — IT NO LONGER ARRIVES BY ITSELF ██ ───────
+  -- This helper's whole method was: spend the live wave, and let the engine roll a fresh one at the
+  -- CURRENT (boosted) knobs. Its own comment named the branch it relied on — "the game's own
+  -- escalation path (0299:659 spatial / :1043 aggregate — the same `enemy side is wiped -> spawn`
+  -- branch in both arms)". THAT BRANCH IS EXACTLY WHAT 0344 DELETES. After it, a body arrives only
+  -- when the site's clock makes a slot due, and now() is FROZEN for this transaction, so no number of
+  -- ticks produces one: the field stayed empty, nothing shot the fleet, and the caller's "the ship is
+  -- DEAD" assert read a fleet that was never attacked. That is the CI failure verbatim —
+  -- "the encounter is still active after 12 ticks at enemy_attack_base 1000000 ... 0 living enemy row(s)".
+  -- THE PROPERTY IS UNCHANGED and is still the callers': a fleet meeting a wave at enemy_attack_base
+  -- 1000000 dies. Only the way the wave gets there moved, from a deleted arrow to the shared staging —
+  -- and the body is still placed by the ONE spawn authority, at the current knobs, at (the measured
+  -- formation extent + its own range + 1), so it still has to CLOSE before it can fire. That is why the
+  -- loop below still drives ticks rather than expecting a kill on the first one.
+  perform pg_temp.pressure_refill(p_enc, 1);
   -- ── 0336: ONE TICK IS NO LONGER LETHAL, SO DRIVE UNTIL THE WAVE IS SPENT ─────────────────────────
   -- This helper ticked ONCE. That was correct while every enemy was inserted on the engagement anchor
   -- — on top of the lead, at distance 0 — because the wave that spawned in that tick also fired in it.

@@ -80,3 +80,28 @@ begin
   end loop;
   return v_got;
 end $$;
+
+-- ── pg_temp.pressure_refill — "PUT n BODIES ON THE FIELD NOW", the one primitive every caller uses ──
+-- pressure_site + pressure_fill are the two halves of every multi-body staging in the harness, and
+-- FOUR callers now need exactly that pair back to back: danger-combat's field blocks, TEAMSETTLE's two
+-- due slots, team-command's pg_temp.wipe_tick (which must land a LETHAL body after spending the live
+-- one) and fleetgo's pg_temp.earn_wave (which must have a real body to clear). Composing it here once
+-- is the difference between one authority and four spellings that the next slice keeps in step by hand.
+--
+-- IT OWNS THE SITE ROW AS WELL AS THE CLOCK, deliberately: a caller that asks for n bodies must not
+-- inherit whatever concurrent cap an earlier block in the same transaction happened to leave behind.
+-- The cap is set to exactly n, so "n arrived" and "no more than n can stand" are the same statement.
+--
+-- IT RAISES RATHER THAN RETURNING SHORT. Every caller's next assertion is about a fight that has
+-- bodies in it; a silent 0 is precisely the failure that cost this slice a CI round — an empty field
+-- reads as "the fleet survived" or "the wave never closed", never as "nothing was ever spawned".
+create or replace function pg_temp.pressure_refill(p_enc uuid, p_n int) returns void language plpgsql as $$
+declare v_got int;
+begin
+  perform pg_temp.pressure_site(p_enc, 45.0, p_n);
+  v_got := pg_temp.pressure_fill(p_enc, p_n);
+  if v_got <> p_n then
+    raise exception 'pressure_refill: the pressure authority delivered % of the % bod(ies) asked for at encounter % — after 0344 a body arrives only when a clock slot comes due AND the field is under its site''s cap, and now() is frozen for this transaction, so a caller that needs a field must ask for one. An empty field does not read as an error downstream: it reads as "the fleet survived" or "the wave never closed"',
+      v_got, p_n, p_enc;
+  end if;
+end $$;

@@ -2481,7 +2481,17 @@ begin
    where ce.id = v_enc;
   if v_bd is null or v_bd <= 0 then raise exception 'AUTOEXIT FAIL: the encounter''s location has base_difficulty %', v_bd; end if;
   select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
-  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * 1.25))::numeric, 6);
+  -- ██ (0344) THE STALE `* 1.25` IS DELETED FROM THIS DERIVATION ██
+  -- The divisor was `(v_bd * 1.25)`, and that 1.25 was the DELETED danger factor written as a bare
+  -- literal: at danger 1 the head multiplied the wave's attack by (1 + 1 * enemy_attack_danger_scale)
+  -- = 1.25, so the block divided it back out to hit its 6%-of-capacity-per-tick erosion. 0344 deletes
+  -- the factor, and the pressure authority hands a body base_difficulty x enemy_attack_base as its OWN
+  -- power. A LITERAL is invisible to a grep for the knob name, which is why this survived the earlier
+  -- sweeps of the deleted surface — it is the same class wearing a number.
+  -- Leaving it would not have gone red: it would have eroded 20%% slower than this block intends,
+  -- quietly spending more of its own tick budget, which is the kind of drift that surfaces later as a
+  -- flake. Removing it RESTORES the pre-0344 erosion rate exactly rather than changing it.
+  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / v_bd)::numeric, 6);   -- (0344) the /1.25 is GONE: see the note above
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
   -- erosion must be monotone; captured and restored at the end like every knob this block touches.
   select coalesce(public.cfg_num('shield_regen_combat_pct'), 0) into v_srg_before;
@@ -2715,7 +2725,17 @@ begin
     from public.combat_encounters ce join public.locations l on l.id = ce.location_id
    where ce.id = v_enc2;
   if v_bd is null or v_bd <= 0 then raise exception 'AUTOEXIT FAIL: the control encounter''s location has base_difficulty %', v_bd; end if;
-  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * 1.25))::numeric, 6);
+  -- ██ (0344) THE STALE `* 1.25` IS DELETED FROM THIS DERIVATION ██
+  -- The divisor was `(v_bd * 1.25)`, and that 1.25 was the DELETED danger factor written as a bare
+  -- literal: at danger 1 the head multiplied the wave's attack by (1 + 1 * enemy_attack_danger_scale)
+  -- = 1.25, so the block divided it back out to hit its 6%-of-capacity-per-tick erosion. 0344 deletes
+  -- the factor, and the pressure authority hands a body base_difficulty x enemy_attack_base as its OWN
+  -- power. A LITERAL is invisible to a grep for the knob name, which is why this survived the earlier
+  -- sweeps of the deleted surface — it is the same class wearing a number.
+  -- Leaving it would not have gone red: it would have eroded 20%% slower than this block intends,
+  -- quietly spending more of its own tick budget, which is the kind of drift that surfaces later as a
+  -- flake. Removing it RESTORES the pre-0344 erosion rate exactly rather than changing it.
+  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / v_bd)::numeric, 6);   -- (0344) the /1.25 is GONE: see the note above
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
   for i in 1..60 loop
     perform pg_temp.ae_tick(v_enc2);
@@ -5527,7 +5547,17 @@ begin
    where ce.id = v_enc;
   if v_bd is null or v_bd <= 0 then raise exception 'WRECKHOME FAIL: the encounter''s location has base_difficulty %', v_bd; end if;
   select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
-  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * 1.25))::numeric, 6);
+  -- ██ (0344) THE STALE `* 1.25` IS DELETED FROM THIS DERIVATION ██
+  -- The divisor was `(v_bd * 1.25)`, and that 1.25 was the DELETED danger factor written as a bare
+  -- literal: at danger 1 the head multiplied the wave's attack by (1 + 1 * enemy_attack_danger_scale)
+  -- = 1.25, so the block divided it back out to hit its 6%-of-capacity-per-tick erosion. 0344 deletes
+  -- the factor, and the pressure authority hands a body base_difficulty x enemy_attack_base as its OWN
+  -- power. A LITERAL is invisible to a grep for the knob name, which is why this survived the earlier
+  -- sweeps of the deleted surface — it is the same class wearing a number.
+  -- Leaving it would not have gone red: it would have eroded 20%% slower than this block intends,
+  -- quietly spending more of its own tick budget, which is the kind of drift that surfaces later as a
+  -- flake. Removing it RESTORES the pre-0344 erosion rate exactly rather than changing it.
+  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / v_bd)::numeric, 6);   -- (0344) the /1.25 is GONE: see the note above
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
   select coalesce(public.cfg_num('shield_regen_combat_pct'), 0) into v_srg_before;
   perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);

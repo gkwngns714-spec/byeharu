@@ -854,6 +854,10 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness no longer includes scripts/lib/pressure-staging.sql — if it has grown its own copy of the staging helpers, delete the copy and include the lib"
   grep -q "create or replace function pg_temp.pressure_site" "$PRESSURE_LIB" \
     || fail "the shared lib lost pg_temp.pressure_site — a block that needs a field of n bodies must OWN the site's cadence and concurrent cap as a row rather than inherit whichever numbers the seed carries (proofs-never-assert-ambient-defaults, in its content form)"
+  grep -q "create or replace function pg_temp.pressure_refill" "$PRESSURE_LIB" \
+    || fail "the shared lib lost pg_temp.pressure_refill — the ONE primitive for \"put n bodies on the field now\". Four callers across three suites compose it (danger-combat's field blocks, TEAMSETTLE, team-command's wipe_tick, fleetgo's earn_wave); a suite that opens its own site row and fills it by hand is the fourth spelling this exists to prevent"
+  grep -q "An empty field does not read as an error downstream" "$PRESSURE_LIB" \
+    || fail "pg_temp.pressure_refill no longer RAISES on a short delivery — a silent 0 bodies reads downstream as \"the fleet survived\" or \"the wave never closed\", which is exactly how this class cost a CI round"
   grep -q "create or replace function pg_temp.pressure_fill" "$PRESSURE_LIB" \
     || fail "the shared lib lost pg_temp.pressure_fill — with the clock skip-forward and a txn-frozen now(), a block cannot fill a field by driving ticks, and filling it by hand would break the combat_units sole-writer law"
   # ONE composition of the authority across scripts/ AND scripts/lib/: the lib's, and nowhere else.
