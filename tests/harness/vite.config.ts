@@ -23,8 +23,14 @@ import { join } from 'node:path'
 //   fleetinfo.html — the real <FleetStatusPanel> inside the real top-left <OverlayRail>: where each
 //                 fleet is, what it is doing, WHY it cannot fight, and the one action slot (into the
 //                 fight under its feet, or out of the one it is in), MEASURED at 320px and at 288px
+//   reach.html  — the map's overlay RAILS, WHOLE: the top-left stack (notices + the real
+//                 <ExplorationPanel>, <CombatMapCard> and <FleetStatusPanel>) and the bottom-right
+//                 command hub (<FleetCommandPanel> / <ZoneInfoPanel> under the hub header). It
+//                 exists because fleetinfo.html mounts ONE panel in that rail and one panel always
+//                 fits — which is how "right now i can't press hunt" survived a green UI proof. The
+//                 STACK is where the clipping lives, so the stack is what this serves.
 // The tailwind plugin serves the harnesses that MEASURE rendered pixels — fight.html, nav.html,
-// assets.html, ships.html, fleet.html and fleetinfo.html — which have to load the app design system
+// assets.html, ships.html, fleet.html, fleetinfo.html and reach.html — which have to load the app design system
 // rather than approximate it. Each of those
 // imports ./harness.css (NOT src/index.css directly): with `root: tests/harness`, Tailwind v4's
 // source auto-detection sees only tests/harness/**, so harness.css's explicit `@source '../../src'`

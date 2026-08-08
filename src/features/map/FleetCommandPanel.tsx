@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Badge, Button, Notice, OverlayPanel, SectionLabel, buttonClasses } from '../../components/ui'
+import {
+  Badge,
+  Button,
+  Notice,
+  OverlayPanel,
+  SectionLabel,
+  buttonClasses,
+  overlayAccountClass,
+  overlayReachClass,
+} from '../../components/ui'
 import {
   commandShipGroupDock,
   commandShipGroupGo,
@@ -539,8 +548,11 @@ export function FleetCommandPanel({
     }
   }
 
-  // Stop (model-guaranteed FIRST when present) renders OUTSIDE the scroll container so it can never
-  // scroll away; every later section shares the capped, scrollable body below it.
+  // THE REACH LAW, composed (components/ui/overlayLayout.ts). Stop is model-guaranteed FIRST when
+  // present and rides the REACH region — outside the scroll body, so the brake can never scroll
+  // away. Every later section shares the ACCOUNT: capped, scrollable, and the first thing to give
+  // up room. These are the SAME two builders MapScreen's rails use; this panel does not re-state
+  // the rule in its own class strings, which is how the rule came to protect only this one button.
   const [first, ...rest] = model.sections
   const stopSection = first?.kind === 'stop' ? first : null
   const scrollable = stopSection ? rest : model.sections
@@ -550,7 +562,8 @@ export function FleetCommandPanel({
       data-testid="fleet-command-panel"
       // Play-test move: the command surfaces live in the bottom-RIGHT corner, out of the map's
       // center. Rides MapScreen's bottom-right OverlayRail (shared with the pirate-intercept panel,
-      // which stacks above it) — no self-positioning, so it omits `slot`.
+      // which stacks above it) — no self-positioning, so it omits `slot`. The `max-h` is THIS
+      // panel's own account cap and is legitimate: it bounds the SECTION LIST, never the brake.
       className="flex max-h-[45%] w-72 max-w-[calc(100vw-1.5rem)] flex-col"
     >
       {notice && (
@@ -558,11 +571,9 @@ export function FleetCommandPanel({
           {notice.text}
         </Notice>
       )}
-      {stopSection && <div className="shrink-0">{section(stopSection)}</div>}
+      {stopSection && <div className={overlayReachClass()}>{section(stopSection)}</div>}
       {scrollable.length > 0 && (
-        <div className={`min-h-0 space-y-2 overflow-y-auto ${stopSection ? 'mt-2' : ''}`}>
-          {scrollable.map(section)}
-        </div>
+        <div className={overlayAccountClass(stopSection ? 'mt-2' : '')}>{scrollable.map(section)}</div>
       )}
     </OverlayPanel>
   )

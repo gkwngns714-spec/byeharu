@@ -12,7 +12,17 @@ export { screenBodyClass, screenSplitClass, screenRailClass } from './screenLayo
 export { EmptyState } from './EmptyState'
 export { Skeleton } from './Skeleton'
 export { OverlayPanel, OverlayRail } from './OverlayPanel'
-export { overlayPanelClass, overlayRailClass, OVERLAY_SLOTS, type OverlaySlot, type OverlayTone } from './overlayLayout'
+export {
+  overlayAccountClass,
+  overlayPanelClass,
+  overlayRailClass,
+  overlayReachClass,
+  overlayReachStackClass,
+  overlaySlotAlignClass,
+  OVERLAY_SLOTS,
+  type OverlaySlot,
+  type OverlayTone,
+} from './overlayLayout'
 export { Icon } from './Icon'
 export { ICON_NAMES, ICON_PATHS, type IconName } from './icons'
 export { Collapsible, CollapsibleCard } from './Collapsible'

@@ -200,24 +200,35 @@ createRoot(document.getElementById('root') as HTMLElement).render(
   // The panel's real container: the map's top-left rail, with MapScreen's own width caps. The rail
   // is `absolute`, so this stand-in map box gives it something to be absolute inside.
   <div className="relative h-[100dvh] w-full bg-app text-ink" data-testid="map-host">
-    <OverlayRail slot="top-left" className="max-h-[60%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
-      <FleetStatusPanel
-        groups={scenario === 'none' ? [] : [G1]}
-        membership={MEMBERSHIP}
-        positions={POSITIONS}
-        locations={LOCATIONS}
-        movements={MOVEMENTS}
-        unifiedFleets={FLEETS}
-        dangerZones={ZONES}
-        encounters={ENCOUNTERS}
-        units={[]}
-        fleetControlEnabled
-        nowMs={NOW}
-        onSelectHuntSite={(locationId) => {
-          w.__huntSiteCalls.push(locationId)
-        }}
-        onCombatChanged={() => {}}
-      />
-    </OverlayRail>
+    {/* THE REACH LAW: the readout carries controls, so it rides the rail's `reach` region — pinned
+        outside any scroll box — exactly as MapScreen mounts it. This harness used to hand-copy
+        `max-h-[60%] … overflow-y-auto` from MapScreen, which is a SECOND authority for the rail's
+        geometry: the copy stayed green while the real rail clipped the Hunt button off the screen.
+        The geometry now lives in the primitive; there is nothing left here to drift.
+        The STACKED case — notices + combat card + this panel together, which is what actually
+        overflowed — is proved in tests/actionsAreReachable.uispec.ts. */}
+    <OverlayRail
+      slot="top-left"
+      className="w-72 max-w-[calc(100vw-5rem)]"
+      reach={
+        <FleetStatusPanel
+          groups={scenario === 'none' ? [] : [G1]}
+          membership={MEMBERSHIP}
+          positions={POSITIONS}
+          locations={LOCATIONS}
+          movements={MOVEMENTS}
+          unifiedFleets={FLEETS}
+          dangerZones={ZONES}
+          encounters={ENCOUNTERS}
+          units={[]}
+          fleetControlEnabled
+          nowMs={NOW}
+          onSelectHuntSite={(locationId) => {
+            w.__huntSiteCalls.push(locationId)
+          }}
+          onCombatChanged={() => {}}
+        />
+      }
+    />
   </div>,
 )
