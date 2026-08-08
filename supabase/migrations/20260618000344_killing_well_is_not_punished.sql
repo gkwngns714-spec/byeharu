@@ -108,15 +108,27 @@
 --     metal = reward_metal_base * greatest(locations.reward_tier, 1) * reward_multiplier, per kill
 --     items = public.site_loot_for_kill(location_id, kills) over public.location_loot rows
 --
--- Adding loot to a site is now an INSERT, never a function edit. Every item the deleted ladder
--- could produce is still produced, by a row, at a site whose tier justifies it:
+-- Adding loot to a site is now an INSERT, never a function edit. **All SEVEN items the deleted
+-- ladder could produce are still produced**, by rows, at sites whose tier justifies them — the five
+-- deterministic ones every kill, and the two config-gated ones at the rate their knob carried:
 --     Snare    (t1)  scrap 1, pirate_alloy 1
---     Reaver   (t2)  scrap 2, pirate_alloy 1, weapon_parts 1
---     Blackden (t3)  scrap 3, pirate_alloy 2, weapon_parts 1, engine_parts 1, repair_parts 1
+--     Reaver   (t2)  scrap 2, pirate_alloy 1, weapon_parts 1,
+--                    captain_memory_shard 1 @ captain_shard_drop_rate
+--     Blackden (t3)  scrap 3, pirate_alloy 2, weapon_parts 1, engine_parts 1, repair_parts 1,
+--                    captain_memory_shard 1 @ captain_shard_drop_rate,
+--                    blueprint_fragment   1 @ blueprint_fragment_drop_rate
 -- The ladder put engine_parts at wave 8 and repair_parts at wave 10, and the measurement says
 -- depth >= 8 is 5 deaths to 1 extraction: 11 engine_parts were ever earned and 1 banked, 8
 -- repair_parts earned and 0 banked. They are now authored at the tier-3 site, where a player can
 -- actually leave with them.
+--
+-- ⚠ AN EARLIER VERSION OF THIS FILE CLAIMED THE SENTENCE ABOVE WHILE CARRYING ONLY FIVE OF THE
+-- SEVEN. That was false and it was a blocking defect, not a documentation slip: captain_memory_shard
+-- and blueprint_fragment are CONFIG-GATED drops inside the same function, pirate_loot_for_wave is
+-- their ONLY producer in the entire database, and dropping them would have left 5 captain recruit
+-- recipes and 2 hull build recipes permanently unsatisfiable on a live game holding zero of either.
+-- Section 2 carries them; self-assert (i) fails the deploy on the whole class if any future slice
+-- disconnects a faucet a recipe depends on. See section 2 for the gate-mapping argument.
 --
 -- ── THE INCOME COMPENSATION, APPLIED, AND ITS ARITHMETIC STATED HONESTLY ────────────────────────
 -- COMBAT_BALANCE_VALUES / the contract's §6 measured the counterfactual against all 57 logged
@@ -146,11 +158,13 @@
 --      payout authority beside the site's reward_tier.
 --   7  The next_wave_at pause on both arms: it paced a thing that no longer happens.
 --   8  Both calls to pirate_loot_for_wave, and its depth ladder as an engine input.
---   9  Four game_config rows that nothing reads after this: enemy_hp_danger_scale,
+--   9  Six game_config rows. Four that nothing reads after this: enemy_hp_danger_scale,
 --      enemy_attack_danger_scale, reward_danger_scale and danger_time_divisor_seconds. A live
 --      knob that gates nothing is a liability — 0320's finding. NOT enemy_synthetic_max_units:
 --      resolve_location_encounter still reads it as its authored-plan ceiling, so only the TICK's
---      read of it is deleted (asserted 0). See section 4.
+--      read of it is deleted (asserted 0). See section 4. Plus captain_shard_drop_rate and
+--      blueprint_fragment_drop_rate, whose VALUES are first copied into location_loot.drop_chance
+--      — migrated, not lost — because after this slice pirate_loot_for_wave has no caller at all.
 --  10  The write of combat_encounters.danger_level. The column stops carrying a meaning here and
 --      is dropped by 0349 (the contract's own sequencing). Until then both arms write the
 --      constant 1 rather than leaving a stale escalation number on a live row.
@@ -218,7 +232,10 @@
 --      three times; the tick's own header records it).
 --   2. Re-insert the four game_config rows deleted in section 4, at their pre-0344 values:
 --      enemy_hp_danger_scale 0.6, enemy_attack_danger_scale 0.25, reward_danger_scale 0.25 and
---      danger_time_divisor_seconds 180; and set reward_metal_base
+--      danger_time_divisor_seconds 180; RESTORE captain_shard_drop_rate and
+--      blueprint_fragment_drop_rate from the location_loot rows this migration wrote them into
+--      (the deploy log's 0344 drop-rate migration NOTICE records both values verbatim); and set
+--      reward_metal_base
 --      back to 10. (Their absence is what makes the coalesce fallbacks in the OLD body correct
 --      again, so the order does not matter — but the metal knob does, and it is one write.)
 --   3. drop function public.combat_pressure_step(uuid, integer, double precision, double
@@ -580,14 +597,21 @@ create table if not exists public.location_loot (
   location_id uuid    not null references public.locations (id) on delete cascade,
   item_id     text    not null references public.item_types (item_id) on delete restrict,
   quantity    integer not null check (quantity > 0),
+  -- HOW OFTEN, AS DATA. Rolled once per (item, enemy destroyed). 1.0 = every kill, which is what
+  -- the five deterministic ladder items were and still are. It exists because the ladder had TWO
+  -- kinds of drop, not one: five deterministic items and two CONFIG-GATED chance drops. A loot
+  -- authority that can only express the deterministic half is not the loot authority.
+  drop_chance double precision not null default 1.0 check (drop_chance >= 0 and drop_chance <= 1),
+  note        text,
   created_at  timestamptz not null default now(),
   primary key (location_id, item_id)
 );
 alter table public.location_loot enable row level security;
 revoke insert, update, delete on table public.location_loot from anon, authenticated;
 
-insert into public.location_loot (location_id, item_id, quantity)
-select l.id, v.item_id, v.qty
+-- ── THE FIVE DETERMINISTIC LADDER ITEMS — every kill, unchanged ─────────────────────────────────
+insert into public.location_loot (location_id, item_id, quantity, drop_chance, note)
+select l.id, v.item_id, v.qty, 1.0, 'ladder item, deterministic per kill'
   from (values
     ('Snare',    'scrap',         1),
     ('Snare',    'pirate_alloy',  1),
@@ -600,6 +624,73 @@ select l.id, v.item_id, v.qty
     ('Blackden', 'engine_parts',  1),
     ('Blackden', 'repair_parts',  1)
   ) as v(name, item_id, qty)
+  join public.locations l on l.name = v.name and l.location_type = 'pirate_hunt'
+  join public.item_types t on t.item_id = v.item_id
+on conflict (location_id, item_id) do nothing;
+
+-- ── THE TWO CONFIG-GATED FAUCETS — CARRIED ACROSS, NOT DROPPED ─────────────────────────────────
+-- ⛔ THE DEFECT THIS FIXES, and it was a blocking one. The first version of this section re-authored
+-- only the five DETERMINISTIC ladder items and left the two CHANCE drops behind. Measured on
+-- production: pirate_loot_for_wave is the ONLY producer of either item anywhere in the database, so
+-- deleting the tick's two calls to it without carrying them here would have left
+--   * captain_memory_shard — the shared gating ingredient on 5 captain recruit recipes (0125:64-78:
+--     gunnery_veteran, trade_broker, survey_cartographer, extraction_foreman, fleet_quartermaster)
+--   * blueprint_fragment  — required qty 2 by 2 hull build recipes (0185:156-168: bulk_hauler and
+--     strike_corvette)
+-- with NO source at all, permanently, on a live game where players hold zero of either. Migration
+-- 0171 exists precisely because "recruiting is dead-ended without a shard source"; that is the exact
+-- condition this would have re-created. Self-assert (i) below now fails the deploy on this whole
+-- CLASS rather than on these two instances.
+--
+-- ── HOW THE OLD GATE MAPS ONTO THE NEW MODEL ───────────────────────────────────────────────────
+-- The deployed gates are NOT the same for the two items, and the difference is the design input:
+--     captain_memory_shard   p_wave >= 2   and random() < captain_shard_drop_rate      (0171)
+--     blueprint_fragment     p_wave >= 8   and random() < blueprint_fragment_drop_rate (0185, which
+--                                          calls it "the DEEP-RUN gate", the engine_parts depth)
+-- Wave depth was the axis, and this slice deletes waves. SITE DIFFICULTY replaces it — the one axis
+-- that already exists as data, that location_loot is already keyed by, and that needs no new
+-- mechanism. So the shallow gate becomes "not at the easiest site" and the deep gate becomes "the
+-- hardest site only":
+--     captain_memory_shard   Reaver (t2, difficulty 15) and Blackden (t3, 25)   — NOT Snare
+--     blueprint_fragment     Blackden only (t3, difficulty 25)
+-- Keeping the shard off Snare is what preserves the gating INTENT: Snare is difficulty 10 and took
+-- 28 of the 44 sorties ever fought, so authoring it there would make the recruit ingredient
+-- trivially farmable at the easiest site — the opposite of a gate. (An elapsed-presence threshold
+-- inside the encounter would be closer to the original "you went deeper" feel, and it was rejected:
+-- it needs a new mechanism and a second gating authority beside the site row, to reproduce an axis
+-- whose own measurement says it was never reached — 21 of 25 extractions happened at depth <= 7
+-- waves, and blueprint_fragment has never dropped once in the game's history.)
+--
+-- ── THE RATE IS NOT INVENTED. IT MIGRATES FROM THE KNOB, AT APPLY TIME ─────────────────────────
+-- drop_chance is read out of the very game_config keys that gated these drops, in this statement,
+-- so each environment carries its OWN value across rather than a number I typed: a fresh CI database
+-- seeded 0/0 (0171:77, 0185:96) stays at 0/0 and its loot stays fully deterministic, and production
+-- carries whatever the owner actually set. That is what "wire the knobs to the new rows" means here,
+-- and it is why section 4 can then delete the knobs without losing a tuning decision.
+--
+-- WHAT THAT MEANS FOR EACH FAUCET, PLAINLY:
+--   * captain_memory_shard lands at whatever captain_shard_drop_rate holds. If that is still 0 — as
+--     the 2026-08-02 audit recorded, which is why captains are ALREADY unobtainable today — then the
+--     SOURCE now exists and is authored while the faucet stays shut, which is exactly production's
+--     current posture. Turning captains on becomes a row edit with no deploy. It is NOT turned on
+--     here: activating a progression system the owner deliberately left at 0 is their call, not a
+--     side effect of a combat slice.
+--   * blueprint_fragment lands at whatever blueprint_fragment_drop_rate holds. This one IS a real
+--     improvement and it is declared rather than smuggled: the old gate was wave >= 8, and the
+--     measurement says depth >= 8 is 5 deaths to 1 extraction and the fragment has NEVER dropped in
+--     44 encounters. Moving the same rate onto "an enemy destroyed at Blackden" makes the shipyard's
+--     only repeatable faucet actually reachable for the first time, behind the hardest site in the
+--     game. The per-fight yield under the new cadence is UNMEASURED and must be read off production.
+insert into public.location_loot (location_id, item_id, quantity, drop_chance, note)
+select l.id, v.item_id, v.qty, coalesce(cfg_num(v.rate_key), 0), v.note
+  from (values
+    ('Reaver',   'captain_memory_shard', 1, 'captain_shard_drop_rate',
+     '0171 wave>=2 shard faucet, re-gated onto site difficulty; rate migrated from the knob'),
+    ('Blackden', 'captain_memory_shard', 1, 'captain_shard_drop_rate',
+     '0171 wave>=2 shard faucet, re-gated onto site difficulty; rate migrated from the knob'),
+    ('Blackden', 'blueprint_fragment',   1, 'blueprint_fragment_drop_rate',
+     '0185 wave>=8 deep-run faucet, re-gated onto the hardest site; rate migrated from the knob')
+  ) as v(name, item_id, qty, rate_key, note)
   join public.locations l on l.name = v.name and l.location_type = 'pirate_hunt'
   join public.item_types t on t.item_id = v.item_id
 on conflict (location_id, item_id) do nothing;
@@ -665,31 +756,71 @@ delete from public.game_config
  where key in ('enemy_hp_danger_scale', 'enemy_attack_danger_scale', 'reward_danger_scale',
                'danger_time_divisor_seconds');
 
+-- ── THE TWO DROP-RATE KNOBS: WIRED INTO THE ROWS ABOVE, THEN DELETED ───────────────────────────
+-- captain_shard_drop_rate and blueprint_fragment_drop_rate gated the two chance drops inside
+-- pirate_loot_for_wave. Section 2 has already COPIED each one's live value into its
+-- location_loot.drop_chance, so the tuning is preserved and merely moved to where the authority
+-- now is. Leaving them would be worse than deleting them: after this migration
+-- pirate_loot_for_wave has NO caller among public functions (asserted in (i) below — 0185's two
+-- calls are inside its own already-run apply-time DO block, not a function), so they would be live
+-- knobs controlling literally nothing, which is the liability this section exists to remove.
+-- Their values are echoed to the deploy log first, so the log records what was migrated.
+do $knobs$
+declare v_shard text; v_bp text;
+begin
+  select value #>> '{}' into v_shard from public.game_config where key = 'captain_shard_drop_rate';
+  select value #>> '{}' into v_bp    from public.game_config where key = 'blueprint_fragment_drop_rate';
+  raise notice '0344 drop-rate migration: captain_shard_drop_rate = % and blueprint_fragment_drop_rate = % have been copied into public.location_loot.drop_chance (shard -> Reaver + Blackden, fragment -> Blackden) and the knob rows are now deleted. To change either faucet from here on, update the ROW; there is no knob and no deploy.',
+    coalesce(v_shard, '<absent>'), coalesce(v_bp, '<absent>');
+end $knobs$;
+
+delete from public.game_config
+ where key in ('captain_shard_drop_rate', 'blueprint_fragment_drop_rate');
+
 
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 -- SECTION 5 — THE AUTHORITIES
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 
 -- ── site_loot_for_kill — WHAT ONE DEAD ENEMY IS WORTH, IN ITEMS ─────────────────────────────────
--- One reader of public.location_loot, and the only thing the engine asks about item drops. It is
--- DETERMINISTIC, exactly as pirate_loot_for_wave was and for the same reason 0041 gave: a proof
--- that has to average a random variable is a proof nobody can read. Quantity scales with the
--- number of bodies destroyed and with nothing else — not with wave, not with depth, not with time.
+-- One reader of public.location_loot, and the only thing the engine asks about item drops. Quantity
+-- scales with the number of bodies destroyed and with nothing else — not with wave, not with depth,
+-- not with time.
+--
+-- ONE ROLL PER (ITEM, ENEMY DESTROYED). The cross join against generate_series is what makes that
+-- literal: each authored row is offered once per body, so a deterministic row (drop_chance 1.0)
+-- pays quantity x kills exactly as before, and a gated row pays a binomial count. random() returns
+-- [0,1), so `random() < 1.0` is true for every roll and `random() < 0` for none — the two ends need
+-- no special case, and a chance-0 row is inert rather than absent.
+--
+-- VOLATILE, not stable: it rolls. That is the same forcing 0171 recorded when it made
+-- pirate_loot_for_wave volatile ("reads game_config + random() — both illegal under immutable"),
+-- and it is why the gated rows carry their chance rather than the function reading a knob.
+--
+-- DETERMINISM WHERE IT MATTERS, STATED: on a fresh CI database both gated keys seed at 0 (0171:77,
+-- 0185:96), so every location_loot row there has drop_chance 1.0 or 0 and this function is exactly
+-- as deterministic as the loot it replaced. A proof that reads a site's authored rows gets a stable
+-- answer; one that wants a certain item should select on drop_chance >= 1, which is what
+-- scripts/team-command-proof.sql's TEAMSETTLE now does.
 create or replace function public.site_loot_for_kill(p_location uuid, p_kills integer)
 returns jsonb
 language sql
-stable
+volatile
 security definer
 set search_path to 'public'
 as $slk$
   select coalesce(
-    jsonb_agg(jsonb_build_object('item_id', ll.item_id, 'quantity', ll.quantity * p_kills)
-              order by ll.item_id),
+    jsonb_agg(jsonb_build_object('item_id', s.item_id, 'quantity', s.qty) order by s.item_id),
     '[]'::jsonb)
-  from public.location_loot ll
-  where ll.location_id = p_location
-    and coalesce(p_kills, 0) > 0
-    and ll.quantity > 0;
+  from (
+    select ll.item_id, sum(ll.quantity)::integer as qty
+      from public.location_loot ll
+      cross join generate_series(1, greatest(coalesce(p_kills, 0), 0)) as k
+     where ll.location_id = p_location
+       and ll.quantity > 0
+       and random() < ll.drop_chance
+     group by ll.item_id
+  ) s;
 $slk$;
 
 revoke all on function public.site_loot_for_kill(uuid, integer) from public;
@@ -1598,10 +1729,94 @@ begin
     from public.location_loot ll
     join public.locations l on l.id = ll.location_id
    where l.name in ('Snare', 'Reaver', 'Blackden');
-  if v_rows <> 10 then
-    raise exception '0344 ASSERT (f) FAIL: the three authored sites carry % loot row(s) (want 10). Every item the deleted wave ladder could produce must still be produced by a row, or this slice closes a faucet silently', v_rows;
+  if v_rows <> 13 then
+    raise exception '0344 ASSERT (f) FAIL: the three authored sites carry % loot row(s) (want 13 — the 10 deterministic ladder rows plus the 3 that carry the two config-gated faucets across). Every item the deleted wave ladder could produce must still be produced by a row, or this slice closes a faucet silently', v_rows;
   end if;
 end $f$;
+
+-- (i) ██ THE FAUCET CLASS GUARD ██ NOTHING A RECIPE REQUIRES MAY LOSE ITS ONLY SOURCE
+--
+-- This is the assert that would have caught the defect this slice shipped in its first version, and
+-- it is written over the CLASS rather than over the two items that exposed it.
+--
+-- THE CLASS: this migration removes the engine's only call to public.pirate_loot_for_wave, so every
+-- item that function could produce loses its producer unless public.location_loot carries it. The
+-- item set is DERIVED from the function's own deployed body, not typed here — so if a future slice
+-- adds a sixth drop to that ladder and forgets to author it, this fails without being edited.
+--
+-- Then the sharper half: intersect that set with everything the three recipe-ingredient tables
+-- actually require. An item that a recipe demands and nothing produces is an unbuildable recipe on
+-- a live game — measured here as 5 captain recruit recipes (captain_memory_shard) and 2 hull build
+-- recipes (blueprint_fragment), against player stockpiles of zero.
+--
+-- IT CANNOT PASS VACUOUSLY. Three ways it could, all closed: the ladder-item set is re-derived from
+-- the deployed body and must be non-empty; the recipe set is read from the three tables and must be
+-- non-empty; and the intersection must be non-empty too, because if it were empty the sweep would
+-- be reporting "nothing to check" as "nothing wrong".
+do $i$
+declare
+  v_src   text;
+  v_items text[];
+  v_req   integer;
+  v_isect integer;
+  v_bad   text;
+  v_callers text;
+begin
+  select p.prosrc into v_src
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pirate_loot_for_wave';
+  if v_src is null then
+    raise exception '0344 ASSERT (i) FAIL: public.pirate_loot_for_wave does not exist, so the set of items whose faucet this slice disconnects cannot be derived. Pin the item list explicitly rather than sweeping an empty set';
+  end if;
+  -- every item id the ladder can emit, read out of its own body
+  select array_agg(distinct m[1] order by m[1]) into v_items
+    from regexp_matches(v_src, '''item_id'',[[:space:]]*''([a-z0-9_]+)''', 'g') m;
+  if v_items is null or array_length(v_items, 1) < 5 then
+    raise exception '0344 ASSERT (i) FAIL: only % item id(s) were derived from pirate_loot_for_wave''s body (want at least the 5 deterministic ladder items). The probe is broken, and a sweep over a short list would report a clean world', coalesce(array_length(v_items, 1), 0);
+  end if;
+
+  -- everything the recipes require
+  create temporary table if not exists _0344_req (item_id text primary key) on commit drop;
+  delete from _0344_req;
+  insert into _0344_req (item_id)
+  select distinct item_id from (
+    select item_id from public.captain_recipe_ingredients
+    union all select item_id from public.hull_recipe_ingredients
+    union all select item_id from public.module_recipe_ingredients) u
+  on conflict do nothing;
+  select count(*) into v_req from _0344_req;
+  if v_req = 0 then
+    raise exception '0344 ASSERT (i) FAIL: the three recipe-ingredient tables require 0 items — the sweep below would pass over an empty set';
+  end if;
+
+  select count(*) into v_isect from _0344_req r where r.item_id = any(v_items);
+  if v_isect = 0 then
+    raise exception '0344 ASSERT (i) FAIL: none of the % ladder item(s) is required by any recipe, so this guard is checking nothing. Either the derivation or the recipe read is wrong', array_length(v_items, 1);
+  end if;
+
+  -- THE PROPERTY: every item that a recipe requires AND the ladder used to produce must now have an
+  -- authored source. A row with drop_chance 0 counts as a SOURCE — the faucet exists and is shut,
+  -- which is a tuning state; no row at all is a dead end, which is a design defect.
+  select string_agg(r.item_id, ', ' order by r.item_id) into v_bad
+    from _0344_req r
+   where r.item_id = any(v_items)
+     and not exists (select 1 from public.location_loot ll where ll.item_id = r.item_id);
+  if v_bad is not null then
+    raise exception '0344 ASSERT (i) FAIL: [%] are required by captain/hull/module recipes and were produced ONLY by public.pirate_loot_for_wave, whose engine callers this migration deletes — and public.location_loot authors no source for them. That is a permanently unbuildable recipe on a live game. Author a location_loot row (drop_chance may be 0 to keep the faucet shut) or do not delete the call', v_bad;
+  end if;
+
+  -- AND THE PREMISE THIS GUARD RESTS ON: the ladder really is disconnected from the engine, so
+  -- location_loot really is the only source. If some function still called it, the two authorities
+  -- would both be live and the wave-depth coupling would still be reachable.
+  select string_agg(p.proname, ', ' order by p.proname) into v_callers
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.prokind in ('f', 'p')
+     and p.proname <> 'pirate_loot_for_wave'
+     and position('pirate_loot_for_wave(' in regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g')) > 0;
+  if v_callers is not null then
+    raise exception '0344 ASSERT (i) FAIL: [%] still call pirate_loot_for_wave. Loot would have two authorities and the wave-depth ladder would still be reachable from the engine', v_callers;
+  end if;
+end $i$;
 
 -- (g) NOTHING DARK. There is no flag, the dead knobs are GONE, and the compensation is applied.
 --
@@ -1615,9 +1830,10 @@ begin
     from public.game_config
    where key ilike '%pressure_step%' or key ilike '%killing_well%' or key ilike '%reinforcement%'
       or key in ('enemy_hp_danger_scale', 'enemy_attack_danger_scale', 'reward_danger_scale',
-                 'danger_time_divisor_seconds');
+                 'danger_time_divisor_seconds',
+                 'captain_shard_drop_rate', 'blueprint_fragment_drop_rate');
   if v_keys <> '' then
-    raise exception '0344 ASSERT (g) FAIL: game_config still carries (%). 0344 ships NO flag of its own, and the four now-unread danger knobs must be gone — a knob that could restore kill escalation is the adapter this slice exists to delete', v_keys;
+    raise exception '0344 ASSERT (g) FAIL: game_config still carries (%). 0344 ships NO flag of its own; the four now-unread danger knobs must be gone, and the two drop-rate knobs must be gone because their values have MOVED into public.location_loot.drop_chance — two places holding one drop rate is the duality this slice removes', v_keys;
   end if;
   -- enemy_synthetic_max_units is deliberately NOT swept: it survives as resolve_location_encounter's
   -- authored-plan ceiling (see section 4). What matters for D3 is that the TICK no longer reads it,

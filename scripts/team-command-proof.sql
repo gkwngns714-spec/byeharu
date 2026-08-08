@@ -1996,7 +1996,7 @@ begin
   if v_got is distinct from (v_legacy || jsonb_build_object('item_id', 'captain_memory_shard', 'quantity', 1)) then
     raise exception 'SHARDDROP FAIL: rate-1 wave-10 bundle wrong: %', v_got; end if;
 
-  raise notice 'TEAMCMD_PASS_SHARDDROP ok: committed seed 0 (dark); rate-0 byte-parity with the 0041 bundle (wave 10 + wave 1); rate-1 wave-2 gains exactly one appended shard (additive-only); wave-1 threshold holds at any rate; rate left 1 in-txn. (0344: the rate no longer reaches a fight — the tick''s two calls to pirate_loot_for_wave are deleted, so this block is now a DIRECT test of that function and TEAMSETTLE carries the site''s own location_loot item instead. The drop logic stays proven; the faucet is disconnected, which is a finding recorded at TEAMSETTLE.)';
+  raise notice 'TEAMCMD_PASS_SHARDDROP ok: committed seed 0 (dark); rate-0 byte-parity with the 0041 bundle (wave 10 + wave 1); rate-1 wave-2 gains exactly one appended shard (additive-only); wave-1 threshold holds at any rate; rate left 1 in-txn. (0344: the rate no longer reaches a fight — the tick''s two calls to pirate_loot_for_wave are deleted, so this block is now a DIRECT test of that function and the shard faucet it gates has MOVED to public.location_loot.drop_chance on Reaver + Blackden, its rate copied across from this very knob. The drop logic stays proven; the engine now reads the row. See TEAMSETTLE.)';
 end $$;
 
 -- ════════ BLOCK TEAMSETTLE (Slice D3, 0169): sortie settle — members return, reconcile home, M1 ════════
@@ -2154,14 +2154,23 @@ begin
   -- THE SITE'S OWN AUTHORED LOOT, read from the row the engine reads. This is what a kill pays now,
   -- and deriving it here is what keeps the deposit pin below honest through a content change: the
   -- quantity asserted is the site's, never a number typed into this harness.
+  -- (0344) drop_chance >= 1 is not a narrowing of the property, it is what keeps the property TRUE.
+  -- location_loot rows carry a per-kill drop_chance, and the two config-gated faucets 0344 carries
+  -- across (captain_memory_shard on Reaver/Blackden, blueprint_fragment on Blackden) seed at 0 on a
+  -- fresh database. This block's sortie resolves to the lowest-gate site — Snare — which authors
+  -- neither today; but an unfiltered `order by item_id limit 1` would pick a chance-0 row the moment
+  -- one were authored here ('blueprint_fragment' and 'captain_memory_shard' both sort ahead of
+  -- everything Snare carries), and this block would then assert a deposit that provably never
+  -- happens. The deposit pin needs an item a kill CERTAINLY pays; this selects exactly that.
   select ll.item_id, ll.quantity into v_loot_item, v_loot_qty
     from public.location_loot ll
     join public.combat_encounters ce on ce.location_id = ll.location_id
    where ce.id = v_enc
+     and ll.drop_chance >= 1
    order by ll.item_id
    limit 1;
   if v_loot_item is null or v_loot_qty is null or v_loot_qty < 1 then
-    raise exception 'TEAMSETTLE FAIL: the sortie site authors no public.location_loot row (item %, qty %) — a kill would pay metal only, and the end-to-end ITEM deposit this block exists to close would have nothing to carry',
+    raise exception 'TEAMSETTLE FAIL: the sortie site authors no CERTAIN (drop_chance >= 1) public.location_loot row (item %, qty %) — a kill would pay metal only, or only a chance drop, and the end-to-end ITEM deposit this block exists to close would have nothing it can rely on carrying',
       v_loot_item, v_loot_qty; end if;
   -- OWN THE PRESSURE ROW. Cap 1 means at most ONE body stands at a time, so each phase is exactly one
   -- arrival and exactly one kill — and the "2 units alive" pin below can never be reading a straggler.
@@ -2202,20 +2211,28 @@ begin
     raise exception 'TEAMSETTLE FAIL: the won bundle is empty after two destroyed bodies — there is nothing for the settle to carry home and every deposit pin below would be vacuous'; end if;
   -- ██ THE 0171 SHARD CARRY IS DELETED HERE, AND IT IS NOT REPLACED BY A WEAKER FORM ██
   -- It required the bundle to carry exactly one captain_memory_shard at captain_shard_drop_rate 1.
-  -- That item has EXACTLY ONE source in the game — public.pirate_loot_for_wave, wave >= 2 (0171) — and
-  -- 0344 deletes both calls to that function from the tick. No arrangement of knobs, waves or clocks
-  -- puts a shard in a bundle any more, so the assertion could not be re-premised: it is not that this
-  -- fixture stopped reaching it, it is that the faucet is disconnected. The end-to-end ITEM carry it
-  -- was serving is preserved above and below, against the item the engine now really pays.
-  -- ⚠ THAT IS A FINDING ABOUT THE MIGRATION, NOT ABOUT THIS PROOF, AND IT IS RECORDED RATHER THAN
-  -- QUIETLY ABSORBED: captain_memory_shard is the shared gating ingredient on all six captain recruit
-  -- recipes (0125), and 0171 exists precisely because "recruiting is dead-ended without a shard
-  -- source". 0344's section 2 re-authors five deterministic ladder items into public.location_loot and
-  -- does not carry the two CONFIG-GATED drops across — the shard, and 0185's blueprint_fragment. Their
-  -- knobs (captain_shard_drop_rate, blueprint_fragment_drop_rate) survive as live knobs that now gate
-  -- nothing, which is the liability 0344's own section 4 cites as its reason for deleting dead knobs.
+  -- That item's source was public.pirate_loot_for_wave, wave >= 2 (0171), and 0344 deletes both calls
+  -- to that function from the tick. The old assertion cannot be re-premised AS WRITTEN because the
+  -- wave-depth axis it stood on no longer exists: there are no waves, and the shard is now paid PER
+  -- ENEMY DESTROYED from public.location_loot at the sites 0344 authors it on — Reaver and Blackden,
+  -- not this block's lowest-gate Snare sortie. The end-to-end ITEM carry it was serving is preserved
+  -- above and below, against the item the engine really pays at THIS site.
+  -- ⚠ THAT WAS A FINDING ABOUT THE MIGRATION, IT WAS RAISED HERE RATHER THAN QUIETLY ABSORBED, AND
+  -- IT HAS SINCE BEEN FIXED IN 0344 — recorded, not deleted, because the finding is why the fix
+  -- exists. captain_memory_shard is the shared gating ingredient on 5 captain recruit recipes
+  -- (0125:64-78 — the earlier note here said six; the measured number is 5), and 0171 exists
+  -- precisely because "recruiting is dead-ended without a shard source". 0344's first version
+  -- re-authored only the five DETERMINISTIC ladder items into public.location_loot and left both
+  -- CONFIG-GATED drops behind — the shard, and 0185's blueprint_fragment (required qty 2 by 2 hull
+  -- recipes) — which would have left both permanently unobtainable.
+  -- 0344 NOW CARRIES BOTH: location_loot gained a per-kill drop_chance column, the shard is authored
+  -- at Reaver + Blackden and the fragment at Blackden (site difficulty replacing the old wave-depth
+  -- gate), and each row's chance is COPIED from the knob that used to gate it at apply time — so the
+  -- two knobs are deleted rather than left gating nothing, and no tuning is lost. 0344's self-assert
+  -- (i) now fails the deploy for the whole CLASS: any item a captain/hull/module recipe requires that
+  -- the ladder was the only producer of must have an authored location_loot source.
   -- The direct unit tests of pirate_loot_for_wave in TEAMCMD_PASS_SHARDDROP above still pass — the
-  -- function is untouched — so the drop LOGIC remains proven; what is gone is the engine consuming it.
+  -- function is untouched — so the drop LOGIC remains proven; what moved is where the engine reads it.
   select count(*) into n from public.combat_units where encounter_id = v_enc and alive_count > 0;
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members alive before retreat (want 2)', n; end if;
 

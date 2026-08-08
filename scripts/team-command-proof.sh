@@ -374,8 +374,14 @@ if [ "$MODE" = "selftest" ]; then
   # DERIVED from the site's rows, never named here, so a content change cannot silently gut this.
   grep -qF "loot_merge_items must ACCUMULATE, not replace" "$SQL" \
     || fail "harness does not ASSERT the won bundle ACCUMULATES the site's per-kill loot across BOTH payout events (the property the old wave-2 shard pin actually bought — a bundle that was replaced rather than merged would still look right on the last read)"
-  grep -qF "the sortie site authors no public.location_loot row" "$SQL" \
+  grep -qF "the sortie site authors no CERTAIN (drop_chance >= 1) public.location_loot row" "$SQL" \
     || fail "harness lacks TEAMSETTLE's authored-loot non-vacuity guard (a site with no loot row pays metal only, and every ITEM deposit pin below it would be vacuous)"
+  # 0344: location_loot rows carry a per-kill drop_chance, and the two config-gated faucets the
+  # migration carries across (captain_memory_shard, blueprint_fragment) seed at 0. TEAMSETTLE must
+  # select an item a kill CERTAINLY pays, or the deposit pin asserts an outcome that may never occur —
+  # a vacuity that would only surface as a flake, on the day someone authors a chance row at Snare.
+  grep -qF "and ll.drop_chance >= 1" "$SQL" \
+    || fail "harness does not restrict TEAMSETTLE's derived loot item to a CERTAIN drop (drop_chance >= 1) — a chance-gated row would make the end-to-end deposit pin probabilistic"
   # 0333: the global player_inventory pool is DROPPED — items live PER PORT in base_items — so the
   # .sql assertion names the base the settle deposited into, and this pin follows it there.
   grep -qF "was not deposited into the settling base" "$SQL" \
