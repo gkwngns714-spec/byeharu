@@ -314,3 +314,75 @@ test('every damage number still arrives — the round carries it, it is never lo
   await expect(page.locator('[data-testid^="spatial-combat-splat-"][data-unit="p2"]')).toHaveCount(2)
   await expect(page.locator('[data-testid^="spatial-combat-splat-"][data-unit="e3"]')).toHaveCount(2)
 })
+
+// ── THE REACH REGION IS ONE REGION, WITH AN EDGE ───────────────────────────────────────────────────
+// The owner, looking at the live game: "my fleet range shape in blue is weird."
+//
+// The SET drawn was already exactly the fire rule (spatialCombatLayer.spec.ts pins the measured
+// 4-hull / 6-enemy case). What it had no way to READ as was a thing: N filled discs under a 14%
+// group opacity with `stroke: 'none'` — no boundary anywhere — while the fleet those discs belong to
+// is drawn as ONE glyph. One actor, four unoutlined lobes.
+//
+// The union does not move; it is the rule. What is added is a SILHOUETTE — the same discs as one
+// path, stroked and masked to the region's own exterior — and only a browser can answer whether that
+// mask left anything on screen. A `<mask>` that erased the whole stroke would still typecheck, still
+// pass every pure spec, and render nothing at all.
+const FLEET_EDGE = `spatial-combat-reach-edge-${FLEET_KEY}`
+
+test('the fleet reach region carries a boundary that is actually PAINTED', async ({ page }) => {
+  const edge = page.getByTestId(FLEET_EDGE)
+  await expect(edge).toHaveCount(1)
+  const box = await edge.boundingBox()
+  const fill = await page.getByTestId(`spatial-combat-range-${FLEET_KEY}`).boundingBox()
+  // The stroke survived the mask: it spans the region it outlines, rather than being erased whole.
+  expect(box!.width).toBeGreaterThan(fill!.width * 0.9)
+  expect(box!.height).toBeGreaterThan(fill!.height * 0.9)
+  // …and it is SCENERY: drawn before the glyphs, so an outline never sits on top of a ship.
+  const order = await page.evaluate(
+    ([a, b]) => {
+      const ea = document.querySelector(`[data-testid="${a}"]`)!
+      const eb = document.querySelector(`[data-testid="${b}"]`)!
+      return ea.compareDocumentPosition(eb) & Node.DOCUMENT_POSITION_FOLLOWING ? 'before' : 'after'
+    },
+    [FLEET_EDGE, FLEET],
+  )
+  expect(order).toBe('before')
+})
+
+test('THE OWNER’S OWN FORMATION — as wide as its reach — still draws ONE outlined region', async ({ page }) => {
+  // 5.14 x 4.24 world units of spread against weapon range 5 (encounter 49acbae0, measured). This is
+  // the geometry that produced the lumpy edgeless cloud; the 6-unit ring above is a different, looser
+  // one, so the hard case needs its own fixture.
+  await page.getByTestId('real-formation').click()
+  const fill = page.getByTestId(`spatial-combat-range-${FLEET_KEY}`)
+  await expect(fill).toHaveAttribute('data-hulls', '4') // four living hulls, four discs — still the union
+  await expect(page.getByTestId(FLEET_EDGE)).toHaveCount(1)
+  const edge = await page.getByTestId(FLEET_EDGE).boundingBox()
+  const glyph = await centre(page, FLEET)
+  // ONE region, and the fleet stands INSIDE it — not beside it, which is what a lead-centred circle
+  // on a chord-spread formation kept producing.
+  expect(glyph.x).toBeGreaterThan(edge!.x)
+  expect(glyph.x).toBeLessThan(edge!.x + edge!.width)
+  expect(glyph.y).toBeGreaterThan(edge!.y)
+  expect(glyph.y).toBeLessThan(edge!.y + edge!.height)
+})
+
+// ── THE DEAD STOP SHOWING DAMAGE ───────────────────────────────────────────────────────────────────
+// The owner: "when fleet is destroyed, i want also a damage shown to be disappeared as well."
+//
+// e3 is destroyed on tick 17 and its two splats (the 9 and the ✕) are the last hit of the fight. A
+// destroyed unit is never targeted again (0317), so no newer tick ever carries a hit: before this,
+// that tick stayed "latest" indefinitely and its number sat on the wreck for as long as the player
+// looked at the map. This is the ONLY proof that can see it — every resolver is correct at every
+// instant while it happens; what was wrong is that the instant never ended.
+test('the corpse lets go of its damage — the killing blow shows, and then it is GONE', async ({ page }) => {
+  const splats = page.locator('[data-testid^="spatial-combat-splat-"][data-unit="e3"]')
+  await expect(splats).toHaveCount(2) // it is shown: the number and the kill mark
+  // One exchange later, with NOTHING else happening — the same rows, the same events, only the clock
+  // moved. (combatMotion.TICK_READOUT_MS, plus a margin for the round's own flight before it lands.)
+  await expect(splats).toHaveCount(0, { timeout: 12000 })
+  // …and the fire line that killed it went with it, rather than leaving a permanent lane at a wreck.
+  await expect(page.getByTestId('spatial-combat-fire')).toHaveCount(0)
+  // The wreck itself was already drawing no glyph; the map is now clean of it entirely.
+  await expect(page.getByTestId('spatial-combat-unit-unit-e3')).toHaveCount(0)
+})

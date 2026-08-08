@@ -31,6 +31,7 @@ import {
   TICKS,
   UNITS,
   UNITS_NEXT_TICK,
+  UNITS_REAL_FORMATION,
   UNITS_REPOSITIONED,
 } from './fightFixtures'
 
@@ -40,10 +41,13 @@ function Fight({
   twoFights,
   advanced,
   repositioned,
+  tight,
 }: {
   twoFights: boolean
   advanced: boolean
   repositioned: boolean
+  /** the owner's REAL formation — as wide as its own weapon range. The reach region's hard case. */
+  tight: boolean
 }) {
   // `repositioned` moves the WHOLE engagement — hulls, enemies and the anchor — by one delta, which
   // is what a 0337 in-combat reposition does to it tick after tick. It is the state in which the
@@ -52,7 +56,7 @@ function Fight({
   const encounters = twoFights ? [mine, OTHER_ENCOUNTER] : [mine]
   // `advanced` delivers the NEXT server tick's rows — a second observation, which is the only way a
   // rendered proof can watch a step being crossed rather than a glyph standing still.
-  const base = repositioned ? UNITS_REPOSITIONED : advanced ? UNITS_NEXT_TICK : UNITS
+  const base = tight ? UNITS_REAL_FORMATION : repositioned ? UNITS_REPOSITIONED : advanced ? UNITS_NEXT_TICK : UNITS
   const units = twoFights ? [...base, ...OTHER_UNITS] : base
   const events = twoFights ? [...EVENTS, ...OTHER_EVENTS] : EVENTS
   return (
@@ -97,10 +101,11 @@ function Harness() {
   const [twoFights, setTwoFights] = useState(false)
   const [advanced, setAdvanced] = useState(false)
   const [repositioned, setRepositioned] = useState(false)
+  const [tight, setTight] = useState(false)
   return (
     <>
       <div id="map-host">
-        <Fight twoFights={twoFights} advanced={advanced} repositioned={repositioned} />
+        <Fight twoFights={twoFights} advanced={advanced} repositioned={repositioned} tight={tight} />
       </div>
       <div id="controls">
         <button data-testid="toggle-second-fight" onClick={() => setTwoFights((v) => !v)}>
@@ -113,6 +118,11 @@ function Harness() {
             taken against exactly the fight it was taken against before. */}
         <button data-testid="reposition-fight" onClick={() => setRepositioned((v) => !v)}>
           fight moved: {repositioned ? 'on' : 'off'}
+        </button>
+        {/* The owner's own measured formation (5.14 x 4.24 world units, weapon range 5). Off by
+            default so every existing measurement is taken against exactly the fight it always was. */}
+        <button data-testid="real-formation" onClick={() => setTight((v) => !v)}>
+          real formation: {tight ? 'on' : 'off'}
         </button>
       </div>
     </>

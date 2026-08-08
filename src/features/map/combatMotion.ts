@@ -231,26 +231,77 @@ export const SHOT_MAX_MS = 900
  *  the trail's tail is simply where the same interpolation says it was that fraction ago. */
 export const SHOT_TRAIL_FRACTION = 0.18
 
-/** event id → the local clock ms this client FIRST saw that fire event. A tick's events stay the
- *  latest tick for a full 3 s and arrive again on every 1.5 s poll, so without this the flight would
- *  restart on each poll and the round would judder back to the muzzle. */
-export type ShotSightings = Readonly<Record<number, number>>
+/** event id → the local clock ms this client FIRST saw that event. A tick's events stay the latest
+ *  tick for a full 3 s and arrive again on every 1.5 s poll, so without this the flight would
+ *  restart on each poll and the round would judder back to the muzzle — and, since this ledger was
+ *  widened to every tick artifact, a damage number would never learn how old it is. */
+export type EventSightings = Readonly<Record<number, number>>
 
-/** THE REDUCER for fire events: remember when each salvo was first seen, forget the ones that are
+/** THE ARTIFACTS OF ONE EXCHANGE — the events whose on-map drawing belongs to the tick that wrote
+ *  them: the salvo (a fire line and a round), the hit (a damage number) and the kill (a ✕).
+ *
+ *  ONE PREDICATE, because they share one lifetime. Three copies of "which events does the map draw"
+ *  is how the fire line and the hitsplat would drift apart. A spatial event names a `unit_id`; the
+ *  aggregate (dark-path) rows carry `group` instead and are not drawn anywhere, so they are not
+ *  tracked either. */
+export const isTickArtifact = (e: CombatEvent): boolean =>
+  (e.event_type === 'missile_salvo' || e.event_type === 'hull_damage' || e.event_type === 'unit_destroyed') &&
+  !!e.payload_json &&
+  e.payload_json['unit_id'] != null
+
+/**
+ * HOW LONG AN EXCHANGE STAYS ON THE MAP — and why this constant had to exist.
+ *
+ * THE OWNER: *"when fleet is destroyed, i want also a damage shown to be disappeared as well."*
+ *
+ * MEASURED CAUSE. Every artifact of a tick was drawn from `latestTickByEncounter` and had a START
+ * but NO END: a splat appeared when its round landed and then rendered on every subsequent frame for
+ * as long as its tick stayed the newest one for that encounter. In a busy fight that is invisible —
+ * the next tick replaces it three seconds later. **When the field empties it is permanent.** The
+ * blow that kills the last pirate emits the last `hull_damage` + `unit_destroyed` of the fight; dead
+ * units are not targeted again (0317, "the dead do not shoot"), so no newer tick ever carries a hit,
+ * so that tick stays "latest" indefinitely and its damage number and its ✕ sit over the wreck until
+ * something else gets shot. Same for the fire lines. That is the corpse still showing its damage.
+ *
+ * THE RULE: an exchange's drawing is bounded by the exchange. It is never blanked before the NEXT
+ * tick could plausibly have arrived, and it is always gone within one such window — so this is
+ * exactly `STEP_MAX_MS`, the bound this file already states for "one plausible server tick", rather
+ * than a new number. Composing it means a cadence change moves both together.
+ *
+ * IT CAN NEVER SHORTEN A LIVE FIGHT'S READOUT. Only the latest tick's artifacts are resolved at all,
+ * so on a fight that is still exchanging fire the next tick has already replaced them long before
+ * this expires; the expiry is reachable only when nothing further happens — which is the case the
+ * owner reported, and the only case it changes.
+ */
+export const TICK_READOUT_MS = STEP_MAX_MS
+
+/** THE REDUCER for a tick's artifacts: remember when each was first seen, forget the ones that are
  *  gone. Pure. An event already known keeps its ORIGINAL sighting (a shot in flight is never
- *  restarted); an event no longer in hand is dropped so the map cannot grow. */
-export function observeShots(
-  prev: ShotSightings,
+ *  restarted, and a damage number never has its clock reset by a poll); an event no longer in hand
+ *  is dropped so the ledger cannot grow. */
+export function observeCombatEvents(
+  prev: EventSightings,
   events: readonly CombatEvent[],
   nowMs: number,
-): ShotSightings {
+): EventSightings {
   const next: Record<number, number> = {}
   for (const e of events) {
-    if (e.event_type !== 'missile_salvo') continue
-    if (!e.payload_json || e.payload_json['unit_id'] == null) continue
+    if (!isTickArtifact(e)) continue
     next[e.id] = prev[e.id] ?? nowMs
   }
   return next
+}
+
+/** Is the artifact of event `id` still within its exchange's window? UNKNOWN → true: a caller that
+ *  keeps no ledger (every pure spec that passes none) sees exactly the pre-expiry behaviour, and a
+ *  real event is never hidden because the client failed to notice it. */
+export function tickArtifactLive(
+  sightings: EventSightings | undefined,
+  id: number,
+  nowMs: number,
+): boolean {
+  const seen = sightings?.[id]
+  return !finite(seen) || nowMs < seen + TICK_READOUT_MS
 }
 
 /** A weapon entry we can actually characterise: it must carry the two numbers the round is drawn
@@ -425,7 +476,7 @@ export function resolveOrdnance(args: {
   endpoints: ReadonlyMap<string, ShotEndpoint>
   /** the raw unit rows — the lead election reads `aggro_priority`, which the endpoint view drops. */
   units: readonly CombatUnit[]
-  sightings: ShotSightings
+  sightings: EventSightings
   nowMs: number
 }): OrdnanceView[] {
   const out: OrdnanceView[] = []
@@ -500,7 +551,7 @@ export function resolveShotArrivals(args: {
   latestTick: ReadonlyMap<string, number>
   endpoints: ReadonlyMap<string, ShotEndpoint>
   units: readonly CombatUnit[]
-  sightings: ShotSightings
+  sightings: EventSightings
 }): ReadonlyMap<string, number> {
   const out = new Map<string, number>()
   const unitById = new Map(args.units.map((u) => [u.id, u]))
@@ -539,8 +590,12 @@ export function resolveShotArrivals(args: {
   return out
 }
 
-/** Is any round still in the air at `nowMs`? The other half of the frame loop's stop condition. */
-export function anyShotInFlight(sightings: ShotSightings, nowMs: number): boolean {
-  for (const id in sightings) if (sightings[id] + SHOT_MAX_MS > nowMs) return true
+/** Is any of this exchange's drawing still due to change at `nowMs`? The other half of the frame
+ *  loop's stop condition — and, since the ledger was widened, the thing that keeps the clock
+ *  advancing until the last damage number has EXPIRED. Stopping the loop at the last round's landing
+ *  would freeze `nowMs`, and a splat that is drawn until `nowMs` passes its window would then never
+ *  reach it: the corpse would keep its number for exactly the reason this bounds it. */
+export function anyTickArtifactLive(sightings: EventSightings, nowMs: number): boolean {
+  for (const id in sightings) if (sightings[id] + TICK_READOUT_MS > nowMs) return true
   return false
 }

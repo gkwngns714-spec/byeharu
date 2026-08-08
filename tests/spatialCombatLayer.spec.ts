@@ -8,11 +8,13 @@ import {
   resolveSpatialUnits,
   resolveFireLines,
   resolveHitSplats,
+  reachRegionPath,
   resolveRenderPoints,
   unitWeaponRange,
 } from '../src/features/map/spatialCombatLayer'
 import { resolveCombatActors } from '../src/features/map/combatActors'
 import { WORLD_TO_VIEWBOX_SCALE } from '../src/features/map/openSpaceTransform'
+import { observeCombatEvents, TICK_READOUT_MS } from '../src/features/map/combatMotion'
 import type { CombatEvent, CombatUnit } from '../src/features/combat/combatTypes'
 
 // COMBAT-S4 — pure spec for the spatial-combat map layer (the territoryLayer/miningFieldRangeLayer/
@@ -66,6 +68,8 @@ interface LayerArgs {
   norm: (p: { x: number; y: number }) => { x: number; y: number }
   k: number
   pxScale?: number
+  sightings?: Readonly<Record<number, number>>
+  nowMs?: number
 }
 const layer = (a: LayerArgs) => spatialCombatLayer({ ...a, actors: resolveCombatActors(a.units) })
 const pointsOf = (units: CombatUnit[]) => resolveRenderPoints(resolveCombatActors(units))
@@ -185,6 +189,102 @@ test('THE RING IS THE RULE — every hull that can fire contributes its OWN disc
     (f) => Math.hypot((f.pos_x as number) - LEAD.x, (f.pos_y as number) - LEAD.y) <= REACH,
   )
   expect(insideLeadCircle).toHaveLength(2)
+})
+
+// ── THE REGION HAS AN EDGE ─ "my fleet range shape in blue is weird" ──────────────────────
+// The SET was already right (the test above). What it had no way to be read as was a THING: N filled
+// discs under a 14% group opacity, `stroke: 'none'`, no boundary anywhere. On the owner's measured
+// geometry — four hulls spanning 5.1 x 4.2 world units with every weapon range 5, i.e. a formation
+// as wide as its own reach — that is a lumpy four-lobed wash under a fleet drawn as ONE glyph.
+// The union is the fire rule and does not move. What is added is a silhouette: the SAME discs as one
+// path, stroked and masked to the region's own exterior, so the internal arcs are cut and only the
+// outer boundary survives.
+
+/** The union path, read back as discs. Same information the fill circles carry, from the element the
+ *  EDGE is actually drawn with — so this checks the outline covers the reach, not a copy of it. */
+const edgeDiscsOf = (els: ReactElement[], key: string) => {
+  const g = els.find((e) => (e.props as Props)['data-testid'] === `spatial-combat-reach-edge-${key}`)
+  if (!g) return []
+  const kids = (g.props as { children: ReactElement[] }).children
+  const edge = kids.find((c) => (c.props as Props)['key'] === 'edge' || (c.props as Props)['stroke'] !== undefined)
+  const d = String((edge?.props as { d?: string })?.d ?? '')
+  const out: { cx: number; cy: number; r: number }[] = []
+  for (const m of d.matchAll(/M(-?[\d.eE+]+),(-?[\d.eE+]+)A(-?[\d.eE+]+),/g)) {
+    const r = Number(m[3])
+    out.push({ cx: Number(m[1]) + r, cy: Number(m[2]), r })
+  }
+  return out
+}
+
+test('reachRegionPath: one closed subpath per disc, all wound the same way (a nonzero UNION)', () => {
+  const d = reachRegionPath([
+    { cx: 0, cy: 0, r: 5 },
+    { cx: 4, cy: 0, r: 5 },
+  ])
+  // Two subpaths, each closed — an open subpath would be filled by an implicit close and stroked as
+  // a gap, which is exactly the seam this shape exists not to have.
+  expect(d.match(/M/g)).toHaveLength(2)
+  expect(d.match(/Z/g)).toHaveLength(2)
+  // Same sweep flag on every arc: opposite windings would CANCEL under fill-rule nonzero and punch a
+  // hole through the overlap — the region would claim it cannot shoot the one place it best can.
+  expect(d.match(/ 0 1,0 /g)).toHaveLength(4)
+  expect(d).not.toContain(' 0 1,1 ')
+  expect(reachRegionPath([])).toBe('')
+})
+
+test('THE EDGE IS THE SAME REGION — the outline is drawn from the discs the fill is', () => {
+  const els = layer({
+    units: [
+      unit({ id: 'p0', pos_x: 0, pos_y: 0, weapons_json: [{ range: 5 }] }),
+      unit({ id: 'p1', pos_x: 3, pos_y: 0, weapons_json: [{ range: 5 }] }),
+      unit({ id: 'p2', pos_x: 0, pos_y: 3, weapons_json: [{ range: 5 }] }),
+    ],
+    events: [],
+    norm,
+    k: 1,
+  })
+  const fill = discsOf(els, 'fleet-e1')
+  const edge = edgeDiscsOf(els, 'fleet-e1')
+  expect(fill).toHaveLength(3)
+  expect(edge).toHaveLength(3)
+  for (let i = 0; i < fill.length; i++) {
+    expect(edge[i].cx).toBeCloseTo(fill[i].cx, 9)
+    expect(edge[i].cy).toBeCloseTo(fill[i].cy, 9)
+    expect(edge[i].r).toBeCloseTo(fill[i].r, 9)
+  }
+})
+
+test('the edge is MASKED to the region’s exterior — an internal arc is not a boundary', () => {
+  const els = layer({ units: [unit({ id: 'u1', weapons_json: [{ range: 300 }] })], events: [], norm, k: 1 })
+  const g = els.find((e) => (e.props as Props)['data-testid'] === 'spatial-combat-reach-edge-fleet-e1')!
+  const kids = (g.props as { children: ReactElement[] }).children
+  const defs = kids[0]
+  const mask = (defs.props as { children: ReactElement }).children
+  const maskId = (mask.props as Props)['id'] as string
+  // white everywhere in the box, BLACK over the union itself → only the OUTSIDE half of the stroke
+  // survives, so every arc buried under a neighbouring disc disappears whole.
+  const maskKids = (mask.props as { children: ReactElement[] }).children
+  expect((maskKids[0].props as Props)['fill']).toBe('#fff')
+  expect((maskKids[1].props as Props)['fill']).toBe('#000')
+  expect((maskKids[1].props as Props)['fillRule']).toBe('nonzero')
+  const edge = kids[1].props as Props
+  expect(edge['mask']).toBe(`url(#${maskId})`)
+  expect(edge['fill']).toBe('none')
+  expect(edge['stroke']).toBe('var(--color-accent)')
+})
+
+test('an ENEMY is one hull, so its region is still exactly one circle — and one circle’s outline', () => {
+  const els = layer({
+    units: [unit({ id: 'p', side: 'player' }), unit({ id: 'e', side: 'enemy', pos_x: 400, weapons_json: [{ range: 4 }] })],
+    events: [],
+    norm,
+    k: 1,
+  })
+  expect(discsOf(els, 'unit-e')).toHaveLength(1)
+  const edge = edgeDiscsOf(els, 'unit-e')
+  expect(edge).toHaveLength(1)
+  expect(edge[0]).toMatchObject({ cx: 400, cy: 200 })
+  expect(edge[0].r).toBeCloseTo(4 * WORLD_TO_VIEWBOX_SCALE, 9)
 })
 
 test('a DEAD hull contributes no reach — a wreck is not a gun the fleet still has', () => {
@@ -444,4 +544,84 @@ test('the layer renders a splat element per damaged unit, on top of the glyphs',
   expect(splatIdx).toBeGreaterThan(-1)
   // drawn last => a number is never hidden behind the ship it belongs to
   expect(splatIdx).toBe(ids.length - 1)
+})
+
+// ── D7: THE DEAD STOP SHOWING DAMAGE ──────────────────────────────────────────────────────────────
+// The owner: "when fleet is destroyed, i want also a damage shown to be disappeared as well."
+//
+// Both halves of one defect. A tick's artifacts are resolved from `latestTickByEncounter`, which is
+// correct while the fight is still exchanging fire — the next tick replaces them three seconds
+// later. It is NOT correct once the field empties: the blow that kills the last hostile writes the
+// last hull_damage + unit_destroyed of the fight, a destroyed unit is never targeted again (0317),
+// so no newer tick ever carries a hit and that tick stays "latest" indefinitely. Its number and its
+// ✕ then sit on the wreck forever, and the fire line with them. `life` bounds the DRAWING by the
+// exchange it belongs to.
+const T0 = 1_700_000_000_000
+const deadEnemy = () =>
+  unit({ id: 'e9', side: 'enemy', pos_x: 400, pos_y: 200, alive_count: 0, hp_current: 0 })
+const killTick = (): CombatEvent[] => [
+  salvo({ id: 30, tick_number: 9, seq: 0, payload_json: { unit_id: 'u1', target_id: 'e9' } }),
+  salvo({ id: 31, tick_number: 9, seq: 1, event_type: 'hull_damage', payload_json: { unit_id: 'e9', damage: 9.4 } }),
+  salvo({ id: 32, tick_number: 9, seq: 2, event_type: 'unit_destroyed', payload_json: { unit_id: 'e9', count: 1 } }),
+]
+
+test('the KILLING BLOW still renders — expiry must not resurrect the defect it sits beside', () => {
+  const rows = [unit({ id: 'u1' }), deadEnemy()]
+  const events = killTick()
+  const sightings = observeCombatEvents({}, events, T0)
+  const splats = resolveHitSplats(events, pointsOf(rows), undefined, { sightings, nowMs: T0 + 500 })
+  // the number AND the kill mark, both on a row whose alive_count is already 0
+  expect(splats).toHaveLength(2)
+  expect(splats.filter((s) => s.destroyed)).toHaveLength(1)
+  expect(resolveFireLines(events, pointsOf(rows), { sightings, nowMs: T0 + 500 })).toHaveLength(1)
+})
+
+test('…and then it LEAVES — the corpse keeps neither its damage, its ✕ nor its lane', () => {
+  const rows = [unit({ id: 'u1' }), deadEnemy()]
+  const events = killTick()
+  const sightings = observeCombatEvents({}, events, T0)
+  // One exchange later nothing further has happened — which, with the field cleared, is the normal
+  // case and not an edge one. The rows and the events are IDENTICAL; only the clock moved.
+  const after = { sightings, nowMs: T0 + TICK_READOUT_MS + 1 }
+  expect(resolveHitSplats(events, pointsOf(rows), undefined, after)).toEqual([])
+  expect(resolveFireLines(events, pointsOf(rows), after)).toEqual([])
+  // …and the wreck was already drawing no glyph and no reach, so the map is now clean of it.
+  const els = spatialCombatLayer({
+    actors: resolveCombatActors(rows),
+    units: rows,
+    events,
+    norm,
+    k: 1,
+    sightings,
+    nowMs: T0 + TICK_READOUT_MS + 1,
+  })
+  expect(byTestId(els, 'spatial-combat-unit-unit-e9')).toBeUndefined()
+  expect(byTestId(els, 'spatial-combat-range-unit-e9')).toBeUndefined()
+  expect(els.filter((e) => String((e.props as Props)['data-testid'] ?? '').startsWith('spatial-combat-splat-'))).toEqual([])
+})
+
+test('a caller with NO ledger is unchanged — the expiry can never hide a real exchange', () => {
+  const rows = [unit({ id: 'u1' }), deadEnemy()]
+  const events = killTick()
+  // No `life` argument at all: byte-identical to the behaviour before the window existed. Every
+  // existing caller and spec that passes none is measuring exactly what it always did.
+  expect(resolveHitSplats(events, pointsOf(rows))).toHaveLength(2)
+  expect(resolveFireLines(events, pointsOf(rows))).toHaveLength(1)
+  // An event the ledger never saw is LIVE, not expired — a blink is not a reason to drop a hit.
+  const partial = { sightings: {}, nowMs: T0 + 10 * TICK_READOUT_MS }
+  expect(resolveHitSplats(events, pointsOf(rows), undefined, partial)).toHaveLength(2)
+})
+
+test('a live fight is untouched — the window is longer than the exchange that replaces it', () => {
+  const rows = [unit({ id: 'u1' }), unit({ id: 'e9', side: 'enemy', pos_x: 400, pos_y: 200 })]
+  const events = [
+    ...killTick().map((e) => ({ ...e, tick_number: 9 })),
+    // the NEXT tick lands, 3 s later, and is what actually clears the previous one
+    salvo({ id: 40, tick_number: 10, seq: 0, event_type: 'hull_damage', payload_json: { unit_id: 'e9', damage: 3 } }),
+  ]
+  const sightings = observeCombatEvents({}, events, T0)
+  const splats = resolveHitSplats(events, pointsOf(rows), undefined, { sightings, nowMs: T0 + 3000 })
+  // tick 10's hit only — the latest-tick filter, not the window, is what retires tick 9.
+  expect(splats).toHaveLength(1)
+  expect(splats[0].damage).toBe(3)
 })

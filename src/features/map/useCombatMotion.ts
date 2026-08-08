@@ -34,13 +34,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CombatEvent, CombatUnit } from '../combat/combatTypes'
 import {
-  anyShotInFlight,
+  anyTickArtifactLive,
   anyUnitInMotion,
+  observeCombatEvents,
   observeCombatUnits,
-  observeShots,
   smoothCombatUnits,
   type CombatMotion,
-  type ShotSightings,
+  type EventSightings,
 } from './combatMotion'
 
 /** ~30 fps. See the header — this bounds React reconciliation, not the smoothness of the motion. */
@@ -50,8 +50,9 @@ export interface CombatMotionState {
   /** the caller's rows with pos_x/pos_y moved to where they are NOW. Pass these wherever the raw
    *  rows went, so every consumer of resolveSpatialUnits (glyphs AND the fleet badge) agrees. */
   units: CombatUnit[]
-  /** when each fire event was first seen — the ordnance's own zero. */
-  sightings: ShotSightings
+  /** when each of the exchange's events was first seen — the ordnance's zero AND the damage
+   *  number's expiry (combatMotion.TICK_READOUT_MS). */
+  sightings: EventSightings
   /** the clock the pure layer renders at. */
   nowMs: number
 }
@@ -70,7 +71,7 @@ export function useCombatMotion(
   events: readonly CombatEvent[],
 ): CombatMotionState {
   const [motion, setMotion] = useState<CombatMotion>({})
-  const [sightings, setSightings] = useState<ShotSightings>({})
+  const [sightings, setSightings] = useState<EventSightings>({})
   const [nowMs, setNowMs] = useState(() => Date.now())
   const frame = useRef<number | null>(null)
   const lastFrameMs = useRef(0)
@@ -84,15 +85,17 @@ export function useCombatMotion(
   }, [units])
 
   useEffect(() => {
-    // Same shape for the fire events: remember when each salvo was first seen so a round in flight is
-    // never restarted by the next poll handing back the same tick.
+    // Same shape for the exchange's events: remember when each was first seen, so a round in flight
+    // is never restarted by the next poll handing back the same tick — and so a damage number knows
+    // how old it is, which is what stops it outliving the fight over a wreck.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSightings((prev) => observeShots(prev, events, Date.now()))
+    setSightings((prev) => observeCombatEvents(prev, events, Date.now()))
   }, [events])
 
   useEffect(() => {
-    // Nothing on the map is moving and nothing is in the air → do not schedule a single frame.
-    if (!anyUnitInMotion(motion, Date.now()) && !anyShotInFlight(sightings, Date.now())) return
+    // Nothing on the map is moving and this exchange's drawing has nothing left to change → do not
+    // schedule a single frame.
+    if (!anyUnitInMotion(motion, Date.now()) && !anyTickArtifactLive(sightings, Date.now())) return
     let live = true
     const tick = () => {
       if (!live) return

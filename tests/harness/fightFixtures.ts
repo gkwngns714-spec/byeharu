@@ -112,6 +112,43 @@ export const UNITS: CombatUnit[] = [
   unit({ id: 'e3', side: 'enemy', pos_x: FIGHT_X + 1, pos_y: FIGHT_Y + 2, hp_max: 60, hp_current: 0, alive_count: 0, aggro_priority: null, weapons_json: [PIRATE_GUN] }),
 ]
 
+/** THE FORMATION THE OWNER WAS ACTUALLY LOOKING AT — encounter `49acbae0`, measured, not invented.
+ *
+ *  WHY IT HAD TO EXIST. `UNITS` above is a 6-unit ring, so its four discs of radius 5.5 sit 8.49-12
+ *  apart: they barely touch, the formation's own centre is OUTSIDE every one of them, and the region
+ *  renders as a ring of four separate blobs. That is a real state, but it is not the one the owner
+ *  called weird. Their fleet was in a *tight* formation:
+ *
+ *      (-60.23, 103.32)  (-59.44, 99.08)  (-56.76, 101.24)  (-55.09, 99.44)
+ *
+ *  — a spread of **5.14 x 4.24 world units** with every weapon range **5**. The formation is as wide
+ *  as its own reach, which is the case that produces the lumpy, overlapping, four-lobed cloud with
+ *  scalloped edges and no boundary. Reproduced here at true scale (offsets from that formation's own
+ *  centroid, so the fight still sits at the harness anchor) rather than described, because the whole
+ *  point of the rendered proof is to look at the shape a real fight makes.
+ *
+ *  The three hostiles stand at the measured radial distances from the elected LEAD — 3.20 (inside the
+ *  lead's own circle) and 5.06 / 6.86 (outside it, and reachable only from an escort on the chord).
+ *  So the fixture is also a fight in which a lead-centred circle would still be lying. */
+const TIGHT_LEAD_DX = -2.35
+const TIGHT_LEAD_DY = 2.55
+
+export const UNITS_REAL_FORMATION: CombatUnit[] = [
+  unit({
+    id: 'p1',
+    pos_x: FIGHT_X + TIGHT_LEAD_DX,
+    pos_y: FIGHT_Y + TIGHT_LEAD_DY,
+    aggro_priority: 100,
+    weapons_json: [{ module_type_id: 'autocannon_battery', range: 5, projectile_speed: 60, power: 10 }],
+  }),
+  unit({ id: 'p2', pos_x: FIGHT_X - 1.56, pos_y: FIGHT_Y - 1.69, hp_current: 41, weapons_json: [{ module_type_id: 'basic_player_weapon', range: 5, projectile_speed: 60, power: 15 }] }),
+  unit({ id: 'p3', pos_x: FIGHT_X + 1.12, pos_y: FIGHT_Y + 0.47, hp_current: 96, weapons_json: [{ module_type_id: 'basic_player_weapon', range: 5, projectile_speed: 60, power: 15 }] }),
+  unit({ id: 'p4', pos_x: FIGHT_X + 2.79, pos_y: FIGHT_Y - 1.33, hp_current: 22, weapons_json: [{ module_type_id: 'basic_player_weapon', range: 5, projectile_speed: 60, power: 15 }] }),
+  unit({ id: 'e1', side: 'enemy', pos_x: FIGHT_X + TIGHT_LEAD_DX + 3.2, pos_y: FIGHT_Y + TIGHT_LEAD_DY, hp_max: 60, hp_current: 44, aggro_priority: null, weapons_json: [PIRATE_GUN] }),
+  unit({ id: 'e2', side: 'enemy', pos_x: FIGHT_X + TIGHT_LEAD_DX + 5.06, pos_y: FIGHT_Y + TIGHT_LEAD_DY, hp_max: 60, hp_current: 12, aggro_priority: null, weapons_json: [PIRATE_GUN] }),
+  unit({ id: 'e3', side: 'enemy', pos_x: FIGHT_X + TIGHT_LEAD_DX + 6.86, pos_y: FIGHT_Y + TIGHT_LEAD_DY + 0.2, hp_max: 60, hp_current: 33, aggro_priority: null, weapons_json: [PIRATE_GUN] }),
+]
+
 /** THE NEXT SERVER TICK, 3.0 s later — production's measured cadence (3014-3042 ms).
  *
  *  The same rows, with the two living pirates having CLOSED on the formation and their `updated_at`
