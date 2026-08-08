@@ -18,11 +18,19 @@ import { Button, Notice } from '../../components/ui'
 // render `request_retreat: presence not active (is retreating)` verbatim. This component only knows
 // how to be pressed once at a time and how to say what came back.
 
+// ── THE TOUCH FLOOR IS THIS COMPONENT'S, NOT ITS CALLERS' ────────────────────────────────────────
+// Leaving a fight is the one thing a player must never fumble, so the button carries the design
+// system's 44px floor ITSELF. It used to be bolted on per mount — FleetStatusPanel wrapped it in
+// `[&_button]:min-h-11 [&_button]:w-full` while the map's combat card did not, so the SAME control
+// rendered 44px tall in one corner of the map and **24px** in the other, measured at a 390px phone
+// (tests/actionsAreReachable.uispec.ts caught it). One control means one hit area.
+
 export function RetreatControl({
   presenceId,
   retreating,
   onChanged,
   size = 'sm',
+  block = false,
   className = '',
   testId = 'combat-retreat',
 }: {
@@ -32,6 +40,9 @@ export function RetreatControl({
   retreating: boolean
   onChanged: () => void
   size?: 'sm' | 'md'
+  /** Fill the container's width — for the stacked map cards, where the row is the whole card. The
+   *  Mission panel mounts it inline in a header row and leaves this off. */
+  block?: boolean
   className?: string
   testId?: string
 }) {
@@ -56,6 +67,7 @@ export function RetreatControl({
       <Button
         variant="warning"
         size={size}
+        className={`min-h-11 ${block ? 'w-full' : ''}`}
         data-testid={testId}
         onClick={handleRetreat}
         disabled={retreating}

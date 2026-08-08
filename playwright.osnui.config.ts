@@ -17,7 +17,11 @@ import { defineConfig, devices } from '@playwright/test'
 // the real <FittingDetail>), MEASURED side by side at 1280px and stacked-but-unclipped at 320px;
 // /fleetinfo.html — the real <FleetStatusPanel> in the real map rail: where each fleet is, what it
 // is doing, WHY it cannot fight, and the one action slot (hunt the site under its feet, or retreat
-// from the fight it is in), MEASURED at the 320px floor and 10% under it.
+// from the fight it is in), MEASURED at the 320px floor and 10% under it;
+// /reach.html — the map's overlay RAILS, WHOLE, at four viewports including the owner's phone and
+// the exact 1440x675 desktop where "i can't press hunt" was measured: EVERY actionable control
+// proved fully inside the viewport AND fully inside every scroll ancestor. fleetinfo.html mounts
+// one panel in that rail and one panel always fits — the STACK is where the clipping lives.
 // Readiness polls /dock.html because ONE entry is enough to prove the server is up; all are served
 // by it.
 export default defineConfig({

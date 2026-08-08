@@ -6,7 +6,7 @@ import {
   explorationScanErrorMessage,
   type GetMyExplorationDiscoveriesResult,
 } from './explorationTypes'
-import { Button, OverlayPanel } from '../../components/ui'
+import { Button, OverlayPanel, overlayAccountClass, overlayReachClass } from '../../components/ui'
 import { ItemChip } from '../../components/items'
 
 // EXPLORATION-P11 — the dark exploration surface: one Scan action + the player's discoveries list.
@@ -74,27 +74,37 @@ export function ExplorationPanel({
     // UI R2: the OverlayPanel primitive owns the chrome (accent tone = the exploration identity;
     // ex-violet). Rides MapScreen's top-left OverlayRail (UI R1) — no self-positioning; the primitive
     // keeps it interactive inside the pointer-transparent rail. Tokens only.
-    <OverlayPanel tone="accent" data-testid="exploration-panel" className="w-64 text-ink">
-      <p className="text-[11px] font-medium text-accent">Exploration</p>
-      <Button
-        variant="primary"
-        size="sm"
-        data-testid="exploration-scan-button"
-        disabled={!settled || !mainShipId}
-        busy={scanPending}
-        busyLabel="Scanning…"
-        onClick={() => void scan()}
-        className="mt-1"
-      >
-        Scan for signals
-      </Button>
+    // THE REACH LAW (components/ui/overlayLayout.ts): the panel is a flex column whose CONTROL is
+    // pinned and whose readout is an account. In the map's top-left rail the panels are squeezed
+    // whenever a fight starts — the squeeze must land on the discoveries list, never on Scan.
+    <OverlayPanel tone="accent" data-testid="exploration-panel" className="flex min-h-[5.5rem] w-64 shrink-[999] flex-col text-ink">
+      <div className={overlayReachClass()}>
+        <p className="text-[11px] font-medium text-accent">Exploration</p>
+        <Button
+          variant="primary"
+          size="sm"
+          data-testid="exploration-scan-button"
+          disabled={!settled || !mainShipId}
+          busy={scanPending}
+          busyLabel="Scanning…"
+          onClick={() => void scan()}
+          // The 44px touch floor, like every other action in the map rails. Measured at 24px on a
+          // 390px phone by tests/actionsAreReachable.uispec.ts — present, reachable and too small
+          // to press, which is the same defect as being clipped wearing different clothes.
+          className="min-h-11 w-full"
+        >
+          Scan for signals
+        </Button>
+      </div>
+      {/* THE ACCOUNT — everything below is what the scan HAS FOUND. It scrolls and it yields room. */}
+      <div className={overlayAccountClass('mt-1')}>
       {!settled && (
-        <p data-testid="exploration-scan-hint" className="mt-1 text-[10px] text-ink-faint">
+        <p data-testid="exploration-scan-hint" className="text-[10px] text-ink-faint">
           Stop in open space to scan.
         </p>
       )}
       {scanNote && (
-        <p data-testid="exploration-scan-note" className="mt-1 text-[10px] text-accent">
+        <p data-testid="exploration-scan-note" className="text-[10px] text-accent">
           {scanNote}
         </p>
       )}
@@ -136,6 +146,7 @@ export function ExplorationPanel({
           No discoveries yet.
         </p>
       )}
+      </div>
     </OverlayPanel>
   )
 }

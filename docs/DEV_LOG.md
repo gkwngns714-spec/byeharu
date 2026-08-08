@@ -5,6 +5,68 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-08 — THE ACTION IS ALWAYS REACHABLE (`slice-the-action-is-always-reachable`, client-only)
+
+**The owner, playing the live game:** *"right now i can't press hunt."* And, as the actual spec:
+*"one thing made, one thing gets broken, a standard spaghetti. i want you to create things
+thoroughly. i told you many times that this should not happen yet it always does."*
+
+**The button was never disabled.** Measured in the running page at 1440x675: "Hunt at Snare" at
+y 391→435, `disabled: false`. Its scroll ancestor — the top-left `OverlayRail`, carrying
+`max-h-[60%] overflow-y-auto` **at the call site** — ended at y=399 with `clientHeight` 334 against
+`scrollHeight` 386. **8 of the button's 44 pixels were on screen.** The rail stacks the exploration
+panel, ambush/near-miss notices, the combat card and the fleet readout; the close-call notice
+("Slipped past the pirates around Snare.") appears only NEAR A DANGER ZONE — i.e. exactly when Hunt
+is needed — and Hunt, being last, is what the cap cut. Not caused by 3148685; pre-existing fragility.
+
+**The rule already existed, for exactly one button.** `FleetCommandPanel.tsx:542` — *"Stop renders
+OUTSIDE the scroll container so it can never scroll away."* A per-panel habit protects one control.
+This slice makes it structural, in the one place every map overlay passes through.
+
+**THE REACH LAW (`components/ui/overlayLayout.ts`), one authority, composed everywhere.** A rail has
+two regions: an **account** (`overlayAccountClass` — capped, scrollable, `shrink-[999]`: information,
+which yields first) and a **reach** (the controls, never scrolled, never clipped). The rail bounds
+ITSELF (`max-h-[calc(100%-1.5rem)]`) and carries no overflow; **no call site may cap or scroll a
+rail** — a scroll ancestor above the reach region defeats it silently, which is how this survived a
+green UI proof. Both map rails were repointed: top-left `reach` = ExplorationPanel + CombatMapCard +
+FleetStatusPanel, `children` = the notices; the bottom-right command hub is ALL control, so the whole
+rail is `reach` and its second scroll ancestor over the brake is gone. `FleetCommandPanel` now
+composes the same two builders instead of re-stating them in local class strings.
+
+**The stack genuinely does not fit, so the law goes one level deeper.** With the real chrome (header
++ nav ⇒ a 505px map box at 1440x675), a live fight is 583px of panels. Each squeezable panel now
+splits itself the same way — its readout is an account, its control is pinned — and declares a
+**yield order**: ExplorationPanel `shrink-[999]` → CombatMapCard `shrink-[99]` → FleetStatusPanel
+`shrink` (last). Each floors at its own pinned row (`min-h-[…]`), so no pressure can squeeze a panel
+past its button. The fleet readout's LIST became an account too: three fleets in one zone is 702px,
+and Fleet 2's and Fleet 3's "Hunt at Snare" were landing at y 554 and y 718 on a 640px screen — the
+owner's defect, one fleet along. Collapsible gained `className`/`regionClassName` so the fold's body,
+not the fold, is what gives way.
+
+**Also fixed, same class, found by measuring:** `RetreatControl` rendered **24px** tall on the map's
+combat card and 44px in the fleet readout — the 44px floor had been bolted on per mount
+(`[&_button]:min-h-11`). The floor now lives in the control (plus a `block` prop), so its mounts
+cannot disagree. Exploration's Scan was 24px; it now clears the floor too.
+
+**The proof failed first.** `tests/actionsAreReachable.uispec.ts` + `tests/harness/reach.html` mount
+the rails WHOLE (fleetinfo.html mounts one panel, and one panel always fits — that is why it was
+green while the game was broken), inside a harness that reproduces AppShell's chrome class for class
+rather than handing the rail the whole viewport. Against the pre-fix layout: **8 failed** —
+`fleet-status-hunt-g-fleet-1 ("Hunt at Snare") is clipped … by DIV.pointer-events-none.absolute.z-10.flex`
+and `combat-map-retreat-enc-1 height … 24`. After: 36 pass, at 390x664, 320x640, 375x667 and the
+owner's own 1440x675. `tests/actionsAreReachable.spec.ts` is the static half — the regions are what
+they claim, no rail call site (src OR harness) may cap or scroll, every action-bearing panel rides
+`reach`, the yield order and the per-panel floors are declared, NO-SOFTLOCK holds, one hunt call site.
+
+**Known limit, measured not tuned:** past two fleets the readout scrolls its LIST — no layout shows
+three fleet cards at once against a 505px map box. It is bounded and visible (the box is proved fully
+on screen, and the fold still dismisses it), which is the whole difference from the rail silently
+cropping its last panel with no cue.
+
+**Proof:** `tsc -b` clean · `vite build` clean · spec suite **2005 passed** · rendered UI proofs
+**158 passed**. `eslint` reports 24 errors / 2 warnings — **identical to the pre-change baseline**
+(worldeditor/ranking/shop react-hooks + harness fast-refresh); pre-existing and untouched.
+
 ## 2026-08-04 — HUNT FROM WHERE YOU STAND (`slice-hunt-from-where-you-stand`, client-only)
 
 **The owner, twice:** *"i am in combat zone, and the fight does not start."*

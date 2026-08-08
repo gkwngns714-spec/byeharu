@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Badge, Button, Collapsible, OverlayPanel, StatRow } from '../../components/ui'
+import { Badge, Button, Collapsible, OverlayPanel, StatRow, overlayAccountClass } from '../../components/ui'
 import { teamReasonMessage } from '../command/teamReasonMessage'
 import { resolveStoppableFleets } from '../command/teamStop'
 import { RetreatControl } from '../combat/RetreatControl'
@@ -73,16 +73,24 @@ export function FleetStatusPanel({
   if (model.rows.length === 0) return null
 
   return (
-    <OverlayPanel data-testid="fleet-status-panel" className="w-72 max-w-full">
+    // THE REACH LAW (components/ui/overlayLayout.ts), applied INSIDE the panel. The rail pins this
+    // whole readout outside any scroll box, but the readout itself grows with the fleet count: three
+    // fleets standing in one zone is 702px of cards, and MEASURED before this split, Fleet 2's and
+    // Fleet 3's "Hunt at Snare" buttons landed at y 552 and y 714 on a 640px screen — the owner's
+    // exact defect, one fleet along. So the fold's TOGGLE is pinned and its LIST is an account: the
+    // list scrolls inside a box the player can see, instead of the panel running off the screen.
+    <OverlayPanel data-testid="fleet-status-panel" className="flex min-h-[3.75rem] w-72 max-w-full flex-col">
       <Collapsible
+        className="flex min-h-0 flex-col"
+        regionClassName="flex min-h-0 flex-1 flex-col"
         data-testid="fleet-status-fold"
         // A STABLE SECTION id (never a per-fleet one) — the collapsibleState convention.
         storageKey="map-fleet-status"
         // Open by default: the owner asked to SEE this, and a fold they have to find first is the
         // same dead end as no panel. Their choice is remembered from the first tap onward.
         defaultOpen
-        headerClassName="min-h-11"
-        contentClassName="mt-1.5 flex flex-col gap-1.5"
+        headerClassName="min-h-11 shrink-0"
+        contentClassName={overlayAccountClass('mt-1.5 gap-1.5')}
         header={
           <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Fleets</span>
@@ -161,9 +169,11 @@ function FleetStatusCard({
           presenceId={action.presenceId}
           retreating={action.retreating}
           onChanged={onCombatChanged}
-          // The wrapper takes the class, so the 44px touch floor is asked of the button INSIDE it —
-          // RetreatControl stays the one component, unchanged, with one more mount.
-          className="mt-1.5 [&_button]:min-h-11 [&_button]:w-full"
+          // `block` (the control's own prop) instead of a `[&_button]` reach-in: the 44px touch
+          // floor now lives INSIDE RetreatControl, so every mount of it clears the floor and the
+          // map's two retreat buttons can no longer disagree about their own hit area.
+          block
+          className="mt-1.5"
           testId={`fleet-status-retreat-${row.groupId}`}
         />
       )}

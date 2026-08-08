@@ -26,7 +26,9 @@ export function Collapsible({
   onToggle,
   defaultOpen = true,
   storageKey,
+  className = '',
   headerClassName = '',
+  regionClassName = '',
   contentClassName = '',
   chevronSize = 16,
   'data-testid': testId,
@@ -42,7 +44,15 @@ export function Collapsible({
   defaultOpen?: boolean
   /** Stable section id to persist the player's choice under (uncontrolled mode only). */
   storageKey?: string
+  /** Root classes. THE REACH LAW hook (components/ui/overlayLayout.ts): a fold inside a map rail
+   *  passes `flex min-h-0 flex-col` here — together with `regionClassName` + an account
+   *  `contentClassName` it makes the fold's BODY the thing that gives way under pressure, while the
+   *  toggle stays put. Without it the chain of plain divs between the root and the content blocks
+   *  the flex constraint and the whole fold is squeezed off the bottom of the screen instead. */
+  className?: string
   headerClassName?: string
+  /** Classes for the aria region wrapper that sits between the root and the content (see above). */
+  regionClassName?: string
   contentClassName?: string
   chevronSize?: number
   'data-testid'?: string
@@ -75,7 +85,7 @@ export function Collapsible({
   }
 
   return (
-    <div data-testid={testId}>
+    <div data-testid={testId} className={className}>
       <button
         type="button"
         aria-expanded={open}
@@ -93,7 +103,7 @@ export function Collapsible({
       </button>
       {/* The region element always exists (aria-controls stays valid either way); the CHILDREN
           unmount while closed, so a folded section does no rendering work. */}
-      <div id={contentId} data-testid={testId ? `${testId}-content` : undefined}>
+      <div id={contentId} data-testid={testId ? `${testId}-content` : undefined} className={regionClassName}>
         {open ? <div className={contentClassName}>{children}</div> : null}
       </div>
     </div>

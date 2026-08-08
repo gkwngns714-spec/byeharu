@@ -32,7 +32,7 @@ import { selectCombatPhase, nextWaveText } from '../combat/combatPhase'
 import { resolveAutoExitLine, type AutoExitSetting } from '../combat/autoExitLine'
 import { resolveRepositionCourse } from '../combat/repositionCourse'
 import { RetreatControl } from '../combat/RetreatControl'
-import { OverlayPanel } from '../../components/ui'
+import { OverlayPanel, overlayAccountClass, overlayReachClass } from '../../components/ui'
 
 /** One side's live standing, as the server reports it: how many ships are still up and how much
  *  hull they have left. NO "power" — see the header for why the two sides' power columns were never
@@ -118,7 +118,9 @@ export function CombatMapCard({
   if (live.length === 0) return null
 
   return (
-    <div className="pointer-events-auto flex flex-col gap-2">
+    // `min-h-0` so the SQUEEZE reaches the cards: this wrapper is the flex item the rail's reach
+    // region shrinks, and a flex item's automatic minimum is its full content unless told otherwise.
+    <div className="pointer-events-auto flex min-h-0 shrink-[99] flex-col gap-2">
       {live.map((e) => {
         const mine = units.filter((u) => u.encounter_id === e.id && u.side === 'player')
         const theirs = units.filter((u) => u.encounter_id === e.id && u.side === 'enemy')
@@ -148,7 +150,18 @@ export function CombatMapCard({
         return (
           // The ONE overlay chrome (OverlayPanel, danger tone) — this card was one of three
           // hand-rolled skins on the map; "tick" (a server-internal unit) no longer prints.
-          <OverlayPanel key={e.id} tone="danger" className="w-64" data-testid={`combat-map-card-${e.id}`}>
+          // THE REACH LAW (components/ui/overlayLayout.ts): a flex column whose fight READOUT is an
+          // account — it scrolls and it yields room — and whose Retreat is pinned. In the map's
+          // top-left rail this card, the exploration panel and the fleet readout together are 583px
+          // against a 505px map box the moment a fight starts, so something has to give; the one
+          // thing that may never give is the way out of the fight.
+          <OverlayPanel
+            key={e.id}
+            tone="danger"
+            className="flex min-h-[4.75rem] w-64 flex-col"
+            data-testid={`combat-map-card-${e.id}`}
+          >
+            <div className={overlayAccountClass('flex-1')}>
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wide text-danger">
                 {phase.label}
@@ -238,15 +251,21 @@ export function CombatMapCard({
               </p>
             )}
 
+            </div>
             {/* LEAVING IS ONE CLICK, ON THE SCREEN THAT SHOWS THE FIGHT — the ONE retreat control
-                (combat/RetreatControl), the same component the Mission panel mounts. */}
+                (combat/RetreatControl), the same component the Mission panel mounts. PINNED: the
+                readout above may scroll, this never does. */}
+            <div className={overlayReachClass('mt-3')}>
             <RetreatControl
               presenceId={e.presence_id}
               retreating={phase.isRetreating}
               onChanged={onChanged}
-              className="mt-3"
+              // `block` — the card IS the row, and this button was rendering 24px tall on a phone
+              // while the SAME control 3 inches below it rendered 44px. One control, one hit area.
+              block
               testId={`combat-map-retreat-${e.id}`}
             />
+            </div>
           </OverlayPanel>
         )
       })}

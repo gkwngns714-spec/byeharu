@@ -330,32 +330,91 @@ export function MapScreen() {
               pirateDraftPoints={pirateDraftPoints}
               onPirateTap={handlePirateTap}
             />
-            {/* top-left overlay rail: the server-lit feature panels ride ONE stacked, scrollable
-                slot so that WHEN a capability lights they read as coherent map overlays instead of
-                colliding at hand-tuned offsets. All keep their server-lit `return null` gates
-                verbatim (dark today → the rail renders empty and, being pointer-transparent, never
-                intercepts map gestures). GalaxyMap owns top-right (zoom) and bottom-left (legend);
-                WorldEvents takes top-center; the FleetCommandPanel takes bottom-right. */}
-            <OverlayRail slot="top-left" className="max-h-[60%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
-              {/* EXPLORATION-P11 — dark scan; legal only settled in space (server-lit, renders nothing
-                  in prod). MINING-P12's persistent panel was REMOVED from this rail in the clean-map
-                  redesign — the extract surface now folds into the double-tap command hub, appearing
-                  only when the summon point sits inside a mining field's range (see the hub below). */}
-              <ExplorationPanel
-                lifecycleKey={panelLifecycleKey}
-                mainShipId={mainShip?.main_ship_id ?? null}
-                shipStatus={mainShip?.status}
-                shipSpatialState={null}
-              />
-              {/* COMBAT — the fight is a thing happening in SPACE, so its live standing belongs on
-                  the MAP, not only on the ops screen. Reads the shell's already-polled combat state
-                  (no new fetch); renders nothing when nothing is fighting (clean-map law #1). A
-                  SECOND VIEW of the same server rows — ActiveCombatPanel stays the Mission-side
-                  detail. CORNER OWNERSHIP (2026-08-03): this stack used to sit at right-3 top-3 —
-                  the EXACT anchor of GalaxyMap's zoom rail, so a 256px combat card buried the
-                  zoom/reset buttons for the whole fight. It now rides THIS rail: one container per
-                  corner, so it can never overlap the exploration panel either. Corner map: zoom
-                  top-right · legend bottom-left · hub bottom-right · alerts/features top-left. */}
+            {/* ██ THE TOP-LEFT RAIL — and THE REACH LAW ██
+                Corner map: zoom top-right · legend bottom-left · command hub bottom-right ·
+                alerts/features/fleets top-left. One container per corner, so nothing collides at
+                hand-tuned offsets and the combat card can never bury the zoom buttons again.
+
+                Owner, playing the LIVE game 2026-08-08: "right now i can't press hunt." This rail
+                used to carry `max-h-[60%] overflow-y-auto` RIGHT HERE, so the whole stack — notices,
+                exploration, combat card, fleet readout — shared ONE capped scroll box, and whatever
+                came LAST in it was what got cut. At 1440x675 that was the Hunt button: 8 of its 44
+                pixels inside a 334px box holding 386px of content. Enabled, present, unpressable.
+                The close-call notice that tipped it over only appears NEAR A DANGER ZONE — exactly
+                when the player needs Hunt.
+
+                So the cap now lands on the INFORMATION and never on the ACTION:
+                  · `children` = the ACCOUNT — notices. Pure text; it may scroll, because losing
+                    sight of a sentence costs nothing.
+                  · `reach`    = every panel that carries a CONTROL. Pinned outside any scroll
+                    region by the primitive itself; the account collapses before a button does.
+                The rail takes NO height cap from this call site — it bounds itself to the map box,
+                and tests/actionsAreReachable.spec.ts fails the build if anyone puts one back. This
+                is the rule the BRAKE already had (FleetCommandPanel.tsx:542 — "Stop renders OUTSIDE
+                the scroll container") generalised from one button to every action.
+
+                Every panel keeps its server-lit `return null` gate verbatim: a dark capability
+                renders nothing and the pointer-transparent rail never intercepts map gestures. */}
+            <OverlayRail
+              slot="top-left"
+              className="w-72 max-w-[calc(100vw-5rem)]"
+              reach={
+                <>
+                  {/* EXPLORATION-P11 — the Scan action; legal only settled in space (server-lit).
+                      It is in `reach` because it has a BUTTON: the law is about controls, not about
+                      which feature a panel belongs to. MINING-P12's persistent panel was REMOVED
+                      from this rail in the clean-map redesign — the extract surface folds into the
+                      double-tap command hub, appearing only when the summon point sits inside a
+                      mining field's range (see the hub below). */}
+                  <ExplorationPanel
+                    lifecycleKey={panelLifecycleKey}
+                    mainShipId={mainShip?.main_ship_id ?? null}
+                    shipStatus={mainShip?.status}
+                    shipSpatialState={null}
+                  />
+                  {/* COMBAT — the fight is a thing happening in SPACE, so its live standing belongs
+                      on the MAP, not only on the ops screen. Reads the shell's already-polled combat
+                      state (no new fetch); renders nothing when nothing is fighting (clean-map law
+                      #1). A SECOND VIEW of the same server rows — ActiveCombatPanel stays the
+                      Mission-side detail. It carries the ONE RetreatControl: leaving a fight is the
+                      most reachable thing on this screen, so it is in `reach` by definition. */}
+                  <CombatMapCard
+                    encounters={combat.encounters}
+                    units={combat.units}
+                    ticks={combat.ticks}
+                    autoExit={combat.autoExit}
+                    onChanged={() => void combat.refresh()}
+                  />
+                  {/* MY FLEETS, ON THE MAP (owner, 2026-08-04, playing: "in map, i want to see
+                      information regarding fleet, where it is, stats, what it is currently doing. I
+                      am in snare but in no fight is occuring, i want also a toggle combat on map…").
+
+                      LAST in the stack, which is precisely why it was the victim — and now precisely
+                      why it must be pinned: it carries the one action slot per fleet (into the fight
+                      under its feet, or out of the one it is in). Props only, from reads the shell
+                      already polls: no new fetch, no new poll, no state of its own.
+
+                      The hunt handoff is the SAME one the command panel and the zone panel use —
+                      `handleSelect`, the map's own marker-selection path — so a fleet parked on top
+                      of a fight reaches the EXISTING hunt control by exactly the route a tap on that
+                      site's marker takes. No second hunt path, no new RPC. */}
+                  <FleetStatusPanel
+                    groups={teamGroups}
+                    membership={teamGroupMap}
+                    positions={fleetPositions}
+                    locations={locations}
+                    movements={movements}
+                    unifiedFleets={unifiedGroupFleets}
+                    dangerZones={dangerZones}
+                    encounters={combat.encounters}
+                    units={combat.units}
+                    fleetControlEnabled={fleetControlEnabled}
+                    onSelectHuntSite={(locationId) => handleSelect(locationId)}
+                    onCombatChanged={() => void combat.refresh()}
+                  />
+                </>
+              }
+            >
               {ambushEncounterNotices({ encounters: combat.encounters, locations }).map((n) => (
                 <OverlayPanel
                   key={n.encounterId}
@@ -388,40 +447,6 @@ export function MapScreen() {
                   <p className="text-xs font-semibold text-warning">{n.text}</p>
                 </OverlayPanel>
               ))}
-              <CombatMapCard
-                encounters={combat.encounters}
-                units={combat.units}
-                ticks={combat.ticks}
-                autoExit={combat.autoExit}
-                onChanged={() => void combat.refresh()}
-              />
-              {/* MY FLEETS, ON THE MAP (owner, 2026-08-04, playing: "in map, i want to see
-                  information regarding fleet, where it is, stats, what it is currently doing. I am
-                  in snare but in no fight is occuring, i want also a toggle combat on map…").
-
-                  It rides THIS rail — the map's information corner — and sits BELOW the combat card
-                  on purpose: while a battle is running, the fight's readout is the more urgent thing
-                  and must keep the top of the rail. Props only, from reads the shell already polls:
-                  no new fetch, no new poll, no state of its own.
-
-                  The hunt handoff is the SAME one the command panel and the zone panel use —
-                  `handleSelect`, the map's own marker-selection path — so a fleet parked on top of a
-                  fight reaches the EXISTING hunt control by exactly the route a tap on that site's
-                  marker takes. No second hunt path, no new RPC. */}
-              <FleetStatusPanel
-                groups={teamGroups}
-                membership={teamGroupMap}
-                positions={fleetPositions}
-                locations={locations}
-                movements={movements}
-                unifiedFleets={unifiedGroupFleets}
-                dangerZones={dangerZones}
-                encounters={combat.encounters}
-                units={combat.units}
-                fleetControlEnabled={fleetControlEnabled}
-                onSelectHuntSite={(locationId) => handleSelect(locationId)}
-                onCombatChanged={() => void combat.refresh()}
-              />
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
@@ -548,8 +573,19 @@ export function MapScreen() {
                 play-test rule), under a slim header: a back arrow (← the icons) and a ✕ (clean map).
                 The title NAMES the action. Reuses the existing FleetCommand/Mining/PirateIntercept
                 panels verbatim. */}
+            {/* THE COMMAND HUB — every single thing in it is a CONTROL (the header's ✕ is the only
+                way to dismiss the panel; the panel below is nothing but verbs), so the whole rail
+                rides `reach` and NOTHING here scrolls. It used to carry `max-h-[85%]
+                overflow-y-auto` at this call site, which put a second scroll ancestor ABOVE
+                FleetCommandPanel's own careful stop-outside-the-scroll split and silently defeated
+                it: the brake was pinned inside a box that could itself be scrolled away. One
+                authority now — the panel caps and scrolls its own SECTIONS (its account), the rail
+                caps nothing. See components/ui/overlayLayout.ts for the law. */}
             {hubOpen && hubView !== 'menu' && (
-              <OverlayRail slot="bottom-right" className="max-h-[85%] max-w-[calc(100vw-1.5rem)] overflow-y-auto">
+              <OverlayRail
+                slot="bottom-right"
+                className="max-w-[calc(100vw-1.5rem)]"
+                reach={
                   <>
                     <OverlayPanel data-testid="map-command-panel-header" className="flex w-72 max-w-full items-center gap-2">
                       {/* PORT-SEND: the arrow only exists when there IS an icon menu behind this stage
@@ -667,7 +703,8 @@ export function MapScreen() {
                       />
                     )}
                   </>
-              </OverlayRail>
+                }
+              />
             )}
           </div>
         )}

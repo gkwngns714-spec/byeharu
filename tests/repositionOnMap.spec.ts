@@ -154,6 +154,13 @@ test('leaving the fight is not crowded: RetreatControl stays last and stays reac
     code.indexOf('{course.text}'),
     'the course line must sit above the retreat control, never after it',
   ).toBeLessThan(code.indexOf('<RetreatControl'))
-  // still the card's final element, with its own spacing untouched
-  expect(code).toMatch(/<RetreatControl[\s\S]*className="mt-3"[\s\S]*<\/OverlayPanel>/)
+  // Still the card's final element, with its spacing untouched — REPOINTED to the stronger property
+  // (THE REACH LAW, 2026-08-08). The `mt-3` moved off the control onto the PINNED wrapper that holds
+  // it: the readout above is now an account that scrolls and yields room under pressure, while this
+  // row is `overlayReachClass` — never scrolled, never shrunk, never squeezed past its own height.
+  // "Stays reachable" used to be a claim about source ordering; it is now a claim the layout
+  // enforces, measured at four viewports in tests/actionsAreReachable.uispec.ts.
+  expect(code).toMatch(/overlayReachClass\('mt-3'\)[\s\S]*<RetreatControl[\s\S]*<\/OverlayPanel>/)
+  // …and the one place it must never sit: inside the card's own scroll region.
+  expect(code.indexOf('overlayAccountClass')).toBeLessThan(code.indexOf('overlayReachClass'))
 })
