@@ -2,10 +2,15 @@
 -- (`supabase start` applies the full chain incl. 0272 + its self-assert). NEVER point at prod.
 --
 -- Proves the slice's whole claim through the REAL combat chain:
---   (a) SPAWN STATS   — an elite plan entry materialises real combat_units whose ship_hp is
---                       encounter_elite_difficulty_multiplier x the non-elite row's, through the
---                       IDENTICAL existing spawn insert (process_combat_ticks is not changed by 0272).
---   (b) CEILING       — the total spawned unit count still respects enemy_synthetic_max_units.
+--   (a)(b) ██ DELETED BY 0344 AND REPLACED BY ITS INVERSE ██ They asserted that an elite plan entry
+--                       materialises combat_units at the multiplier, and that the spawned count respects
+--                       the synthetic ceiling. 0344 deletes the tick's v_resolver_engaged branch — the
+--                       only place an authored plan was ever instantiated — so nothing materialises a
+--                       plan at all. What replaces them is ELITE_PASS_RESOLVER_INERT: with the flag
+--                       TRUE, the tick fields ONE plain synthetic body from the pressure clock, tags no
+--                       plan, writes no encounter_runtime_state row and lets no multiplier near
+--                       combat_units. The RESOLVER itself is untouched and still proven by (c)(e) and
+--                       the split-plan block, whose plan ceiling this file now OWNS as a write.
 --   (c) LEGACY PARITY — elite_chance = 0 content resolves to a plan BYTE-EQUAL to the pre-0272 (0261)
 --                       plan, compared against an INDEPENDENTLY recomputed 0261 expectation (the count
 --                       roll re-derived here from the 0261 salt/idiom), across 16 seeds. Only the
@@ -30,8 +35,8 @@
 -- RNG is introduced (the 0041 law).
 --
 -- PASS markers: ELITE_PASS_SOURCE, ELITE_PASS_LEGACY_PARITY, ELITE_PASS_DETERMINISM,
--- ELITE_PASS_SPLIT_PLAN, ELITE_PASS_FLAGOFF_SYNTHETIC, ELITE_PASS_SPAWN_STATS,
--- ELITE_PASS_WEAPONS_DAMAGE, "ELITE STAT WIRING PROOF PASSED".
+-- ELITE_PASS_SPLIT_PLAN, ELITE_PASS_FLAGOFF_SYNTHETIC, ELITE_PASS_RESOLVER_INERT (0344, replacing
+-- ELITE_PASS_SPAWN_STATS), ELITE_PASS_WEAPONS_DAMAGE, "ELITE STAT WIRING PROOF PASSED".
 
 \set ON_ERROR_STOP on
 
@@ -49,7 +54,7 @@ end $$;
 
 -- ════════ STATIC PROOF — ELITE_PASS_SOURCE (prosrc; no fixtures needed) ══════════════════════════════
 do $$
-declare v_tick text; v_res text; v_n int;
+declare v_tick text; v_res text; v_n int; v_code text;
 begin
   select prosrc into v_tick from pg_proc where proname='process_combat_ticks'       and pronamespace='public'::regnamespace;
   select prosrc into v_res  from pg_proc where proname='resolve_location_encounter' and pronamespace='public'::regnamespace;
@@ -58,22 +63,47 @@ begin
   if v_tick ilike '%elite%' then
     raise exception 'ELITE PROOF FAIL SOURCE: process_combat_ticks references elite — the damage side must never learn what elite means';
   end if;
-  if strpos(v_tick, 'resolve_location_encounter(e.location_id, e.id::text)') = 0
-     or strpos(v_tick, 'v_resolver_engaged') = 0
-     or strpos(v_tick, 'v_enemy_count  := least(coalesce(cfg_num(''enemy_synthetic_max_units''),6)::integer, greatest(1, v_danger));') = 0
-     -- ██ RE-POINTED BY 0339, BY NAME, NEVER BY WIDENING ██ This pinned the wave's weapons_json
-     -- delivery shape inside the tick. 0339 folded the enemy-spawn loop — which existed TWICE,
-     -- differing only in indentation, and which every migration since 0299 had to patch in lockstep
-     -- — into combat_spawn_wave_units, so the literal now lives in that leaf. The pin FOLLOWS it
-     -- rather than being deleted or loosened: the tick must COMPOSE the one spawn authority, and the
-     -- authority must still carry the shape. Strictly stronger than the old form, which was
-     -- satisfiable by either of two copies while the other drifted.
-     or strpos(v_tick, 'public.combat_spawn_wave_units(') = 0
+  -- ██ RE-POINTED BY 0344, AND THREE OF THE OLD ANCHORS ARE NOW ASSERTED ABSENT ██
+  -- This list existed to prove 0272 did not rewrite the tick, so it pinned text 0272 had to leave alone.
+  -- 0344 legitimately DELETES three of those anchors, and pinning them now would DEMAND the defect:
+  --   * `resolve_location_encounter(e.location_id, e.id::text)` — the tick's only call to the resolver,
+  --     inside the branch that chose between two live wave SIZERS at runtime. It is deleted, so the
+  --     authored/elite plan is no longer instantiated by the engine at all. The RESOLVER ITSELF is
+  --     untouched and is still proven below on its own terms (determinism, the split plan, the clamp).
+  --   * the synthetic body-count sizer — the literal "+1 enemy per kill", deleted with v_danger.
+  --   * `public.combat_spawn_wave_units(` INSIDE the tick — both spawn arms are gone; the one caller
+  --     left in the schema is public.combat_pressure_step, and that is where the pin follows.
+  -- 0339's own rule is honoured exactly as it stated it — the pin FOLLOWS the leaf rather than being
+  -- deleted or loosened — and the three deletions become ABSENCE assertions rather than silence.
+  if strpos(v_tick, 'public.combat_pressure_step(') = 0
+     or strpos((select p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                 where n.nspname = 'public' and p.proname = 'combat_pressure_step'),
+               'public.combat_spawn_wave_units(') = 0
      or strpos((select p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
                  where n.nspname = 'public' and p.proname = 'combat_spawn_wave_units'),
                '''module_type_id'', ''pirate_synthetic_weapon'', ''range'', p_range,') = 0
      or strpos(v_tick, 'v_reward_metal := round(coalesce(cfg_num(''reward_metal_base''),10) * greatest(loc.reward_tier,1)') = 0 then
-    raise exception 'ELITE PROOF FAIL SOURCE: a pinned process_combat_ticks anchor is gone (the tick must be untouched by 0272)';
+    raise exception 'ELITE PROOF FAIL SOURCE: a pinned anchor is gone — the tick must compose public.combat_pressure_step, that authority must compose the ONE spawn leaf, the leaf must still carry the pirate weapons_json delivery shape, and the reward line prefix must survive';
+  end if;
+  -- AND THE THREE ANCHORS 0344 DELETES MUST STAY DELETED. Comment-stripped, because this file's own
+  -- prose names every string being asserted absent (the 0222 vacuity trap, in reverse); the probe's
+  -- liveness comes from the four presence clauses immediately above, in the same block.
+  v_code := regexp_replace(v_tick, '--[^' || chr(10) || ']*', '', 'g');
+  if length(v_code) < 40000 or length(v_code) >= length(v_tick) then
+    raise exception 'ELITE PROOF FAIL SOURCE: the comment strip produced % chars from a % char tick body — every absence assert below would be measured against nothing', length(v_code), length(v_tick);
+  end if;
+  if position('resolve_location_encounter' in v_code) > 0 then
+    raise exception 'ELITE PROOF FAIL SOURCE: the tick still calls resolve_location_encounter — 0344 deletes the branch that chose between two live wave sizers, and a surviving call means a second thing can still decide how many enemies exist';
+  end if;
+  if position('public.combat_spawn_wave_units(' in v_code) > 0 then
+    raise exception 'ELITE PROOF FAIL SOURCE: the tick still places an enemy wave itself — after 0344 the only function in the schema that may is public.combat_pressure_step';
+  end if;
+  -- NOTE the CONCATENATED NEEDLE, and it is the house idiom (ONEANCHOR in danger-combat-proof uses it
+  -- for the same reason): the shared selftest gate refuses any proof that names the deleted
+  -- kill-escalation local in executable SQL, because a READ of it is how a stale prediction survives.
+  -- Splitting the string keeps that detector honest while still letting this block probe the tick for it.
+  if position('v_dan' || 'ger' in v_code) > 0 then
+    raise exception 'ELITE PROOF FAIL SOURCE: the tick still names the deleted kill-escalation local — it is gone with the term that fed it, and a surviving reference means destroying an enemy can still make the next one bigger';
   end if;
   -- 0314 repointed this pin 2 -> 3: the tick's known RNG sites are the two wave-seed variance
   -- rolls (spatial + aggregate arm) plus the PER-HIT damage roll 0314 added inside the fire loop
@@ -349,7 +379,16 @@ declare v_loc uuid := (select v from elfx where k='loc_split'); p jsonb; v_mult 
   v_n_elite int; v_n_norm int; v_bd_e double precision; v_bd_n double precision; v_sum int; v_ceiling int;
 begin
   v_mult   := coalesce(public.cfg_num('encounter_elite_difficulty_multiplier'), 2);
-  v_ceiling := greatest(1, coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::integer);
+  -- ── (0344) THE PLAN CEILING IS OWNED HERE RATHER THAN READ ───────────────────────────────────────
+  -- enemy_synthetic_max_units survives 0344 (772c42d: resolve_location_encounter still reads it as the
+  -- ceiling that trims an AUTHORED plan, so deleting the row would have left that clamp on its own
+  -- coalesce fallback — a silent ceiling change on a live game). The row is authored, so a read would be
+  -- legal here. It is still OWNED instead: a block that asserts a clamp should state the value the clamp
+  -- is given rather than inherit whatever the seed happens to carry, which is the
+  -- proofs-never-assert-ambient-defaults law. 6 is the seeded and fallback value, so the clamp exercised
+  -- here is the one every other block in this file already sees.
+  v_ceiling := 6;
+  perform public.set_game_config('enemy_synthetic_max_units', to_jsonb(v_ceiling));
   p := public.resolve_location_encounter(v_loc, 'split');
   if p is null then raise exception 'ELITE PROOF FAIL SPLIT_PLAN: split fixture did not resolve'; end if;
 
@@ -519,10 +558,18 @@ begin
   select hp_max, pos_x, pos_y, unit_type_id into v_hpmax, v_px, v_py, v_ut
     from public.combat_units where encounter_id = v_enc and side='enemy';
   if v_ut <> 'pirate_synthetic' then raise exception 'ELITE PROOF FAIL FLAGOFF: enemy unit_type % (want pirate_synthetic)', v_ut; end if;
+  -- ── (0344) THE SYNTHETIC BODY'S HP IS THE SITE'S NUMBER, WITH NO DANGER FACTOR OVER IT ───────────
+  -- This was `base_difficulty x enemy_hp_base x (1 + danger x enemy_hp_danger_scale) x variance`, and
+  -- the middle factor is DELETED along with its knob row. Leaving the read in would have been the
+  -- worst of the available failures: cfg_num returns NULL for a deleted key, the coalesce silently
+  -- supplies 0.6, and the expectation would have been 1.6x what the engine now produces — a red with a
+  -- misleading message, or on a differently-tuned chain a green over the wrong formula. What remains is
+  -- what was always underneath it: the SITE decides how hard a body is, and it says so in one row.
+  -- combat_damage_variance_pct is pinned 0 by this file, so the roll inside the pressure authority
+  -- collapses to exactly 1 and the comparison stays exact.
   v_exp_hp := (select base_difficulty from public.locations where id = v_hunt)
-              * coalesce(public.cfg_num('enemy_hp_base'),14)
-              * (1 + 1 * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;
-  if abs(v_hpmax - v_exp_hp) > 0.001 then raise exception 'ELITE PROOF FAIL FLAGOFF: enemy hp_max % <> the verbatim synthetic formula %', v_hpmax, v_exp_hp; end if;
+              * coalesce(public.cfg_num('enemy_hp_base'),14);
+  if abs(v_hpmax - v_exp_hp) > 0.001 then raise exception 'ELITE PROOF FAIL FLAGOFF: enemy hp_max % <> the site-driven body formula % (locations.base_difficulty x enemy_hp_base, no danger factor)', v_hpmax, v_exp_hp; end if;
 
   -- ── 0336 REPOINT OF THE POSITION CLAUSE ───────────────────────────────────────────────────────
   -- NULL-PINNED FIRST: `x is distinct from NULL` is TRUE for every real number, so an unwritten
@@ -560,7 +607,26 @@ begin
   update public.combat_encounters set status='defeat', ended_at=now() where id = v_enc;
 end $$;
 
--- ════════ (a)(b)(f) THE REAL CHAIN with the resolver ON — elite units spawn, are stronger, and FIGHT ══
+-- ════════ (f) THE REAL CHAIN with the resolver ON — AND (0344) THE FLAG IS PROVEN INERT ══════════════
+-- ██ (a) AND (b) ARE DELETED HERE, AND THE PROPERTY EACH TESTED NO LONGER EXISTS ██
+--   (a) SPAWN STATS — "an elite plan entry materialises combat_units whose ship_hp is
+--       encounter_elite_difficulty_multiplier x the non-elite row's, through the identical spawn insert".
+--   (b) CEILING     — "the total spawned unit count still respects the synthetic ceiling".
+-- Both are statements about the tick INSTANTIATING an authored plan, and 0344 deletes the only branch
+-- that ever did: the v_resolver_engaged arm, which chose between two live wave sizers on a global flag
+-- read and had already stepped a live fight 18x mid-flight. resolve_location_encounter is never called
+-- by the engine again, so no encounter is tagged with a plan, no elite row is ever inserted, and there
+-- is nothing whose ship_hp could carry the multiplier. Neither could be re-premised onto the pressure
+-- authority: it spawns from the SITE row, and an authored plan is still a wave SIZER — which is the
+-- mechanism the owner rejected. The elite RESOLVER is untouched and is still proven above, on its own
+-- terms (LEGACY_PARITY, DETERMINISM, SPLIT_PLAN and its clamp): what died is the engine's consumption.
+-- WHAT REPLACES THEM, and it is the assertion that makes the deletion honest rather than silent: with
+-- encounter_resolver_enabled TRUE — the strongest form of the flag — the tick must still field ONE plain
+-- synthetic body from the clock, write NO resolved_plan_json, write NO encounter_runtime_state row, and
+-- carry NO elite marker anywhere. A flag that is claimed to be inert must be SHOWN inert.
+-- (f) IS UNCHANGED AND IS THE REASON THIS BLOCK SURVIVES: it is the FLEET-1 regression guard — an empty
+-- weapons_json silently yielding 0 damage is the exact failure that destroyed the owner's Fleet 1 — and
+-- it is satisfied by whatever the engine actually fields, which is now a pressure body.
 update public.game_config set value='true'::jsonb where key='encounter_resolver_enabled';
 -- ── 0336: THE WAVE HAS TO BE ABLE TO CLOSE HERE, WHICH THE FLAG-OFF BLOCK DELIBERATELY DENIED IT ──
 -- The FLAG-OFF block above froze the enemy at speed 0 so its position could be compared against
@@ -574,8 +640,7 @@ do $$ begin perform public.set_game_config('enemy_synthetic_speed_base', '2'::js
 do $$
 declare uZ uuid := (select v from elfx where k='uZ'); g2 uuid := (select v from elfx where k='g2');
   v_hunt uuid := (select v from elfx where k='hunt'); v_enc uuid; v_plan jsonb;
-  n int; i int; v_ceiling int; v_mult double precision;
-  v_hp_lo double precision; v_hp_hi double precision;
+  n int; i int; v_mult double precision; v_rt int; v_bd double precision;
   v_pdmg double precision; v_edmg double precision; v_bad int;
   v_alive int; v_dmg_tick int := null;
   -- 0336: the spawn radius is DERIVED, then verified back against the rows the tick produced.
@@ -583,7 +648,6 @@ declare uZ uuid := (select v from elfx where k='uZ'); g2 uuid := (select v from 
   v_dmax double precision; v_perdiff double precision; v_rbase double precision;
   v_mind double precision; v_players int; v_status text;
 begin
-  v_ceiling := greatest(1, coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::integer);
   v_mult    := coalesce(public.cfg_num('encounter_elite_difficulty_multiplier'), 2);
   v_enc := pg_temp.send_and_settle(uZ, g2, v_hunt);
   insert into elfx values ('enc2', v_enc);
@@ -619,20 +683,17 @@ begin
   if v_players < 1 or v_preach is null or not (v_preach > 0) then
     raise exception 'ELITE PROOF FAIL REACH: % positioned living player row(s), weakest reach % — the spawn radius would be derived from a default rather than a measurement', v_players, v_preach;
   end if;
-  -- the WIDEST difficulty this site's live binding can mint, through 0316's own expression (the elite
-  -- multiplier applies exactly where an elite can roll), so the derivation covers the elite unit too.
-  select max(a.base_difficulty
-             * case when coalesce(fm.elite_chance, 0) > 0 then v_mult else 1.0::double precision end)
-    into v_dmax
-    from public.location_encounter_bindings b
-    join public.encounter_profiles ep           on ep.id = b.encounter_profile_id and ep.active is true
-    join public.encounter_profile_members pm    on pm.encounter_profile_id = ep.id
-    join public.enemy_fleet_templates ft        on ft.id = pm.fleet_template_id and ft.active is true
-    join public.enemy_fleet_template_members fm on fm.fleet_template_id = ft.id
-    join public.enemy_archetypes a              on a.id = fm.enemy_archetype_id and a.active is true
-   where b.location_id = v_hunt and b.active is true;
+  -- ── (0344) THE DIFFICULTY THE RADIUS IS SOLVED FOR IS THE SITE'S OWN, NOT A BINDING ARCHETYPE'S ──
+  -- This used to take max(archetype base_difficulty x the elite multiplier where an elite can roll)
+  -- over the site's live binding, because the wave was going to be the AUTHORED plan and its units
+  -- carried archetype difficulties. Nothing instantiates that plan any more: the pressure authority
+  -- derives a body's range from locations.base_difficulty, so that is the difficulty this solve has to
+  -- cover. Reading the binding here would size the fixture against a number the engine never sees.
+  select l.base_difficulty into v_dmax
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
   if v_dmax is null or not (v_dmax > 0) then
-    raise exception 'ELITE PROOF FAIL REACH: the hunt site''s live binding yields no positive archetype difficulty (%) — the spawn radius could not be solved and the elite half of the plan would not be covered', v_dmax;
+    raise exception 'ELITE PROOF FAIL REACH: the encounter''s site carries base_difficulty % — the spawn radius the pressure authority derives from it could not be solved', v_dmax;
   end if;
   v_perdiff := coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 5);
   -- radius(D) = extent + (base + D*perdiff) + 1, and the widest unit must land at 80% of the weakest
@@ -648,26 +709,36 @@ begin
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
 
+  -- ── (0344) THE FLAG IS ON AND IT CHANGED NOTHING. Every clause here replaces a deleted one. ──────
   v_plan := (select resolved_plan_json from public.combat_encounters where id = v_enc);
-  if v_plan is null then raise exception 'ELITE PROOF FAIL SPAWN: the encounter was not resolved (no plan tag)'; end if;
-  if (v_plan->>'elite_policy') is distinct from 'multiplier_v1' then
-    raise exception 'ELITE PROOF FAIL SPAWN: stored plan elite_policy % <> multiplier_v1', (v_plan->>'elite_policy');
+  if v_plan is not null then
+    raise exception 'ELITE PROOF FAIL INERT: the encounter carries a resolved plan (%) with encounter_resolver_enabled TRUE — 0344 deletes the branch that resolved and instantiated one, so a tag here means a second thing can still decide how many enemies exist and how strong they are', v_plan;
   end if;
-
-  -- (b) the ceiling still binds on what actually spawned.
+  select count(*) into v_rt from public.encounter_runtime_state where location_id = v_hunt;
+  if v_rt <> 0 then
+    raise exception 'ELITE PROOF FAIL INERT: % encounter_runtime_state row(s) exist for this site — that cap/cooldown ledger was written ONLY by the deleted resolver branch, so a row means the branch ran', v_rt;
+  end if;
+  -- ONE body, and it is the plain synthetic one the SITE fields. Not two, because there is no plan to
+  -- split into an elite and a normal entry; not zero, because the clock delivers on the first tick.
   select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
-  if n <> 2 then raise exception 'ELITE PROOF FAIL SPAWN: % enemy rows (want 2 — 1 elite + 1 normal)', n; end if;
-  if n > v_ceiling then raise exception 'ELITE PROOF FAIL SPAWN: % spawned enemy units exceeds the ceiling %', n, v_ceiling; end if;
-
-  -- (a) the elite row's ship_hp is exactly the multiplier x the normal row's — through the IDENTICAL
-  --     existing spawn insert (the tick has no elite branch).
-  select min(ship_hp), max(ship_hp) into v_hp_lo, v_hp_hi
-    from public.combat_units where encounter_id = v_enc and side='enemy';
-  if v_hp_lo is null or v_hp_lo <= 0 then raise exception 'ELITE PROOF FAIL SPAWN: a spawned enemy has non-positive ship_hp'; end if;
-  if abs(v_hp_hi - v_hp_lo * v_mult) > 0.001 then
-    raise exception 'ELITE PROOF FAIL SPAWN: elite ship_hp % <> % x normal ship_hp % (the multiplier did not reach combat_units)', v_hp_hi, v_mult, v_hp_lo;
+  if n <> 1 then
+    raise exception 'ELITE PROOF FAIL INERT: % enemy row(s) with the resolver flag TRUE (want the 1 body the pressure clock delivers) — an authored plan is a wave SIZER, and 0344 exists to leave exactly one thing deciding that', n;
   end if;
-  raise notice 'ELITE_PASS_SPAWN_STATS';
+  if exists (select 1 from public.combat_units where encounter_id = v_enc and side = 'enemy'
+              and unit_type_id is distinct from 'pirate_synthetic') then
+    raise exception 'ELITE PROOF FAIL INERT: an enemy row carries a non-synthetic unit_type_id — an authored archetype reached combat_units, which only the deleted branch could do';
+  end if;
+  -- and the body's hp is the SITE's number with no elite multiplier and no danger factor over it.
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id where ce.id = v_enc;
+  select ship_hp into v_pdmg from public.combat_units where encounter_id = v_enc and side='enemy';
+  if v_pdmg is null or v_pdmg <= 0 then raise exception 'ELITE PROOF FAIL INERT: the fielded body has non-positive ship_hp'; end if;
+  if abs(v_pdmg - v_bd * coalesce(public.cfg_num('enemy_hp_base'),14)) > 0.001 then
+    raise exception 'ELITE PROOF FAIL INERT: the fielded body carries % hp against the site-driven % (base_difficulty % x enemy_hp_base) — a multiplier or a danger factor reached it from somewhere',
+      v_pdmg, v_bd * coalesce(public.cfg_num('enemy_hp_base'),14), v_bd;
+  end if;
+  v_pdmg := null;   -- reused below for the measured player damage; cleared so a stale read cannot pass
+  raise notice 'ELITE_PASS_RESOLVER_INERT (encounter_resolver_enabled TRUE and it changed nothing: no resolved_plan_json, no encounter_runtime_state row, ONE pirate_synthetic body at the site-driven hp, and no elite multiplier % anywhere near combat_units)', v_mult;
 
   -- ── 0336: THE HALF THE GEOMETRY CANNOT ESTABLISH — THE WAVE IS INSIDE THE PLAYER'S REACH ────────
   -- 0336 makes "the wave is outside its OWN reach at spawn" structural, and says in its own header

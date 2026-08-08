@@ -44,8 +44,11 @@
 -- E5 (0261): every existing DIRECT resolve_location_encounter(...) call now passes a FIXED per-location
 -- seed (loc::text) so all existing markers still hold; the resolved combat path feeds e.id::text internally.
 --
--- PASS markers: ER_PASS_VERBATIM, ER_PASS_FLAGOFF_ROWS, ER_PASS_FLAGOFF_REWARD, ER_PASS_RESOLVED_PLAN,
--- ER_PASS_MULTIWAVE, ER_PASS_NULL_FLAGS, ER_PASS_NULL_BINDING, ER_PASS_NULL_INACTIVE_LOC, ER_PASS_CAP,
+-- PASS markers: ER_PASS_VERBATIM, ER_PASS_FLAGOFF_ROWS, ER_PASS_FLAGOFF_REWARD,
+-- ER_PASS_RESOLVER_INERT (0344 — replacing ER_PASS_RESOLVED_PLAN, ER_PASS_MULTIWAVE and ER_PASS_CAP,
+-- which each asserted that the tick instantiates an authored plan: 0344 deletes the only branch that
+-- did, so the property is gone and pinning it would demand the deleted wave sizer),
+-- ER_PASS_NULL_FLAGS, ER_PASS_NULL_BINDING, ER_PASS_NULL_INACTIVE_LOC,
 -- ER_PASS_COOLDOWN, ER_PASS_DETERMINISM, ER_PASS_REWARD_SHARED, ER_PASS_UNIT_CLAMP, ER_PASS_SKIP_ZERO,
 -- ER_PASS_REWARD_UNTOUCHED, ER_PASS_E5_VARIETY, ER_PASS_E5_SEED_STABLE, ER_PASS_ELITE_WIRED,
 -- "ENCOUNTER-RESOLVER PROOF PASSED".
@@ -73,7 +76,7 @@ end $$;
 
 -- ════════ STATIC PROOF 1 — ER_PASS_VERBATIM + ER_PASS_REWARD_UNTOUCHED (prosrc, no fixtures needed) ══
 do $$
-declare v_tick text; v_ccge text; v_reward text; v_base text; v_res text;
+declare v_tick text; v_ccge text; v_reward text; v_base text; v_res text; v_code text;
 begin
   select pg_get_functiondef(oid) into v_tick   from pg_proc where proname='process_combat_ticks'          and pronamespace='public'::regnamespace;
   select pg_get_functiondef(oid) into v_ccge   from pg_proc where proname='combat_create_group_encounter' and pronamespace='public'::regnamespace;
@@ -81,24 +84,48 @@ begin
   select pg_get_functiondef(oid) into v_base   from pg_proc where proname='base_add_resources'            and pronamespace='public'::regnamespace;
   select pg_get_functiondef(oid) into v_res    from pg_proc where proname='resolve_location_encounter'    and pronamespace='public'::regnamespace;
 
-  -- the VERBATIM pre-E3 synthetic-wave lines survive as the flag-OFF fallback.
-  -- ██ RE-POINTED BY 0339, BY NAME, NEVER BY WIDENING ██ The weapons_json delivery literal used to
-  -- live in the tick TWICE — once per spawn arm, differing only in indentation — and this pin could
-  -- be satisfied by either copy while the other drifted. 0339 folded the placement loop into
-  -- combat_spawn_wave_units, so the literal now lives once, in that leaf. The pin follows it: the
-  -- tick must still own the SYNTHETIC WAVE'S SIZING (which is what this proof is actually about, and
-  -- which 0339 does not touch), and the one spawn authority must still carry the delivery shape.
-  if strpos(v_tick, 'v_enemy_count  := least(coalesce(cfg_num(''enemy_synthetic_max_units''),6)::integer, greatest(1, v_danger));') = 0
-     or strpos(v_tick, 'public.combat_spawn_wave_units(') = 0
+  -- ██ RE-POINTED BY 0344 — THE WAVE SIZER AND THE DANGER-SCALED REWARD ARE DELETED, NOT MOVED ██
+  -- 0339 had already moved the placement literal into combat_spawn_wave_units and this pin followed it.
+  -- 0344 goes further and DELETES what those two clauses pinned:
+  --   * the synthetic wave SIZER — least(<the deleted unit-cap knob>, greatest(1, the kill-escalation
+  --     term)). That line IS "+1 enemy per kill"; the owner has rejected it three times.
+  --   * the reward's danger factor — round(reward_metal_base x tier x (1 + <a deleted scale> x the
+  --     kill-escalation term) x reward_multiplier). Metal is paid PER ENEMY DESTROYED now.
+  --   * both spawn arms inside the tick, so the tick composes the spawn leaf ZERO times: the one caller
+  --     left in the schema is public.combat_pressure_step.
+  -- Pinning any of them would DEMAND the defect. They become ABSENCE assertions, and the presence half
+  -- follows the leaf exactly as 0339 said it should: the tick must compose the pressure authority, that
+  -- authority must compose the ONE spawn leaf, and the leaf must still carry the delivery shape.
+  if strpos(v_tick, 'public.combat_pressure_step(') = 0
+     or strpos((select p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                 where n.nspname = 'public' and p.proname = 'combat_pressure_step'),
+               'public.combat_spawn_wave_units(') = 0
      or strpos((select p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
                  where n.nspname = 'public' and p.proname = 'combat_spawn_wave_units'),
                '''module_type_id'', ''pirate_synthetic_weapon'', ''range'', p_range,') = 0 then
-    raise exception 'ER PROOF FAIL: the verbatim synthetic-wave lines are gone from process_combat_ticks / its spawn authority';
+    raise exception 'ER PROOF FAIL: the tick must compose public.combat_pressure_step, that authority must compose the ONE spawn leaf, and the leaf must still carry the pirate weapons_json delivery shape';
   end if;
-  -- the VERBATIM :898-899 reward formula survives as the flag-OFF reward fallback.
-  if strpos(v_tick, 'v_reward_metal := round(coalesce(cfg_num(''reward_metal_base''),10) * greatest(loc.reward_tier,1)') = 0
-     or strpos(v_tick, '* (1 + coalesce(cfg_num(''reward_danger_scale''),0.25) * v_danger) * coalesce(cfg_num(''reward_multiplier''),1.0));') = 0 then
-    raise exception 'ER PROOF FAIL: the verbatim :898-899 reward formula is gone from process_combat_ticks';
+  -- the reward line's SITE half survives (base x tier x multiplier); only the danger factor is gone.
+  if strpos(v_tick, 'v_reward_metal := round(coalesce(cfg_num(''reward_metal_base''),10) * greatest(loc.reward_tier,1)') = 0 then
+    raise exception 'ER PROOF FAIL: the reward line''s site half (reward_metal_base x greatest(reward_tier,1)) is gone from process_combat_ticks';
+  end if;
+  -- AND THE DELETED SURFACE MUST STAY DELETED. Comment-stripped, because this block's own prose above
+  -- names what is being asserted absent (the 0222 vacuity trap, in reverse); the probe's liveness comes
+  -- from the presence clauses immediately above, in the same block. The needles for the deleted local are
+  -- CONCATENATED — the shared selftest gate refuses any proof that names it in executable SQL, and the
+  -- house idiom (ONEANCHOR in danger-combat-proof) is to split the string rather than blind the detector.
+  v_code := regexp_replace(v_tick, '--[^' || chr(10) || ']*', '', 'g');
+  if length(v_code) < 40000 or length(v_code) >= length(v_tick) then
+    raise exception 'ER PROOF FAIL: the comment strip produced % chars from a % char tick body — every absence assert here would be measured against nothing', length(v_code), length(v_tick);
+  end if;
+  if position('v_dan' || 'ger' in v_code) > 0 then
+    raise exception 'ER PROOF FAIL: the tick still names the deleted kill-escalation local — while it survives, destroying an enemy can still make the next one bigger';
+  end if;
+  if position('public.combat_spawn_wave_units(' in v_code) > 0 then
+    raise exception 'ER PROOF FAIL: the tick still places an enemy wave itself — after 0344 the only function that may is public.combat_pressure_step';
+  end if;
+  if position('resolve_location_encounter' in v_code) > 0 then
+    raise exception 'ER PROOF FAIL: the tick still calls resolve_location_encounter — 0344 deletes the branch that chose between two live wave sizers on a global flag read';
   end if;
   -- the 0234 AGGREGATE (C) arm is unchanged (distinctive aggregate-only tokens).
   if strpos(v_tick, 'coalesce(sum(coalesce(cu2.attack_snapshot, ut.attack) * cu2.alive_count), 0)') = 0
@@ -671,10 +698,13 @@ begin
   if n <> 1 then raise exception 'ER PROOF FAIL FLAGOFF: % enemy rows (want 1)', n; end if;
   select hp_max, pos_x, pos_y into v_hpmax, v_px, v_py from public.combat_units
     where encounter_id = v_enc and side='enemy' and unit_type_id='pirate_synthetic';
+  -- (0344) THE BODY'S HP IS THE SITE'S NUMBER, WITH NO DANGER FACTOR OVER IT. This was
+  -- `base_difficulty x enemy_hp_base x (1 + danger x <a deleted scale>) x variance`; the middle factor
+  -- and its knob row are DELETED. Leaving the read in would have compared against 1.6x what the engine
+  -- produces — a red whose message blamed the flag-off arm for a formula change somewhere else.
   v_exp_hp := (select base_difficulty from public.locations where id = v_hunt)
-              * coalesce(public.cfg_num('enemy_hp_base'),14)
-              * (1 + 1 * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;
-  if abs(v_hpmax - v_exp_hp) > 0.001 then raise exception 'ER PROOF FAIL FLAGOFF: enemy hp_max % <> pre-E3 formula %', v_hpmax, v_exp_hp; end if;
+              * coalesce(public.cfg_num('enemy_hp_base'),14);
+  if abs(v_hpmax - v_exp_hp) > 0.001 then raise exception 'ER PROOF FAIL FLAGOFF: enemy hp_max % <> the site-driven body formula % (locations.base_difficulty x enemy_hp_base, no danger factor)', v_hpmax, v_exp_hp; end if;
   -- ── 0336 REPOINT: "at the location center" -> the ring the tick actually composes. ────────────
   -- NULL-PINNED FIRST: `x is distinct from NULL` is TRUE for every real number, so an unwritten
   -- coordinate satisfied the OLD clause and would satisfy a naive distance form of this one.
@@ -717,10 +747,15 @@ begin
     raise exception 'ER PROOF FAIL FLAGOFF: wave did not clear after forcing enemy to 1 hp';
   end if;
   v_metal := ((select total_rewards_json from public.combat_encounters where id = v_enc)->>'metal')::double precision;
+  -- (0344) METAL IS PAID PER ENEMY DESTROYED, FROM THE SITE ROW, AND THE DANGER FACTOR IS DELETED.
+  -- The head paid on a WAVE CLEAR at base x tier x (1 + <a deleted scale> x danger) x multiplier. The
+  -- scale row is gone and the payout event changed: this tick destroys ONE body, so the expectation is
+  -- the per-kill value times one kill. Same shape, one fewer factor, and it is derived from the same
+  -- rows the engine reads rather than from a literal.
   v_exp_metal := round(coalesce(public.cfg_num('reward_metal_base'),10) * greatest(v_tier,1)
-                       * (1 + coalesce(public.cfg_num('reward_danger_scale'),0.25) * 1) * coalesce(public.cfg_num('reward_multiplier'),1.0));
+                       * coalesce(public.cfg_num('reward_multiplier'),1.0)) * 1;
   if v_metal is distinct from v_exp_metal then
-    raise exception 'ER PROOF FAIL FLAGOFF: total metal % <> pre-E3 reward %', v_metal, v_exp_metal;
+    raise exception 'ER PROOF FAIL FLAGOFF: total metal % <> the site-driven per-kill reward % for the ONE body destroyed', v_metal, v_exp_metal;
   end if;
   raise notice 'ER_PASS_FLAGOFF_REWARD';
 
@@ -728,161 +763,83 @@ begin
   update public.combat_encounters set status='defeat', ended_at=now() where id = v_enc;
 end $$;
 
--- ════════ RESOLVED SCENARIO (encounter_resolver_enabled=true ⇒ the authored plan) ════════════════════
+-- ════════ (0344) THE RESOLVED SCENARIO IS DELETED — THE ENGINE NO LONGER INSTANTIATES A PLAN ═════════
+-- ██ THREE BLOCKS STOOD HERE, AND THE PROPERTY EACH TESTED NO LONGER EXISTS ██
+--   ER_PASS_RESOLVED_PLAN — resolver ON + an ACTIVE binding produces ONE archetype-derived enemy row at
+--                           the archetype's own hp, the encounter tagged with resolved_plan_json, the
+--                           encounter_runtime_state ledger written, the reward taken from the authored
+--                           profile, and the unit standing on the formation leaf's ring.
+--   ER_PASS_MULTIWAVE     — a resolved encounter REUSES its stored plan on wave 2 rather than
+--                           re-resolving, and the reward stays the resolved one.
+--   ER_PASS_CAP           — an active tagged encounter blocks a second resolve at cap=1, and the cap
+--                           self-heals when that encounter leaves 'active'.
+-- All three are statements about the tick's v_resolver_engaged branch, which migration 0344 DELETES. It
+-- was TWO live wave SIZERS selected by a global flag read, and it had already stepped a live fight 18x
+-- mid-flight (Reaver 7f56967e: wave 13->14, units 1->6, hp 123->2213, and the fleet died). After 0344
+-- nothing calls resolve_location_encounter, so nothing is tagged, the ledger is never written, the
+-- authored reward profile is never consulted, and there is no wave 2 to reuse a plan on — bodies arrive
+-- one at a time on the site's own cadence.
+-- NONE OF THEM COULD BE RE-PREMISED, and this is the reason rather than a preference: the pressure
+-- authority spawns from the SITE row, and an authored plan is still a wave SIZER that something has to
+-- TRIGGER. Under the contract's own shape that trigger stays "the enemy side is empty", which is
+-- precisely the arrow the owner has now rejected three times. A clock has no such trigger.
+-- WHAT SURVIVES UNTOUCHED, and it is most of this suite: every DIRECT test of the resolver FUNCTION —
+-- REWARD_SHARED, UNIT_CLAMP, SKIP_ZERO, DETERMINISM, NULL_FLAGS, NULL_BINDING, NULL_INACTIVE_LOC,
+-- COOLDOWN, E5_VARIETY, E5_SEED_STABLE and ELITE_WIRED. resolve_location_encounter is not changed by
+-- 0344; what changed is that the ENGINE stopped calling it. So the one thing that had to be ADDED is the
+-- assertion that makes the deletion honest instead of silent: with the flag TRUE and a valid ACTIVE
+-- binding, the tick must still field a plain synthetic body and tag NOTHING.
 update public.game_config set value='true'::jsonb where key='encounter_resolver_enabled';
 do $$
-declare uZ uuid := (select v from erfx where k='uZ'); g2 uuid := (select v from erfx where k='g2');
-  v_hunt uuid := (select v from erfx where k='hunt'); v_ep uuid := (select v from erfx where k='ep'); v_enc uuid;
-  n int; n_players int;
-  v_hpmax double precision; v_exp_hp double precision; v_px double precision; v_py double precision;
-  v_metal double precision; v_exp_metal double precision; v_tier int; v_grants jsonb; v_plan jsonb;
-  v_ax double precision; v_ay double precision; v_extent double precision; v_erange double precision;
-  v_sx double precision; v_sy double precision;  -- (0338) the encounter's own site: where a wave comes FROM
-  v_fx double precision; v_fy double precision; v_slot int; v_slot_found int := null;
+declare
+  uZ uuid := (select v from erfx where k='uZ'); g2 uuid := (select v from erfx where k='g2');
+  v_hunt uuid := (select v from erfx where k='hunt');
+  v_enc uuid; n int; v_rows int; v_code text; v_bd double precision; v_hp double precision;
 begin
-  select reward_tier into v_tier from public.locations where id = v_hunt;
-  select resource_grants into v_grants from public.reward_profiles where id = (select v from erfx where k='rp');
+  -- (1) THE ARM IS GONE FROM THE DEPLOYED TICK. Non-vacuity first: the probe must be able to find
+  --     something, and the chain must actually have been through 0344.
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
+   where n2.nspname = 'public' and p.proname = 'process_combat_ticks';
+  if v_code is null or length(v_code) < 40000 then
+    raise exception 'ER PROOF FAIL INERT: the comment-stripped tick body is % chars — the absence assert below would be measured against nothing', coalesce(length(v_code), -1);
+  end if;
+  if position('combat_pressure_step' in v_code) = 0 then
+    raise exception 'ER PROOF FAIL INERT: the deployed tick does not compose combat_pressure_step, so this chain has not been through 0344 — asserting that the resolved arm is deleted would be asserting something no migration has done yet';
+  end if;
+  if position('resolve_location_encounter' in v_code) > 0 then
+    raise exception 'ER PROOF FAIL INERT: the deployed tick still calls resolve_location_encounter — while that branch survives there are TWO live wave sizers chosen by a flag read, which is the disease 0344 removes';
+  end if;
+
+  -- (2) AND WITH THE FLAG ON AND A VALID ACTIVE BINDING, NOTHING RESOLVED.
   v_enc := pg_temp.send_and_settle(uZ, g2, v_hunt);
-  insert into erfx values ('enc2', v_enc);
-
-  -- 0336: the anchor and the MEASURED player extent, read before the wave exists (see the FLAG-OFF
-  -- block above and this file's header — the spawn arm measures the extent before anything moves in
-  -- the spawn tick, so it has to be read here and not afterwards).
-  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), l.x, l.y into v_ax, v_ay, v_sx, v_sy
-    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
-   where ce.id = v_enc;
-  if v_ax is null or v_ay is null then
-    raise exception 'ER PROOF FAIL RESOLVED: the encounter has no engagement anchor (engagement_x/y and the location centre are both NULL) — the spawn geometry below would be measured from nothing';
-  end if;
-  select count(*), coalesce(max(public.osn_distance(v_ax, v_ay, u.pos_x, u.pos_y)), 0)
-    into n_players, v_extent
-    from public.combat_units u
-   where u.encounter_id = v_enc and u.side='player' and u.alive_count > 0
-     and u.pos_x is not null and u.pos_y is not null;
-  if n_players < 1 then
-    raise exception 'ER PROOF FAIL RESOLVED: no positioned living player unit before the spawn tick — the extent would be a default rather than a measurement and the radius assert would prove nothing';
-  end if;
-
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
-
-  -- the resolved wave: 1 unit on its own formation slot; the encounter tagged; the runtime ledger written.
-  select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
-  if n <> 1 then raise exception 'ER PROOF FAIL RESOLVED: % enemy rows (want 1)', n; end if;
-  select hp_max, pos_x, pos_y into v_hpmax, v_px, v_py from public.combat_units where encounter_id = v_enc and side='enemy';
-  v_exp_hp := 5 * coalesce(public.cfg_num('enemy_hp_base'),14) * (1 + 1 * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;  -- archetype base_difficulty=5
-  if abs(v_hpmax - v_exp_hp) > 0.001 then raise exception 'ER PROOF FAIL RESOLVED: enemy hp_max % <> archetype-derived %', v_hpmax, v_exp_hp; end if;
-  -- 0336 REPOINT, identical in kind to the FLAG-OFF one: the RESOLVED spawn arm composes the SAME
-  -- formation leaf, so the resolved wave is pinned against it the same way. NULL-pinned first.
-  if v_px is null or v_py is null then
-    raise exception 'ER PROOF FAIL RESOLVED: the spawned enemy carries a NULL coordinate (%,%) — a missing position must FAIL, never pass a geometry assert by absence', v_px, v_py;
+  if (select resolved_plan_json from public.combat_encounters where id = v_enc) is not null then
+    raise exception 'ER PROOF FAIL INERT: the encounter carries a resolved plan with the resolver flag TRUE — clause (1) says the branch is gone, so this contradicts it';
   end if;
-  select max((w->>'range')::double precision) into v_erange
-    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w
-   where cu.encounter_id = v_enc and cu.side='enemy';
-  if v_erange is null then
-    raise exception 'ER PROOF FAIL RESOLVED: the spawned enemy carries no weapon range in its own weapons_json — the spawn radius is DERIVED from that range and cannot be formed';
+  select count(*) into v_rows from public.encounter_runtime_state;
+  if v_rows <> 0 then
+    raise exception 'ER PROOF FAIL INERT: % encounter_runtime_state row(s) exist — that cap/cooldown ledger was written ONLY by the deleted branch, so a row means the branch ran', v_rows;
   end if;
-  for v_slot in 0 .. n - 1 loop
-    select fp.x, fp.y into v_fx, v_fy
-      from public.combat_formation_point(v_ax, v_ay, v_extent + v_erange + 1, v_slot,
-              public.combat_wave_arrival_phase(v_ax, v_ay, v_sx, v_sy, v_slot)) fp;
-    if v_fx is not null and v_fy is not null
-       and abs(v_px - v_fx) <= 0.000001 and abs(v_py - v_fy) <= 0.000001 then
-      v_slot_found := v_slot; exit;
-    end if;
-  end loop;
-  if v_slot_found is null then
-    raise exception 'ER PROOF FAIL RESOLVED: the resolved enemy stands at (%,%), which is not combat_formation_point(anchor %,%, radius % = measured extent % + its own range % + 1, slot, the 0338 arrival phase toward its own site) for any slot of this wave — the resolved spawn arm no longer lays its wave out through the one formation authority',
-      v_px, v_py, v_ax, v_ay, v_extent + v_erange + 1, v_extent, v_erange;
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> 1 then
+    raise exception 'ER PROOF FAIL INERT: % enemy row(s) (want the 1 body the pressure clock delivers on a first tick) — an authored fleet size reached the field', n;
   end if;
-  v_plan := (select resolved_plan_json from public.combat_encounters where id = v_enc);
-  if v_plan is null or (v_plan->>'encounter_profile_id') <> v_ep::text then
-    raise exception 'ER PROOF FAIL RESOLVED: encounter not tagged with the resolved plan: %', v_plan;
+  if exists (select 1 from public.combat_units where encounter_id = v_enc and side = 'enemy'
+              and unit_type_id is distinct from 'pirate_synthetic') then
+    raise exception 'ER PROOF FAIL INERT: an enemy row carries a non-synthetic unit_type_id — an authored archetype reached combat_units, which only the deleted branch could do';
   end if;
-  if not exists (select 1 from public.encounter_runtime_state s where s.location_id = v_hunt and s.encounter_profile_id = v_ep and s.last_spawn_at is not null) then
-    raise exception 'ER PROOF FAIL RESOLVED: encounter_runtime_state last_spawn_at not set';
+  -- and its hp is the SITE'S, not the archetype's. This fixture engineers those two to differ (the
+  -- location's base_difficulty against the archetype's 5), which is what makes this clause able to fail.
+  select base_difficulty into v_bd from public.locations where id = v_hunt;
+  select hp_max into v_hp from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if abs(v_hp - v_bd * coalesce(public.cfg_num('enemy_hp_base'),14)) > 0.001 then
+    raise exception 'ER PROOF FAIL INERT: the fielded body carries % hp against the site-driven % (base_difficulty % x enemy_hp_base) — an archetype difficulty or a danger factor reached it from somewhere',
+      v_hp, v_bd * coalesce(public.cfg_num('enemy_hp_base'),14), v_bd;
   end if;
-
-  -- reward via the AUTHORED profile (base 20) — DISTINCT from the pre-E3 base-10 value, proving the adapter branch.
-  update public.combat_units set hp_current = 1 where encounter_id = v_enc and side='enemy';
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
-  if (select waves_cleared from public.combat_encounters where id = v_enc) < 1 then
-    raise exception 'ER PROOF FAIL RESOLVED: wave did not clear';
-  end if;
-  v_metal := ((select total_rewards_json from public.combat_encounters where id = v_enc)->>'metal')::double precision;
-  v_exp_metal := public.resolve_encounter_reward_inputs(v_grants, v_tier, 1);
-  if v_metal is distinct from v_exp_metal then
-    raise exception 'ER PROOF FAIL RESOLVED: total metal % <> authored-profile reward %', v_metal, v_exp_metal;
-  end if;
-  if v_exp_metal = round(coalesce(public.cfg_num('reward_metal_base'),10) * greatest(v_tier,1) * (1 + 0.25*1) * coalesce(public.cfg_num('reward_multiplier'),1.0)) then
-    raise exception 'ER PROOF FAIL RESOLVED: the authored (base 20) reward is indistinguishable from the pre-E3 (base 10) reward — the test cannot discriminate the branch';
-  end if;
-  raise notice 'ER_PASS_RESOLVED_PLAN (1 archetype-derived row at hp_max %, plan-tagged, runtime ledger written, reward from the authored profile, standing exactly on combat_formation_point(anchor %,%, measured extent % + its own range % + 1, slot %, the 0338 arrival phase))',
-    round(v_hpmax::numeric, 3), v_ax, v_ay, v_extent, v_erange, v_slot_found;
-end $$;
-
--- ════════ MULTI-WAVE (FIX 2): a resolved encounter REUSES its plan on wave 2 (not synthetic); reward stays resolved ═
-do $$
-declare v_enc uuid := (select v from erfx where k='enc2'); v_hunt uuid := (select v from erfx where k='hunt');
-  v_ep uuid := (select v from erfx where k='ep'); v_grants jsonb; v_tier int; n int;
-  v_hpmax double precision; v_exp_hp2 double precision; v_ac int; v_metal double precision; v_exp double precision;
-begin
-  select reward_tier into v_tier from public.locations where id = v_hunt;
-  select resource_grants into v_grants from public.reward_profiles where id = (select v from erfx where k='rp');
-
-  -- wave 1 already cleared (waves_cleared=1). Fast-forward the wave gate and tick → wave 2 spawns. With the
-  -- FIX the encounter REUSES its plan (cap=1 would otherwise re-resolve, self-count, and degrade to synthetic).
-  update public.combat_encounters set next_wave_at = now() - interval '1 second',
-         last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
-
-  select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
-  if n <> 1 then raise exception 'ER PROOF FAIL MULTIWAVE: % enemy rows on wave 2 (want 1)', n; end if;
-  -- wave-2 danger = 1 + waves_cleared(1) = 2 ⇒ RESOLVED hp uses the archetype base_difficulty (5) at danger 2,
-  -- NOT the synthetic loc.base_difficulty formula (that degradation is exactly what the fix prevents).
-  select hp_max into v_hpmax from public.combat_units where encounter_id = v_enc and side='enemy';
-  v_exp_hp2 := 5 * coalesce(public.cfg_num('enemy_hp_base'),14) * (1 + 2 * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;
-  if abs(v_hpmax - v_exp_hp2) > 0.001 then
-    raise exception 'ER PROOF FAIL MULTIWAVE: wave-2 hp_max % <> resolved archetype-derived % (degraded to synthetic?)', v_hpmax, v_exp_hp2;
-  end if;
-  if (select resolved_plan_json->>'encounter_profile_id' from public.combat_encounters where id = v_enc) <> v_ep::text then
-    raise exception 'ER PROOF FAIL MULTIWAVE: the resolved tag was lost on wave 2';
-  end if;
-  -- the ledger was NOT re-upserted on the reused wave (active_count stays 1; the cooldown anchors on wave 1).
-  select active_count into v_ac from public.encounter_runtime_state where location_id = v_hunt and encounter_profile_id = v_ep;
-  if v_ac <> 1 then raise exception 'ER PROOF FAIL MULTIWAVE: runtime active_count % (want 1 — reuse must not re-upsert)', v_ac; end if;
-
-  -- clear wave 2; the reward must STILL be resolved (base 20) ⇒ total = R(tier,1) + R(tier,2).
-  update public.combat_units set hp_current = 1 where encounter_id = v_enc and side='enemy';
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
-  if (select waves_cleared from public.combat_encounters where id = v_enc) < 2 then
-    raise exception 'ER PROOF FAIL MULTIWAVE: wave 2 did not clear';
-  end if;
-  v_metal := ((select total_rewards_json from public.combat_encounters where id = v_enc)->>'metal')::double precision;
-  v_exp := public.resolve_encounter_reward_inputs(v_grants, v_tier, 1) + public.resolve_encounter_reward_inputs(v_grants, v_tier, 2);
-  if v_metal is distinct from v_exp then
-    raise exception 'ER PROOF FAIL MULTIWAVE: accumulated metal % <> two resolved waves % (wave 2 paid synthetic?)', v_metal, v_exp;
-  end if;
-  raise notice 'ER_PASS_MULTIWAVE';
-end $$;
-
--- ════════ CAP: the resolved encounter (still active, tagged er_ep, cap=1) blocks a 2nd resolve; heals ═
-do $$
-declare v_hunt uuid := (select v from erfx where k='hunt'); v_enc2 uuid := (select v from erfx where k='enc2');
-begin
-  -- enc2 is active + tagged er_ep ⇒ active_cnt = 1 = cap ⇒ NULL.
-  if public.resolve_location_encounter(v_hunt, v_hunt::text) is not null then
-    raise exception 'ER PROOF FAIL CAP: resolve did not block at the active_encounter_cap';
-  end if;
-  -- retire enc2 ⇒ active_cnt = 0 ⇒ resolves again (cooldown 0 on er_ep, so CAP is isolated).
-  update public.combat_encounters set status='defeat', ended_at=now() where id = v_enc2;
-  if public.resolve_location_encounter(v_hunt, v_hunt::text) is null then
-    raise exception 'ER PROOF FAIL CAP: resolve did not self-heal after the encounter left active';
-  end if;
-  raise notice 'ER_PASS_CAP';
+  update public.combat_encounters set status='defeat', ended_at=now() where id = v_enc;
+  raise notice 'ER_PASS_RESOLVER_INERT (encounter_resolver_enabled TRUE with a valid ACTIVE binding and it changed nothing: the deployed tick no longer calls resolve_location_encounter at all, no resolved_plan_json, no encounter_runtime_state row, and the field is ONE plain pirate_synthetic body at the SITE difficulty rather than the archetype''s)';
 end $$;
 
 -- ════════ E5 (0261): VARIETY + SEED-STABLE + ZERO-ELITE + ELITE-READINESS-GUARD ══════════════════════

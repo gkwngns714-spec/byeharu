@@ -299,6 +299,14 @@ begin
   return v;
 end $$;
 
+-- ── (0344) PRESSURE STAGING — shared, not re-copied ──────────────────────────────────────────────
+-- TEAMSETTLE needs to make a reinforcement slot COME DUE, because after 0344 an enemy body arrives on
+-- the site's own cadence and now() is FROZEN for this whole transaction — so no number of ticks makes
+-- a time-driven clock fire. pg_temp.pressure_site / pg_temp.pressure_fill live in
+-- scripts/lib/pressure-staging.sql, shared with danger-combat-proof.sql; a second copy here is exactly
+-- what the next slice would have to keep in step by hand.
+\ir lib/pressure-staging.sql
+
 -- ★ THE TWO LIGHTS-ON FIXTURE HELPERS (added 2026-07-27) ────────────────────────────────────────────
 -- 0300 lit every capability this file was written against while dark. Two of them changed what a
 -- VALID fixture is, so they are provisioned once here instead of being patched in at ~10 call sites.
@@ -372,9 +380,12 @@ end $$;
 -- MODE-AGNOSTIC BY CONSTRUCTION — it spends the wave in BOTH representations (the spatial arm's
 -- side='enemy' rows and the aggregate arm's `enemy_integrity_current` scalar), so this helper is
 -- correct whether or not `spatial_combat_enabled` is lit, and never re-acquires the ambient
--- dependency it exists to remove. `next_wave_at` is cleared because now() is FROZEN inside the
--- proof's single transaction: a wave-transition pause set to now()+N could never elapse and would
--- park every later tick on the `next_wave_incoming` branch.
+-- dependency it exists to remove.
+-- (0344) THE `next_wave_at = null` CLEAR IS GONE. It was here because now() is FROZEN inside the
+-- proof's single transaction, so a wave-transition pause set to now()+N could never elapse and would
+-- park every later tick on the `next_wave_incoming` branch. 0344 deletes that pause from both arms,
+-- so nothing reads the column: clearing it established NOTHING, which is the silent-precondition
+-- class this slice's sweep exists to end. Spending the field is now the whole job.
 --
 -- The knob is CAPTURED and RESTORED, never restored to a hard-coded literal — the committed seed is
 -- the chain's to own, not this file's.
@@ -390,8 +401,7 @@ create or replace function pg_temp.spend_wave(p_enc uuid) returns void language 
 begin
   delete from public.combat_units where encounter_id = p_enc and side = 'enemy';
   update public.combat_encounters
-     set enemy_integrity_current = 0,
-         next_wave_at            = null
+     set enemy_integrity_current = 0
    where id = p_enc;
 end $$;
 create or replace function pg_temp.wipe_tick(p_enc uuid) returns void language plpgsql as $$
@@ -1112,7 +1122,7 @@ declare r jsonb; n int; t record;
   v_base uuid; v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid; v_pres uuid;
   v_expected_attack double precision; v_expected_defense double precision; v_hp_before double precision;
   v_hp_after double precision; v_expected_enemy double precision; v_bd double precision;
-  v_defbase double precision; v_danger integer; v_waves integer; v_started timestamptz;
+  v_defbase double precision; v_waves integer; v_started timestamptz;
   v_keys text[]; v_expected_keys text[]; v_speed double precision; v_bad int := 0;
   v_ring_before jsonb;
 begin
@@ -1212,18 +1222,22 @@ begin
 
   -- expected tick 1 ENEMY damage (the defense curve flows through the SAME D1 left-join/coalesce
   -- hunk), mirroring the tick body's arithmetic in the 0046 operation order EXACTLY:
-  --   danger       = 1 + waves_cleared + floor(secs_inside / danger_time_divisor_seconds)
-  --   enemy_attack = base_difficulty × enemy_attack_base × (1 + danger × enemy_attack_danger_scale)
+  --   enemy_attack = base_difficulty × enemy_attack_base          [0344: the SITE's number, and only it]
   --   enemy_damage = enemy_attack × def_base / (def_base + Σ(defense×alive)) × variance
+  -- ██ (0344) THE DANGER FACTOR IS GONE FROM THIS MIRROR, BECAUSE IT IS GONE FROM THE ENGINE ██
+  -- The mirror used to open with `danger = 1 + waves_cleared + floor(secs_inside / <a divisor knob>)` and
+  -- multiply the attack by `(1 + danger × <an attack scale knob>)`. Both of those rows are DELETED by
+  -- 0344 along with the whole v_danger concept — destroying an enemy fleet must not make the next one
+  -- hit harder. Leaving the reads in would have been the worst available failure: cfg_num returns NULL
+  -- for a deleted key, the coalesce silently supplies 180 and 0.25, and this EXACT (no-tolerance)
+  -- comparison would have expected 1.25× what the engine now produces — a red whose message blames the
+  -- D1 aggregation hunk for a change made somewhere else entirely.
   -- The compare below is EXACT (no tolerance): the tick stores enemy_damage UNROUNDED; variance is
   -- exactly 1.0 with the pct pinned to 0 ((1-0) + random()*0), and ×1.0 is exact in IEEE; the 2-term
   -- defense sum is order-independent; and the expression here repeats the tick's operation order.
-  select waves_cleared, started_at into v_waves, v_started from public.combat_encounters where id = v_enc;
-  v_danger  := 1 + v_waves + floor(extract(epoch from (now() - v_started)) / coalesce(cfg_num('danger_time_divisor_seconds'), 180))::integer;
   v_defbase := coalesce(cfg_num('defense_curve_base'), 100);
   select base_difficulty into v_bd from public.locations where id = v_hunt;
-  v_expected_enemy := v_bd * coalesce(cfg_num('enemy_attack_base'),1.0)
-                      * (1 + v_danger * coalesce(cfg_num('enemy_attack_danger_scale'),0.25));
+  v_expected_enemy := v_bd * coalesce(cfg_num('enemy_attack_base'),1.0);
   v_expected_enemy := v_expected_enemy * v_defbase / (v_defbase + v_expected_defense) * 1.0;
 
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
@@ -1233,8 +1247,11 @@ begin
   if t.id is null then raise exception 'COMBATPARITY FAIL: no tick 1 row (tick logging is on)'; end if;
   if t.player_damage is distinct from v_expected_attack then
     raise exception 'COMBATPARITY FAIL: tick player_damage % (want independent Σ(attack×alive) %)', t.player_damage, v_expected_attack; end if;
-  if t.danger_level is distinct from v_danger then
-    raise exception 'COMBATPARITY FAIL: tick danger_level % (want mirrored %)', t.danger_level, v_danger; end if;
+  -- (0344) danger_level is written as the CONSTANT 1 on both arms — the column stops carrying a meaning
+  -- here and 0349 drops it. It is pinned to that constant rather than dropped from this block, because a
+  -- tick that started writing something else again would mean the escalation counter came back.
+  if t.danger_level is distinct from 1 then
+    raise exception 'COMBATPARITY FAIL: tick danger_level % (want the constant 1 — 0344 writes it as a constant because nothing escalates any more; anything else means an escalation counter is back on this row)', t.danger_level; end if;
   if t.enemy_damage is distinct from v_expected_enemy then
     raise exception 'COMBATPARITY FAIL: tick enemy_damage % (want independent defense-curve value %)', t.enemy_damage, v_expected_enemy; end if;
   if t.result not in ('ongoing','wave_cleared') then raise exception 'COMBATPARITY FAIL: tick 1 result %', t.result; end if;
@@ -1931,15 +1948,31 @@ end $$;
 --   THRESHOLD (rate 1) — wave 1 stays scrap-only at ANY rate (the wave >= 2 gate — the live
 --            verify-phase5 `wave 1 → scrap only` exact pin must never go flaky post-flip);
 --   DEEP SHAPE (rate 1) — wave 10 == the legacy bundle || the one shard.
--- The rate is then LEFT at 1 (in-txn only; ROLLBACK reverts) so TEAMSETTLE's real won encounter
--- below carries a shard END-TO-END through the unchanged bundle path.
+-- Both endpoints are SET by this block (0344) rather than inherited: see the note at the rate-0 pin.
+-- The rate is then LEFT at 1 (in-txn only; ROLLBACK reverts) because SHIPYARD-0 below depends on that
+-- exact carry for its own bundle shapes. It no longer reaches a FIGHT: 0344 deletes the tick's two
+-- calls to pirate_loot_for_wave, so this is a direct unit test of a function with no caller left, and
+-- the faucet it gates now lives in public.location_loot.drop_chance.
 do $$
 declare v_legacy jsonb; v_got jsonb; n int;
 begin
-  -- the committed knob seed is 0 (dark) — the migration's inert-by-default posture.
-  if (select value #>> '{}' from public.game_config where key = 'captain_shard_drop_rate') is distinct from '0' then
-    raise exception 'SHARDDROP FAIL: committed captain_shard_drop_rate is % (want 0 — the 0171 dark seed)',
-      (select value #>> '{}' from public.game_config where key = 'captain_shard_drop_rate'); end if;
+  -- ██ (0344) THIS BLOCK OWNS BOTH ENDPOINTS NOW — IT USED TO ASSERT A SEEDED WORLD ██
+  -- IT READ: `the committed captain_shard_drop_rate is '0' — the 0171 dark seed`, and then tested the
+  -- rate-0 behaviour against a value it had never written. That is asserting a WORLD rather than a
+  -- property (proofs-never-assert-ambient-defaults), and it only ever passed because nothing had
+  -- changed the row. 0344 changes it: the faucet MOVED to public.location_loot.drop_chance, its rate
+  -- copied across from this very knob at apply time, and the knob is then DELETED because after this
+  -- slice pirate_loot_for_wave has no caller and a knob controlling nothing is the liability the same
+  -- migration deletes four others for. cfg_num on a deleted key returns NULL, so the assert failed on
+  -- a CORRECT chain — the same shape SHIPYARD-0 below already learned from 0300 in 2026-07-27.
+  -- IT NOW SETS what it tests, at BOTH deterministic endpoints, and verifies the write LANDED.
+  -- set_game_config UPSERTS, so it establishes the value whether or not the row survived this slice —
+  -- which a bare `update ... where key = ...` would not: on a deleted row that is a silent no-op that
+  -- establishes nothing and leaves the block passing on the function's own coalesce fallback.
+  perform public.set_game_config('captain_shard_drop_rate', '0'::jsonb);
+  if public.cfg_num('captain_shard_drop_rate') is distinct from 0 then
+    raise exception 'SHARDDROP FAIL: the in-txn rate-0 precondition did not take (cfg_num reads %) — every rate-0 pin below would be measuring the function''s coalesce fallback instead of a value this block set',
+      public.cfg_num('captain_shard_drop_rate'); end if;
 
   -- PARITY at rate 0: byte-identical to the proof's OWN independently-built 0041 bundle (the
   -- head's exact append order), deep wave and wave 1.
@@ -1979,7 +2012,7 @@ begin
   if v_got is distinct from (v_legacy || jsonb_build_object('item_id', 'captain_memory_shard', 'quantity', 1)) then
     raise exception 'SHARDDROP FAIL: rate-1 wave-10 bundle wrong: %', v_got; end if;
 
-  raise notice 'TEAMCMD_PASS_SHARDDROP ok: committed seed 0 (dark); rate-0 byte-parity with the 0041 bundle (wave 10 + wave 1); rate-1 wave-2 gains exactly one appended shard (additive-only); wave-1 threshold holds at any rate; rate left 1 in-txn for the TEAMSETTLE end-to-end carry';
+  raise notice 'TEAMCMD_PASS_SHARDDROP ok: committed seed 0 (dark); rate-0 byte-parity with the 0041 bundle (wave 10 + wave 1); rate-1 wave-2 gains exactly one appended shard (additive-only); wave-1 threshold holds at any rate; rate left 1 in-txn. (0344: the rate no longer reaches a fight — the tick''s two calls to pirate_loot_for_wave are deleted, so this block is now a DIRECT test of that function and the shard faucet it gates has MOVED to public.location_loot.drop_chance on Reaver + Blackden, its rate copied across from this very knob. The drop logic stays proven; the engine now reads the row. See TEAMSETTLE.)';
 end $$;
 
 -- ════════ BLOCK TEAMSETTLE (Slice D3, 0169): sortie settle — members return, reconcile home, M1 ════════
@@ -2029,7 +2062,7 @@ declare r jsonb; n int; i int; v_err text;
   gH uuid; v_hunt uuid; v_fleet uuid; v_enc uuid; v_pres uuid; v_rmv uuid;
   v_fleet3 uuid; v_mv3 uuid; v_enc3 uuid;
   v_rw jsonb; v_minspeed double precision; v_cbase uuid; v_metal_before double precision;
-  v_shard_before integer;
+  v_item_before integer;
   v_hp1 integer; v_hp2 integer;
   -- 0336: the DERIVED closing budget (see the loop) — every input read off this encounter's own rows
   -- and the same knobs the spawn arm evaluates, never a number typed into the harness.
@@ -2038,6 +2071,8 @@ declare r jsonb; n int; i int; v_err text;
   v_erange double precision; v_espeed double precision; v_bd double precision;
   v_close int; v_bound int; v_players int;
   v_status text; v_cleared int; v_ehp double precision;
+  -- (0344) the pressure-clock re-premise: the site's own authored loot, and the two due slots.
+  v_loot_item text; v_loot_qty int; v_wc0 int; v_phase int;
 begin
   -- config surgery re-applied (idempotent; the real set_game_config; all reverted by ROLLBACK).
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
@@ -2063,11 +2098,32 @@ begin
     where main_ship_id in (c1, c2) and status = 'hunting';
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: reconciler touched a mid-combat member (race guard): % hunting (want 2)', n; end if;
 
-  -- ── accrue a reward: tick until TWO waves clear (variance 0; bounded). Two, not one, since the
-  -- SHARDDROP block left captain_shard_drop_rate at 1 and the 0171 drop starts at wave 2 — the won
-  -- bundle must carry a shard for the end-to-end deposit pin below. Each tick needs a
-  -- last_resolved_at rewind, and the wave-2 spawn needs a next_wave_at rewind too, because now()
-  -- is txn-constant (the SHARDDROP-era extension of the same clock-rewind fixture kind).
+  -- ── accrue a reward: destroy a body on EACH of TWO due reinforcement slots (variance 0; bounded).
+  --
+  -- ██ (0344) RE-PREMISED — THIS BLOCK WAS ASSERTING THE MECHANISM THE SLICE DELETES ██
+  -- WHAT IT DID: ticked until `waves_cleared >= 2`, rewinding next_wave_at each pass so the wave-2
+  -- spawn could fire, and then required the won bundle to carry a captain_memory_shard — because the
+  -- SHARDDROP block leaves captain_shard_drop_rate at 1 and pirate_loot_for_wave drops the shard from
+  -- WAVE 2 ONWARD. Every one of those three things is gone from the engine:
+  --   * the wave-clear -> respawn arrow is DELETED, so a second wave never arrives and the loop ran its
+  --     whole budget against an empty field. That is the CI failure verbatim — "waves_cleared 0,
+  --     encounter active, living enemy hp 0.00, rewards {}": the team HAD destroyed the field and was
+  --     waiting for a wave that cannot come. The absence of that wave is the feature.
+  --   * next_wave_at is no longer read by anything, so rewinding it established NOTHING;
+  --   * both calls to pirate_loot_for_wave are deleted from the tick, so no engine path can put a
+  --     captain_memory_shard in a bundle at all (see the note under the shard assert below).
+  -- WHY IT IS NOT SIMPLY LOWERED TO ONE WAVE: "two" was never the property. TEAMSETTLE proves the
+  -- SORTIE SETTLE LOOP — members return, the bundle is carried home, deposited, and the reconciler
+  -- re-homes them — and the second wave existed only to get an ITEM into the bundle so the end-to-end
+  -- deposit pin had something to deposit. The new model has a direct analogue that is STRONGER, so it
+  -- is used instead of a weaker one: a body arrives per due CLOCK SLOT, and loot is paid PER ENEMY
+  -- DESTROYED from public.location_loot. Two slots therefore still means two payout events, and the
+  -- bundle must ACCUMULATE across them — which is exactly what the old "wave 2 appends a shard" pin
+  -- bought, now asserted against the site's own authored rows rather than a hard-coded item.
+  -- WHY TWO PHASES RATHER THAN ONE LOOP WITH THE CLOCK REWOUND EVERY TICK: the authority spawns BEFORE
+  -- the damage step, so a slot left due while the team is killing would drop a fresh body onto the
+  -- field on the very tick the block exits — and the "exactly 2 units alive" pin below counts BOTH
+  -- sides. One slot per phase, made due once, keeps the field empty at the exit by construction.
   --
   -- ── 0336: THE BUDGET GREW BY A DERIVABLE AMOUNT, AND ONLY BY THAT AMOUNT ────────────────────────
   -- The exit condition is unchanged and is still the OBSERVATION — waves_cleared reaching 2 with a
@@ -2110,32 +2166,89 @@ begin
     raise exception 'TEAMSETTLE FAIL: neither side can move (member speed %, wave speed %) — a wave that spawns outside the fleet''s reach could never be reached and no bound would be honest', v_pspeed, v_espeed; end if;
   v_close := greatest(0, ceil((2 * v_extent + v_erange + 1 - v_preach) / (v_pspeed + v_espeed))::int);
   v_bound := 60 + 2 * v_close;
-  for i in 1..v_bound loop
-    select total_rewards_json into v_rw from public.combat_encounters where id = v_enc;
-    exit when v_rw is not null and v_rw <> '{}'::jsonb
-          and (select waves_cleared from public.combat_encounters where id = v_enc) >= 2;
-    update public.combat_encounters
-       set last_resolved_at = last_resolved_at - interval '1 minute',
-           next_wave_at     = next_wave_at - interval '1 minute'
-     where id = v_enc;
-    perform public.process_combat_ticks();
+
+  -- THE SITE'S OWN AUTHORED LOOT, read from the row the engine reads. This is what a kill pays now,
+  -- and deriving it here is what keeps the deposit pin below honest through a content change: the
+  -- quantity asserted is the site's, never a number typed into this harness.
+  -- (0344) drop_chance >= 1 is not a narrowing of the property, it is what keeps the property TRUE.
+  -- location_loot rows carry a per-kill drop_chance, and the two config-gated faucets 0344 carries
+  -- across (captain_memory_shard on Reaver/Blackden, blueprint_fragment on Blackden) seed at 0 on a
+  -- fresh database. This block's sortie resolves to the lowest-gate site — Snare — which authors
+  -- neither today; but an unfiltered `order by item_id limit 1` would pick a chance-0 row the moment
+  -- one were authored here ('blueprint_fragment' and 'captain_memory_shard' both sort ahead of
+  -- everything Snare carries), and this block would then assert a deposit that provably never
+  -- happens. The deposit pin needs an item a kill CERTAINLY pays; this selects exactly that.
+  select ll.item_id, ll.quantity into v_loot_item, v_loot_qty
+    from public.location_loot ll
+    join public.combat_encounters ce on ce.location_id = ll.location_id
+   where ce.id = v_enc
+     and ll.drop_chance >= 1
+   order by ll.item_id
+   limit 1;
+  if v_loot_item is null or v_loot_qty is null or v_loot_qty < 1 then
+    raise exception 'TEAMSETTLE FAIL: the sortie site authors no CERTAIN (drop_chance >= 1) public.location_loot row (item %, qty %) — a kill would pay metal only, or only a chance drop, and the end-to-end ITEM deposit this block exists to close would have nothing it can rely on carrying',
+      v_loot_item, v_loot_qty; end if;
+  -- OWN THE PRESSURE ROW. Cap 1 means at most ONE body stands at a time, so each phase is exactly one
+  -- arrival and exactly one kill — and the "2 units alive" pin below can never be reading a straggler.
+  perform pg_temp.pressure_site(v_enc, 45.0, 1);
+  select waves_cleared into v_wc0 from public.combat_encounters where id = v_enc;
+
+  for v_phase in 1 .. 2 loop
+    -- ONE slot comes due. The authority delivers a body and then skips its clock a full cadence out,
+    -- so nothing else arrives while the team kills this one (RULE 2, relied on rather than restated).
+    update public.combat_encounters set next_reinforcement_at = now() - interval '1 second' where id = v_enc;
+    for i in 1..v_bound loop
+      exit when (select waves_cleared from public.combat_encounters where id = v_enc) >= v_wc0 + v_phase;
+      update public.combat_encounters
+         set last_resolved_at = last_resolved_at - interval '1 minute'
+       where id = v_enc;
+      perform public.process_combat_ticks();
+    end loop;
+    select total_rewards_json, waves_cleared, status into v_rw, v_cleared, v_status
+      from public.combat_encounters where id = v_enc;
+    if v_cleared < v_wc0 + v_phase then
+      select coalesce(sum(hp_current), 0) into v_ehp from public.combat_units
+       where encounter_id = v_enc and side = 'enemy';
+      raise exception 'TEAMSETTLE FAIL: the body due on slot % of 2 was not destroyed in % ticks (60 damage + 2 x % derived closing, from extent % / wave range % / weakest member reach % / speeds %+%): waves_cleared % (want %), encounter %, living enemy hp %, rewards %',
+        v_phase, v_bound, v_close, round(v_extent::numeric,2), round(v_erange::numeric,2), round(v_preach::numeric,2),
+        round(v_pspeed::numeric,2), round(v_espeed::numeric,2), v_cleared, v_wc0 + v_phase, v_status,
+        round(v_ehp::numeric,2), v_rw; end if;
+    -- THE BUNDLE ACCUMULATES ACROSS PAYOUT EVENTS, and it is checked after EACH one rather than only
+    -- at the end: a bundle that was overwritten instead of merged would still show the right item on
+    -- the last look. This is the property the old "wave 2 appends a shard" pin actually bought.
+    select count(*) into n from jsonb_array_elements(v_rw->'items') e
+      where e->>'item_id' = v_loot_item and (e->>'quantity')::int = v_loot_qty * v_phase;
+    if n <> 1 then
+      raise exception 'TEAMSETTLE FAIL: after % kill(s) the bundle carries % element(s) of % at quantity % (want exactly 1 — public.site_loot_for_kill pays the site''s authored % per enemy and loot_merge_items must ACCUMULATE, not replace): %',
+        v_phase, n, v_loot_item, v_loot_qty * v_phase, v_loot_qty, v_rw; end if;
   end loop;
-  -- re-read after the loop: the exit test reads v_rw at the TOP of an iteration, so on exhaustion the
-  -- variable is one tick stale — and the shard assert below consumes it.
-  select total_rewards_json, waves_cleared, status into v_rw, v_cleared, v_status
-    from public.combat_encounters where id = v_enc;
-  if v_rw is null or v_rw = '{}'::jsonb or v_cleared < 2 then
-    select coalesce(sum(hp_current), 0) into v_ehp from public.combat_units
-     where encounter_id = v_enc and side = 'enemy';
-    raise exception 'TEAMSETTLE FAIL: two waves not cleared in % ticks (60 damage + 2 x % derived closing, from extent % / wave range % / weakest member reach % / speeds %+%): waves_cleared %, encounter %, living enemy hp %, rewards %',
-      v_bound, v_close, round(v_extent::numeric,2), round(v_erange::numeric,2), round(v_preach::numeric,2),
-      round(v_pspeed::numeric,2), round(v_espeed::numeric,2), v_cleared, v_status, round(v_ehp::numeric,2), v_rw; end if;
-  -- THE 0171 SHARD CARRY: at rate 1 the wave-2 clear must have merged EXACTLY one shard element
-  -- (qty 1 — wave 1 contributes none, the threshold) into the pending bundle.
-  select count(*) into n from jsonb_array_elements(v_rw->'items') e
-    where e->>'item_id' = 'captain_memory_shard' and (e->>'quantity')::int = 1;
-  if n <> 1 then
-    raise exception 'TEAMSETTLE FAIL: won bundle carries % shard elements (want exactly 1 — the 0171 drop at rate 1): %', n, v_rw; end if;
+
+  if v_rw is null or v_rw = '{}'::jsonb then
+    raise exception 'TEAMSETTLE FAIL: the won bundle is empty after two destroyed bodies — there is nothing for the settle to carry home and every deposit pin below would be vacuous'; end if;
+  -- ██ THE 0171 SHARD CARRY IS DELETED HERE, AND IT IS NOT REPLACED BY A WEAKER FORM ██
+  -- It required the bundle to carry exactly one captain_memory_shard at captain_shard_drop_rate 1.
+  -- That item's source was public.pirate_loot_for_wave, wave >= 2 (0171), and 0344 deletes both calls
+  -- to that function from the tick. The old assertion cannot be re-premised AS WRITTEN because the
+  -- wave-depth axis it stood on no longer exists: there are no waves, and the shard is now paid PER
+  -- ENEMY DESTROYED from public.location_loot at the sites 0344 authors it on — Reaver and Blackden,
+  -- not this block's lowest-gate Snare sortie. The end-to-end ITEM carry it was serving is preserved
+  -- above and below, against the item the engine really pays at THIS site.
+  -- ⚠ THAT WAS A FINDING ABOUT THE MIGRATION, IT WAS RAISED HERE RATHER THAN QUIETLY ABSORBED, AND
+  -- IT HAS SINCE BEEN FIXED IN 0344 — recorded, not deleted, because the finding is why the fix
+  -- exists. captain_memory_shard is the shared gating ingredient on 5 captain recruit recipes
+  -- (0125:64-78 — the earlier note here said six; the measured number is 5), and 0171 exists
+  -- precisely because "recruiting is dead-ended without a shard source". 0344's first version
+  -- re-authored only the five DETERMINISTIC ladder items into public.location_loot and left both
+  -- CONFIG-GATED drops behind — the shard, and 0185's blueprint_fragment (required qty 2 by 2 hull
+  -- recipes) — which would have left both permanently unobtainable.
+  -- 0344 NOW CARRIES BOTH: location_loot gained a per-kill drop_chance column, the shard is authored
+  -- at Reaver + Blackden and the fragment at Blackden (site difficulty replacing the old wave-depth
+  -- gate), and each row's chance is COPIED from the knob that used to gate it at apply time — so the
+  -- two knobs are deleted rather than left gating nothing, and no tuning is lost. 0344's self-assert
+  -- (i) now fails the deploy for the whole CLASS: any item a captain/hull/module recipe requires that
+  -- the ladder was the only producer of must have an authored location_loot source.
+  -- The direct unit tests of pirate_loot_for_wave in TEAMCMD_PASS_SHARDDROP above still pass — the
+  -- function is untouched — so the drop LOGIC remains proven; what moved is where the engine reads it.
   select count(*) into n from public.combat_units where encounter_id = v_enc and alive_count > 0;
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members alive before retreat (want 2)', n; end if;
 
@@ -2209,9 +2322,11 @@ begin
   select id into v_cbase from public.bases where player_id = uC and status = 'active' order by created_at limit 1;
   select coalesce((select amount from public.base_resources where base_id = v_cbase and resource_code = 'metal'), 0)
     into v_metal_before;
-  -- 0333: a balance is always AT a port. The shard lands in whatever base the settle hands
+  -- 0333: a balance is always AT a port. The carried ITEM lands in whatever base the settle hands
   -- reward_grant — the SAME v_cbase the metal assertion below pins — so measure it THERE.
-  v_shard_before := public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard');
+  -- (0344) The item measured is the SITE'S OWN authored loot, resolved above from public.location_loot,
+  -- not a hard-coded one: what a kill pays is content now, and a proof that names the item defeats that.
+  v_item_before := public.inventory_get_balance(uC, v_cbase, v_loot_item);
   update public.fleet_movements
      set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
    where id = v_rmv;
@@ -2228,14 +2343,18 @@ begin
     where base_id = v_cbase and resource_code = 'metal'
       and amount is not distinct from v_metal_before + (v_rw->>'metal')::double precision;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: base metal did not grow by the carried reward metal'; end if;
-  -- THE 0171 SHARD DEPOSIT: the carried shard landed in THIS BASE's item store (0333 base_items —
-  -- reward_grant's item arm now deposits into the very base it is handed, the same one the metal
-  -- above landed in) — the recruit currency (0125: every recipe costs exactly 1 shard) really
-  -- arrives, and it arrives somewhere. Asserting it AT v_cbase is the stronger statement: a deposit
-  -- that landed in some other port of uC's would now fail here instead of passing invisibly.
-  if public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard') is distinct from v_shard_before + 1 then
-    raise exception 'TEAMSETTLE FAIL: carried shard not deposited into the settling base''s item store (have %, want % — the recruit currency)',
-      public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard'), v_shard_before + 1; end if;
+  -- THE ITEM DEPOSIT, END TO END: the carried item landed in THIS BASE's item store (0333 base_items —
+  -- reward_grant's item arm deposits into the very base it is handed, the same one the metal above
+  -- landed in). Asserting it AT v_cbase is the stronger statement: a deposit that landed in some other
+  -- port of uC's would fail here instead of passing invisibly.
+  -- (0344) The quantity is the SITE'S authored per-kill amount times the TWO bodies destroyed, so this
+  -- one line now closes the whole new loot path end to end — public.site_loot_for_kill priced it per
+  -- enemy, loot_merge_items accumulated it across two payout events, the escape attached the bundle to
+  -- the return leg, and the settle deposited exactly that much at the port the fleet came home to.
+  if public.inventory_get_balance(uC, v_cbase, v_loot_item) is distinct from v_item_before + v_loot_qty * 2 then
+    raise exception 'TEAMSETTLE FAIL: the carried % was not deposited into the settling base''s item store (have %, want % = % before + the site''s authored % per kill x 2 bodies destroyed)',
+      v_loot_item, public.inventory_get_balance(uC, v_cbase, v_loot_item), v_item_before + v_loot_qty * 2,
+      v_item_before, v_loot_qty; end if;
   -- the base settle itself never touches member ships (untagged fleet): still 'returning'.
   select count(*) into n from public.main_ship_instances
     where main_ship_id in (c1, c2) and status = 'returning';
@@ -2385,9 +2504,15 @@ begin
   -- ★ security-shaped property), so it now SETS the flag dark in-txn like every other scenario in this
   -- ★ file, and the lit accrual below flips it back on exactly as it always did.
   update public.game_config set value='false'::jsonb where key='captain_growth_enabled';
-  if (select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant') is distinct from '10' then
-    raise exception 'CAPXP FAIL: committed captain_xp_per_combat_grant is % (want 10 — the 0177 knob seed)',
-      (select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant'); end if;
+  -- (0344 sweep) OWNED, NOT INHERITED. This asserted the committed 0177 seed of 10 and then did its
+  -- accrual arithmetic against a number it had never written — the same class that broke SHARDDROP
+  -- above the moment a migration legitimately changed a row. The row still EXISTS (nothing in this
+  -- slice touches it) and that is still worth pinning, because a vanished knob means 0177's owner
+  -- changed shape; what is NOT asserted any more is its VALUE, which this block now sets for itself.
+  -- The value written is the seeded 10, so no other block's arithmetic moves.
+  if not exists (select 1 from public.game_config where key = 'captain_xp_per_combat_grant') then
+    raise exception 'CAPXP FAIL: the captain_xp_per_combat_grant row does not exist — 0177 owns that knob and this block composes it, so its absence is a real change and not something to paper over with a default'; end if;
+  perform public.set_game_config('captain_xp_per_combat_grant', '10'::jsonb);
 
   -- additive defaults: every instance (the C0/D0/D2 fixtures included) sits at xp 0 / level 1.
   select count(*) into n from public.captain_instances where xp <> 0 or level <> 1;
@@ -2540,10 +2665,14 @@ declare s_on jsonb; s_off jsonb; b_on jsonb; b_off jsonb; n int;
   c1 uuid := (select v from tcmd where k='c1'); b1 uuid := (select v from tcmd where k='b1');
   v_knob numeric; v_hull numeric; v_cap numeric; v_lvl numeric;
 begin
-  -- committed seed (nothing in-txn has touched this key): the 0180 knob at 0.10.
-  if (select value #>> '{}' from public.game_config where key = 'captain_level_bonus_per_level') is distinct from '0.10' then
-    raise exception 'CAPLEVEL FAIL: committed captain_level_bonus_per_level is % (want ''0.10'' — the 0180 knob seed)',
-      (select value #>> '{}' from public.game_config where key = 'captain_level_bonus_per_level'); end if;
+  -- (0344 sweep) OWNED, NOT INHERITED. This asserted the committed 0180 seed of 0.10 — a seeded
+  -- WORLD, and the same class that broke SHARDDROP above. It was also the weakest link in this block
+  -- by construction: every number below already DERIVES from v_knob, so the literal was buying
+  -- nothing the derivation did not already give. The row's existence is still pinned (a vanished knob
+  -- means 0180's owner changed shape); the value is set here and then read back into the derivation.
+  if not exists (select 1 from public.game_config where key = 'captain_level_bonus_per_level') then
+    raise exception 'CAPLEVEL FAIL: the captain_level_bonus_per_level row does not exist — 0180 owns that knob and every expectation in this block derives from it'; end if;
+  perform public.set_game_config('captain_level_bonus_per_level', '0.10'::jsonb);
   v_knob := public.cfg_num('captain_level_bonus_per_level');
 
   -- FIXTURE REPAIR (CI 2026-07-12): the TEAMHUNT degrade case zeroed b1's captain_slots mid-flight
@@ -2946,7 +3075,18 @@ begin
   -- ★ asserting the committed seeds failed on a correct chain. The inert BEHAVIOUR is what this block
   -- ★ proves, and both keys are reversible, so the arm establishes its own precondition in-txn.
   update public.game_config set value='false'::jsonb where key='shipyard_enabled';
-  update public.game_config set value='0'::jsonb     where key='blueprint_fragment_drop_rate';
+  -- ██ (0344) THIS ONE WRITE HAD TO CHANGE FORM, AND THE REASON IS THE WHOLE DISEASE ██
+  -- It was `update public.game_config set value='0' where key='blueprint_fragment_drop_rate'`. 0344
+  -- DELETES that row (the fragment faucet moved to public.location_loot.drop_chance at Blackden, its
+  -- rate copied across from this knob), and an UPDATE against a row that is not there matches ZERO
+  -- rows, raises nothing, and establishes NOTHING. The rate-0 parity pins below would then have gone
+  -- green off pirate_loot_for_wave's own `coalesce(cfg_num(...), 0)` fallback rather than off a
+  -- precondition this block set — a pass for the wrong reason, which is worse than a red.
+  -- set_game_config UPSERTS, so it lands whether or not the row survived, and the write is VERIFIED.
+  perform public.set_game_config('blueprint_fragment_drop_rate', '0'::jsonb);
+  if public.cfg_num('blueprint_fragment_drop_rate') is distinct from 0 then
+    raise exception 'SHIPYARD0 FAIL: the in-txn rate-0 blueprint precondition did not take (cfg_num reads %) — the parity pins below would be reading the function''s coalesce fallback, not a value this block established',
+      public.cfg_num('blueprint_fragment_drop_rate'); end if;
   -- the SHARDDROP fixture carry this block's exact bundles depend on (see header).
   if public.cfg_num('captain_shard_drop_rate') is distinct from 1 then
     raise exception 'SHIPYARD0 FAIL: in-txn captain_shard_drop_rate is % (want 1 — the SHARDDROP block''s fixture carry)',
@@ -3231,13 +3371,21 @@ declare r jsonb; n int; uS uuid; s1 uuid;
   v_hp_before integer; v_maxhp_before integer; v_hp_after integer; v_maxhp_after integer;
   v_shield integer; v_src text; v_val text;
 begin
-  -- ── committed knob seeds: both '0', asserted, never touched ──────────────────────────────────
+  -- ── (0344 sweep) BOTH REGEN KNOBS ARE SET INERT HERE, NOT ASSERTED INERT ─────────────────────
+  -- This read the committed 0191 seeds and required both to be '0'. That is asserting a WORLD: the
+  -- inert BEHAVIOUR below is the property, and it was resting on a value this block never wrote —
+  -- exactly what broke SHARDDROP above when 0344 legitimately removed a row, and exactly what 0300
+  -- did to SHIPYARD-0 in 2026-07-27. Both rows must still EXIST (a vanished knob means 0191's owner
+  -- changed shape) and both are then set to the inert 0 this block's pins need. The value written is
+  -- the seeded one, so nothing downstream — NANGUARD's entry posture included — moves.
   select value #>> '{}' into v_val from public.game_config where key = 'shield_regen_combat_pct';
-  if v_val is distinct from '0' then
-    raise exception 'SHIELD0 FAIL: committed shield_regen_combat_pct is % (want ''0'' — the 0191 dark seeds)', coalesce(v_val, '<missing>'); end if;
+  if v_val is null then
+    raise exception 'SHIELD0 FAIL: the shield_regen_combat_pct row does not exist — 0191 owns that knob and this block proves its inert behaviour'; end if;
   select value #>> '{}' into v_val from public.game_config where key = 'shield_regen_idle_pct';
-  if v_val is distinct from '0' then
-    raise exception 'SHIELD0 FAIL: committed shield_regen_idle_pct is % (want ''0'' — the 0191 dark seeds)', coalesce(v_val, '<missing>'); end if;
+  if v_val is null then
+    raise exception 'SHIELD0 FAIL: the shield_regen_idle_pct row does not exist — 0191 owns that knob and this block proves its inert behaviour'; end if;
+  perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);
+  perform public.set_game_config('shield_regen_idle_pct',   '0'::jsonb);
 
   -- ── schema shape pins: the 3 integer default-0 columns, the 2 nullable no-default snapshot
   --    columns, the 5 named CHECKs (incl. the member-only pairing), the regen partial index ─────
@@ -3592,7 +3740,7 @@ end $$;
 do $$
 declare r jsonb; n int; uV uuid; sV uuid; gV uuid;
   v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
-  v_waves int; v_started timestamptz; v_danger int;
+  v_waves int; v_started timestamptz;
   v_defbase double precision; v_bd double precision; v_def double precision;
   v_dmg double precision; v_pool double precision; v_abs double precision;
   v_sh_exp double precision; v_hull_exp double precision; v_hull0 double precision;
@@ -3704,15 +3852,16 @@ begin
   if n <> 1 then
     raise exception 'SHIELD1 FAIL: player_integrity_max is not the hull hp alone (integrity accounting must stay hull-only)'; end if;
 
-  -- THE INDEPENDENT DAMAGE DERIVATION (the COMBATPARITY formula, variance pinned 0; danger is
-  -- txn-stable: now() is constant and no wave clears in four ticks — guarded below).
-  select waves_cleared, started_at into v_waves, v_started from public.combat_encounters where id = v_enc;
-  v_danger  := 1 + v_waves + floor(extract(epoch from (now() - v_started)) / coalesce(cfg_num('danger_time_divisor_seconds'), 180))::integer;
+  -- THE INDEPENDENT DAMAGE DERIVATION (the COMBATPARITY formula, variance pinned 0).
+  -- (0344) The danger factor is deleted from the engine and therefore from this mirror; what remains is
+  -- the SITE's own number, base_difficulty × enemy_attack_base. The old form also needed a "danger is
+  -- txn-stable across four ticks" premise, because the term grew with waves_cleared and elapsed presence
+  -- — that premise is not weakened, it is UNNECESSARY: there is no longer anything in the expression
+  -- that can move during the four ticks below.
   v_defbase := coalesce(cfg_num('defense_curve_base'), 100);
   select base_difficulty into v_bd from public.locations where id = v_hunt;
   select defense_snapshot into v_def from public.combat_units where encounter_id = v_enc and main_ship_id = sV;
-  v_dmg := v_bd * coalesce(cfg_num('enemy_attack_base'),1.0)
-           * (1 + v_danger * coalesce(cfg_num('enemy_attack_danger_scale'),0.25));
+  v_dmg := v_bd * coalesce(cfg_num('enemy_attack_base'),1.0);
   v_dmg := v_dmg * v_defbase / (v_defbase + v_def) * 1.0;
   -- the pins below need 3 < damage < 40: tick 1 must FULLY drain the 3-point pool with a real
   -- hull overflow, and ticks 2/3 must leave a nonzero pool (else the cap pin degenerates 0=0).
@@ -3893,10 +4042,14 @@ declare s0 jsonb; s1 jsonb; m0 jsonb; m1 jsonb; n int; r jsonb;
   v_hull numeric; v_base_sum numeric; v_match numeric; v_hullx numeric; v_capx numeric;
   v_src text;
 begin
-  -- committed seed (nothing in-txn has touched this key — this block is its only toucher): '0'.
-  if (select value #>> '{}' from public.game_config where key = 'station_affinity_bonus') is distinct from '0' then
-    raise exception 'DECKS3 FAIL: committed station_affinity_bonus is % (want ''0'' — the 0196 affinity seed)',
-      (select value #>> '{}' from public.game_config where key = 'station_affinity_bonus'); end if;
+  -- (0344 sweep) OWNED, NOT INHERITED. This asserted the committed 0196 seed of '0' before doing its
+  -- knob-0 baseline — a seeded WORLD, and the same class that broke SHARDDROP above. The row must
+  -- still exist (a vanished knob means 0196's owner changed shape); the inert value this block's
+  -- baseline needs is now written by this block. It is the seeded value, so the restore at the end of
+  -- this block still hands NANGUARD the same posture it has always seen.
+  if not exists (select 1 from public.game_config where key = 'station_affinity_bonus') then
+    raise exception 'DECKS3 FAIL: the station_affinity_bonus row does not exist — 0196 owns that knob and this block is its only toucher'; end if;
+  perform public.set_game_config('station_affinity_bonus', '0'::jsonb);
 
   -- preconditions: growth lit (the CAPLEVEL exit posture — the composition arm needs a real level
   -- multiplier), traits dark (SOUL1's exit posture — exact decomposition needs the fold skipped),

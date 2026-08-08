@@ -24,12 +24,17 @@
 --   ECP_PASS_INACTIVE_BINDING_NO_SPAWN   an INACTIVE binding produces no runtime encounter (resolver ON)
 --   ECP_PASS_RESOLVER_OFF_NO_SPAWN       resolver OFF produces no runtime encounter
 --   ECP_PASS_BINDING_ONLY_NO_SPAWN       activating ONLY the binding, resolver still OFF ⇒ no encounter
---   ECP_PASS_ACTIVATED_SPAWN             resolver ON + valid ACTIVE binding ⇒ the EXPECTED encounter
---   ECP_PASS_ONE_RUNTIME_ROW             exactly ONE encounter_runtime_state row is created
---   ECP_PASS_COOLDOWN_BLOCKS             the 30 s cooldown prevents a duplicate spawn, and self-heals
---   ECP_PASS_FLEET_COMPOSITION           the wave is exactly ONE canary_pirate, per the template
---   ECP_PASS_REWARD_MATCHES              the reward is metal-only, base 7 (literal 18 at tier 2/danger 1)
---   ECP_PASS_NON_ELITE                   no unit is elite (tag may be disabled_v1 @0261 or multiplier_v1 @0272)
+--   ECP_PASS_CANARY_INERT                ██ 0344 — REPLACES SIX MARKERS ██ resolver ON + a valid ACTIVE
+--                                        binding changes NOTHING: the deployed tick no longer calls
+--                                        resolve_location_encounter at all (0344 deletes that branch), so
+--                                        no plan is tagged, no encounter_runtime_state row is written, and
+--                                        the field is ONE plain pirate_synthetic body from the site's own
+--                                        pressure clock. The six markers it replaces —
+--                                        ACTIVATED_SPAWN, ONE_RUNTIME_ROW, COOLDOWN_BLOCKS,
+--                                        FLEET_COMPOSITION, REWARD_MATCHES and NON_ELITE — each asserted
+--                                        that the tick INSTANTIATES an authored plan, which is precisely
+--                                        the wave-sizer mechanism 0344 removes; none could be re-premised,
+--                                        because the pressure authority spawns from the SITE row.
 --   ECP_PASS_BINDING_DISABLED_STOPS      disabling the binding stops future spawns
 --   ECP_PASS_RESOLVER_DISABLED_STOPS     disabling the resolver stops ALL resolver behaviour
 --   ECP_PASS_NO_NEW_ACTIVE_CONTENT       at end of transaction nothing authored here is left active
@@ -117,15 +122,20 @@ begin
   perform public.set_game_config('combat_tick_logging',  'true'::jsonb);
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
   perform public.set_game_config('enemy_hp_base',        '500'::jsonb);          -- the enemy survives the spawn tick
-  perform public.set_game_config('enemy_hp_danger_scale','0.6'::jsonb);
   perform public.set_game_config('enemy_attack_base',    '0'::jsonb);            -- no player ever dies
   perform public.set_game_config('enemy_synthetic_range_base', '10000'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_base', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
-  perform public.set_game_config('enemy_synthetic_max_units', '6'::jsonb);
+  -- ██ (0344) THREE WRITES WERE DELETED FROM THIS BLOCK, AND THEY ARE THE DANGEROUS KIND ██
+  -- enemy_hp_danger_scale=0.6, enemy_synthetic_max_units=6 and reward_danger_scale=0.25 each ESTABLISHED
+  -- a precondition the expectations below were solved against: a known hp scale, a known unit ceiling and
+  -- a known reward scale. 0344 DELETES all three rows. A write to a key nothing reads does not error — it
+  -- re-inserts a row and moves on — so each would have gone on LOOKING like staging while establishing
+  -- nothing, and this file would have stayed green over preconditions it no longer set. Removed rather
+  -- than repointed: a body's hp is now locations.base_difficulty x enemy_hp_base with no scale over it,
+  -- the field size is public.location_pressure.concurrent_cap, and metal is paid PER KILL with no scale.
   -- reward tunables pinned to the PRODUCTION values so the literal expectations below are production's.
   perform public.set_game_config('reward_metal_base',   '10'::jsonb);
-  perform public.set_game_config('reward_danger_scale', '0.25'::jsonb);
   perform public.set_game_config('reward_multiplier',   '1.0'::jsonb);
 end $$;
 
@@ -297,10 +307,15 @@ begin
   select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
   if n < 1 then raise exception 'ECP FAIL (%): no enemy spawned at all (% rows) — the legacy synthetic wave did not run', p_ctx, n; end if;
   select hp_max into v_hp from public.combat_units where encounter_id = v_enc and side='enemy' limit 1;
-  -- the legacy arm scales off the LOCATION base_difficulty (15), not the archetype's (1).
-  v_exp := 15 * public.cfg_num('enemy_hp_base') * (1 + 1 * public.cfg_num('enemy_hp_danger_scale')) / greatest(n,1);
+  -- (0344) THE SITE'S OWN BODY, AND THE SITE IS THE ONLY THING THAT DECIDES HOW HARD IT IS.
+  -- This was `15 x enemy_hp_base x (1 + danger x enemy_hp_danger_scale) / n` — the LOCATION difficulty
+  -- (15, not the archetype's 1) times a wave total divided by the unit count. The danger factor and its
+  -- knob row are deleted, and the authority now hands each BODY its own hp rather than splitting a wave
+  -- total, so both the factor and the divisor go. Leaving the read in would have compared against 1.6x
+  -- what the engine produces, with a message blaming the canary arm for a formula change.
+  v_exp := 15 * public.cfg_num('enemy_hp_base');
   if abs(v_hp - v_exp) > 0.001 then
-    raise exception 'ECP FAIL (%): enemy hp_max % <> the legacy synthetic per-unit value % — this is not the pre-canary wave', p_ctx, v_hp, v_exp;
+    raise exception 'ECP FAIL (%): enemy hp_max % <> the site-driven body value % (locations.base_difficulty 15 x enemy_hp_base) — this is not the plain synthetic body', p_ctx, v_hp, v_exp;
   end if;
   -- the runtime ledger must not have gained a spawn.
   select coalesce((select v from ecfn where k='ledger_baseline'), 0)::integer into v_before;
@@ -362,147 +377,72 @@ begin
   raise notice 'ECP_PASS_BINDING_ONLY_NO_SPAWN';
 end $$;
 
--- ════════ SCENARIO 3 — resolver ON + ACTIVE valid binding ⇒ the EXPECTED canary encounter ════════════
+-- ════════ SCENARIO 3 — (0344) resolver ON + ACTIVE valid binding ⇒ THE CANARY IS INERT ══════════════
+-- ██ FOUR BLOCKS WERE DELETED HERE, AND THE PROPERTY EACH TESTED NO LONGER EXISTS ██
+--   ECP_PASS_ACTIVATED_SPAWN   — resolver ON + a valid ACTIVE binding produces the EXPECTED resolved
+--                                encounter, tagged with the canary profile and carrying its cap/cooldown.
+--   ECP_PASS_ONE_RUNTIME_ROW   — exactly one encounter_runtime_state row is created, active_count 1.
+--   ECP_PASS_FLEET_COMPOSITION — the wave is exactly ONE canary_pirate at the ARCHETYPE difficulty.
+--   ECP_PASS_NON_ELITE         — no spawned unit is elite.
+--   ECP_PASS_REWARD_MATCHES    — the metal paid is the authored profile's (base 7, literal 18 at tier 2).
+--   ECP_PASS_COOLDOWN_BLOCKS   — the 30 s cooldown prevents a duplicate spawn and self-heals.
+-- Every one of them is a statement about the tick INSTANTIATING an authored plan, and migration 0344
+-- deletes the only branch that ever did — the v_resolver_engaged arm, which chose between two live wave
+-- SIZERS on a global flag read and had already stepped a live fight 18x mid-flight. After 0344 nothing
+-- calls resolve_location_encounter, so no encounter is tagged, encounter_runtime_state is never written,
+-- the cooldown ledger it anchored is never touched, and the authored reward profile is not consulted.
+-- NONE OF THEM COULD BE RE-PREMISED. The pressure authority spawns from the SITE row, and an authored
+-- plan is still a wave SIZER — the mechanism the owner has now rejected three times — so there is no
+-- arrangement of flags, bindings or clocks under which the resolved arm runs again.
+-- WHAT REPLACES THEM is the assertion that makes the deletion honest instead of silent, and it is a
+-- REAL property with a live failure mode: an operator can still flip encounter_resolver_enabled and
+-- activate a binding, so the suite must show that doing BOTH changes nothing — otherwise the next
+-- reader assumes the canary works and authors content against it. The negative scenarios 1, 2, 4 and 5
+-- keep their own markers and now hold for a second, stronger reason as well.
 update public.game_config set value='true'::jsonb where key='encounter_resolver_enabled';
 do $$
 declare
   v_loc uuid := (select v from ecfx where k='loc'); v_ep uuid := (select v from ecfx where k='ep');
-  v_arch uuid := (select v from ecfx where k='arch'); v_rp uuid := (select v from ecfx where k='rp');
-  v_enc uuid; g uuid; n integer; v_plan jsonb; u jsonb; v_hp double precision; v_exp double precision;
-  v_lx double precision; v_ly double precision; v_px double precision; v_py double precision;
-  v_rows integer; v_ac integer; v_grants jsonb; v_reskey text;
+  v_enc uuid; g uuid; n integer; v_rows integer; v_code text;
 begin
-  select x, y into v_lx, v_ly from public.locations where id = v_loc;
   g := pg_temp.new_armed_player('s3');
   v_enc := pg_temp.drive('s3');
 
-  -- ── the encounter is the RESOLVED one, tagged with the canary profile.
-  v_plan := (select resolved_plan_json from public.combat_encounters where id = v_enc);
-  if v_plan is null then
-    raise exception 'ECP FAIL ACTIVATED: resolved_plan_json is NULL — the canary did NOT spawn with the resolver on and a valid active binding';
+  -- (1) THE ARM IS GONE FROM THE DEPLOYED TICK — read off its own source, comments stripped (this file's
+  --     prose names the identifier being asserted absent), with the probe's liveness established first.
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
+   where n2.nspname = 'public' and p.proname = 'process_combat_ticks';
+  if v_code is null or length(v_code) < 40000 then
+    raise exception 'ECP FAIL INERT: the comment-stripped tick body is % chars — the absence assert below would be measured against nothing', coalesce(length(v_code), -1);
   end if;
-  if (v_plan->>'encounter_profile_id') <> v_ep::text then
-    raise exception 'ECP FAIL ACTIVATED: the encounter is tagged with profile % (want the canary %)', v_plan->>'encounter_profile_id', v_ep;
+  if position('combat_pressure_step' in v_code) = 0 then
+    raise exception 'ECP FAIL INERT: the deployed tick does not compose combat_pressure_step, so this chain has not been through 0344 — asserting that the resolver arm is deleted would be asserting something no migration has done yet';
   end if;
-  if (v_plan->>'active_encounter_cap') <> '1' or (v_plan->>'cooldown_seconds') <> '30' then
-    raise exception 'ECP FAIL ACTIVATED: plan cap/cooldown are (%, %) — want (1, 30)', v_plan->>'active_encounter_cap', v_plan->>'cooldown_seconds';
+  if position('resolve_location_encounter' in v_code) > 0 then
+    raise exception 'ECP FAIL INERT: the deployed tick still calls resolve_location_encounter — 0344 deletes that branch, and while it survives there are TWO things deciding how many enemies exist and how strong they are';
   end if;
-  raise notice 'ECP_PASS_ACTIVATED_SPAWN';
 
-  -- ── ECP_PASS_ONE_RUNTIME_ROW: exactly ONE ledger row, for exactly this (location, profile), count 1.
+  -- (2) AND WITH THE FLAG ON AND THE BINDING ACTIVE, NOTHING RESOLVED.
+  if (select resolved_plan_json from public.combat_encounters where id = v_enc) is not null then
+    raise exception 'ECP FAIL INERT: the encounter carries a resolved plan with the resolver flag TRUE and an ACTIVE binding — (1) says the branch is gone, so this contradicts it';
+  end if;
   select count(*) into v_rows from public.encounter_runtime_state;
-  if v_rows <> 1 then raise exception 'ECP FAIL ONE_RUNTIME_ROW: % encounter_runtime_state row(s) (want exactly 1)', v_rows; end if;
-  select active_count into v_ac from public.encounter_runtime_state
-   where location_id = v_loc and encounter_profile_id = v_ep;
-  if v_ac is null then raise exception 'ECP FAIL ONE_RUNTIME_ROW: the single row is not for (canary location, canary profile)'; end if;
-  if v_ac <> 1 then raise exception 'ECP FAIL ONE_RUNTIME_ROW: active_count % (want 1 on the first spawn)', v_ac; end if;
-  update ecfn set v = 1 where ecfn.k = 'ledger_baseline';
-  raise notice 'ECP_PASS_ONE_RUNTIME_ROW';
-
-  -- ── ECP_PASS_FLEET_COMPOSITION: the plan and the spawned units are EXACTLY one canary_pirate.
-  if jsonb_array_length(v_plan->'units') <> 1 then
-    raise exception 'ECP FAIL FLEET_COMPOSITION: the plan carries % unit spec(s) (want 1): %', jsonb_array_length(v_plan->'units'), v_plan;
+  if v_rows <> 0 then
+    raise exception 'ECP FAIL INERT: % encounter_runtime_state row(s) exist — that cap/cooldown ledger was written ONLY by the deleted branch, so a row means the branch ran', v_rows;
   end if;
-  u := v_plan->'units'->0;
-  if (u->>'enemy_archetype_id') <> v_arch::text or (u->>'count') <> '1'
-     or (u->>'unit_type_id') <> 'pirate_synthetic' or (u->>'base_difficulty')::double precision <> 1 then
-    raise exception 'ECP FAIL FLEET_COMPOSITION: unit spec % does not match the canary_pirate template member (1x, pirate_synthetic, base_difficulty 1)', u;
+  -- and what DID field is the site's own plain synthetic body, from the clock.
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> 1 then
+    raise exception 'ECP FAIL INERT: % enemy row(s) (want the 1 body the pressure clock delivers on a first tick) — an authored fleet size reached the field', n;
   end if;
-  select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
-  if n <> 1 then raise exception 'ECP FAIL FLEET_COMPOSITION: % enemy combat_units row(s) (want exactly 1)', n; end if;
-  select hp_max, pos_x, pos_y into v_hp, v_px, v_py from public.combat_units
-   where encounter_id = v_enc and side='enemy' and unit_type_id='pirate_synthetic';
-  -- resolved hp uses the ARCHETYPE base_difficulty (1), not the location's (15).
-  v_exp := 1 * public.cfg_num('enemy_hp_base') * (1 + 1 * public.cfg_num('enemy_hp_danger_scale'));
-  if abs(v_hp - v_exp) > 0.001 then
-    raise exception 'ECP FAIL FLEET_COMPOSITION: enemy hp_max % <> archetype-derived % (degraded to the synthetic wave?)', v_hp, v_exp;
+  if exists (select 1 from public.combat_units where encounter_id = v_enc and side = 'enemy'
+              and unit_type_id is distinct from 'pirate_synthetic') then
+    raise exception 'ECP FAIL INERT: an enemy row carries a non-synthetic unit_type_id — an authored archetype reached combat_units, which only the deleted branch could do';
   end if;
-  if abs(v_hp - 15 * public.cfg_num('enemy_hp_base') * (1 + 1 * public.cfg_num('enemy_hp_danger_scale'))) < 0.001 then
-    raise exception 'ECP FAIL FLEET_COMPOSITION: the resolved hp is indistinguishable from the legacy synthetic hp — the test cannot discriminate the arm';
-  end if;
-  if v_px is distinct from v_lx or v_py is distinct from v_ly then
-    raise exception 'ECP FAIL FLEET_COMPOSITION: the canary enemy is not at the location centre (%,% vs %,%)', v_px, v_py, v_lx, v_ly;
-  end if;
-  raise notice 'ECP_PASS_FLEET_COMPOSITION';
-
-  -- ── ECP_PASS_NON_ELITE: elite_chance 0 stays non-elite.
-  -- The plan's elite_policy tag is VERSION-DEPENDENT and both values are correct:
-  --   'disabled_v1'   — migration 0261 removed the elite roll entirely.
-  --   'multiplier_v1' — migration 0272 (elite stat wiring) reinstated it as a plan SPLIT.
-  -- What must hold in BOTH worlds is the thing this marker is actually about: a member with
-  -- elite_chance = 0 must never produce an elite unit. Under 0272 the resolver marks elite
-  -- entries with `elite: true` and omits the key entirely otherwise (that omission is what makes
-  -- the elite_chance=0 plan byte-identical to 0261's), so asserting the key's ABSENCE is the
-  -- correct, version-independent check. Pinning the tag to 'disabled_v1' would make this proof
-  -- fail the moment 0272 lands — which is exactly what it did.
-  if (select elite_chance from public.enemy_fleet_template_members
-       where fleet_template_id = (select v from ecfx where k='fleet')) <> 0 then
-    raise exception 'ECP FAIL NON_ELITE: the canary template member does not carry elite_chance 0';
-  end if;
-  if (v_plan->>'elite_policy') is distinct from 'disabled_v1'
-     and (v_plan->>'elite_policy') is distinct from 'multiplier_v1' then
-    raise exception 'ECP FAIL NON_ELITE: plan elite_policy % is neither disabled_v1 (0261) nor multiplier_v1 (0272)',
-      v_plan->>'elite_policy';
-  end if;
-  if u ? 'is_elite' then raise exception 'ECP FAIL NON_ELITE: the resolved unit carries an is_elite key: %', u; end if;
-  if coalesce((u->>'elite')::boolean, false) then
-    raise exception 'ECP FAIL NON_ELITE: a unit from an elite_chance=0 member is tagged elite: %', u;
-  end if;
-  if exists (select 1 from information_schema.columns
-              where table_schema='public' and table_name='combat_units' and column_name='is_elite') then
-    raise exception 'ECP FAIL NON_ELITE: combat_units still carries an is_elite column (0261 dropped it)';
-  end if;
-  raise notice 'ECP_PASS_NON_ELITE';
-
-  -- ── ECP_PASS_REWARD_MATCHES: metal-only, base 7. Force the wave clear through the REAL tick path.
-  v_grants := v_plan->'reward_profile'->'resource_grants';
-  if (v_plan->'reward_profile'->>'id') <> v_rp::text then
-    raise exception 'ECP FAIL REWARD: the plan resolved reward profile % (want canary_reward %)', v_plan->'reward_profile'->>'id', v_rp;
-  end if;
-  for v_reskey in select jsonb_object_keys(v_grants) loop
-    if v_reskey <> 'metal' then raise exception 'ECP FAIL REWARD: resource_grants carries an unsupported resource %: %', v_reskey, v_grants; end if;
-  end loop;
-  if (v_grants->'metal'->>'base')::double precision <> 7 then
-    raise exception 'ECP FAIL REWARD: metal base % (want 7)', v_grants->'metal'->>'base';
-  end if;
-
-  update public.combat_units set hp_current = 1 where encounter_id = v_enc and side='enemy';
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
-  if (select waves_cleared from public.combat_encounters where id = v_enc) < 1 then
-    raise exception 'ECP FAIL REWARD: the wave did not clear';
-  end if;
-  select ((total_rewards_json->>'metal')::double precision) into v_hp from public.combat_encounters where id = v_enc;
-  -- reward_tier 2, danger 1 ⇒ round(7 * 2 * (1 + 0.25*1) * 1.0) = 18 (production's literal value).
-  v_exp := public.resolve_encounter_reward_inputs(v_grants, 2, 1);
-  if v_exp <> 18 then raise exception 'ECP FAIL REWARD: the canary reward formula yields % (want the production literal 18)', v_exp; end if;
-  if v_hp is distinct from v_exp then
-    raise exception 'ECP FAIL REWARD: paid metal % <> the canary profile value % (did the legacy base-10 formula pay instead?)', v_hp, v_exp;
-  end if;
-  if v_exp = round(public.cfg_num('reward_metal_base') * 2 * (1 + public.cfg_num('reward_danger_scale') * 1) * public.cfg_num('reward_multiplier')) then
-    raise exception 'ECP FAIL REWARD: the canary (base 7) reward is indistinguishable from the legacy (base 10) reward — the test cannot discriminate';
-  end if;
-  raise notice 'ECP_PASS_REWARD_MATCHES';
-end $$;
-
--- ════════ COOLDOWN — the 30 s throttle blocks a duplicate spawn, then self-heals ═════════════════════
-do $$
-declare v_loc uuid := (select v from ecfx where k='loc'); v_ep uuid := (select v from ecfx where k='ep');
-  v_enc uuid := (select v from ecfx where k='enc_s3');
-begin
-  -- retire the scenario-3 encounter so the DERIVED cap (1) is no longer the reason for a NULL plan —
-  -- isolating the cooldown as the ONLY remaining brake.
-  update public.combat_encounters set status='defeat', ended_at=now() where id = v_enc;
-  if public.resolve_location_encounter(v_loc, 'ecp-cd-1') is not null then
-    raise exception 'ECP FAIL COOLDOWN: resolve returned a plan INSIDE the 30 s cooldown window';
-  end if;
-  -- back-date the ledger past the window ⇒ the brake releases (proving cooldown, not something else, blocked).
-  update public.encounter_runtime_state set last_spawn_at = now() - interval '1 hour'
-   where location_id = v_loc and encounter_profile_id = v_ep;
-  if public.resolve_location_encounter(v_loc, 'ecp-cd-2') is null then
-    raise exception 'ECP FAIL COOLDOWN: resolve stayed NULL after the cooldown window elapsed — something other than cooldown is blocking';
-  end if;
-  raise notice 'ECP_PASS_COOLDOWN_BLOCKS';
+  -- the ledger baseline the negative scenarios compare against stays 0, because nothing can move it.
+  update ecfn set v = 0 where ecfn.k = 'ledger_baseline';
+  raise notice 'ECP_PASS_CANARY_INERT (resolver flag TRUE + an ACTIVE valid binding, and it changed nothing: the deployed tick no longer calls resolve_location_encounter at all, no resolved_plan_json, no encounter_runtime_state row, and the field is ONE plain pirate_synthetic body from the site''s own pressure clock)';
 end $$;
 
 -- ════════ SCENARIO 4 — the binding is DISABLED ⇒ future spawns stop (resolver still ON) ══════════════

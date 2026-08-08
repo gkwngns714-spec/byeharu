@@ -598,7 +598,7 @@ declare
   v_binding uuid := nullif(current_setting('canary.binding', true), '')::uuid;
   v_loc uuid; v_ep uuid; v_cap integer; v_cd integer; r record;
   v_elapsed double precision; v_live integer; v_any integer;
-  v_tier integer; v_danger integer := 1; v_bd double precision; v_metal double precision; v_hp double precision;
+  v_tier integer; v_bd double precision; v_metal double precision; v_hp double precision;
   v_grants jsonb; v_reward uuid; v_override uuid;
 begin
   if v_binding is null then perform set_config('canary.blockers', v_b::text, true); return; end if;
@@ -735,23 +735,36 @@ begin
      where m.encounter_profile_id = v_ep order by fm.id limit 1;
   end if;
   select rp.resource_grants into v_grants from public.reward_profiles rp where rp.id = v_reward;
-  if v_bd is not null and to_regprocedure('public.cfg_num(text)') is not null then
-    v_hp := v_bd * coalesce(public.cfg_num('enemy_hp_base'), 14)
-                 * (1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6));
-    raise notice 'CANARY_FINDING [INFO] CH21_EXPECTED_WAVE1 archetype_base_difficulty=% enemy_hp(variance=1)=% legacy_synthetic_hp_would_be=% :: the canary enemy is far weaker than the location''s legacy synthetic wave',
-      v_bd, round(v_hp::numeric, 2),
-      round((( select l.base_difficulty from public.locations l where l.id = v_loc)
-             * coalesce(public.cfg_num('enemy_hp_base'), 14)
-             * (1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6)))::numeric, 2);
+  -- ── CH21, REPOINTED BY 0344 — AND THE FIRST FINDING IS NOW WHETHER THE CANARY DOES ANYTHING AT ALL ──
+  -- This forecast used to print the wave the RESOLVED PLAN would mint, at
+  -- archetype base_difficulty x enemy_hp_base x (1 + danger x enemy_hp_danger_scale), beside the
+  -- "legacy synthetic" wave the site would otherwise field, and the authored metal beside
+  -- reward_metal_base x tier x (1 + reward_danger_scale x danger). 0344 deletes the danger term and both
+  -- of those scale rows, so every one of those numbers would now be computed from a coalesce fallback
+  -- the engine never applies — a readiness report stating a difficulty and a payout that cannot occur.
+  -- It also deletes the tick's ONLY call to resolve_location_encounter, so the authored plan is not
+  -- instantiated at all. An operator reading this report before flipping a flag needs THAT first.
+  if to_regprocedure('public.cfg_num(text)') is not null then
+    if position('resolve_location_encounter' in
+                regexp_replace((select p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                                 where n.nspname = 'public' and p.proname = 'process_combat_ticks'),
+                               '--[^' || chr(10) || ']*', '', 'g')) = 0 then
+      raise notice 'CANARY_FINDING [BLOCK] CH21_RESOLVER_NOT_REACHED :: the deployed process_combat_ticks does NOT call resolve_location_encounter — 0344 deleted the only branch that did, so this binding cannot produce an encounter no matter how it is authored or flagged. Activating it changes nothing a player sees. The authored content below is inert until a slice re-points it at public.combat_pressure_step.';
+      v_b := v_b + 1;
+    end if;
+    -- what the SITE actually fields, which after 0344 is the only thing that decides a fight's difficulty
+    v_hp := (select l.base_difficulty from public.locations l where l.id = v_loc)
+            * coalesce(public.cfg_num('enemy_hp_base'), 14);
+    raise notice 'CANARY_FINDING [INFO] CH21_EXPECTED_BODY archetype_base_difficulty=% site_body_hp(variance=1)=% :: after 0344 a body''s hp is locations.base_difficulty x enemy_hp_base with no danger factor, and bodies arrive on public.location_pressure''s cadence up to its cap — the archetype difficulty is what the authored plan WOULD have used',
+      v_bd, round(v_hp::numeric, 2);
   end if;
   if v_grants is not null and to_regprocedure('public.resolve_encounter_reward_inputs(jsonb,integer,integer)') is not null then
-    v_metal := public.resolve_encounter_reward_inputs(v_grants, v_tier, v_danger);
-    raise notice 'CANARY_FINDING [INFO] CH21_EXPECTED_REWARD wave1_metal=% legacy_metal_would_be=% reward_tier=% danger=% :: the authored reward is distinguishable from the legacy formula',
+    v_metal := public.resolve_encounter_reward_inputs(v_grants, v_tier, 1);
+    raise notice 'CANARY_FINDING [INFO] CH21_EXPECTED_REWARD authored_metal_would_be=% site_metal_PER_KILL=% reward_tier=% :: 0344 pays per ENEMY DESTROYED from the site row (reward_metal_base x greatest(reward_tier,1) x reward_multiplier) and the authored profile is not consulted by the engine at all',
       v_metal,
       round(coalesce(public.cfg_num('reward_metal_base'), 10) * greatest(v_tier, 1)
-            * (1 + coalesce(public.cfg_num('reward_danger_scale'), 0.25) * v_danger)
             * coalesce(public.cfg_num('reward_multiplier'), 1.0)),
-      v_tier, v_danger;
+      v_tier;
   end if;
   perform set_config('canary.blockers', v_b::text, true);
 end $$;

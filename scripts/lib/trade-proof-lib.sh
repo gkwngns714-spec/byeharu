@@ -18,6 +18,10 @@
 #                                             the begin;..rollback; scope (list/loop form; a
 #                                             single flag is a one-element call)
 #   tp_assert_out_of_scope <sql>            — the proof references no src/ or migrations/ path
+#   tp_assert_no_kill_escalation <sql>      — (0344) the proof names none of the FOUR deleted
+#                                             kill-escalation knobs, and evaluates none of the
+#                                             deleted `1 + waves_cleared + elapsed/divisor` term,
+#                                             in executable SQL
 #   tp_run_local <name> <sql> <pass-line> <markers>
 #                                           — the local-mode psql run + PASS-line + per-marker
 #                                             greps ($MARKERS/$PASS_LINE interface; the caller
@@ -79,7 +83,76 @@ tp_assert_out_of_scope() {
   grep -qiE '\.\./src|/src/|migrations/' "$1" && fail "proof references src/ or migrations (out of scope)" || true
 }
 
-# ── (5) local: run the write-then-ROLLBACK proof against a disposable DB_URL, then assert the
+# ── (5) 0344: THE DELETED KILL-ESCALATION SURFACE MAY NEVER COME BACK INTO A PROOF. ───────────────
+#    Migration 0344 deletes the term `v_danger := 1 + e.waves_cleared + floor(secs_inside /
+#    danger_time_divisor_seconds)` and the five game_config rows it fed:
+#      enemy_hp_danger_scale · enemy_attack_danger_scale · reward_danger_scale ·
+#      danger_time_divisor_seconds
+#    WHY THIS IS A STATIC GATE AND NOT A NOTE IN A COMMENT. A proof that READS one of those keys gets
+#    NULL and silently falls back to its old coalesce default, so its arithmetic is solved against a
+#    factor the engine no longer applies. A proof that WRITES one — `perform set_game_config(k, …)` to
+#    establish a precondition — does not error either: it re-inserts a row nothing reads, establishes
+#    NOTHING, and the block then goes GREEN over a property it never staged. A silent green is worse
+#    than a red, and the recorded lesson is that a rule living only in a comment gets broken while one
+#    the selftest enforces does not (proofs-never-assert-ambient-defaults, 2026-08-03).
+#    Comments are STRIPPED before matching, deliberately: the re-premised blocks NAME these keys in
+#    prose to record why they are gone, and that prose must stay legal.
+#    The replacement surface is public.location_pressure (a cadence and a concurrent cap, authored per
+#    site as rows) plus combat_encounters.next_reinforcement_at (the clock).
+#    enemy_synthetic_max_units IS DELIBERATELY NOT IN THIS GUARD, and the reason is a correction to this
+#    guard's own first draft. It was written while 0344 deleted five rows, so it refused READS of that
+#    key too. 0344 then STOPPED deleting it (772c42d): public.resolve_location_encounter still reads it
+#    as the ceiling that trims an AUTHORED plan — greatest(1, coalesce(cfg_num(...), 6)) at 0272:270,
+#    that function's textual head — and this slice does not touch that function. The row therefore
+#    survives, an authored value still exists, and refusing to read it would be this guard demanding a
+#    deletion the migration deliberately did not make. What 0344 requires of that key is that the TICK
+#    stops reading it, and the migration's own assert (a) proves exactly that at 0 occurrences.
+tp_assert_no_kill_escalation() {
+  local sql="$1" k hit
+  for k in enemy_hp_danger_scale enemy_attack_danger_scale reward_danger_scale \
+           danger_time_divisor_seconds; do
+    hit="$(sed -E 's/--.*//' "$sql" | grep -n "$k" || true)"
+    [ -z "$hit" ] && continue
+    fail "$(basename "$sql") still names the DELETED game_config key '$k' in executable SQL:
+$hit
+  0344 deletes that row. A READ falls back to its old coalesce default (so the block's arithmetic is
+  solved against a factor the engine no longer applies) and a WRITE establishes nothing at all (so the
+  block passes over a precondition it never set). Re-premise it on public.location_pressure — a cadence
+  and a concurrent cap, per site — and on combat_encounters.next_reinforcement_at."
+  done
+  # ── (0344) THE TWO FAUCET RATES: READABLE ONLY BY A BLOCK THAT WROTE THEM ───────────────────────
+  # 0344 also deletes captain_shard_drop_rate and blueprint_fragment_drop_rate. They are NOT in the
+  # loop above, because unlike the four danger knobs a proof may legitimately WRITE them: both gate
+  # public.pirate_loot_for_wave, which 0344 leaves standing (its retirement is 0350's, and two
+  # activation scripts still read its prosrc), so the direct unit tests of that function must set the
+  # rate they exercise. What is forbidden is READING one as though it were still authored.
+  # THIS IS THE EXACT REGRESSION THAT REDDENED THE MATRIX: SHARDDROP asserted
+  # `the committed captain_shard_drop_rate is '0' — the 0171 dark seed` and went red on a CORRECT
+  # chain the moment the row was deleted; SHIPYARD-0 closed its faucet with a bare
+  # `update ... where key = ...`, which matches ZERO rows once the row is gone, established NOTHING,
+  # and would have gone GREEN off the function's own coalesce fallback. A silent green is the worse
+  # of the two. The rule below is file-scoped and therefore has no false positives: read it only if
+  # you also write it. set_game_config UPSERTS; a bare UPDATE does not, so the write must be that form.
+  for k in captain_shard_drop_rate blueprint_fragment_drop_rate; do
+    reads="$(sed -E 's/--.*//' "$sql" | grep -nE "cfg_num\('$k'\)|where key *= *'$k'" || true)"
+    [ -z "$reads" ] && continue
+    grep -qF "set_game_config('$k'" "$sql" || fail "$(basename "$sql") READS the game_config key '$k' without ever writing it:
+$reads
+  0344 deletes that row — the faucet moved to public.location_loot.drop_chance, its rate copied across
+  from this very knob at apply time — so a read inherits pirate_loot_for_wave's own coalesce fallback
+  instead of an authored value. A block that tests behaviour at a given rate must SET that rate through
+  public.set_game_config (which UPSERTS, so it lands whether or not the row survived) and then verify
+  the write took. A bare 'update ... where key = ...' matches zero rows and establishes nothing."
+  done
+  hit="$(sed -E 's/--.*//' "$sql" | grep -nE 'v_danger|1[[:space:]]*\+[[:space:]]*(e\.)?waves_cleared' || true)"
+  [ -z "$hit" ] || fail "$(basename "$sql") still evaluates the DELETED kill-escalation term in executable SQL:
+$hit
+  \`1 + waves_cleared + floor(secs_inside / danger_time_divisor_seconds)\` is gone from the engine, so a
+  field size or an enemy stat predicted from it is a prediction from a mechanism this slice removed.
+  Reading waves_cleared itself is still fine — it is the ESCALATION that is deleted, not the counter."
+}
+
+# ── (6) local: run the write-then-ROLLBACK proof against a disposable DB_URL, then assert the
 #    PASS line + every property marker in the output. The caller asserts its DB_URL contract
 #    (`: "${DB_URL:?…}"`) before calling, so the diagnostic names the script, not this lib.
 tp_run_local() {

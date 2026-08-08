@@ -152,12 +152,25 @@ begin
 end $$;
 
 -- ══════════ 2. THE EXPECTED COMBAT RESULT (read-only; printed BEFORE the flip) ══════════
+-- ██ REWRITTEN BY 0344, BECAUSE WHAT THIS SECTION FORECAST NO LONGER HAPPENS ██
+-- It used to print the wave the RESOLVED PLAN would mint: an archetype's base_difficulty x
+-- enemy_hp_base x (1 + danger x enemy_hp_danger_scale), an authored reward, and "resolved_plan_json is
+-- NON-NULL" as the confirmation step. Every line of that died with 0344:
+--   * the tick's v_resolver_engaged branch — the one place resolve_location_encounter was ever called
+--     — is DELETED, so no encounter is ever tagged with a plan and encounter_runtime_state is never
+--     written. Flipping this canary now changes NOTHING a player can see.
+--   * the two danger scales and the danger term itself are deleted rows and a deleted expression, so
+--     reading them here would print numbers derived from coalesce fallbacks the engine never applies —
+--     a forecast that looks authoritative and is simply wrong.
+-- What an operator actually needs before flipping a flag is the truth, so this prints the truth: what
+-- the site really fields after 0344, and the fact that the flag is inert until a later slice re-points
+-- authored content at the pressure authority.
 do $$
 declare
   v_canary uuid := '2f7bcf88-d810-47b4-8e04-748655688b55'::uuid;
-  b record; ep record; l record; a record; g jsonb; v_reward uuid;
-  v_hp double precision; v_atk double precision; v_metal double precision; v_legacy double precision;
-  v_danger integer := 1;
+  b record; ep record; l record; a record; lp record;
+  v_hp double precision; v_atk double precision; v_metal double precision;
+  v_tick_resolves boolean;
 begin
   select * into b  from public.location_encounter_bindings where id = v_canary;
   select * into ep from public.encounter_profiles          where id = b.encounter_profile_id;
@@ -169,27 +182,39 @@ begin
     join public.enemy_archetypes a2              on a2.id = fm.enemy_archetype_id and a2.active is true
    where m.encounter_profile_id = ep.id
    order by fm.id limit 1;
-  v_reward := coalesce(ep.reward_override_id, a.default_reward_profile_id);
-  select rp.resource_grants into g from public.reward_profiles rp where rp.id = v_reward;
+  select * into lp from public.location_pressure where location_id = l.id;
 
-  v_hp    := a.base_difficulty * coalesce(public.cfg_num('enemy_hp_base'), 14)
-             * (1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6));
-  v_atk   := a.base_difficulty * coalesce(public.cfg_num('enemy_attack_base'), 1.0)
-             * (1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25));
-  v_metal := public.resolve_encounter_reward_inputs(g, l.reward_tier, v_danger);
-  v_legacy := round(coalesce(public.cfg_num('reward_metal_base'), 10) * greatest(l.reward_tier, 1)
-              * (1 + coalesce(public.cfg_num('reward_danger_scale'), 0.25) * v_danger)
-              * coalesce(public.cfg_num('reward_multiplier'), 1.0));
+  -- OBSERVED, not assumed: does the deployed tick still call the resolver at all?
+  select position('resolve_location_encounter' in regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g')) > 0
+    into v_tick_resolves
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'process_combat_ticks';
 
-  raise notice '════════ EXPECTED COMBAT RESULT AT % (wave 1, danger %) ════════', l.name, v_danger;
-  raise notice '  enemy wave      : 1 x % (unit_type %, archetype base_difficulty %)', a.key, a.unit_type_id, a.base_difficulty;
-  raise notice '  enemy hp        : ~%  (before combat_damage_variance_pct)', round(v_hp::numeric, 2);
-  raise notice '  enemy attack    : ~%', round(v_atk::numeric, 2);
-  raise notice '  reward on clear : % metal  (authored profile; the LEGACY synthetic wave would have paid %)', v_metal, v_legacy;
-  raise notice '  legacy wave hp  : ~%  <- what this location spawned BEFORE the canary (location base_difficulty %)',
-    round((l.base_difficulty * coalesce(public.cfg_num('enemy_hp_base'), 14) * (1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6)))::numeric, 2), l.base_difficulty;
-  raise notice '  cap / cooldown  : % concurrent, % s between spawns', ep.active_encounter_cap, ep.cooldown_seconds;
-  raise notice '  HOW TO CONFIRM  : combat_encounters.resolved_plan_json is NON-NULL and tagged encounter_profile_id=%; combat_units holds exactly 1 enemy row', ep.id;
+  -- what the SITE fields, which after 0344 is the only thing that decides a fight's difficulty.
+  v_hp    := l.base_difficulty * coalesce(public.cfg_num('enemy_hp_base'), 14);
+  v_atk   := l.base_difficulty * coalesce(public.cfg_num('enemy_attack_base'), 1.0);
+  v_metal := round(coalesce(public.cfg_num('reward_metal_base'), 10) * greatest(l.reward_tier, 1)
+             * coalesce(public.cfg_num('reward_multiplier'), 1.0));
+
+  raise notice '════════ EXPECTED COMBAT RESULT AT % (0344: pressure is a CLOCK) ════════', l.name;
+  if v_tick_resolves then
+    raise notice '  RESOLVER REACHED : the deployed tick still names resolve_location_encounter — this canary is LIVE and the authored plan below is what will spawn';
+    raise notice '  authored member  : 1 x % (unit_type %, archetype base_difficulty %)', a.key, a.unit_type_id, a.base_difficulty;
+  else
+    raise notice '  ██ THE FLAG IS INERT ██ the deployed tick does NOT name resolve_location_encounter: 0344 deleted the only branch that ever called it, so NO encounter is tagged with a plan, encounter_runtime_state is never written, and flipping this changes nothing a player sees. The authored member below (% / archetype base_difficulty %) is content waiting for a slice that re-points it at the pressure authority.', a.key, a.base_difficulty;
+  end if;
+  if lp is null then
+    raise notice '  ██ NO PRESSURE ROW ██ % carries no public.location_pressure row, so it hosts NO reinforcements at all (the authority fails closed)', l.name;
+  else
+    raise notice '  reinforcements   : ONE body every % s, up to % concurrent (public.location_pressure — a clock and a cap, never a kill count)', lp.reinforcement_seconds, lp.concurrent_cap;
+  end if;
+  raise notice '  one body hp      : ~%  (locations.base_difficulty % x enemy_hp_base, before combat_damage_variance_pct)', round(v_hp::numeric, 2), l.base_difficulty;
+  raise notice '  one body attack  : ~%', round(v_atk::numeric, 2);
+  raise notice '  metal PER KILL   : %  (reward_metal_base x greatest(reward_tier %, 1) x reward_multiplier — paid per enemy destroyed, not per wave cleared)', v_metal, l.reward_tier;
+  raise notice '  items PER KILL   : % (public.location_loot rows for this site)',
+    coalesce((select string_agg(format('%sx %s', ll.quantity, ll.item_id), ', ' order by ll.item_id)
+                from public.location_loot ll where ll.location_id = l.id), 'NONE');
+  raise notice '  HOW TO CONFIRM  : combat_encounters.next_reinforcement_at advances by the cadence above and combat_units gains ONE enemy row per elapsed slot up to the cap — never a row per wave cleared';
 end $$;
 
 -- ══════════ 3. THE WRITE — ██ COMBAT BEHAVIOUR CHANGES ON THIS COMMIT ██ ══════════
