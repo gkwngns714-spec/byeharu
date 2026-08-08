@@ -515,6 +515,13 @@ begin
      or not exists (select 1 from pg_proc where proname = 'reward_grant' and pronamespace = 'public'::regnamespace) then
     raise exception 'LEB PROOF FAIL: a combat/reward function is missing — surface disturbed';
   end if;
+  -- (0344 note) This clause survives UNCHANGED, and the round trip is worth recording: 0344's first
+  -- draft deleted enemy_synthetic_max_units, which would have made `NULL is distinct from 6` TRUE
+  -- and reddened this block on a CORRECT system. 772c42d stopped deleting it — resolve_location_
+  -- encounter still reads it as its authored-plan ceiling — so the row is authored again and the
+  -- original comparison is right. It is still an ambient-default read, which this repository has a
+  -- standing law against; repointing it to a captured-before/compare-after no-leak check belongs to
+  -- the slice that owns this suite, not to 0344, which no longer touches the value at all.
   if public.cfg_num('enemy_synthetic_max_units') is distinct from 6 then
     raise exception 'LEB PROOF FAIL: enemy_synthetic_max_units is % (expected 6)', public.cfg_num('enemy_synthetic_max_units');
   end if;

@@ -18,16 +18,20 @@
 -- set_fleet_command_ship → send_ship_group_hunt → movement_settle_arrival → combat_create_group_encounter
 -- → process_combat_ticks → …) ACROSS A WAVE PAUSE with combat_tick_logging ON, and asserts, in one txn:
 --   NWINC_PASS_CONSTRAINT  (S) the applied chain carries 0241; combat_ticks_result_check admits all seven
---       literals incl. next_wave_incoming (the six legacy + the new one).
---   NWINC_PASS_CONTROL     (C) CONTROL EXPERIMENT (DDL-only, the sanctioned combat-proof idiom): with the
---       PRE-0241 six-value CHECK re-added, a LOGGED wave-pause tick STALLS — the check_violation is
---       swallowed by the cron guard, tick_number does NOT advance and NO next_wave_incoming row lands.
---       Dropping it and restoring the widened CHECK (0241 state) makes the SAME tick progress. This is
---       what makes the (P) assertion non-vacuous: it would FAIL under the pre-fix constraint.
---   NWINC_PASS_PAUSE_LOGS  (P) with the shipped (widened) CHECK and combat_tick_logging=true, the
---       wave-pause tick LANDS exactly one result='next_wave_incoming' combat_ticks row, NO check_violation
---       aborts/stalls the encounter, tick_number advances and last_resolved_at re-resolves to now() — the
---       encounter CONTINUES; the pause grants no reward, spawns no pirate (a pure pacing + log tick).
+--       literals incl. next_wave_incoming (the six legacy + the new one). 0344 removes the WRITER, not
+--       the vocabulary — rows written before that deploy still carry the literal — so (S) is untouched.
+--   NWINC_PASS_NOPAUSE     (N) ██ 0344 REPLACES (C) AND (P), WHICH TESTED A BRANCH THAT IS NOW DELETED ██
+--       (C) re-added the pre-0241 six-value CHECK and required the LOGGED wave-pause tick to STALL; (P)
+--       required that same tick to LAND one result='next_wave_incoming' row and the encounter to
+--       continue. Both are statements about `if e.next_wave_at is not null and now() < e.next_wave_at`,
+--       which stood on BOTH arms of the tick and which 0344 DELETES: it paced a thing that no longer
+--       happens, because enemy bodies now arrive on the site's own cadence rather than because a wave
+--       was cleared. There is no arrangement of knobs or clocks that reaches a branch removed from the
+--       source, so neither could be re-premised. (N) asserts what IS true — the deployed tick composes
+--       combat_pressure_step and names neither next_wave_incoming nor next_wave_at — plus the one thing
+--       (C)/(P) were really protecting: A FIGHT WITH AN EMPTY FIELD STILL PACES rather than stalling
+--       (tick_number advances, last_resolved_at re-resolves to now()), grants no reward, moves no wave
+--       counter, and is handed NO body for having been emptied.
 --
 -- ── DETERMINISM MODEL (no RNG, no cron, no timing race) ──────────────────────────────────────────
 -- combat_damage_variance_pct=0 collapses the engine variance roll to a constant 1.0; now() is frozen at
@@ -197,18 +201,24 @@ begin
   perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
   perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
   update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
-  perform public.set_game_config('combat_tick_logging', 'true'::jsonb);       -- LOG the pause tick (the whole point)
+  perform public.set_game_config('combat_tick_logging', 'true'::jsonb);       -- every tick is LOGGED (the whole point)
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
-  perform public.set_game_config('enemy_hp_danger_scale', '0'::jsonb);        -- wave total hp independent of danger
+  -- ██ (0344) FIVE WRITES WERE DELETED FROM THIS BLOCK, AND THEY ARE THE DANGEROUS KIND ██
+  -- enemy_hp_danger_scale=0, enemy_attack_danger_scale=0, enemy_synthetic_max_units=6 and
+  -- wave_transition_seconds=3 each ESTABLISHED A PRECONDITION this file depended on: hp independent of
+  -- danger, attack independent of danger, a known unit ceiling, and a 3-second wave-transition window.
+  -- 0344 DELETES all four rows (and the pause the last one paced). A write to a key nothing reads does
+  -- NOT error — it re-inserts a row and moves on — so every one of them would have gone on looking like
+  -- staging while establishing NOTHING, and the file would have stayed green over preconditions it no
+  -- longer set. They are removed rather than repointed because the properties they bought are now
+  -- STRUCTURAL: an enemy body's hp and attack are locations.base_difficulty x their knob with no danger
+  -- factor anywhere, and the field size is public.location_pressure.concurrent_cap.
   perform public.set_game_config('enemy_attack_base', '0'::jsonb);            -- pirates deal 0 dmg → players immortal
-  perform public.set_game_config('enemy_attack_danger_scale', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_base', '0'::jsonb);   -- pirates never move
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_base', '500'::jsonb); -- >> ring → pirates HOLD & fire in place
   perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
-  perform public.set_game_config('enemy_synthetic_max_units', '6'::jsonb);
   perform public.set_game_config('spatial_formation_ring_radius', '30'::jsonb);
-  perform public.set_game_config('wave_transition_seconds', '3'::jsonb);      -- next_wave_at = now()+3s after a clear
 end $tune$;
 
 -- choose the hunt location, set enemy_hp_base so each wave's TOTAL hp = 120, provision team A (2 armed).
@@ -244,85 +254,102 @@ begin
   raise notice 'NWINC_PASS_CONSTRAINT ok: chain carries 0241; combat_ticks_result_check admits all seven result literals incl. next_wave_incoming (def: %)', v_def;
 end $s$;
 
--- ════════ THE LIFECYCLE: wave 1 → pause; control (pre-fix stall) → positive (fixed lands+continues) ═══
+-- ════════ SECTION N (0344): THE PAUSE THIS PROOF WAS BUILT ON IS DELETED, AND THAT IS THE ASSERT ══════
+-- ██ TWO BLOCKS WERE DELETED HERE, AND THE PROPERTY EACH TESTED NO LONGER EXISTS ██
+--   NWINC_PASS_CONTROL   — re-added the pre-0241 six-value CHECK and required the LOGGED wave-pause
+--                          tick to STALL, so that the positive assert below could not pass vacuously.
+--   NWINC_PASS_PAUSE_LOGS— required the wave-pause tick to LAND exactly one result='next_wave_incoming'
+--                          combat_ticks row and the encounter to continue.
+-- Both are statements about `if e.next_wave_at is not null and now() < e.next_wave_at then <log a
+-- next_wave_incoming tick and skip the combat step>`, which existed on BOTH arms of the tick and which
+-- migration 0344 DELETES: it paced a thing that no longer happens. Enemy bodies now arrive from
+-- public.combat_pressure_step on the site's own cadence, so clearing a field does not schedule the next
+-- wave and there is no window to pause in. Neither block could be re-premised: there is no arrangement
+-- of knobs or clocks under which the deployed tick reaches a branch that was removed from its source.
+-- THEY ARE NOT REPLACED BY A WEAKER FORM — they are replaced by the assertion that the branch is gone,
+-- which is the property this slice actually establishes, plus the ONE thing the deleted blocks were
+-- really protecting: A FIGHT WITH AN EMPTY FIELD MUST STILL PACE RATHER THAN STALL. That was the real
+-- damage of the 0241 defect (an encounter frozen forever by a swallowed check_violation), and it is
+-- still reachable — it is simply reached by clearing the field and ticking again.
+-- SECTION S above is UNTOUCHED and still meaningful: the CHECK must keep admitting the literal, because
+-- 0344 removes the writer, not the vocabulary, and combat_ticks rows written before this deploy carry it.
 do $life$
 declare
   uA uuid := (select v from nw where k='uA'); gA uuid := (select v from nw where k='gA');
   v_hunt uuid := (select v from nw where k='v_hunt'); v_enc uuid;
   wc int; tk int; tk0 int; guard int;
-  n_nwinc int; n_nwinc0 int; n_enemy0 int; n_enemy int; wc0 int;
-  rewards0 jsonb; rewards1 jsonb; lr timestamptz; v_res text; v_nwtk int;
+  n_nwinc int; n_enemy0 int; n_enemy int; wc0 int;
+  rewards0 jsonb; rewards1 jsonb; lr timestamptz;
+  v_code text; v_live int;
 begin
+  -- ── (N1) THE BRANCH IS GONE FROM THE DEPLOYED TICK, read off its own source with comments stripped
+  --    (the 0222 vacuity trap, in reverse: this file's own prose names the very string being asserted
+  --    absent). Non-vacuity first — the probe must be able to find something.
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'process_combat_ticks';
+  if v_code is null or length(v_code) < 40000 then
+    raise exception 'N FAIL: the comment-stripped tick body is % chars — every absence assert below would be measured against nothing', coalesce(length(v_code), -1);
+  end if;
+  if position('combat_pressure_step' in v_code) = 0 then
+    raise exception 'N FAIL: the deployed tick does not compose combat_pressure_step — this chain has not been through 0344, so asserting that the wave pause is gone would be asserting something no migration has done yet';
+  end if;
+  if position('next_wave_incoming' in v_code) > 0 then
+    raise exception 'N FAIL: the deployed tick still writes a next_wave_incoming result — 0344 deletes the wave pause on BOTH arms, and a surviving writer means the pause (and therefore the wave-clear scheduling it paced) is still there';
+  end if;
+  if position('next_wave_at' in v_code) > 0 then
+    raise exception 'N FAIL: the deployed tick still reads or writes next_wave_at — the column stays on the table, but nothing in the engine may consult it once pressure is a clock';
+  end if;
+
+  -- ── (N2) AND THE FIGHT STILL PACES WITH AN EMPTY FIELD. This is what the deleted blocks were really
+  --    protecting: the 0241 defect froze an encounter forever because a swallowed check_violation rolled
+  --    the whole tick back. Clear the field, tick again, and require the clock to move.
   v_enc := pg_temp.send_settle(uA, gA, v_hunt);
   insert into nw values ('encA', v_enc);
   raise notice 'NWINC lifecycle: encounter % active on team A', v_enc;
-
-  -- ── drive WAVE 1 (danger 1 → 1 pirate) to completion. Only 'ongoing'/'wave_cleared' ticks land here
-  --    (both legal under BOTH the six- and seven-value CHECK), so NO next_wave_incoming row exists yet. ─
   guard := 0;
   loop
     perform pg_temp.tick(v_enc);
     select waves_cleared into wc from public.combat_encounters where id = v_enc;
     exit when wc >= 1;
-    guard := guard + 1; if guard > 60 then raise exception 'SETUP FAIL: wave 1 did not clear within 60 ticks'; end if;
+    guard := guard + 1; if guard > 60 then raise exception 'SETUP FAIL: the field was not broken within 60 ticks'; end if;
   end loop;
-  -- now in the wave pause: enemy side wiped, next_wave_at = now()+3s (future), zero next_wave_incoming rows.
-  select count(*) into n_nwinc0 from public.combat_ticks where encounter_id = v_enc and result = 'next_wave_incoming';
-  if n_nwinc0 <> 0 then raise exception 'SETUP FAIL: % next_wave_incoming rows already exist before the pause tick (want 0)', n_nwinc0; end if;
-  if not exists (select 1 from public.combat_encounters where id=v_enc and next_wave_at is not null and now() < next_wave_at) then
-    raise exception 'SETUP FAIL: encounter is not in a future-dated wave pause after clearing wave 1'; end if;
-  select tick_number into tk0 from public.combat_encounters where id = v_enc;
-  raise notice 'NWINC setup: wave 1 cleared (waves_cleared=%), tick_number=%, in wave pause with 0 next_wave_incoming rows', wc, tk0;
-
-  -- ── SECTION C: CONTROL EXPERIMENT (DDL-only) — the PRE-0241 six-value CHECK re-added → the LOGGED
-  --    pause tick STALLS. Safe to re-add here: no next_wave_incoming row exists yet, so the narrow CHECK
-  --    validates cleanly. combat_tick_logging is ON. ───────────────────────────────────────────────────
-  alter table public.combat_ticks drop constraint combat_ticks_result_check;
-  alter table public.combat_ticks add constraint combat_ticks_result_check
-    check (result = any (array['ongoing','wave_cleared','retreat_started','escaped','defeat','completed']));
-
-  select tick_number into tk0 from public.combat_encounters where id = v_enc;
-  perform pg_temp.tick(v_enc);   -- pause insert raises check_violation → cron guard swallows → stall
-  select tick_number into tk from public.combat_encounters where id = v_enc;
-  select count(*) into n_nwinc from public.combat_ticks where encounter_id = v_enc and result = 'next_wave_incoming';
-  if tk <> tk0 then raise exception 'C FAIL: tick_number advanced (%->%) under the six-value CHECK — the stall did not occur (is the guard/CHECK as expected?)', tk0, tk; end if;
-  if n_nwinc <> 0 then raise exception 'C FAIL: % next_wave_incoming row(s) landed under the six-value CHECK (want 0 — the insert must have been rejected+rolled back)', n_nwinc; end if;
-
-  -- restore the 0241 (widened) CHECK — the shipped state.
-  alter table public.combat_ticks drop constraint combat_ticks_result_check;
-  alter table public.combat_ticks add constraint combat_ticks_result_check
-    check (result = any (array['ongoing','wave_cleared','retreat_started','escaped','defeat','completed','next_wave_incoming']));
-  raise notice 'NWINC_PASS_CONTROL ok: with the pre-0241 six-value combat_ticks_result_check re-added, the LOGGED wave-pause tick STALLED (tick_number frozen at %, 0 next_wave_incoming rows — check_violation swallowed by the per-encounter cron guard); the widened CHECK was then restored', tk0;
-
-  -- ── SECTION P: with the SHIPPED (widened) CHECK + combat_tick_logging=true, the wave-pause tick LANDS
-  --    a next_wave_incoming row and the encounter CONTINUES (no stall). This is the fix, proven live. ───
-  select tick_number, waves_cleared, total_rewards_json into tk0, wc0, rewards0 from public.combat_encounters where id = v_enc;
-  select count(*) into n_nwinc0 from public.combat_ticks where encounter_id = v_enc and result = 'next_wave_incoming';
+  select count(*) into v_live from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  if v_live <> 0 then
+    raise exception 'SETUP FAIL: % living enemy bod(ies) remain after the clear (want 0) — the empty-field tick below would not be an empty-field tick', v_live;
+  end if;
+  select tick_number, waves_cleared, total_rewards_json into tk0, wc0, rewards0
+    from public.combat_encounters where id = v_enc;
   select count(*) into n_enemy0 from public.combat_units where encounter_id = v_enc and side = 'enemy';
 
-  perform pg_temp.tick(v_enc);   -- next_wave_at NOT rewound → the engine takes the pause branch, now legal
+  perform pg_temp.tick(v_enc);
 
   select tick_number, waves_cleared, total_rewards_json, last_resolved_at
     into tk, wc, rewards1, lr from public.combat_encounters where id = v_enc;
   select count(*) into n_nwinc from public.combat_ticks where encounter_id = v_enc and result = 'next_wave_incoming';
   select count(*) into n_enemy from public.combat_units where encounter_id = v_enc and side = 'enemy';
 
-  -- (1) exactly one next_wave_incoming row now exists — the logged pause tick was ACCEPTED (no violation).
-  if n_nwinc <> n_nwinc0 + 1 then raise exception 'P FAIL: next_wave_incoming rows %->% (want exactly one new logged pause tick — the CHECK still rejects it?)', n_nwinc0, n_nwinc; end if;
-  -- (2) that row is a well-formed pause tick at the advanced tick_number.
-  select result, tick_number into v_res, v_nwtk from public.combat_ticks
-    where encounter_id = v_enc and result = 'next_wave_incoming' order by tick_number desc limit 1;
-  if v_res is distinct from 'next_wave_incoming' then raise exception 'P FAIL: latest pause tick result=% (want next_wave_incoming)', v_res; end if;
-  -- (3) the encounter CONTINUES: tick_number advanced and last_resolved_at re-resolved to now() (no stall).
-  if tk <> tk0 + 1 then raise exception 'P FAIL: tick_number %->% (want +1 — the pause tick must pace, not stall)', tk0, tk; end if;
-  if v_nwtk <> tk then raise exception 'P FAIL: pause tick row tick_number=% but encounter tick_number=%', v_nwtk, tk; end if;
-  if lr is distinct from now() then raise exception 'P FAIL: last_resolved_at not refreshed to now() after the pause tick (left at % — a stall)', lr; end if;
-  -- (4) the pause is a pure pacing+log no-op: no reward, no wave advance, no pirate spawn.
-  if wc <> wc0 then raise exception 'P FAIL: waves_cleared changed across the pause tick (%->%)', wc0, wc; end if;
-  if rewards1 is distinct from rewards0 then raise exception 'P FAIL: total_rewards_json changed across the pause tick'; end if;
-  if n_enemy <> n_enemy0 then raise exception 'P FAIL: enemy row count changed across the pause tick (%->%) — a spawn', n_enemy0, n_enemy; end if;
+  if n_nwinc <> 0 then
+    raise exception 'N FAIL: % next_wave_incoming row(s) were logged across this fight (want 0) — the deleted pause branch is being reached by some path, and (N1) missed it', n_nwinc;
+  end if;
+  if tk <> tk0 + 1 then
+    raise exception 'N FAIL: tick_number %->% across the empty-field tick (want +1) — the encounter STALLED, which is the 0241 damage recurring by a different route', tk0, tk;
+  end if;
+  if lr is distinct from now() then
+    raise exception 'N FAIL: last_resolved_at was not refreshed to now() after the empty-field tick (left at %) — the tick rolled back rather than paced', lr;
+  end if;
+  if wc <> wc0 then
+    raise exception 'N FAIL: waves_cleared changed %->% on a tick with nothing alive to break — an empty field satisfies "enemy hp <= 0" on EVERY tick, and without 0344''s v_e_before > 0 conjunct the counter runs forever', wc0, wc;
+  end if;
+  if rewards1 is distinct from rewards0 then
+    raise exception 'N FAIL: total_rewards_json changed on a tick with no kill in it — the empty field is being paid for, every three seconds, forever';
+  end if;
+  if n_enemy <> n_enemy0 then
+    raise exception 'N FAIL: the enemy row count changed %->% on the tick after the field was broken — a body arrived because the field was empty, which is the kill-driven arrow 0344 deletes', n_enemy0, n_enemy;
+  end if;
 
-  raise notice 'NWINC_PASS_PAUSE_LOGS ok: with combat_tick_logging=true and the shipped widened CHECK, the wave-pause tick LANDED one result=next_wave_incoming row (tick_number %->%), NO check_violation stalled the encounter (last_resolved_at re-resolved to now()), and the pause granted no reward/no wave/no spawn — the encounter CONTINUES', tk0, tk;
+  raise notice 'NWINC_PASS_NOPAUSE ok: the deployed tick composes combat_pressure_step and names neither next_wave_incoming nor next_wave_at (0344 deletes the wave pause on both arms, so the CONTROL and PAUSE_LOGS blocks that stood here tested a branch that no longer exists) — and the fight the pause used to hold still PACES with an empty field: tick_number %->%, last_resolved_at re-resolved to now(), no pause row, no reward, no wave counter movement and no body arriving because the field was empty', tk0, tk;
 end $life$;
 
 do $$ begin raise notice 'NEXT-WAVE-INCOMING FIX PROOF PASSED'; end $$;

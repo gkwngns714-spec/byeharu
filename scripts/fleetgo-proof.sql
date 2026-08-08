@@ -46,6 +46,12 @@ begin
   return v;
 end $$;
 
+-- ── (0344) PRESSURE STAGING — shared, not re-copied ──────────────────────────────────────────────
+-- earn_wave needs a LIVING enemy body to clear. After 0344 one arrives only when the site's clock
+-- makes a slot due, and now() is frozen for this transaction. pg_temp.pressure_refill lives in
+-- scripts/lib/pressure-staging.sql, shared with danger-combat-proof.sql and team-command-proof.sql.
+\ir lib/pressure-staging.sql
+
 -- ★ ARM_GROUP — the ONE place this file gives a group its command ship (added 2026-07-27) ────────────
 -- 0300 lit fleet_control_enabled. Per 0204 that makes is_command_ship load-bearing: a group with no
 -- designated command ship is an INACTIVE fleet, and every group verb answers fleet_inactive_no_command.
@@ -80,20 +86,33 @@ end $$;
 -- clears it on tick 2 and the accrual writes total_rewards_json. The earn is asserted non-vacuous
 -- (metal > 0, encounter still active): a proof that passes when the collector no-ops is worthless.
 -- A helper, not a per-phase copy-paste: the LOOT-SECURES block earns three times.
+-- ██ (0344) RE-PREMISED, AND IT WAS PASSING FOR THE WRONG REASON ON TWO OF ITS THREE CALLS ██
+-- IT DID: tick once and require `count(*) where side='enemy'` to be non-zero, i.e. "wave 1 spawned".
+-- 0344 deletes the wave-clear -> respawn arrow, so only the FIRST call of the three ever got a fresh
+-- body from the clock. On calls 2 and 3 the tick spawned nothing — and the guard still passed, because
+-- a destroyed enemy leaves its ROW behind at alive_count 0 and count(*) counts corpses. The surgery
+-- below then set hp_current = 1 / alive_count = 1 on that corpse, RESURRECTING it, and the phase
+-- "worked". It measured a real accrual, so it was never red; it simply stopped staging what it said it
+-- staged, which is the class of silent pass this whole sweep exists to end.
+-- IT NOW ASKS THE CLOCK for exactly one body, through the same shared staging every other suite uses,
+-- and counts only LIVING rows. The property is UNCHANGED and is the one the three callers depend on:
+-- a cleared wave earns a bundle through the real accrual hunk, and the earn is non-vacuous.
 create or replace function pg_temp.earn_wave(p_enc uuid) returns numeric language plpgsql as $$
 declare n int; v_metal numeric;
 begin
+  perform pg_temp.pressure_refill(p_enc, 1);
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute'
    where id = p_enc;
   perform public.process_combat_ticks();
-  select count(*) into n from public.combat_units where encounter_id = p_enc and side = 'enemy';
+  select count(*) into n from public.combat_units
+   where encounter_id = p_enc and side = 'enemy' and alive_count > 0;
   if n = 0 then
-    raise exception 'earn_wave: no enemy wave exists after the spawn tick — the earn phase cannot be staged'; end if;
-  -- ENEMY-side surgery only (an owned precondition): one unit, one hit point, no shield pool.
+    raise exception 'earn_wave: no LIVING enemy body exists after the spawn tick — the earn phase cannot be staged. (Counting rows rather than living rows is how this guard used to pass on a field of corpses.)'; end if;
+  -- ENEMY-side surgery only (an owned precondition): one LIVING unit, one hit point, no shield pool.
   delete from public.combat_units
    where encounter_id = p_enc and side = 'enemy'
      and id <> (select id from public.combat_units
-                 where encounter_id = p_enc and side = 'enemy' order by id limit 1);
+                 where encounter_id = p_enc and side = 'enemy' and alive_count > 0 order by id limit 1);
   update public.combat_units
      set hp_current = 1, alive_count = 1,
          shield_current = case when shield_max is not null then 0 else shield_current end

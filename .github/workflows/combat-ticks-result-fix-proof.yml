@@ -7,12 +7,15 @@ name: COMBAT-TICKS RESULT FIX — 0241 next_wave_incoming disposable apply-proof
 #      combat_tick_logging ON (the whole point), obeys the sole-writer law (never hand-writes combat_units
 #      / group_sortie_members rows), drives the real RPC/engine chain, carries every NWINC_PASS marker +
 #      the determinism guards (variance 0, no random(), manual process_combat_ticks — no cron/sleep), and
-#      contains the section-C control experiment (re-add the pre-0241 six-value CHECK, then restore).
+#      (0344) does NO DDL on combat_ticks_result_check at all — the section-C control experiment that
+#      re-added the pre-0241 six-value CHECK is DELETED with the wave-pause branch it existed to stall.
 #   2. disposable-matrix — `supabase start` applies the FULL migration chain (incl. 0234 spatial tick +
 #      0240 aggregate-bucket uniqueness + 0241 result widening); the proof then drives a REAL encounter
-#      across a wave pause with combat_tick_logging ON and asserts (S) the CHECK admits next_wave_incoming,
-#      (C) the pre-0241 CHECK would STALL a logged pause tick, and (P) the shipped CHECK lands the pause
-#      tick and the encounter CONTINUES. THE GREEN RUN OF THIS JOB IS THE EXECUTION OF THE PROOF.
+#      with combat_tick_logging ON and asserts (S) the CHECK admits next_wave_incoming, and (N, 0344) that
+#      the deployed tick names neither next_wave_incoming nor next_wave_at — the wave pause is deleted on
+#      both arms — while a fight whose field has been broken still PACES instead of stalling, is paid
+#      nothing more, and is handed no body for having been emptied. THE GREEN RUN OF THIS JOB IS THE
+#      EXECUTION OF THE PROOF.
 # The proof flips NO committed flag and writes nothing durable (self-rolling-back). No `environment:` on
 # any job, so none can read production secrets. Modeled on multipirate-lifecycle-proof.yml.
 
@@ -53,7 +56,12 @@ jobs:
             && { echo "SQL follows the final ROLLBACK (would autocommit)"; exit 1; } || true
 
           # every NWINC_PASS marker present + the final PASS line.
-          for m in NWINC_PASS_CONSTRAINT NWINC_PASS_CONTROL NWINC_PASS_PAUSE_LOGS; do
+          # 0344: NWINC_PASS_CONTROL and NWINC_PASS_PAUSE_LOGS are GONE, and deliberately not replaced by
+          # weaker forms. Both asserted over the wave-pause branch, which 0344 deletes from BOTH arms of
+          # the tick because it paced a thing that no longer happens. Pinning them here would DEMAND the
+          # deleted branch, the same mistake as keeping 0311's teleport pins after 0337 removed the
+          # teleport. NWINC_PASS_NOPAUSE replaces them.
+          for m in NWINC_PASS_CONSTRAINT NWINC_PASS_NOPAUSE; do
             grep -q "$m" "$SQL" || { echo "missing PASS marker: $m"; exit 1; }
           done
           grep -q 'NEXT-WAVE-INCOMING FIX PROOF PASSED' "$SQL" || { echo "missing final PASS line"; exit 1; }
@@ -100,17 +108,21 @@ jobs:
             grep -q "public.$fn(" "$SQL" || { echo "harness does not use real RPC public.$fn"; exit 1; }
           done
 
-          # section-C CONTROL EXPERIMENT: re-adds the pre-0241 SIX-value CHECK (no next_wave_incoming) AND
-          # restores the widened one — the combat_ticks_result_check CHECK is dropped+re-added >= twice.
-          n_add="$(grep -cE 'add constraint combat_ticks_result_check' "$SQL" || true)"
-          n_drop="$(grep -cE 'drop constraint combat_ticks_result_check' "$SQL" || true)"
-          [ "$n_add" -ge 2 ] || { echo "control experiment missing: expected >=2 'add constraint combat_ticks_result_check' (narrow + restore), got $n_add"; exit 1; }
-          [ "$n_drop" -ge 2 ] || { echo "control experiment missing: expected >=2 'drop constraint combat_ticks_result_check', got $n_drop"; exit 1; }
-          # the widened restore admits next_wave_incoming somewhere in an array literal.
-          grep -qE "array\[.*'next_wave_incoming'.*\]" "$SQL" \
-            || { echo "harness never restores the widened CHECK admitting next_wave_incoming"; exit 1; }
+          # 0344: THE SECTION-C CONTROL-EXPERIMENT PINS ARE GONE WITH THE BLOCK THEY GUARDED.
+          # They required the harness to drop and re-add combat_ticks_result_check at least twice, to
+          # stage the pre-0241 six-value CHECK and prove a LOGGED wave-pause tick stalled under it. There
+          # is no wave-pause tick any more — 0344 deletes the branch on both arms — so there is nothing
+          # to stage and the DDL would prove nothing. The harness must therefore NOT be doing that DDL at
+          # all, and that is ASSERTED rather than merely unpinned, so the control cannot come back
+          # half-alive and leave a shipped constraint narrowed.
+          if grep -qE '(add|drop) constraint combat_ticks_result_check' "$SQL"; then
+            echo "harness still re-writes combat_ticks_result_check — the section-C control staged the PRE-0241 CHECK to make a wave-pause tick stall, and 0344 deletes the wave pause; DDL on a shipped constraint with nothing left to prove is state this proof must not touch"; exit 1; fi
+          # the shipped CHECK must still ADMIT the literal: 0344 removes the WRITER, not the vocabulary,
+          # and combat_ticks rows written before that deploy still carry it. Section S asserts it live.
+          grep -q 'next_wave_incoming' "$SQL" \
+            || { echo "harness no longer mentions next_wave_incoming at all — section S must keep asserting that the shipped CHECK admits the literal"; exit 1; }
 
-          echo "COMBAT-TICKS RESULT FIX SELFTEST: ALL PASSED (self-rolling-back; 3 NWINC_PASS markers + final PASS; all 5 dark flags lit only inside the txn; combat_tick_logging ON across the pause; determinism guards — variance 0, no random(), no cron/sleep, manual process_combat_ticks; sole-writer law for combat_units + group_sortie_members; full real-RPC/engine chain; section-C control experiment re-adds the pre-0241 six-value CHECK and restores the widened one)"
+          echo "COMBAT-TICKS RESULT FIX SELFTEST: ALL PASSED (self-rolling-back; 2 NWINC_PASS markers + final PASS; all 5 dark flags lit only inside the txn; combat_tick_logging ON; determinism guards — variance 0, no random(), no cron/sleep, manual process_combat_ticks; sole-writer law for combat_units + group_sortie_members; full real-RPC/engine chain; 0344 — the section-C control experiment and the pause-logs block are DELETED with the wave-pause branch they tested, replaced by NWINC_PASS_NOPAUSE, and the harness is asserted to do no DDL on combat_ticks_result_check at all)"
 
   disposable-matrix:
     runs-on: ubuntu-latest
@@ -138,7 +150,7 @@ jobs:
           cat /tmp/nwincout.txt
           echo "---------------------------------"
           [ "$rc" -eq 0 ] || { echo "psql exited $rc — the proof aborted"; exit 1; }
-          for m in NWINC_PASS_CONSTRAINT NWINC_PASS_CONTROL NWINC_PASS_PAUSE_LOGS; do
+          for m in NWINC_PASS_CONSTRAINT NWINC_PASS_NOPAUSE; do
             grep -q "$m" /tmp/nwincout.txt || { echo "PROOF DID NOT EMIT MARKER: $m"; exit 1; }
           done
           grep -q 'NEXT-WAVE-INCOMING FIX PROOF PASSED' /tmp/nwincout.txt \

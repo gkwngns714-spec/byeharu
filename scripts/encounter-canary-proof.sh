@@ -32,16 +32,16 @@ flag_before="$(psql "$DB_URL" -X -t -A -c "select public.cfg_bool('encounter_res
 out="$(psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$SQL" 2>&1)" || true
 echo "$out"
 
+  # 0344: six markers are GONE and deliberately not replaced by weaker forms —
+  # ACTIVATED_SPAWN, ONE_RUNTIME_ROW, COOLDOWN_BLOCKS, FLEET_COMPOSITION,
+  # REWARD_MATCHES and NON_ELITE each asserted that the tick INSTANTIATES an
+  # authored plan, and 0344 deletes the only branch that ever did. Pinning them
+  # would DEMAND the deleted wave sizer. ECP_PASS_CANARY_INERT replaces all six.
 for marker in \
   ECP_PASS_INACTIVE_BINDING_NO_SPAWN \
   ECP_PASS_RESOLVER_OFF_NO_SPAWN \
   ECP_PASS_BINDING_ONLY_NO_SPAWN \
-  ECP_PASS_ACTIVATED_SPAWN \
-  ECP_PASS_ONE_RUNTIME_ROW \
-  ECP_PASS_COOLDOWN_BLOCKS \
-  ECP_PASS_FLEET_COMPOSITION \
-  ECP_PASS_REWARD_MATCHES \
-  ECP_PASS_NON_ELITE \
+  ECP_PASS_CANARY_INERT \
   ECP_PASS_BINDING_DISABLED_STOPS \
   ECP_PASS_RESOLVER_DISABLED_STOPS \
   ECP_PASS_NO_NEW_ACTIVE_CONTENT \

@@ -77,7 +77,7 @@ jobs:
             ELITE_PASS_DETERMINISM \
             ELITE_PASS_SPLIT_PLAN \
             ELITE_PASS_FLAGOFF_SYNTHETIC \
-            ELITE_PASS_SPAWN_STATS \
+            ELITE_PASS_RESOLVER_INERT \
             ELITE_PASS_WEAPONS_DAMAGE \
             'ELITE STAT WIRING PROOF PASSED'; do
             echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }

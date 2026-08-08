@@ -272,8 +272,10 @@ begin
    where movement_id = p_mv and lifecycle_state = 'pending';
 end $$;
 
--- DRAIN an encounter to a terminal state. A pirate-hunt combat never ends on its own — clearing a wave
--- spawns the next — so the ONLY way out is the canonical retreat, which the caller arms first (that is
+-- DRAIN an encounter to a terminal state. A pirate-hunt combat does not end because the field is empty
+-- — (0344) it does not end at all while the site keeps sending bodies on its clock, and before 0344 it
+-- did not end because clearing a wave spawned the next — so the ONLY way out is the canonical retreat,
+-- which the caller arms first (that is
 -- what command_ship_group_go step 8 does against a live encounter). This drives the real engine plus the
 -- movement processor, because the retreat mints its own leg that has to settle before the fleet is
 -- commandable. Deliberately the single process_combat_ticks() site outside PIRATEFIRE, so the harness's
@@ -316,6 +318,13 @@ begin
    where id = p_enc;
   perform public.process_combat_ticks();
 end $$;
+
+-- ── (0344) PRESSURE STAGING — shared, not re-copied ──────────────────────────────────────────────
+-- pg_temp.pressure_site / pg_temp.pressure_fill live in scripts/lib/pressure-staging.sql because
+-- team-command-proof.sql needs the same two helpers. Read that file for why a block cannot simply
+-- drive ticks until n bodies stand, and for the law governing what these are allowed to write.
+\ir lib/pressure-staging.sql
+
 
 -- ════════ SETUP: reveal starter ports, one funded fixture player ═════════════════════════════════════
 do $$
@@ -2472,7 +2481,17 @@ begin
    where ce.id = v_enc;
   if v_bd is null or v_bd <= 0 then raise exception 'AUTOEXIT FAIL: the encounter''s location has base_difficulty %', v_bd; end if;
   select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
-  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * 1.25))::numeric, 6);
+  -- ██ (0344) THE STALE `* 1.25` IS DELETED FROM THIS DERIVATION ██
+  -- The divisor was `(v_bd * 1.25)`, and that 1.25 was the DELETED danger factor written as a bare
+  -- literal: at danger 1 the head multiplied the wave's attack by (1 + 1 * enemy_attack_danger_scale)
+  -- = 1.25, so the block divided it back out to hit its 6%-of-capacity-per-tick erosion. 0344 deletes
+  -- the factor, and the pressure authority hands a body base_difficulty x enemy_attack_base as its OWN
+  -- power. A LITERAL is invisible to a grep for the knob name, which is why this survived the earlier
+  -- sweeps of the deleted surface — it is the same class wearing a number.
+  -- Leaving it would not have gone red: it would have eroded 20%% slower than this block intends,
+  -- quietly spending more of its own tick budget, which is the kind of drift that surfaces later as a
+  -- flake. Removing it RESTORES the pre-0344 erosion rate exactly rather than changing it.
+  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / v_bd)::numeric, 6);   -- (0344) the /1.25 is GONE: see the note above
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
   -- erosion must be monotone; captured and restored at the end like every knob this block touches.
   select coalesce(public.cfg_num('shield_regen_combat_pct'), 0) into v_srg_before;
@@ -2706,7 +2725,17 @@ begin
     from public.combat_encounters ce join public.locations l on l.id = ce.location_id
    where ce.id = v_enc2;
   if v_bd is null or v_bd <= 0 then raise exception 'AUTOEXIT FAIL: the control encounter''s location has base_difficulty %', v_bd; end if;
-  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * 1.25))::numeric, 6);
+  -- ██ (0344) THE STALE `* 1.25` IS DELETED FROM THIS DERIVATION ██
+  -- The divisor was `(v_bd * 1.25)`, and that 1.25 was the DELETED danger factor written as a bare
+  -- literal: at danger 1 the head multiplied the wave's attack by (1 + 1 * enemy_attack_danger_scale)
+  -- = 1.25, so the block divided it back out to hit its 6%-of-capacity-per-tick erosion. 0344 deletes
+  -- the factor, and the pressure authority hands a body base_difficulty x enemy_attack_base as its OWN
+  -- power. A LITERAL is invisible to a grep for the knob name, which is why this survived the earlier
+  -- sweeps of the deleted surface — it is the same class wearing a number.
+  -- Leaving it would not have gone red: it would have eroded 20%% slower than this block intends,
+  -- quietly spending more of its own tick budget, which is the kind of drift that surfaces later as a
+  -- flake. Removing it RESTORES the pre-0344 erosion rate exactly rather than changing it.
+  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / v_bd)::numeric, 6);   -- (0344) the /1.25 is GONE: see the note above
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
   for i in 1..60 loop
     perform pg_temp.ae_tick(v_enc2);
@@ -2751,9 +2780,12 @@ end $$;
 --      with combat_debug_logging pinned FALSE (owned in setup). Pre-0314 the spatial hitsplat was
 --      debug-gated -> zero rows -> red.
 -- Staging is the AUTOEXIT idiom end to end: fresh player, real RPCs only, real zone, real
--- processors, pg_temp.ae_tick as the one cadence driver. The only clock moved beyond ae_tick is
--- started_at (rewound 930s so the wave's danger derives a MULTI-UNIT spawn — same clock-only law
--- as every other rewind here; forced-extract needs 1800s, untouched).
+-- processors, pg_temp.ae_tick as the one cadence driver. The only clock moved beyond ae_tick is the
+-- reinforcement clock, rewound by pg_temp.pressure_fill so the six bodies this block needs arrive from
+-- six elapsed cadence slots of the ONE pressure authority — same clock-only law as every other rewind
+-- here. (0344: it used to rewind started_at by 930 s so the tick's own kill-escalation term derived a
+-- multi-unit spawn. That term, both its knobs and the whole v_danger concept are DELETED — a field is
+-- no longer something a player earns by winning — so the block asks the clock for the field instead.)
 --
 -- ── 0336 RE-PREMISED: THE VOLLEY IS NOT ON TICK 1 ANY MORE, AND THAT IS A NEW PROPERTY ───────────
 -- WHAT THIS BLOCK ASSERTED BEFORE: on TICK 1 the wave spawned AND fired — >= 3 pirate salvos, one
@@ -2797,7 +2829,6 @@ declare
   v_mv uuid; v_enc uuid;
   mv record; pi record;
   v_imax double precision; v_def double precision; v_bd double precision;
-  v_danger int; v_scale double precision;
   v_eab_before double precision; v_eab numeric;
   v_cd_before double precision; v_hv_before double precision; v_ps_before double precision;
   v_esb_before double precision; v_esp_before double precision;  -- (0338) the wave's own closing speed
@@ -2886,17 +2917,28 @@ begin
   select id into v_enc from public.combat_encounters where player_id = uR and status = 'active';
   if v_enc is null then raise exception 'RSFEEL FAIL: the ambush opened no encounter'; end if;
 
-  -- ── a MULTI-UNIT wave: rewind started_at so the spawn's danger derives >= 3 units, and derive
-  --    the expected count from the same knobs the tick reads (never an ambient assumption). ───────
-  update public.combat_encounters set started_at = started_at - interval '930 seconds' where id = v_enc;
-  v_danger := 1 + 0 + floor(930.0 / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
-  n_exp    := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
-  if n_exp < 3 then
-    raise exception 'RSFEEL FAIL: staging derives only % unit(s) — the wave is too small to exercise the roll spread', n_exp;
-  end if;
+  -- ── (0344) A MULTI-BODY FIELD IS NOW ASKED OF THE CLOCK, NOT MANUFACTURED BY WINNING ───────────
+  -- WHAT THIS DID BEFORE, AND WHY IT IS GONE: it rewound started_at by 930 s so the tick's own
+  -- `v_danger := 1 + waves_cleared + floor(secs_inside / danger_time_divisor_seconds)` derived six
+  -- units, and predicted the count from `least(enemy_synthetic_max_units, greatest(1, v_danger))`.
+  -- 0344 DELETES that expression, both its knobs and the whole v_danger concept — destroying an enemy
+  -- fleet must not make the next one bigger — so a prediction from it is a prediction from a mechanism
+  -- that no longer exists, and both knobs it read are deleted rows: writing them would have
+  -- established NOTHING and this block would have gone green over an unstaged world.
+  -- WHAT REPLACES IT: the field is a CADENCE and a CAP, authored as a row per site, and this block
+  -- OWNS both. Six bodies then arrive from six elapsed clock slots through the one pressure authority,
+  -- which is exactly how a live fight fills up — one ring, one radius, 0338's bearing, nothing
+  -- hand-written. The count is no longer DERIVED from anything: it is the number this block asked for,
+  -- and the assert is that the authority delivered exactly that many and no more.
+  n_exp := 6;
+  perform pg_temp.pressure_site(v_enc, 45.0, n_exp);
 
   -- ── enemy attack derived from the fight's OWN numbers (the AUTOEXIT idiom): ~24%% of entry
-  --    integrity per full volley -> ~4%% per hit, so six hits leave the command ship far alive. ───
+  --    integrity per full volley -> ~4%% per hit, so six hits leave the command ship far alive.
+  --    (0344) The danger factor is deleted from the engine, so it is deleted from this derivation:
+  --    the authority hands each body `base_difficulty * enemy_attack_base` as its OWN power — it no
+  --    longer sizes a WAVE total and divides by the unit count — so the per-body divisor is n_exp
+  --    itself. Same 24%% volley, same ~4%% hit, derived from what the engine now reads. ────────────
   select player_integrity_max into v_imax from public.combat_encounters where id = v_enc;
   if v_imax is null or v_imax <= 0 then raise exception 'RSFEEL FAIL: entry integrity is %', v_imax; end if;
   select coalesce(max(defense_snapshot), 0) into v_def from public.combat_units
@@ -2905,20 +2947,29 @@ begin
     from public.combat_encounters ce join public.locations l on l.id = ce.location_id
    where ce.id = v_enc;
   if v_bd is null or v_bd <= 0 then raise exception 'RSFEEL FAIL: base_difficulty %', v_bd; end if;
-  v_scale := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
   select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
-  v_eab := round(((0.24 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * v_scale))::numeric, 6);
+  v_eab := round(((0.24 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * n_exp))::numeric, 6);
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
 
-  -- ── THE SPAWN TICK: the wave arrives, and (0336) it arrives SILENT. ─────────────────────────────
+  -- ── THE FIELD FILLS FROM THE CLOCK, then (0336) its first measured tick is SILENT. ─────────────
+  -- Every body is placed by the authority the tick composes, at the population slot the tick would
+  -- have passed, so the six stand on ONE ring at ONE radius exactly as a six-unit wave used to.
+  n_units := pg_temp.pressure_fill(v_enc, n_exp);
+  if n_units <> n_exp then
+    raise exception 'RSFEEL FAIL: the pressure authority delivered % of the % bodies this block asked for over % elapsed cadence slot(s) — the wave is too small to exercise the roll spread', n_units, n_exp, n_exp;
+  end if;
   perform pg_temp.ae_tick(v_enc);
   select tick_number into v_t0 from public.combat_encounters where id = v_enc;
   if v_t0 is distinct from 1 then
     raise exception 'RSFEEL FAIL: the arrival tick is numbered % (want 1) — the silence pin below would be reading a tick the wave did not arrive on', v_t0;
   end if;
+  -- THE FIELD IS EXACTLY WHAT WAS ASKED FOR, READ AFTER THE TICK — which makes this one statement two
+  -- properties: the six bodies are standing, AND the tick added nothing of its own. The authority
+  -- skipped its clock past every elapsed slot in one step when the field was filled, so a seventh body
+  -- here would mean an arrival was BANKED and released, which is what RULE 2 forbids.
   select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
   if n_units <> n_exp then
-    raise exception 'RSFEEL FAIL: % enemy unit(s) spawned (want the danger-derived %) — the wave is too small to exercise the roll spread', n_units, n_exp;
+    raise exception 'RSFEEL FAIL: % enemy unit(s) stand on the field after its first tick (want the % this block asked the clock for) — either the wave is too small to exercise the roll spread, or a suppressed arrival was banked and released', n_units, n_exp;
   end if;
   -- (0) 0336's NEW PROPERTY: a wave stands at (measured player extent + its own range + 1) from the
   --     anchor, i.e. strictly outside its own reach of every player ship, so it CANNOT shoot on the
@@ -3045,8 +3096,8 @@ begin
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(v_esp_before));
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
 
-  raise notice 'DZCOMBAT_PASS_RSFEEL ok: % pirates spawned at danger %, the wave arrived SILENT on its spawn tick (0336 stands it outside its own reach by construction) and CLOSED, and on the volley tick % every landed hit emitted its own hull_damage with a positive amount under EVENT logging (debug pinned dark), % distinct damage values across one volley of identical guns, the player''s own hit visible too; every fired weapon armed now()+3600s exactly, and tick % was pirate-silent (fight active, wave alive) while the zero-cooldown fallback kept firing (% player salvo(s)): attack interval real, every hit its own roll, every hit visible',
-    n_units, v_danger, v_t1, n_distinct, v_t2, n;
+  raise notice 'DZCOMBAT_PASS_RSFEEL ok: % pirates arrived from % elapsed cadence slot(s) of the ONE pressure authority (0344 — a field is a clock and a cap, never a reward for winning), the wave arrived SILENT on its spawn tick (0336 stands it outside its own reach by construction) and CLOSED, and on the volley tick % every landed hit emitted its own hull_damage with a positive amount under EVENT logging (debug pinned dark), % distinct damage values across one volley of identical guns, the player''s own hit visible too; every fired weapon armed now()+3600s exactly, and tick % was pirate-silent (fight active, wave alive) while the zero-cooldown fallback kept firing (% player salvo(s)): attack interval real, every hit its own roll, every hit visible',
+    n_units, n_exp, v_t1, n_distinct, v_t2, n;
 end $$;
 
 -- ^ RSFEEL's OWN terminator, added at the 0313/0314 merge. Both sides of this conflict appended a
@@ -4401,7 +4452,6 @@ declare
   k_dvar double precision; k_hvar double precision; k_ecd double precision; k_pcd double precision;
   v_pw double precision; v_pwA double precision; v_php double precision; v_pshield double precision; v_pdef double precision;
   v_bd double precision; v_defb double precision;
-  v_danger int; v_hpsc double precision; v_atksc double precision;
   v_tA int; v_tB int;
   v_dead uuid; v_live uuid; v_live_side text; v_live_def double precision;
   v_dead_pow double precision; v_dead_rng double precision; v_would double precision;
@@ -4567,23 +4617,28 @@ begin
    where ce.id = v_encA;
   if v_bd is null or v_bd <= 0 then raise exception 'DEADFIRE FAIL: base_difficulty %', v_bd; end if;
 
-  -- danger derived from the same inputs the tick reads (never assumed): a fresh encounter is danger
-  -- 1, so the wave is exactly ONE pirate — which is what makes the kill mutual rather than a volley.
-  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_encA)
-              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_encA)))
-                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
-  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
-  if n_exp <> 1 then
-    raise exception 'DEADFIRE FAIL: staging derives % pirate(s) for the mutual kill (want exactly 1)', n_exp;
-  end if;
-  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
-  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
-  -- the pirate dies to ONE player shot: half the player's own weapon power, spread over one unit.
+  -- ── (0344) EXACTLY ONE BODY, BECAUSE THE SITE'S CAP SAYS ONE — never because a kill count was low ─
+  -- WHAT THIS DID BEFORE: it derived `1 + waves_cleared + floor(secs_inside / danger_time_divisor)`
+  -- from the encounter and asserted that expression came out at 1, then scaled the two knobs it writes
+  -- by (1 + danger * enemy_hp_danger_scale) and (1 + danger * enemy_attack_danger_scale). 0344 deletes
+  -- the expression, both scales and the whole v_danger concept, so all three of those reads are reads
+  -- of nothing: cfg_num on a deleted key returns NULL, the coalesce fallback silently supplies 0.6 and
+  -- 0.25, and the block would have solved its one-shot arithmetic against factors the engine no longer
+  -- applies — a mutual kill that is no longer mutual, passing green.
+  -- WHAT IT IS NOW: the concurrent cap is CONTENT and this block owns it. Cap 1 makes "exactly one
+  -- pirate" structural rather than arithmetic — there is no clock slot and no cap under which a second
+  -- body could join this fight — and the two knobs are solved directly against ONE body, which is what
+  -- the pressure authority hands out: base_difficulty x enemy_hp_base, at this block's pinned zero
+  -- variance, and base_difficulty x enemy_attack_base as that body's OWN power (the authority no longer
+  -- sizes a wave total and divides it by a unit count).
+  n_exp := 1;
+  perform pg_temp.pressure_site(v_encA, 45.0, n_exp);
+  -- the pirate dies to ONE player shot: half the player's own weapon power.
   perform public.set_game_config('enemy_hp_base',
-    to_jsonb(round(((0.5 * v_pw) / (v_bd * v_hpsc))::numeric, 9)));
+    to_jsonb(round(((0.5 * v_pw) / v_bd)::numeric, 9)));
   -- and the hull dies to ONE pirate shot: three times its hull-plus-shield, de-mitigated.
   perform public.set_game_config('enemy_attack_base',
-    to_jsonb(round((((3.0 * (v_php + v_pshield)) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+    to_jsonb(round((((3.0 * (v_php + v_pshield)) * ((v_defb + v_pdef) / v_defb)) / v_bd)::numeric, 9)));
 
   -- ── THE SPAWN TICK: the wave arrives, silent, and outside the reach of both sides. ─────────────
   perform pg_temp.ae_tick(v_encA);
@@ -4632,7 +4687,7 @@ begin
   end if;
   select count(*) into n_units from public.combat_units where encounter_id = v_encA and side = 'enemy';
   if n_units <> 1 then
-    raise exception 'DEADFIRE FAIL: % pirate unit(s) spawned into the mutual kill (want the danger-derived 1)', n_units;
+    raise exception 'DEADFIRE FAIL: % pirate unit(s) stand in the mutual kill (want the 1 the site''s owned concurrent cap admits) — a second body would make the exchange a volley and every count below would be measuring a different fight', n_units;
   end if;
 
   -- THE THREE COUNTS. On the pre-0317 body every one of them is 2.
@@ -4808,24 +4863,37 @@ begin
     raise exception 'DEADFIRE FAIL: B''s weapon power % / base_difficulty % cannot size the wave', v_pw, v_bd;
   end if;
 
-  -- a SIX-pirate wave: rewind started_at so the tick's own danger derivation reaches the cap.
-  update public.combat_encounters set started_at = started_at - interval '930 seconds' where id = v_encB;
-  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_encB)
-              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_encB)))
-                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
-  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
-  if n_exp < 3 then
-    raise exception 'DEADFIRE FAIL: staging derives only % pirate(s) — with fewer than 3 there are too few survivors to prove the living still act', n_exp;
-  end if;
-  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
-  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
-  -- each pirate dies to ONE player shot (unit hp = half the player's weapon power) …
+  -- ── (0344) A SIX-BODY FIELD IS ASKED OF THE CLOCK AND THE CAP, NOT EARNED BY WINNING ────────────
+  -- WHAT THIS DID BEFORE: it rewound started_at by 930 s so the tick's own
+  -- `1 + waves_cleared + floor(secs_inside / danger_time_divisor_seconds)` reached
+  -- enemy_synthetic_max_units, then scaled both knobs it writes by the two danger factors. Every one of
+  -- those five reads is a read of something 0344 deletes, and the two knob reads would have FALLEN BACK
+  -- to their coalesce defaults — 0.6 and 0.25 — so the "each pirate dies to one player shot" sizing
+  -- would have been solved against factors the engine no longer applies, and the arm would have gone
+  -- green over pirates that survive their killing shot.
+  -- WHAT IT IS NOW: six bodies from six elapsed cadence slots of the ONE pressure authority, under a cap
+  -- this block OWNS. It is the same field, placed by the same leaf, at the same slots — the authority is
+  -- handed the population before each arrival, so the slots walk 0..5 exactly as one six-unit call did —
+  -- and it stands complete BEFORE any tick runs, which is what this arm needs: fill it by driving ticks
+  -- instead and the earlier bodies would have closed further, been shot at, and the six would never be
+  -- one ring on any single tick.
+  n_exp := 6;
+  perform pg_temp.pressure_site(v_encB, 45.0, n_exp);
+  -- each pirate dies to ONE player shot (body hp = half the player's weapon power) — the authority hands
+  -- a body base_difficulty x enemy_hp_base at this block's pinned zero variance, so the knob is solved
+  -- against ONE body rather than against a wave total that then gets divided …
   perform public.set_game_config('enemy_hp_base',
-    to_jsonb(round(((0.5 * v_pw * n_exp) / (v_bd * v_hpsc))::numeric, 9)));
+    to_jsonb(round(((0.5 * v_pw) / v_bd)::numeric, 9)));
   -- … and the whole volley costs the screened escort about a tenth of its pool, so nobody on the
-  -- player side dies and "the living still act" is asked of a fight that is still going.
+  -- player side dies and "the living still act" is asked of a fight that is still going. Per BODY now,
+  -- so the field total is the same tenth it always was: the divisor is n_exp, not a deleted scale.
   perform public.set_game_config('enemy_attack_base',
-    to_jsonb(round((((0.1 * v_esc_hp) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+    to_jsonb(round((((0.1 * v_esc_hp) * ((v_defb + v_pdef) / v_defb)) / (v_bd * n_exp))::numeric, 9)));
+
+  n_units := pg_temp.pressure_fill(v_encB, n_exp);
+  if n_units <> n_exp then
+    raise exception 'DEADFIRE FAIL: the pressure authority delivered % of the % bodies this arm asked for over % elapsed cadence slot(s) — with fewer than 3 there are too few survivors to prove the living still act', n_units, n_exp, n_exp;
+  end if;
 
   -- ── THE SPAWN TICK IS SILENT HERE TOO, THEN THE WHOLE FIELD CLOSES INTO REACH TOGETHER. ────────
   perform pg_temp.ae_tick(v_encB);
@@ -4854,7 +4922,7 @@ begin
   end if;
   select count(*) into n_units from public.combat_units where encounter_id = v_encB and side = 'enemy';
   if n_units <> n_exp then
-    raise exception 'DEADFIRE FAIL: % pirate unit(s) spawned into B (want the danger-derived %)', n_units, n_exp;
+    raise exception 'DEADFIRE FAIL: % pirate unit(s) stand in B (want the % this arm asked the clock for) — either the field never filled, or an arrival was banked and released across the approach', n_units, n_exp;
   end if;
 
   -- ── 0336 REVERSED THIS PAIR OF CLAUSES DELIBERATELY, AND THEY ARE REPOINTED, NOT RELAXED ────────
@@ -5479,7 +5547,17 @@ begin
    where ce.id = v_enc;
   if v_bd is null or v_bd <= 0 then raise exception 'WRECKHOME FAIL: the encounter''s location has base_difficulty %', v_bd; end if;
   select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
-  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * 1.25))::numeric, 6);
+  -- ██ (0344) THE STALE `* 1.25` IS DELETED FROM THIS DERIVATION ██
+  -- The divisor was `(v_bd * 1.25)`, and that 1.25 was the DELETED danger factor written as a bare
+  -- literal: at danger 1 the head multiplied the wave's attack by (1 + 1 * enemy_attack_danger_scale)
+  -- = 1.25, so the block divided it back out to hit its 6%-of-capacity-per-tick erosion. 0344 deletes
+  -- the factor, and the pressure authority hands a body base_difficulty x enemy_attack_base as its OWN
+  -- power. A LITERAL is invisible to a grep for the knob name, which is why this survived the earlier
+  -- sweeps of the deleted surface — it is the same class wearing a number.
+  -- Leaving it would not have gone red: it would have eroded 20%% slower than this block intends,
+  -- quietly spending more of its own tick budget, which is the kind of drift that surfaces later as a
+  -- flake. Removing it RESTORES the pre-0344 erosion rate exactly rather than changing it.
+  v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / v_bd)::numeric, 6);   -- (0344) the /1.25 is GONE: see the note above
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
   select coalesce(public.cfg_num('shield_regen_combat_pct'), 0) into v_srg_before;
   perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);
@@ -6135,8 +6213,9 @@ end $$;
 -- POST-0336:   3 salvos, THREE distinct targets, THREE landed hits, THREE kills.
 -- Every number is derived at assert time from the rows this encounter actually carries: the per-gun
 -- power is read off weapons_json (0331 SHARES a ship's power between identical guns, so a guess of
--- "the catalog weight" would size the wave wrong), the wave size from the same danger formula the
--- tick evaluates, and the one-shot sizing is asserted to really one-shot before anything is claimed.
+-- "the catalog weight" would size the wave wrong), the field size is the concurrent cap this block
+-- OWNS as a row (0344 — it used to be derived from the deleted kill-escalation formula), and the
+-- one-shot sizing is asserted to really one-shot before anything is claimed.
 do $$
 declare
   r jsonb; n int; n_exp int; n_guns int;
@@ -6145,8 +6224,7 @@ declare
   v_hunt uuid := (select v from dzc where k='v_hunt');
   v_mv uuid; v_enc uuid; mv record; pi record;
   v_pw double precision; v_pw_max double precision; v_pool double precision; v_pdef double precision;
-  v_defb double precision; v_bd double precision; v_danger int;
-  v_hpsc double precision; v_atksc double precision; v_uhp double precision;
+  v_defb double precision; v_bd double precision; v_uhp double precision;
   v_tick int; n_salvo int; n_targets int; n_dmg int; n_kill int; n_alive int;
   k_ring double precision; k_ehp double precision; k_eatk double precision;
   k_erb double precision; k_erp double precision; k_esb double precision; k_esp double precision;
@@ -6265,34 +6343,41 @@ begin
    where ce.id = v_enc;
   if v_bd is null or v_bd <= 0 then raise exception 'VOLLEY FAIL: the encounter location carries base_difficulty % — the wave formulas have no scale', v_bd; end if;
 
-  -- A WAVE WITH MORE PIRATES THAN THE SHIP HAS GUNS. now() is frozen for the whole txn, so a fresh
-  -- encounter is always danger 1 (one pirate) — which is exactly the case that CANNOT distinguish
-  -- the two bodies. Rewinding the encounter's OWN started_at is a CLOCK-ONLY write, the same law
-  -- pg_temp.rewind_leg / drain_encounter / ae_tick already follow: no status, no outcome, no
-  -- geometry, no hp is written. The count is then DERIVED from the same formula the tick evaluates.
-  update public.combat_encounters set started_at = started_at - interval '600 seconds' where id = v_enc;
-  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
-              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
-                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
-  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
+  -- A FIELD WITH MORE PIRATES THAN THE SHIP HAS GUNS — AND (0344) IT IS ASKED FOR, NOT EARNED.
+  -- WHAT THIS DID BEFORE: it rewound started_at by 600 s so the tick's own
+  -- `1 + waves_cleared + floor(secs_inside / danger_time_divisor_seconds)` reached 4, and predicted the
+  -- wave size from `least(enemy_synthetic_max_units, greatest(1, danger))`. 0344 deletes that whole
+  -- expression and both of those knob rows: the derivation would have collapsed to 1 + 0 + NULL-fallback
+  -- arithmetic over deleted keys and this block would have staged a ONE-pirate field — the exact case
+  -- its own comment says cannot distinguish the two bodies — while still counting three salvos.
+  -- WHAT IT IS NOW: the concurrent cap is a ROW and this block owns it, four bodies arrive from four
+  -- elapsed cadence slots of the ONE pressure authority, and the field is complete before the tick that
+  -- measures the volley. Nothing here is derived from a kill count, because nothing in the engine is.
+  n_exp := 4;
+  perform pg_temp.pressure_site(v_enc, 45.0, n_exp);
   if n_exp <= 3 then
-    raise exception 'VOLLEY FAIL: staging derives % pirate(s) for a THREE-gun ship — the wave must hold strictly more pirates than the ship has guns, or the last gun has nothing left to re-aim at and the whole property is vacuous', n_exp;
+    raise exception 'VOLLEY FAIL: this block staged % pirate(s) for a THREE-gun ship — the field must hold strictly more pirates than the ship has guns, or the last gun has nothing left to re-aim at and the whole property is vacuous', n_exp;
   end if;
-  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
-  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
-  -- each pirate dies to ONE gun's shot (unit hp = half a single gun's share) …
+  -- each pirate dies to ONE gun's shot (body hp = half a single gun's share). The authority hands a
+  -- body base_difficulty x enemy_hp_base as its OWN hp at this file's pinned zero variance — it no
+  -- longer sizes a wave total and divides by the unit count — so neither n_exp nor a danger scale
+  -- belongs in this solve any more …
   perform public.set_game_config('enemy_hp_base',
-    to_jsonb(round(((0.5 * v_pw * n_exp) / (v_bd * v_hpsc))::numeric, 9)));
-  -- … and the whole wave together costs the hull ~2% of its pool, so nothing about the player side
-  -- changes underneath the counts.
+    to_jsonb(round(((0.5 * v_pw) / v_bd)::numeric, 9)));
+  -- … and the whole field together costs the hull ~2% of its pool, so nothing about the player side
+  -- changes underneath the counts. Per BODY, hence the n_exp divisor.
   perform public.set_game_config('enemy_attack_base',
-    to_jsonb(round((((0.02 * v_pool) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+    to_jsonb(round((((0.02 * v_pool) * ((v_defb + v_pdef) / v_defb)) / (v_bd * n_exp))::numeric, 9)));
 
+  n := pg_temp.pressure_fill(v_enc, n_exp);
+  if n <> n_exp then
+    raise exception 'VOLLEY FAIL: the pressure authority delivered % of the % bodies this block asked for over % elapsed cadence slot(s) — the field must hold strictly more pirates than the ship has guns', n, n_exp, n_exp;
+  end if;
   perform pg_temp.ae_tick(v_enc);
   select tick_number into v_tick from public.combat_encounters where id = v_enc;
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
   if n <> n_exp then
-    raise exception 'VOLLEY FAIL: % pirate unit(s) spawned (want the danger-derived %)', n, n_exp;
+    raise exception 'VOLLEY FAIL: % pirate unit(s) stand on the field (want the % this block asked the clock for) — a body added or banked across the volley tick would make every count below describe a different fight', n, n_exp;
   end if;
   -- THE ONE-SHOT SIZING REALLY ONE-SHOTS — asserted against the row the tick actually wrote, never
   -- assumed from the formula that asked for it. If a pirate could survive a single gun, gun 2 would
@@ -6432,16 +6517,23 @@ begin
   select id into v_enc from public.combat_encounters where player_id = uW2 and status = 'active';
   if v_enc is null then raise exception 'WAVERING FAIL: the ambush opened no encounter'; end if;
 
-  -- a wave of at least THREE: one point cannot be told from a ring, and two cannot be told from a
-  -- line. CLOCK-ONLY rewind, the ae_tick/rewind_leg law, and the count DERIVED from the tick's own
-  -- danger formula rather than assumed.
-  update public.combat_encounters set started_at = started_at - interval '600 seconds' where id = v_enc;
-  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int,
-                 greatest(1, 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
-                            + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
-                                    / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int));
+  -- a field of at least THREE: one point cannot be told from a ring, and two cannot be told from a
+  -- line. (0344) The size used to be DERIVED from the tick's own
+  -- `least(enemy_synthetic_max_units, greatest(1, 1 + waves_cleared + floor(secs_inside / divisor)))`
+  -- after a 600 s started_at rewind. That expression and both of those knob rows are DELETED — a wave
+  -- is no longer a reward for killing — so the derivation would have collapsed onto deleted keys and
+  -- staged a ONE-pirate field, in which a ring is exactly what cannot be told from a point. The size is
+  -- now the concurrent cap this block OWNS as a row, and the bodies arrive from that many elapsed
+  -- cadence slots of the ONE pressure authority: same leaf, same slots 0..n-1, same measured radius,
+  -- same arrival bearing — the ring a live fight gets.
+  n_exp := 4;
+  perform pg_temp.pressure_site(v_enc, 45.0, n_exp);
   if n_exp < 3 then
-    raise exception 'WAVERING FAIL: staging derives only % pirate(s) — with fewer than 3 a ring cannot be told apart from a point or a line and this block would prove nothing', n_exp;
+    raise exception 'WAVERING FAIL: this block staged only % pirate(s) — with fewer than 3 a ring cannot be told apart from a point or a line and this block would prove nothing', n_exp;
+  end if;
+  n := pg_temp.pressure_fill(v_enc, n_exp);
+  if n <> n_exp then
+    raise exception 'WAVERING FAIL: the pressure authority delivered % of the % bodies this block asked for over % elapsed cadence slot(s) — with fewer than 3 a ring cannot be told apart from a point or a line', n, n_exp, n_exp;
   end if;
 
   perform pg_temp.ae_tick(v_enc);
@@ -6465,7 +6557,7 @@ begin
   end if;
   select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
   if n_units <> n_exp then
-    raise exception 'WAVERING FAIL: % pirate unit(s) spawned (want the danger-derived %)', n_units, n_exp;
+    raise exception 'WAVERING FAIL: % pirate unit(s) stand on the field (want the % this block asked the clock for) — a body added or banked across the measuring tick would put a second radius in the ring', n_units, n_exp;
   end if;
   -- NULL-VACUITY (the 0313 law) BEFORE any geometry: `x is distinct from NULL` is TRUE for every
   -- real number, so an unpositioned unit would make the distinct-position count and every radius
@@ -6678,21 +6770,25 @@ begin
       ax, ay, lx, ly;
   end if;
 
-  -- a wave of at least THREE, for the same reason WAVERING needs one: a point cannot be told from a
-  -- ring, and two points cannot be told from a line. DERIVED from the tick's own danger formula.
-  update public.combat_encounters set started_at = started_at - interval '600 seconds' where id = v_enc;
-  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int,
-                 greatest(1, 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
-                            + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
-                                    / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int));
+  -- a field of at least THREE, for the same reason WAVERING needs one: a point cannot be told from a
+  -- ring, and two points cannot be told from a line. (0344) It used to be DERIVED from the tick's own
+  -- kill-escalation formula after a 600 s started_at rewind; that formula and both knobs it read are
+  -- DELETED, so the size is now the concurrent cap this block OWNS as a row and the bodies arrive from
+  -- that many elapsed cadence slots of the ONE pressure authority.
+  n_exp := 4;
+  perform pg_temp.pressure_site(v_enc, 45.0, n_exp);
   if n_exp < 3 then
-    raise exception 'NODIRECTION FAIL: staging derives only % pirate(s) — with fewer than 3 a ring cannot be told apart from a point or a line', n_exp;
+    raise exception 'NODIRECTION FAIL: this block staged only % pirate(s) — with fewer than 3 a ring cannot be told apart from a point or a line', n_exp;
+  end if;
+  n := pg_temp.pressure_fill(v_enc, n_exp);
+  if n <> n_exp then
+    raise exception 'NODIRECTION FAIL: the pressure authority delivered % of the % bodies this block asked for over % elapsed cadence slot(s) — with fewer than 3 a ring cannot be told apart from a point or a line', n, n_exp, n_exp;
   end if;
 
   perform pg_temp.ae_tick(v_enc);
   select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
   if n_units <> n_exp then
-    raise exception 'NODIRECTION FAIL: % pirate unit(s) spawned (want the danger-derived %)', n_units, n_exp;
+    raise exception 'NODIRECTION FAIL: % pirate unit(s) stand on the field (want the % this block asked the clock for) — a body added or banked across the measuring tick would put a second radius in the ring', n_units, n_exp;
   end if;
   select count(*) into n_null from public.combat_units
    where encounter_id = v_enc and side = 'enemy' and (pos_x is null or pos_y is null);
@@ -6768,9 +6864,20 @@ end $$;
 -- THE STAGING: clear the wave for real (the player's own gun, sized from the fight's own numbers),
 -- press Retreat through the REAL path the button uses (request_retreat -> presence_request_leave ->
 -- combat_set_retreating), then tick.
--- THE VACUITY GUARD THAT MATTERS MOST: wave_transition_seconds is pulled to 0 and `now() >=
--- next_wave_at` is ASSERTED before the retreat tick. Without it the head would take the
--- next_wave_incoming pause instead of the spawn, and this block would go green on the defect.
+--
+-- ── (0344) THE VACUITY GUARD IS REPOINTED ONTO THE CLOCK, AND IT GETS STRONGER ───────────────────
+-- WHAT IT WAS: wave_transition_seconds pulled to 0 and `now() >= next_wave_at` asserted before the
+-- retreat tick, because otherwise the head took its next_wave_incoming pause instead of the spawn and
+-- this block went green on the defect. 0344 DELETES that pause on both arms — it paced a thing that no
+-- longer happens — so the guard would have been asserting a schedule nothing reads.
+-- WHAT IT IS NOW: a reinforcement is made DUE (the clock slot is put in the past) and the site's cap
+-- is OWNED with room in it, so the authority WOULD deliver a body on the retreat tick if status were
+-- the only thing stopping it. That is a strictly stronger premise than the old one: it does not merely
+-- prove that nothing was pausing the spawn, it proves an arrival was owed.
+-- AND ONE NEW PROPERTY, which only exists because pressure is a clock: the retreating tick does not
+-- even SPEND the slot. The authority returns before it reads or advances next_reinforcement_at, so a
+-- fleet that retreats through a due reinforcement is not silently charged for it — and a body cannot
+-- be waiting to land the instant the retreat completes.
 do $$
 declare
   r jsonb; n int; n_exp int;
@@ -6779,13 +6886,12 @@ declare
   v_hunt uuid := (select v from dzc where k='v_hunt');
   v_mv uuid; v_enc uuid; v_pres uuid; mv record; pi record; enc record;
   v_pw double precision; v_pool double precision; v_pdef double precision;
-  v_defb double precision; v_bd double precision; v_danger int;
-  v_hpsc double precision; v_atksc double precision; v_uhp double precision;
-  v_tick int; v_wc0 int; v_wn0 int; v_rows0 int; v_nwa timestamptz;
+  v_defb double precision; v_bd double precision; v_uhp double precision;
+  v_tick int; v_wc0 int; v_wn0 int; v_rows0 int;
+  v_due timestamptz; v_due_after timestamptz;
   n_spawned int; n_live int;
   k_ring double precision; k_ehp double precision; k_eatk double precision;
   k_erb double precision; k_erp double precision; k_esb double precision; k_esp double precision;
-  k_wts double precision;
 begin
   select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
   select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
@@ -6794,17 +6900,14 @@ begin
   select coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 0.04) into k_erp;
   select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
   select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
-  select coalesce(public.cfg_num('wave_transition_seconds'), 3)                 into k_wts;
   perform public.set_game_config('spatial_formation_ring_radius',        '1'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_base',           '0.1'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
-  -- THE TRANSITION PAUSE IS CLOSED. now() is frozen for the txn, so ANY positive transition window
-  -- would still be open on the next tick and the head would take the next_wave_incoming branch —
-  -- which spawns nothing, passes every assert below, and proves precisely nothing about the guard
-  -- this block exists to test.
-  perform public.set_game_config('wave_transition_seconds',              '0'::jsonb);
+  -- (0344) wave_transition_seconds is NOT touched here any more. It gated the next_wave_at pause, and
+  -- that pause is deleted from both arms — pulling a knob nothing reads to 0 would be a write that
+  -- establishes nothing, which is precisely the silent-precondition failure this sweep exists to end.
 
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
@@ -6857,16 +6960,15 @@ begin
   if v_pw is null or v_pw <= 0 or v_pool is null or v_pool <= 0 or v_bd is null or v_bd <= 0 or v_defb <= 0 then
     raise exception 'RETREATNOSPAWN FAIL: weapon power % / hull pool % / base_difficulty % / defense base % cannot size the wave', v_pw, v_pool, v_bd, v_defb;
   end if;
-  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
-              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
-                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
-  n_exp := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
-  v_hpsc  := 1 + v_danger * coalesce(public.cfg_num('enemy_hp_danger_scale'), 0.6);
-  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- (0344) ONE body, because the site's cap says one — and the two knobs are solved against that ONE
+  -- body, which is what the pressure authority hands out (base_difficulty x knob, at this file's
+  -- pinned zero variance). The deleted danger scales are not replaced by anything.
+  n_exp := 1;
+  perform pg_temp.pressure_site(v_enc, 45.0, n_exp);
   perform public.set_game_config('enemy_hp_base',
-    to_jsonb(round(((0.5 * v_pw * n_exp) / (v_bd * v_hpsc))::numeric, 9)));
+    to_jsonb(round(((0.5 * v_pw) / v_bd)::numeric, 9)));
   perform public.set_game_config('enemy_attack_base',
-    to_jsonb(round((((0.02 * v_pool) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+    to_jsonb(round((((0.02 * v_pool) * ((v_defb + v_pdef) / v_defb)) / v_bd)::numeric, 9)));
 
   -- ── TICK 1: the wave spawns and the player CLEARS it. ───────────────────────────────────────────
   perform pg_temp.ae_tick(v_enc);
@@ -6880,10 +6982,15 @@ begin
   if n_live <> 0 or enc.waves_cleared <> 1 then
     raise exception 'RETREATNOSPAWN FAIL: after the opening tick % pirate(s) are still alive and waves_cleared is % (want 0 and 1) — the wave was never cleared, so the spawn branch this block tests would not be reached on ANY body', n_live, enc.waves_cleared;
   end if;
-  v_nwa := enc.next_wave_at;
-  if v_nwa is null or now() < v_nwa then
-    raise exception 'RETREATNOSPAWN FAIL: the next wave is scheduled at % and now() is % — the transition window is still OPEN, so the head would take the next_wave_incoming pause instead of the spawn and this block would be green on the defect',
-      v_nwa, now();
+  -- ── (0344) MAKE A REINFORCEMENT GENUINELY OWED, so the silence below can only be the status gate.
+  -- CLOCK-ONLY, the ae_tick / rewind_leg law: the slot is put in the past and nothing else is written.
+  -- The field is empty of living bodies and the cap owned above is 1, so population < cap holds too —
+  -- every condition the authority needs to deliver a body is satisfied EXCEPT 'active'.
+  update public.combat_encounters set next_reinforcement_at = now() - interval '1 second' where id = v_enc;
+  select next_reinforcement_at into v_due from public.combat_encounters where id = v_enc;
+  if v_due is null or now() < v_due then
+    raise exception 'RETREATNOSPAWN FAIL: the next reinforcement is due at % and now() is % — nothing is OWED, so the transition window is still OPEN in the only sense that matters and a silent retreat tick would prove nothing at all',
+      v_due, now();
   end if;
 
   -- ── PRESS RETREAT — the real button path, not a status write. ───────────────────────────────────
@@ -6923,6 +7030,14 @@ begin
     raise exception 'RETREATNOSPAWN FAIL: waves_cleared % -> % and wave_number % -> % across the retreat tick — the wave counter advanced, which only happens when a new wave was raised',
       v_wc0, enc.waves_cleared, v_wn0, enc.wave_number;
   end if;
+  -- ── (0344) AND THE OWED SLOT WAS NOT EVEN SPENT. The authority returns on the status gate BEFORE it
+  -- reads or advances the clock, so a retreating fleet is not charged for a reinforcement it never
+  -- received — and nothing is queued to land the instant the retreat completes.
+  v_due_after := enc.next_reinforcement_at;
+  if v_due_after is distinct from v_due then
+    raise exception 'RETREATNOSPAWN FAIL: the reinforcement clock moved % -> % across the retreat tick — the authority consumed a slot for a fleet it refused to reinforce, which either charges a retreating player for nothing or leaves a body owed the moment the window closes',
+      v_due, v_due_after;
+  end if;
 
   perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
   perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
@@ -6931,10 +7046,9 @@ begin
   perform public.set_game_config('enemy_synthetic_range_per_difficulty', to_jsonb(k_erp));
   perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
-  perform public.set_game_config('wave_transition_seconds',              to_jsonb(k_wts));
 
-  raise notice 'DZCOMBAT_PASS_RETREATNOSPAWN ok: the fleet cleared its wave (waves_cleared %), the transition window was PROVEN closed (next wave due %, now %), Retreat was pressed through the real request_retreat path — and the retreat tick raised NO wave_spawned event, left the enemy side at % row(s) and 0 living units, and moved neither waves_cleared (%) nor wave_number (%): on the head this is where a bigger wave arrived to shoot at a fleet that could not shoot back',
-    v_wc0, v_nwa, now(), v_rows0, enc.waves_cleared, enc.wave_number;
+  raise notice 'DZCOMBAT_PASS_RETREATNOSPAWN ok: the fleet cleared its wave (waves_cleared %), a reinforcement was PROVEN owed under a cap with room in it (due %, now %) so only the status gate could suppress it, Retreat was pressed through the real request_retreat path — and the retreat tick raised NO wave_spawned event, left the enemy side at % row(s) and 0 living units, moved neither waves_cleared (%) nor wave_number (%), and did not even SPEND the owed slot (clock still %): on the head this is where a bigger wave arrived to shoot at a fleet that could not shoot back',
+    v_wc0, v_due, now(), v_rows0, enc.waves_cleared, enc.wave_number, v_due_after;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_NOWEDGE (0336): A TERMINAL-ARM MISMATCH CONCLUDES — IT DOES NOT WEDGE ═══════
@@ -6960,7 +7074,6 @@ declare
   v_hunt uuid := (select v from dzc where k='v_hunt');
   v_mv uuid; v_enc uuid; v_pres uuid; mv record; pi record; enc record;
   v_pool double precision; v_pdef double precision; v_defb double precision; v_bd double precision;
-  v_danger int; v_atksc double precision;
   v_lra_before timestamptz; v_tick_before int; v_pstatus text;
   v_raised boolean := false; v_hit boolean := false; v_dead boolean := false;
   k_ring double precision; k_ehp double precision; k_eatk double precision;
@@ -7030,12 +7143,14 @@ begin
   if v_pool is null or v_pool <= 0 or v_bd is null or v_bd <= 0 or v_defb <= 0 then
     raise exception 'NOWEDGE FAIL: hull pool % / base_difficulty % / defense base % cannot size the killing wave', v_pool, v_bd, v_defb;
   end if;
-  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
-              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
-                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
-  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- (0344) ONE body, and its power is base_difficulty x enemy_attack_base — the site's number, with no
+  -- danger factor over it and no wave total to divide. The cap is OWNED at 1 so no second body can join
+  -- across the tick loops below and change the shot this block sized. The old form multiplied the
+  -- divisor by (1 + danger * enemy_attack_danger_scale); that knob row is DELETED, so the read would
+  -- have silently fallen back to 0.25 and the "one hit survives, two kills" window would be wrong.
+  perform pg_temp.pressure_site(v_enc, 45.0, 1);
   perform public.set_game_config('enemy_attack_base',
-    to_jsonb(round((((0.6 * v_pool) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+    to_jsonb(round((((0.6 * v_pool) * ((v_defb + v_pdef) / v_defb)) / v_bd)::numeric, 9)));
 
   -- ── PHASE 1: let the wave land its FIRST hit. The approach length depends on the spawn geometry,
   --    which this block deliberately does not pin, so it drives ticks until a pirate-sourced hit is
@@ -7587,7 +7702,6 @@ declare
   v_hunt uuid := (select v from dzc where k='v_hunt');
   v_mv uuid; v_enc uuid; v_fleet uuid; mv record; pi record; enc record; fl record;
   v_pool double precision; v_pdef double precision; v_defb double precision; v_bd double precision;
-  v_danger int; v_atksc double precision;
   dx double precision; dy double precision;
   v_dead boolean := false; v_ring_now double precision; v_ring0 double precision;
   k_ring double precision; k_ehp double precision; k_eatk double precision;
@@ -7653,12 +7767,13 @@ begin
   if v_pool is null or v_pool <= 0 or v_bd is null or v_bd <= 0 or v_defb <= 0 then
     raise exception 'RETREATCLEAR FAIL: hull pool % / base_difficulty % / defense base % cannot size the killing wave', v_pool, v_bd, v_defb;
   end if;
-  v_danger := 1 + (select waves_cleared from public.combat_encounters where id = v_enc)
-              + floor(extract(epoch from (now() - (select started_at from public.combat_encounters where id = v_enc)))
-                      / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
-  v_atksc := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  -- (0344) ONE body, its power the site's own base_difficulty x enemy_attack_base — no danger factor
+  -- and no wave total to divide — with the concurrent cap OWNED at 1 so nothing else can join the
+  -- fight while the death arm is being staged. The deleted enemy_attack_danger_scale read would have
+  -- fallen back to 0.25 and mis-sized the killing shot without raising anything.
+  perform pg_temp.pressure_site(v_enc, 45.0, 1);
   perform public.set_game_config('enemy_attack_base',
-    to_jsonb(round((((0.6 * v_pool) * ((v_defb + v_pdef) / v_defb)) / (v_bd * v_atksc))::numeric, 9)));
+    to_jsonb(round((((0.6 * v_pool) * ((v_defb + v_pdef) / v_defb)) / v_bd)::numeric, 9)));
   perform pg_temp.ae_tick(v_enc);
 
   -- ARM THE DESTINATION, through the mover the Retreat-to-a-point UI uses. It must be a point the
@@ -7865,11 +7980,28 @@ begin
     raise exception 'ONEANCHOR FAIL: the tick still writes the fleet position directly — that is how a PRESENT fleet gets silently un-docked, and it is why a site fight could never be manoeuvred in';
   end if;
 
-  -- (4) ONE SPAWN AUTHORITY: the loop that was written twice is written once.
+  -- (4) ONE SPAWN AUTHORITY — AND (0344) THE PIN FOLLOWS THE LEAF, WHICH IS WHAT IT ALWAYS SAID IT
+  --     WOULD DO. 0339 folded two copies of the placement loop into combat_spawn_wave_units and this
+  --     pin counted the tick's TWO compositions of it: the resolved arm and the synthetic arm. 0344
+  --     deletes BOTH of those arms — a wave is no longer raised by clearing one — so the tick composes
+  --     the spawn leaf ZERO times and the only caller left in the schema is
+  --     public.combat_pressure_step, the one place another enemy comes from.
+  --     THE PROPERTY IS UNCHANGED AND STRICTLY STRONGER: it used to be "the loop exists once, composed
+  --     twice"; it is now "the loop exists once and exactly ONE function in the whole schema composes
+  --     it". A second spawner appearing anywhere fails here, which the two-arm count could not say.
+  select string_agg(p.proname, ', ' order by p.proname) into v_other
+    from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+   where ns.nspname = 'public' and p.prokind = 'f'
+     and p.proname <> 'combat_spawn_wave_units'
+     and position('public.combat_spawn_wave_units(' in regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g')) > 0;
+  if v_other is distinct from 'combat_pressure_step' then
+    raise exception 'ONEANCHOR FAIL: the function(s) composing the spawn authority are [%] — want exactly combat_pressure_step. The placement loop existed TWICE before 0339 and every migration had to patch both; after 0344 there is ONE clock that decides another enemy exists, and a second caller anywhere in the schema is a second pressure authority', coalesce(v_other, '<nobody>');
+  end if;
+  -- the tick itself must no longer compose it at all — the two arms are deleted, not relocated.
   n := (length(v_code) - length(replace(v_code, 'public.combat_spawn_wave_units(', '')))
        / length('public.combat_spawn_wave_units(');
-  if n <> 2 then
-    raise exception 'ONEANCHOR FAIL: % composition(s) of the spawn authority in the tick (want exactly 2 — the resolved arm and the synthetic arm, which legitimately differ in the STATS they pass and in nothing else)', n;
+  if n <> 0 then
+    raise exception 'ONEANCHOR FAIL: % composition(s) of the spawn authority survive INSIDE the tick (want 0 — 0344 deletes both spawn arms and moves the decision into public.combat_pressure_step, which is the only thing that may place an enemy)', n;
   end if;
   -- NOTE the concatenated needle: this harness's own selftest greps for a literal INSERT against the
   -- unit table and treats any occurrence as the proof hand-writing engine state (the sole-writer
@@ -7881,7 +8013,7 @@ begin
     raise exception 'ONEANCHOR FAIL: the tick still measures, places or inserts a wave unit itself — the placement loop existed TWICE and every migration since 0299 had to patch both; it must exist once';
   end if;
 
-  raise notice 'DZCOMBAT_PASS_ONEANCHOR ok: across the whole applied schema exactly ONE function sets engagement_x and it is combat_encounter_move (the sweep 0301 shipped and that never re-ran while 0337 drifted past it), that leaf provably spends its delta on the formation and the fleet marker as well as the anchor, the tick composes it and writes no position by hand, and the enemy-spawn loop that existed TWICE is now one leaf composed exactly twice';
+  raise notice 'DZCOMBAT_PASS_ONEANCHOR ok: across the whole applied schema exactly ONE function sets engagement_x and it is combat_encounter_move (the sweep 0301 shipped and that never re-ran while 0337 drifted past it), that leaf provably spends its delta on the formation and the fleet marker as well as the anchor, the tick composes it and writes no position by hand, and the enemy-spawn loop that existed TWICE is now one leaf composed by exactly ONE function in the whole schema — public.combat_pressure_step, the clock 0344 mints — with the tick composing it zero times';
 end $$;
 
 -- ════════ DZCOMBAT_PASS_SITEORIGIN (0339): ON A HUNT, THE ENEMY COMES OUT OF THE CITY ════════════
@@ -7979,9 +8111,10 @@ begin
   -- ── (2) SO THE WAVE HAS A BEARING, AND IT POINTS AT THE CITY. ─────────────────────────────────
   perform pg_temp.ae_tick(v_enc);
   select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
-  -- ONE unit is enough, and CI taught this block that: wave 1 at danger 1 is a SINGLE pirate
-  -- (least(enemy_synthetic_max_units, greatest(1, danger))), and the first cut demanded two "because
-  -- an arc cannot be told from a point". THE PROPERTY HERE IS THE ORIGIN, NOT THE ARC: slot 0 stands
+  -- ONE unit is enough, and CI taught this block that: the first tick of a fresh fight brings a SINGLE
+  -- body — (0344) because the pressure clock delivers at most one per pass, where it used to be
+  -- least(enemy_synthetic_max_units, greatest(1, danger)) at danger 1 — and the first cut demanded two
+  -- "because an arc cannot be told from a point". THE PROPERTY HERE IS THE ORIGIN, NOT THE ARC: slot 0 stands
   -- on the bearing to the city whatever the wave size, and with one unit slot 0 IS the whole wave —
   -- a stronger witness, not a weaker one, because there is nowhere else for it to be. The ARC is
   -- owned where it belongs, by DZCOMBAT_PASS_WAVERING, which stages a wave large enough to have one.
@@ -8014,6 +8147,335 @@ begin
   raise notice 'DZCOMBAT_PASS_SITEORIGIN ok: a real HUNT at a site with territory_radius % anchored its fight EXACTLY that far off the site (fight %,% vs city %,%), so the city is a DIRECTION rather than the ground under the fleet — and the %-pirate wave then arrived on that bearing, with exactly one raider standing where the ray from the fight toward the city crosses the measured wave radius %. On the deployed body the anchor IS the site, the bearing is undefined and every hunt gets the plain ring: the owner''s "the enemy ships are not comming out from the location - snare"',
     v_trad, round(ax::numeric,3), round(ay::numeric,3), round(lx::numeric,3), round(ly::numeric,3),
     n_units, round(v_rad::numeric,6);
+end $$;
+
+-- ════════ DZCOMBAT_PASS_PRESSURE (0344): ANOTHER ENEMY IS A CLOCK, NEVER A REWARD FOR KILLING ══════
+-- ██ THE OWNER, THREE TIMES: "I told you that it will be not +1 fleets when fleet is destroyed." ██
+-- THE DEFECT, RED BY CONSTRUCTION ON THE DEPLOYED BODY. One integer meant five things and it began
+-- with the player's own kill count: v_danger := 1 + e.waves_cleared + floor(secs_inside / divisor),
+-- read as the number of enemy BODIES, the enemy HP multiplier, the enemy ATTACK multiplier and the
+-- LOOT multiplier. Measured on production: Snare encounter 520a35c0 ran wave->bodies->wave hp of
+-- 1->1->203, 2->2->319, 3->3->427 … 6->6->587 and then pinned at 6 bodies while wave hp climbed to
+-- 1036 — 5.1x — purely because the player kept winning. The arrow that did it was one branch: "the
+-- enemy side is empty" -> "spawn a wave".
+--
+-- THIS BLOCK IS WHERE THAT DIRECTIVE BECOMES EXECUTABLE, and it is deliberately ONE block rather than
+-- a clause smeared across the seven blocks above that merely NEED a field: the clock is one property
+-- and it gets one home. Everything is driven through the REAL tick — no direct call to the authority
+-- anywhere below — so what is measured is what a live fight does.
+--   (A) THE ARITHMETIC OF THE CLOCK, on a fight whose bodies cannot die:
+--       A1 a fresh fight's first tick brings EXACTLY ONE body, and the clock lands exactly one cadence
+--          after the slot it consumed (the identity, computed from the site row this block owns);
+--       A2 the next tick brings NOTHING and does not touch the clock — an arrival needs a DUE slot;
+--       A3 five elapsed slots bring ONE body, not five, and the clock skips past all five in one step
+--          to a value strictly in the future: A MISSED ARRIVAL IS LOST, NEVER BANKED;
+--       A4 at the concurrent cap NOTHING arrives — and the due slot is still SPENT, not stored, so
+--          nothing is owed the moment a body dies;
+--       A5 the cap holds on the next due slot too (a cap that leaked would show up only here).
+--   (B) AND THE DIRECTIVE ITSELF: a fight whose whole field is DESTROYED gets nothing back. The kill
+--       does not summon a body, does not make the clock due, and does not re-bank the reward — an
+--       empty field satisfies "enemy hp <= 0" on every tick, and without the v_e_before > 0 conjunct
+--       0344 adds it would log a wave_cleared and pay out every three seconds forever.
+-- ON THE DEPLOYED BODY (B) is where a FRESH, LARGER wave arrives, and (A1) fields
+-- least(enemy_synthetic_max_units, greatest(1, danger)) bodies rather than one.
+do $$
+declare
+  r jsonb; n int; n_live int; n_rows int;
+  uP3 uuid; sP3 uuid; gP3 uuid; uQ uuid; sQ uuid; gQ uuid;
+  o_x double precision; o_y double precision; v_verts jsonb;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  v_mv uuid; v_enc uuid; v_encQ uuid; mv record; pi record;
+  v_cad double precision; v_cap int;
+  v_started timestamptz; v_due timestamptz; v_prev timestamptz; v_exp timestamptz;
+  v_pw double precision; v_bd double precision; v_rad double precision; v_prange double precision;
+  v_wc int; v_rw jsonb; v_rw2 jsonb;
+  k_ehp double precision; k_eatk double precision; k_erb double precision; k_erp double precision;
+  k_esb double precision; k_esp double precision; k_ring double precision;
+begin
+  k_ehp  := coalesce(public.cfg_num('enemy_hp_base'), 14);
+  k_eatk := coalesce(public.cfg_num('enemy_attack_base'), 1.0);
+  k_erb  := coalesce(public.cfg_num('enemy_synthetic_range_base'), 3.6);
+  k_erp  := coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 0.04);
+  k_esb  := coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6);
+  k_esp  := coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04);
+  k_ring := coalesce(public.cfg_num('spatial_formation_ring_radius'), 30);
+  -- OWN THE GEOMETRY, because this block is about the CLOCK and must not be about the approach: the
+  -- bodies are frozen where they arrive (speed 0) and cannot reach the fleet (range 0.1 against a
+  -- spawn radius of extent + 0.1 + 1), so nothing on the enemy side ever fires and no arrival count
+  -- below can be disturbed by damage. The player's own reach is asserted, not assumed, further down.
+  perform public.set_game_config('spatial_formation_ring_radius',        '1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_base',           '0.1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+
+  -- ══ (A) THE ARITHMETIC OF THE CLOCK ═════════════════════════════════════════════════════════════
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.pr.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uP3;
+  insert into public.player_wallet (player_id, balance) values (uP3, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uP3, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: commission A: %', r; end if;
+  select main_ship_id into sP3 from public.main_ship_instances where player_id = uP3;
+  r := pg_temp.call_as(uP3, 'public.upsert_ship_group(1, ''Pressure Clock'')');
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: group A: %', r; end if;
+  gP3 := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uP3, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sP3, gP3));
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: assign A: %', r; end if;
+  r := pg_temp.call_as(uP3, format('public.set_fleet_command_ship(%L::uuid, true)', sP3));
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: command A: %', r; end if;
+  r := pg_temp.call_as(uP3, format('public.set_group_auto_exit(%L::uuid, false, 30)', gP3));
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: auto-exit off A: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uP3 and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gP3
+   limit 1;
+  if o_x is null then raise exception 'PRESSURE FAIL: could not resolve A''s docked origin'; end if;
+  v_verts := jsonb_build_array(
+    jsonb_build_array(o_x - 100, o_y + 400),
+    jsonb_build_array(o_x + 100, o_y + 400),
+    jsonb_build_array(o_x + 100, o_y + 600),
+    jsonb_build_array(o_x - 100, o_y + 600));
+  r := pg_temp.call_as(uP3, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                   'DZC Pressure Clock Zone', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: zone A: %', r; end if;
+  r := pg_temp.call_as(uP3, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                   gP3, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: go A: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'PRESSURE FAIL: no pending ambush on A''s leg (risk knobs are 1.0)'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uP3 and status = 'active';
+  if v_enc is null then raise exception 'PRESSURE FAIL: the ambush opened no encounter for A'; end if;
+
+  -- THE SITE'S PRESSURE IS CONTENT AND THIS BLOCK OWNS IT — a cadence that is not a round multiple of
+  -- anything, and a cap of 3. The cadence is then READ BACK from the row, so every expectation below is
+  -- derived from what the authority itself reads rather than from a number written in this file twice.
+  perform pg_temp.pressure_site(v_enc, 40.0, 3);
+  select lp.reinforcement_seconds, lp.concurrent_cap into v_cad, v_cap
+    from public.location_pressure lp
+    join public.combat_encounters ce on ce.location_id = lp.location_id
+   where ce.id = v_enc;
+  if v_cad is null or v_cad <= 0 or v_cap is null or v_cap < 2 then
+    raise exception 'PRESSURE FAIL: the site carries cadence % / cap % — with no positive cadence there are no slots to count and with a cap under 2 the cap assert cannot be told from the arrival assert', v_cad, v_cap;
+  end if;
+  -- BODIES THAT CANNOT DIE, so an arrival COUNT is only ever about arrivals.
+  perform public.set_game_config('enemy_hp_base',     '100000'::jsonb);
+  perform public.set_game_config('enemy_attack_base', '0'::jsonb);
+  select started_at, next_reinforcement_at into v_started, v_due
+    from public.combat_encounters where id = v_enc;
+  if v_started is null then
+    raise exception 'PRESSURE FAIL: the encounter carries no started_at — the authority reads coalesce(next_reinforcement_at, started_at), so with both NULL there is no clock at all and every arrival below would be suppressed silently';
+  end if;
+  if v_due is not null then
+    raise exception 'PRESSURE FAIL: a freshly created encounter already carries next_reinforcement_at % — the unstamped-row law (the clock starts when the fight started) is what A1 measures, and it is not being exercised', v_due;
+  end if;
+
+  -- ── A1: ONE body on the first tick, and the clock lands exactly one cadence past the slot it spent.
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> 1 then
+    raise exception 'PRESSURE FAIL A1: % enemy bod(ies) arrived on the first tick of a fresh fight (want exactly 1) — the field is sized by a CLOCK now, one body per due slot, never by a count derived from the player''s own kill history and time survived', n;
+  end if;
+  select next_reinforcement_at into v_due from public.combat_encounters where id = v_enc;
+  v_exp := v_started + make_interval(secs => v_cad * (floor(extract(epoch from (now() - v_started)) / v_cad) + 1));
+  if v_due is distinct from v_exp then
+    raise exception 'PRESSURE FAIL A1: the clock landed at % after the first arrival but the site''s own cadence of % s past the slot it consumed (started_at %) puts it at % — the clock is the ONE thing that decides another enemy exists and its advance must be the site row''s cadence and nothing else', v_due, v_cad, v_started, v_exp;
+  end if;
+  if v_due <= now() then
+    raise exception 'PRESSURE FAIL A1: the clock landed at %, which is not in the future of now() % — a slot that is still due after being consumed lets a second body arrive on the very next pass, which is escalation by another name', v_due, now();
+  end if;
+  -- the player really can reach this field: otherwise (B) below could never destroy one, and the
+  -- geometry premise this block owns would be silently wrong rather than loudly wrong.
+  select max(public.osn_distance(ce.engagement_x, ce.engagement_y, cu.pos_x, cu.pos_y)) into v_rad
+    from public.combat_units cu join public.combat_encounters ce on ce.id = cu.encounter_id
+   where cu.encounter_id = v_enc and cu.side = 'enemy';
+  select max((w->>'range')::double precision) into v_prange
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w
+   where cu.encounter_id = v_enc and cu.side = 'player';
+  if v_rad is null or v_prange is null or v_rad >= v_prange then
+    raise exception 'PRESSURE FAIL: the field stands at radius % against the fleet''s own frozen reach % — an unreachable field makes the destruction arm (B) unstageable and every NULL here would pass a comparison silently (the 0313 law)', v_rad, v_prange;
+  end if;
+
+  -- ── A2: a tick with NO due slot brings nothing and does not touch the clock.
+  v_prev := v_due;
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> 1 then
+    raise exception 'PRESSURE FAIL A2: the field went to % bod(ies) on a tick with no due slot (want 1) — an arrival that does not wait for its slot is not a clock', n;
+  end if;
+  select next_reinforcement_at into v_due from public.combat_encounters where id = v_enc;
+  if v_due is distinct from v_prev then
+    raise exception 'PRESSURE FAIL A2: the clock moved % -> % on a tick that delivered nothing — a pass that is not due must read the clock and leave, or the cadence drifts with the tick rate', v_prev, v_due;
+  end if;
+
+  -- ── A3: FIVE elapsed slots deliver ONE body, and the clock skips past all five in one step.
+  -- 205 s against a 40 s cadence is deliberately NOT a whole multiple: an exactly-on-the-boundary
+  -- rewind would make floor() decide the answer on a value sitting on its own step edge, which is the
+  -- zero-margin disease this repository has already been bitten by twice.
+  v_prev := now() - interval '205 seconds';
+  update public.combat_encounters set next_reinforcement_at = v_prev where id = v_enc;
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> 2 then
+    raise exception 'PRESSURE FAIL A3: % bod(ies) stand after a tick that found FIVE elapsed slots (want 2 — the one already standing plus exactly ONE arrival) — a suppressed or missed arrival was BANKED and paid out later, and a cron stall would then hand a fleet a wave', n;
+  end if;
+  select next_reinforcement_at into v_due from public.combat_encounters where id = v_enc;
+  v_exp := v_prev + make_interval(secs => v_cad * (floor(extract(epoch from (now() - v_prev)) / v_cad) + 1));
+  if v_due is distinct from v_exp then
+    raise exception 'PRESSURE FAIL A3: the clock landed at % but skipping past every elapsed slot in ONE step from % at a % s cadence puts it at % — a clock that advances by one cadence per pass instead of skipping forward IS the queue that banking needs', v_due, v_prev, v_cad, v_exp;
+  end if;
+  if v_due <= now() then
+    raise exception 'PRESSURE FAIL A3: after skipping five elapsed slots the clock is still due (% <= now() %) — the next pass would deliver again immediately and the cadence would mean nothing', v_due, now();
+  end if;
+
+  -- ── A4: AT THE CAP nothing arrives — and the due slot is still SPENT, never stored.
+  update public.combat_encounters set next_reinforcement_at = now() - interval '1 second' where id = v_enc;
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> v_cap then
+    raise exception 'PRESSURE FAIL: % bod(ies) stand after the third due slot (want the site''s own cap of %) — the field must fill to its authored ceiling and no further', n, v_cap;
+  end if;
+  v_prev := now() - interval '1 second';
+  update public.combat_encounters set next_reinforcement_at = v_prev where id = v_enc;
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> v_cap then
+    raise exception 'PRESSURE FAIL A4: % bod(ies) stand after a due slot AT the cap of % — the cap is what makes a site''s difficulty a property of the site rather than of how long the player survives', n, v_cap;
+  end if;
+  select next_reinforcement_at into v_due from public.combat_encounters where id = v_enc;
+  v_exp := v_prev + make_interval(secs => v_cad * (floor(extract(epoch from (now() - v_prev)) / v_cad) + 1));
+  if v_due is distinct from v_exp then
+    raise exception 'PRESSURE FAIL A4: the suppressed slot left the clock at % instead of %, so it was STORED rather than spent — a body would then be owed the instant one of these three dies, which is the kill-driven arrow wearing a queue', v_due, v_exp;
+  end if;
+
+  -- ── A5: and the cap still holds on the slot after that.
+  update public.combat_encounters set next_reinforcement_at = now() - interval '1 second' where id = v_enc;
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n <> v_cap then
+    raise exception 'PRESSURE FAIL A5: % bod(ies) stand after a second due slot at the cap of % — a cap that admits one more body per pass is not a cap', n, v_cap;
+  end if;
+  if (select status from public.combat_encounters where id = v_enc) <> 'active' then
+    raise exception 'PRESSURE FAIL: A''s encounter left ''active'' during the clock arithmetic — a non-active fight is refused reinforcement by design, so every count above would have been measuring the status gate instead of the clock';
+  end if;
+
+  -- ══ (B) THE DIRECTIVE: DESTROYING THE FIELD BRINGS NOTHING BACK ═════════════════════════════════
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.pq.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uQ;
+  insert into public.player_wallet (player_id, balance) values (uQ, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uQ, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: commission B: %', r; end if;
+  select main_ship_id into sQ from public.main_ship_instances where player_id = uQ;
+  r := pg_temp.call_as(uQ, 'public.upsert_ship_group(1, ''Pressure Kill'')');
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: group B: %', r; end if;
+  gQ := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uQ, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sQ, gQ));
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: assign B: %', r; end if;
+  r := pg_temp.call_as(uQ, format('public.set_fleet_command_ship(%L::uuid, true)', sQ));
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: command B: %', r; end if;
+  r := pg_temp.call_as(uQ, format('public.set_group_auto_exit(%L::uuid, false, 30)', gQ));
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: auto-exit off B: %', r; end if;
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uQ and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gQ
+   limit 1;
+  if o_x is null then raise exception 'PRESSURE FAIL: could not resolve B''s docked origin'; end if;
+  v_verts := jsonb_build_array(
+    jsonb_build_array(o_x - 100, o_y + 400),
+    jsonb_build_array(o_x + 100, o_y + 400),
+    jsonb_build_array(o_x + 100, o_y + 600),
+    jsonb_build_array(o_x - 100, o_y + 600));
+  r := pg_temp.call_as(uQ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC Pressure Kill Zone', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: zone B: %', r; end if;
+  r := pg_temp.call_as(uQ, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gQ, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'PRESSURE FAIL: go B: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'PRESSURE FAIL: no pending ambush on B''s leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_encQ from public.combat_encounters where player_id = uQ and status = 'active';
+  if v_encQ is null then raise exception 'PRESSURE FAIL: the ambush opened no encounter for B'; end if;
+
+  -- cap 1, and a body sized to die to ONE shot of the fleet's own gun: the authority hands a body
+  -- base_difficulty x enemy_hp_base as its OWN hp at this file's pinned zero variance.
+  perform pg_temp.pressure_site(v_encQ, 40.0, 1);
+  select max((w->>'power')::double precision) into v_pw
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w
+   where cu.encounter_id = v_encQ and cu.side = 'player';
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id where ce.id = v_encQ;
+  if v_pw is null or v_pw <= 0 or v_bd is null or v_bd <= 0 then
+    raise exception 'PRESSURE FAIL: B''s weapon power % / base_difficulty % cannot size a one-shot body, so the destruction this arm needs could not happen on ANY body', v_pw, v_bd;
+  end if;
+  perform public.set_game_config('enemy_hp_base', to_jsonb(round(((0.5 * v_pw) / v_bd)::numeric, 9)));
+
+  -- the arrival tick, on which the fleet also destroys what arrived.
+  perform pg_temp.ae_tick(v_encQ);
+  select count(*) filter (where alive_count > 0), count(*)
+    into n_live, n_rows from public.combat_units where encounter_id = v_encQ and side = 'enemy';
+  if n_rows < 1 or n_live <> 0 then
+    raise exception 'PRESSURE FAIL B: the arrival tick left % row(s) with % still living — this arm needs the whole field DESTROYED, or the "no body comes back" assert below is about a fight that was never won', n_rows, n_live;
+  end if;
+  select waves_cleared, total_rewards_json, next_reinforcement_at into v_wc, v_rw, v_due
+    from public.combat_encounters where id = v_encQ;
+  if v_wc <> 1 then
+    raise exception 'PRESSURE FAIL B: waves_cleared is % after the field was broken (want 1) — the clear this arm is built on did not register, so nothing below is about a kill at all', v_wc;
+  end if;
+  if v_due is null or v_due <= now() then
+    raise exception 'PRESSURE FAIL B: the clock reads % against now() % — it must be strictly in the future here, or the silence on the next tick would be the cadence rather than the absence of the kill-driven arrow', v_due, now();
+  end if;
+
+  -- ── THE TICK AFTER THE KILL. This is where the deployed body hands over a fresh, LARGER wave.
+  perform pg_temp.ae_tick(v_encQ);
+  select count(*) into n from public.combat_events
+   where encounter_id = v_encQ and tick_number = (select tick_number from public.combat_encounters where id = v_encQ)
+     and event_type = 'wave_spawned';
+  if n <> 0 then
+    raise exception 'PRESSURE FAIL B: % wave_spawned event(s) on the tick after the field was destroyed — killing well is being punished, which is the one thing the owner has now said three times it must not do', n;
+  end if;
+  select count(*) filter (where alive_count > 0), count(*)
+    into n_live, n from public.combat_units where encounter_id = v_encQ and side = 'enemy';
+  if n_live <> 0 or n <> n_rows then
+    raise exception 'PRESSURE FAIL B: the enemy side went from % row(s)/0 living to % row(s)/% living across the tick after the kill — a body arrived because the field was empty, which is the arrow this slice deletes', n_rows, n, n_live;
+  end if;
+  select total_rewards_json, next_reinforcement_at into v_rw2, v_prev
+    from public.combat_encounters where id = v_encQ;
+  if v_prev is distinct from v_due then
+    raise exception 'PRESSURE FAIL B: the reinforcement clock moved % -> % across the tick after the kill — a death may never move the clock, or "the field is empty" reaches pressure by a longer route', v_due, v_prev;
+  end if;
+  if v_rw2 is distinct from v_rw then
+    raise exception 'PRESSURE FAIL B: total_rewards_json changed % -> % on a tick with no kill in it — an empty field satisfies "enemy hp <= 0" on EVERY tick, so without the v_e_before > 0 conjunct the fight banks a wave-clear reward every three seconds forever', v_rw, v_rw2;
+  end if;
+
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_attack_base',                    to_jsonb(k_eatk));
+  perform public.set_game_config('enemy_synthetic_range_base',           to_jsonb(k_erb));
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', to_jsonb(k_erp));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+
+  raise notice 'DZCOMBAT_PASS_PRESSURE ok: a fresh fight took EXACTLY ONE body on its first tick and its clock landed one authored cadence (% s) past the slot it spent; a tick with no due slot delivered nothing and did not move the clock; FIVE elapsed slots delivered ONE body and the clock skipped past all five in a single step into the future (a missed arrival is LOST, never banked); the field then filled to the site''s authored cap of % and stopped, with each suppressed slot still SPENT rather than stored; and on a second fight the fleet DESTROYED the whole field and got nothing back — no wave_spawned, no row, no clock movement and no second payout on the empty-field tick. On the deployed body that last tick is where a fresh, larger wave arrives, because one integer that began with the player''s own kill count decided how many enemies existed',
+    v_cad, v_cap;
 end $$;
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;

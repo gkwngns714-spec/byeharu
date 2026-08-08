@@ -1666,6 +1666,18 @@ if [ "$MODE" = "selftest" ]; then
     || fail "0222 lost its §10 dual-safe re-confirmation (must re-prove the legacy objects are still fully intact after apply)"
   rm -f "$MIG4C2A_TMP"
 
+    # ── 0344: earn_wave stages a LIVING body, and asks the clock for it ─────────────────────────────
+  # It used to tick once and require `count(*) where side='enemy'` to be non-zero. A destroyed enemy
+  # leaves its ROW behind at alive_count 0, so on the 2nd and 3rd of its three calls — after 0344
+  # deleted the wave-clear -> respawn arrow — that guard passed on a field of CORPSES and the surgery
+  # below it resurrected one. It never went red; it simply stopped staging what it claimed to stage.
+  grep -qF "perform pg_temp.pressure_refill(p_enc, 1)" "$SQL" \
+    || fail "pg_temp.earn_wave no longer ASKS the pressure authority for the body it clears — after 0344 only its FIRST call would get one from the clock, and the later calls would resurrect a corpse"
+  grep -qF "no LIVING enemy body exists after the spawn tick" "$SQL" \
+    || fail "pg_temp.earn_wave's spawn guard is counting ROWS again rather than LIVING rows — that is what let it pass on a field of corpses"
+  grep -q 'ir lib/pressure-staging.sql' "$SQL" \
+    || fail "harness no longer includes scripts/lib/pressure-staging.sql — a local copy of the staging is the duplication the lib exists to prevent"
+
   tp_assert_out_of_scope "$SQL"
 
   echo "FLEET-GO SELFTEST: ALL PASSED (self-rolling-back; flags in-txn only; real-RPC provisioning; dark reject-before-read; §2 no-ship-write asserted 3× with a non-vacuous both-way diff; non-vacuous redirect; independent speed fold; migration additive + composes no per-ship mover)"

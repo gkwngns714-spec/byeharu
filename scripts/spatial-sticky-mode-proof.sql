@@ -40,6 +40,27 @@
 -- MANUAL process_combat_ticks() invocation with clock-rewind — it does NOT exercise live production cron
 -- cadence (interval pacing / concurrency), which is out of scope for a disposable proof.
 
+-- ██████████████████████████████████████████████████████████████████████████████████████████████████
+-- ██ (0344) THIS SUITE IS NOT RE-PREMISED YET, AND THAT IS RECORDED HERE RATHER THAN DISCOVERED ██
+-- Migration 0344 deletes the WAVE LIFECYCLE this file is entirely about: the kill-escalation term
+-- (1 + waves_cleared + elapsed/divisor) that sized wave 1/2/3 as 1/2/3 units, the "enemy side is empty
+-- -> spawn a wave" arrow, and the next_wave_at pause between waves. Enemy bodies now arrive ONE at a
+-- time from public.combat_pressure_step on the site's own authored cadence, up to a concurrent cap.
+-- WHAT WAS DONE IN THE 0344 SWEEP: the four writes that used to establish this file's preconditions and
+-- that 0344 turns into writes-to-nothing were REMOVED (see the block below), because a write that
+-- silently establishes nothing is how a suite goes green over a property it never staged — which is
+-- worse than a red.
+-- WHAT WAS NOT DONE: the wave-lifecycle blocks themselves. They still assert waves_cleared advancing
+-- 1->2->3 with 1/2/3 pirates per wave and a pause tick between them, and NO arrangement of knobs
+-- reaches a branch 0344 removed from the source. RUN AS-IS THIS SUITE WILL BE RED, and it is not
+-- triggered on any branch that carries 0344.
+-- WHAT RE-PREMISING IT LOOKS LIKE, so the next author does not have to re-derive it: own the site's
+-- public.location_pressure row (cadence + concurrent_cap), rewind combat_encounters.next_reinforcement_at
+-- to make a slot due before each tick, and assert ONE arrival per due slot instead of N per wave. The
+-- worked example is DZCOMBAT_PASS_PRESSURE plus pg_temp.pressure_site / pg_temp.pressure_fill in
+-- scripts/danger-combat-proof.sql.
+-- ██████████████████████████████████████████████████████████████████████████████████████████████████
+
 \set ON_ERROR_STOP on
 
 begin;   -- everything below is transient; the trailing ROLLBACK leaves ZERO persisted state.
@@ -194,16 +215,21 @@ begin
   update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);       -- combat_ticks rows land
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);      -- missile_salvo / wave_cleared events land
-  perform public.set_game_config('enemy_hp_danger_scale', '0'::jsonb);        -- wave total hp independent of danger
   perform public.set_game_config('enemy_attack_base', '0'::jsonb);            -- pirates deal 0 dmg → players immortal
-  perform public.set_game_config('enemy_attack_danger_scale', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_base', '0'::jsonb);   -- pirates never move
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_base', '500'::jsonb); -- >> ring → pirates HOLD & fire in place
   perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
-  perform public.set_game_config('enemy_synthetic_max_units', '6'::jsonb);
+  -- ██ (0344) FOUR WRITES WERE DELETED FROM THIS BLOCK, AND THEY ARE THE DANGEROUS KIND ██
+  -- enemy_hp_danger_scale=0, enemy_attack_danger_scale=0, the synthetic unit cap and
+  -- wave_transition_seconds each ESTABLISHED a precondition this file's expectations were solved
+  -- against: hp independent of danger, attack independent of danger, a known unit ceiling, and a known
+  -- wave-transition window. 0344 DELETES all four rows and the pause the last one paced. A write to a
+  -- key nothing reads does NOT error — it re-inserts a row and moves on — so every one of them would
+  -- have gone on LOOKING like staging while establishing NOTHING, and this file would have stayed green
+  -- over preconditions it no longer sets. That silent green is the failure this sweep exists to end, and
+  -- it is why they are removed rather than left in place "harmlessly".
   perform public.set_game_config('spatial_formation_ring_radius', '30'::jsonb);
-  perform public.set_game_config('wave_transition_seconds', '3'::jsonb);
 end $tune$;
 
 -- choose the hunt location; set enemy_hp_base so each wave's TOTAL hp = 60 (per-pirate 60/danger — always
