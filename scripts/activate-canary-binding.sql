@@ -140,7 +140,15 @@ begin
    where m.encounter_profile_id = ep.id;
   if n = 0 then raise exception 'ACTA FAIL: encounter profile % has no ACTIVE fleet template member', ep.key; end if;
 
-  v_ceiling := greatest(1, coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::integer);
+  -- (0344) THE CEILING IS THE RESOLVER'S OWN FALLBACK NOW, AND SAYING SO IS THE POINT.
+  -- enemy_synthetic_max_units was deleted with the rest of the kill-escalation knobs. The ONE reader
+  -- left in the schema is public.resolve_location_encounter, which clamps its authored plan with
+  -- greatest(1, coalesce(cfg_num(<that key>), 6)) — and with nobody authoring the key, that coalesce
+  -- always takes its second branch. Reading the key here would return the same 6 for a DIFFERENT
+  -- reason: it would look like reading an authored value that no longer exists. The number is the
+  -- resolver's, this line cites where it comes from, and if that clamp ever moves this is the one
+  -- place that has to follow it.
+  v_ceiling := 6;
   n := 0;
   for r in
     select fm.id, fm.min_count, fm.max_count, fm.elite_chance, fm.enemy_archetype_id,

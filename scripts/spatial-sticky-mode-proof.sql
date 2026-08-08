@@ -194,16 +194,21 @@ begin
   update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);       -- combat_ticks rows land
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);      -- missile_salvo / wave_cleared events land
-  perform public.set_game_config('enemy_hp_danger_scale', '0'::jsonb);        -- wave total hp independent of danger
   perform public.set_game_config('enemy_attack_base', '0'::jsonb);            -- pirates deal 0 dmg → players immortal
-  perform public.set_game_config('enemy_attack_danger_scale', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_base', '0'::jsonb);   -- pirates never move
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_base', '500'::jsonb); -- >> ring → pirates HOLD & fire in place
   perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
-  perform public.set_game_config('enemy_synthetic_max_units', '6'::jsonb);
+  -- ██ (0344) FOUR WRITES WERE DELETED FROM THIS BLOCK, AND THEY ARE THE DANGEROUS KIND ██
+  -- enemy_hp_danger_scale=0, enemy_attack_danger_scale=0, the synthetic unit cap and
+  -- wave_transition_seconds each ESTABLISHED a precondition this file's expectations were solved
+  -- against: hp independent of danger, attack independent of danger, a known unit ceiling, and a known
+  -- wave-transition window. 0344 DELETES all four rows and the pause the last one paced. A write to a
+  -- key nothing reads does NOT error — it re-inserts a row and moves on — so every one of them would
+  -- have gone on LOOKING like staging while establishing NOTHING, and this file would have stayed green
+  -- over preconditions it no longer sets. That silent green is the failure this sweep exists to end, and
+  -- it is why they are removed rather than left in place "harmlessly".
   perform public.set_game_config('spatial_formation_ring_radius', '30'::jsonb);
-  perform public.set_game_config('wave_transition_seconds', '3'::jsonb);
 end $tune$;
 
 -- choose the hunt location; set enemy_hp_base so each wave's TOTAL hp = 60 (per-pirate 60/danger — always

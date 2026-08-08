@@ -15,6 +15,11 @@ SQL="$SCRIPT_DIR/encounter-resolver-proof.sql"
 out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$SQL" 2>&1)"
 echo "$out"
 
+# 0344: ER_PASS_RESOLVED_PLAN, ER_PASS_MULTIWAVE and ER_PASS_CAP are GONE and deliberately not
+# replaced by weaker forms — each asserted that the tick INSTANTIATES an authored plan, and 0344
+# deletes the v_resolver_engaged branch that was the only place it ever did. Pinning them would
+# DEMAND the deleted wave sizer. ER_PASS_RESOLVER_INERT replaces all three, and every DIRECT test
+# of resolve_location_encounter itself is untouched.
 for marker in \
   ER_PASS_VERBATIM \
   ER_PASS_REWARD_UNTOUCHED \
@@ -28,9 +33,7 @@ for marker in \
   ER_PASS_SKIP_ZERO \
   ER_PASS_FLAGOFF_ROWS \
   ER_PASS_FLAGOFF_REWARD \
-  ER_PASS_RESOLVED_PLAN \
-  ER_PASS_MULTIWAVE \
-  ER_PASS_CAP \
+  ER_PASS_RESOLVER_INERT \
   ER_PASS_E5_VARIETY \
   ER_PASS_E5_SEED_STABLE \
   ER_PASS_ELITE_WIRED \

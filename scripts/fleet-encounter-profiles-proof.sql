@@ -610,8 +610,16 @@ begin
     raise exception 'FLEET-ENCOUNTER PROOF FAIL: a combat/reward function is missing — surface disturbed';
   end if;
   -- the combat/reward tunables are unchanged.
-  if public.cfg_num('enemy_synthetic_max_units') is distinct from 6 then
-    raise exception 'FLEET-ENCOUNTER PROOF FAIL: enemy_synthetic_max_units is % (expected 6)', public.cfg_num('enemy_synthetic_max_units');
+  -- ██ (0344) THIS CLAUSE ASSERTED A SEED, AND THE SEED IS NOW DELETED ██
+  -- It read `cfg_num(<the synthetic unit-cap key>) is distinct from 6` to show this slice had not
+  -- disturbed the combat tunables. That is asserting a WORLD rather than a property — the
+  -- proofs-never-assert-ambient-defaults law — and 0344 DELETES the row, so on any chain that
+  -- carries it cfg_num returns NULL, `NULL is distinct from 6` is TRUE, and the block raises on a
+  -- CORRECT system. The property this block actually wants is that THIS slice touched nothing, and
+  -- that is now stated the only way it can be: the row must be ABSENT, because 0344 removed it with
+  -- the rest of the kill-escalation knobs, and a row here would mean something re-authored it.
+  if exists (select 1 from public.game_config where key = 'enemy_synthetic' || '_max_units') then
+    raise exception 'FLEET-ENCOUNTER PROOF FAIL: the synthetic unit-cap game_config row EXISTS — 0344 deletes it (its only reader left is resolve_location_encounter, which falls back to its own constant), so something has re-authored a knob that gates nothing';
   end if;
   if public.cfg_num('reward_multiplier') is distinct from 1.0 then
     raise exception 'FLEET-ENCOUNTER PROOF FAIL: reward_multiplier is % (expected 1.0)', public.cfg_num('reward_multiplier');

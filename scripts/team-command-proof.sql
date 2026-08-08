@@ -1112,7 +1112,7 @@ declare r jsonb; n int; t record;
   v_base uuid; v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid; v_pres uuid;
   v_expected_attack double precision; v_expected_defense double precision; v_hp_before double precision;
   v_hp_after double precision; v_expected_enemy double precision; v_bd double precision;
-  v_defbase double precision; v_danger integer; v_waves integer; v_started timestamptz;
+  v_defbase double precision; v_waves integer; v_started timestamptz;
   v_keys text[]; v_expected_keys text[]; v_speed double precision; v_bad int := 0;
   v_ring_before jsonb;
 begin
@@ -1212,18 +1212,22 @@ begin
 
   -- expected tick 1 ENEMY damage (the defense curve flows through the SAME D1 left-join/coalesce
   -- hunk), mirroring the tick body's arithmetic in the 0046 operation order EXACTLY:
-  --   danger       = 1 + waves_cleared + floor(secs_inside / danger_time_divisor_seconds)
-  --   enemy_attack = base_difficulty × enemy_attack_base × (1 + danger × enemy_attack_danger_scale)
+  --   enemy_attack = base_difficulty × enemy_attack_base          [0344: the SITE's number, and only it]
   --   enemy_damage = enemy_attack × def_base / (def_base + Σ(defense×alive)) × variance
+  -- ██ (0344) THE DANGER FACTOR IS GONE FROM THIS MIRROR, BECAUSE IT IS GONE FROM THE ENGINE ██
+  -- The mirror used to open with `danger = 1 + waves_cleared + floor(secs_inside / <a divisor knob>)` and
+  -- multiply the attack by `(1 + danger × <an attack scale knob>)`. Both of those rows are DELETED by
+  -- 0344 along with the whole v_danger concept — destroying an enemy fleet must not make the next one
+  -- hit harder. Leaving the reads in would have been the worst available failure: cfg_num returns NULL
+  -- for a deleted key, the coalesce silently supplies 180 and 0.25, and this EXACT (no-tolerance)
+  -- comparison would have expected 1.25× what the engine now produces — a red whose message blames the
+  -- D1 aggregation hunk for a change made somewhere else entirely.
   -- The compare below is EXACT (no tolerance): the tick stores enemy_damage UNROUNDED; variance is
   -- exactly 1.0 with the pct pinned to 0 ((1-0) + random()*0), and ×1.0 is exact in IEEE; the 2-term
   -- defense sum is order-independent; and the expression here repeats the tick's operation order.
-  select waves_cleared, started_at into v_waves, v_started from public.combat_encounters where id = v_enc;
-  v_danger  := 1 + v_waves + floor(extract(epoch from (now() - v_started)) / coalesce(cfg_num('danger_time_divisor_seconds'), 180))::integer;
   v_defbase := coalesce(cfg_num('defense_curve_base'), 100);
   select base_difficulty into v_bd from public.locations where id = v_hunt;
-  v_expected_enemy := v_bd * coalesce(cfg_num('enemy_attack_base'),1.0)
-                      * (1 + v_danger * coalesce(cfg_num('enemy_attack_danger_scale'),0.25));
+  v_expected_enemy := v_bd * coalesce(cfg_num('enemy_attack_base'),1.0);
   v_expected_enemy := v_expected_enemy * v_defbase / (v_defbase + v_expected_defense) * 1.0;
 
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
@@ -1233,8 +1237,11 @@ begin
   if t.id is null then raise exception 'COMBATPARITY FAIL: no tick 1 row (tick logging is on)'; end if;
   if t.player_damage is distinct from v_expected_attack then
     raise exception 'COMBATPARITY FAIL: tick player_damage % (want independent Σ(attack×alive) %)', t.player_damage, v_expected_attack; end if;
-  if t.danger_level is distinct from v_danger then
-    raise exception 'COMBATPARITY FAIL: tick danger_level % (want mirrored %)', t.danger_level, v_danger; end if;
+  -- (0344) danger_level is written as the CONSTANT 1 on both arms — the column stops carrying a meaning
+  -- here and 0349 drops it. It is pinned to that constant rather than dropped from this block, because a
+  -- tick that started writing something else again would mean the escalation counter came back.
+  if t.danger_level is distinct from 1 then
+    raise exception 'COMBATPARITY FAIL: tick danger_level % (want the constant 1 — 0344 writes it as a constant because nothing escalates any more; anything else means an escalation counter is back on this row)', t.danger_level; end if;
   if t.enemy_damage is distinct from v_expected_enemy then
     raise exception 'COMBATPARITY FAIL: tick enemy_damage % (want independent defense-curve value %)', t.enemy_damage, v_expected_enemy; end if;
   if t.result not in ('ongoing','wave_cleared') then raise exception 'COMBATPARITY FAIL: tick 1 result %', t.result; end if;
@@ -3592,7 +3599,7 @@ end $$;
 do $$
 declare r jsonb; n int; uV uuid; sV uuid; gV uuid;
   v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
-  v_waves int; v_started timestamptz; v_danger int;
+  v_waves int; v_started timestamptz;
   v_defbase double precision; v_bd double precision; v_def double precision;
   v_dmg double precision; v_pool double precision; v_abs double precision;
   v_sh_exp double precision; v_hull_exp double precision; v_hull0 double precision;
@@ -3704,15 +3711,16 @@ begin
   if n <> 1 then
     raise exception 'SHIELD1 FAIL: player_integrity_max is not the hull hp alone (integrity accounting must stay hull-only)'; end if;
 
-  -- THE INDEPENDENT DAMAGE DERIVATION (the COMBATPARITY formula, variance pinned 0; danger is
-  -- txn-stable: now() is constant and no wave clears in four ticks — guarded below).
-  select waves_cleared, started_at into v_waves, v_started from public.combat_encounters where id = v_enc;
-  v_danger  := 1 + v_waves + floor(extract(epoch from (now() - v_started)) / coalesce(cfg_num('danger_time_divisor_seconds'), 180))::integer;
+  -- THE INDEPENDENT DAMAGE DERIVATION (the COMBATPARITY formula, variance pinned 0).
+  -- (0344) The danger factor is deleted from the engine and therefore from this mirror; what remains is
+  -- the SITE's own number, base_difficulty × enemy_attack_base. The old form also needed a "danger is
+  -- txn-stable across four ticks" premise, because the term grew with waves_cleared and elapsed presence
+  -- — that premise is not weakened, it is UNNECESSARY: there is no longer anything in the expression
+  -- that can move during the four ticks below.
   v_defbase := coalesce(cfg_num('defense_curve_base'), 100);
   select base_difficulty into v_bd from public.locations where id = v_hunt;
   select defense_snapshot into v_def from public.combat_units where encounter_id = v_enc and main_ship_id = sV;
-  v_dmg := v_bd * coalesce(cfg_num('enemy_attack_base'),1.0)
-           * (1 + v_danger * coalesce(cfg_num('enemy_attack_danger_scale'),0.25));
+  v_dmg := v_bd * coalesce(cfg_num('enemy_attack_base'),1.0);
   v_dmg := v_dmg * v_defbase / (v_defbase + v_def) * 1.0;
   -- the pins below need 3 < damage < 40: tick 1 must FULLY drain the 3-point pool with a real
   -- hull overflow, and ticks 2/3 must leave a nonzero pool (else the cap pin degenerates 0=0).

@@ -61,7 +61,15 @@ SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 # NOTE that 0339 adds no marker for the REPOMODE inversion or the NODIRECTION repoint: both are
 # EXISTING markers whose blocks were repointed in place, because the properties they pinned were
 # themselves the defects 0339 fixes. Their pins below moved with them.
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOHOLD DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR DZCOMBAT_PASS_NODIRECTION DZCOMBAT_PASS_ONEANCHOR DZCOMBAT_PASS_SITEORIGIN"
+# 0344 appends ONE — PRESSURE, and it is the marker for the owner's thrice-given directive ("it will
+# be not +1 fleets when fleet is destroyed"). It is the only runtime check that another enemy comes
+# from a CLOCK: one body per due slot, never two, never one per kill; missed slots LOST not banked;
+# the site's authored cap holding while suppressed slots are still SPENT; and a fleet that destroys
+# the whole field getting nothing back. THIRTY-NINE markers now, from twelve slices. Same law as
+# every line above, for the ninth hand-resolved union of this one string: a resolution that takes
+# either side WHOLE drops the other's markers, the local run then never checks for those notices, and
+# the suite prints OVERALL_PASS with entire runtime blocks unverified. Union, always.
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOHOLD DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR DZCOMBAT_PASS_NODIRECTION DZCOMBAT_PASS_ONEANCHOR DZCOMBAT_PASS_SITEORIGIN DZCOMBAT_PASS_PRESSURE"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -395,7 +403,17 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "quantifying over an empty set"                         "$SQL" || fail "harness lacks the ONEANCHOR non-vacuity pin (a sweep that passes because NOBODY writes the column proves nothing)"
   grep -q "three positions that can disagree"                     "$SQL" || fail "harness lacks the ONEANCHOR moves-all-three assert (a leaf that restamped the anchor alone would satisfy the sweep and leave the fight's ships behind)"
   grep -q "the placement loop existed TWICE"                      "$SQL" || fail "harness lacks the ONEANCHOR spawn-fold assert (the tick must no longer measure, place or insert a wave unit itself)"
-  grep -q "differ in the STATS they pass and in nothing else"     "$SQL" || fail "harness lacks the ONEANCHOR two-arms pin (the fold must keep the ONE difference that is real and delete the one that never was)"
+  # ── 0344 REPOINTS THE SPAWN-FOLD COUNT, AND THE BLOCK'S OWN COMMENT ALREADY SAID IT WOULD ────────
+  # The old pin was "the tick composes the spawn leaf exactly TWICE — the resolved arm and the
+  # synthetic arm, which differ in the STATS they pass and in nothing else". 0344 DELETES both arms:
+  # a wave is no longer raised by clearing one, so the tick composes the leaf ZERO times and the only
+  # caller left in the schema is public.combat_pressure_step. The old wording is GONE rather than
+  # relaxed — leaving it would DEMAND two spawn arms, the same reason 0337 deleted 0311's teleport
+  # pins — and these two replace it with the strictly stronger schema-wide statement.
+  grep -q "a second caller anywhere in the schema is a second pressure authority" "$SQL" \
+    || fail "harness lacks the ONEANCHOR one-spawner sweep (0344: exactly ONE function in public may compose combat_spawn_wave_units, and it must be combat_pressure_step — a second spawner anywhere is a second pressure authority, which the old two-arms count could not say)"
+  grep -q "composition(s) of the spawn authority survive INSIDE the tick" "$SQL" \
+    || fail "harness lacks the ONEANCHOR tick-composes-it-zero-times pin (0344 deletes both spawn arms; a surviving composition inside the tick means the wave-clear arrow, or a relocated copy of it, is still there)"
   # ── 0339: on a HUNT, the enemy comes out of the city ─────────────────────────────────────────────
   grep -q "THIS IS THE OWNER"                                     "$SQL" || fail "harness lacks the SITEORIGIN anchor-is-not-the-site assert — the one that is RED on the deployed body and the reason 0338 was inert on every hunt"
   grep -q "never on an invented distance"                         "$SQL" || fail "harness lacks the SITEORIGIN stands-on-the-site's-own-edge assert (territory_radius from the ONE standoff leaf, not a number this slice chose)"
@@ -725,7 +743,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "landed hit(s) from a three-gun volley"                 "$SQL" || fail "harness lacks the VOLLEY three-landed-hits assert"
   grep -q "destroyed by a three-gun volley"                       "$SQL" || fail "harness lacks the VOLLEY three-kills assert"
   grep -q "one gun does not one-shot it"                          "$SQL" || fail "harness lacks the VOLLEY one-shot-sizing pin (if a pirate survived a single gun the re-aim could not happen on ANY body)"
-  grep -q "the wave must hold strictly more pirates than the ship has guns" "$SQL" || fail "harness lacks the VOLLEY wave-size vacuity guard (the last gun must have something left to re-aim at)"
+  grep -q "the field must hold strictly more pirates than the ship has guns" "$SQL" || fail "harness lacks the VOLLEY field-size vacuity guard (the last gun must have something left to re-aim at; 0344 renames the wave to the field because the size is now an authored cap rather than a kill count)"
   grep -q "this block is about a THREE-gun ship"                  "$SQL" || fail "harness lacks the VOLLEY three-guns-really-fitted fixture pin"
   grep -q "name no target at all"                                 "$SQL" || fail "harness lacks the VOLLEY NULL-target pin (a distinct count over NULLs proves nothing)"
   # WAVERING — a wave arrives on a ring, not on one point.
@@ -801,6 +819,69 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "that order repositions instead of retreating"          "$SQL" || fail "harness lacks the RETREATCLEAR unadmitted-destination guard (an admitted point repositions under 0311 and records nothing)"
   grep -q "would be re-proving part (B)"                          "$SQL" || fail "harness lacks the RETREATCLEAR death-arm attribution pin (a completed retreat routes through the settle arm, which was never broken)"
   grep -q "owned the knob and did not give it back"               "$SQL" || fail "harness lacks the 0336 formation-ring leak pin (every block below RANGEINVARIANT owns that knob; a restore that leaks would silently repoint the invariant instead of failing)"
+
+  # ── 0344 PRESSURE IS A CLOCK, in assert-form, plus the staging law the whole sweep turns on ──────
+  # ── THE CLASS GUARD, AND IT SWEEPS THE WHOLE scripts/ TREE — NOT JUST THIS FILE ─────────────────
+  # THIS SUITE IS THE HOST for the same reason it hosts the generated-migration parity gate: it is the
+  # only proof triggered on `pull_request` AND on push to `main`, so a gate placed here runs on every PR
+  # and every merge. Most of the sibling combat proofs have NO selftest mode at all and several fire
+  # only on a branch glob nobody names any more — putting a copy of this check in each of them would be
+  # both spaghetti and, for the narrow-trigger ones, a gate that never fires (the 2026-08-03 finding:
+  # three suites were wrong since 0300 and nobody saw it because no branch that carried 0300 ran them).
+  # The sweep is over EVERY scripts/*.sql, so a proof or activation script that reaches for the deleted
+  # kill-escalation surface fails HERE, in CI, on the branch that did it — never one CI round at a time.
+  # DELIBERATELY NOT SWEPT: scripts/gen-*.mjs. Those are migration GENERATORS whose --check re-derives an
+  # ALREADY-SHIPPED migration from the heads it was cut against, so the deleted strings inside them are
+  # historical source text, not live reads. Editing one would break its --check — which is the gate three
+  # blocks above — while proving nothing. They are covered by that gate instead, and it is green.
+  swept=0
+  for f in "$REPO_ROOT"/scripts/*.sql; do
+    [ -f "$f" ] || continue
+    tp_assert_no_kill_escalation "$f"
+    swept=$((swept + 1))
+  done
+  [ "$swept" -gt 10 ] \
+    || fail "the kill-escalation class guard swept only $swept scripts/*.sql file(s) — it must never pass over an empty or near-empty set (the same non-vacuity law the generator gate above learned the hard way)"
+  # The two staging helpers. They are the ONLY way a block asks for a multi-body field, and the only
+  # place this proof composes the pressure authority directly — one authority, not one per block.
+  grep -q "create or replace function pg_temp.pressure_site" "$SQL" \
+    || fail "harness lost pg_temp.pressure_site — a block that needs a field of n bodies must OWN the site's cadence and concurrent cap as a row rather than inherit whichever numbers the seed carries (proofs-never-assert-ambient-defaults, in its content form)"
+  grep -q "create or replace function pg_temp.pressure_fill" "$SQL" \
+    || fail "harness lost pg_temp.pressure_fill — with the clock skip-forward and a txn-frozen now(), a block cannot fill a field by driving ticks, and filling it by hand would break the combat_units sole-writer law"
+  n="$(grep -c 'public\.combat_pressure_step(' "$SQL" || true)"
+  [ "$n" = "1" ] || fail "expected exactly 1 composition of the pressure authority in this harness (inside pg_temp.pressure_fill), found $n — a second call site is a second staging idiom, and the next slice would have to keep them in step by hand"
+  grep -q "set next_reinforcement_at = now() - interval" "$SQL" \
+    || fail "harness lost its CLOCK-ONLY reinforcement rewind (the only write pressure staging is allowed: no status, no geometry, no hp, and never a combat_units row)"
+  # The block itself. Each of these is RED by construction on the deployed body, where the field is
+  # sized by 1 + waves_cleared and a destroyed field is immediately replaced by a larger one.
+  grep -q "want exactly 1) — the field is sized by a CLOCK now" "$SQL" \
+    || fail "harness lacks the PRESSURE one-body-per-due-slot assert (the pre-0344 red: least(enemy_synthetic_max_units, greatest(1, 1 + waves_cleared + elapsed)) bodies on the first tick)"
+  grep -q "an arrival that does not wait for its slot is not a clock" "$SQL" \
+    || fail "harness lacks the PRESSURE no-due-slot-no-arrival assert"
+  grep -q "a pass that is not due must read the clock and leave" "$SQL" \
+    || fail "harness lacks the PRESSURE clock-untouched-when-nothing-arrives assert (a clock that drifts with the tick rate is not a cadence)"
+  grep -q "was BANKED and paid out later" "$SQL" \
+    || fail "harness lacks the PRESSURE missed-arrivals-are-LOST assert (RULE 2: five elapsed slots must deliver ONE body, or a cron stall hands a fleet a wave)"
+  grep -q "IS the queue that banking needs" "$SQL" \
+    || fail "harness lacks the PRESSURE skip-forward arithmetic assert (advancing one cadence per pass instead of past every elapsed slot is banking in another costume)"
+  grep -q "the field must fill to its authored ceiling and no further" "$SQL" \
+    || fail "harness lacks the PRESSURE cap assert (a site's difficulty must be a property of the site, not of how long the player survives)"
+  grep -q "so it was STORED rather than spent" "$SQL" \
+    || fail "harness lacks the PRESSURE suppressed-slot-is-still-spent assert (a stored slot owes a body the instant one dies — the kill-driven arrow wearing a queue)"
+  grep -q "a cap that admits one more body per pass is not a cap" "$SQL" \
+    || fail "harness lacks the PRESSURE cap-holds-on-the-next-slot assert"
+  grep -q "killing well is being punished" "$SQL" \
+    || fail "harness lacks the PRESSURE no-spawn-after-a-kill assert — the owner's thrice-given directive, as an executable statement, and the one that is RED on the deployed body"
+  grep -q "a body arrived because the field was empty, which is the arrow this slice deletes" "$SQL" \
+    || fail "harness lacks the PRESSURE empty-field-brings-nothing-back assert"
+  grep -q "a death may never move the clock" "$SQL" \
+    || fail "harness lacks the PRESSURE kill-does-not-move-the-clock assert (the longer route by which 'the field is empty' could still reach pressure)"
+  grep -q "banks a wave-clear reward every three seconds forever" "$SQL" \
+    || fail "harness lacks the PRESSURE no-repeat-payout assert (an empty field satisfies enemy hp <= 0 on EVERY tick; without 0344's v_e_before > 0 conjunct the fight pays out forever)"
+  grep -q "the unstamped-row law" "$SQL" \
+    || fail "harness lacks the PRESSURE unstamped-row premise (the authority reads coalesce(next_reinforcement_at, started_at); a pre-stamped fixture would never exercise it)"
+  grep -q "sitting on its own step edge" "$SQL" \
+    || fail "harness lacks the PRESSURE non-boundary rewind pin (an elapsed span that is a whole multiple of the cadence lets floor() decide on its own step edge — the zero-margin disease)"
 
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
