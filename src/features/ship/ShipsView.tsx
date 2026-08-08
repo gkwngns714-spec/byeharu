@@ -8,6 +8,8 @@ import {
   type RosterShip,
 } from '../command/teamRoster'
 import type { FleetPosition, MainShipRow } from '../map/mainshipApi'
+import { renderShipVisual, shipGlyphFillsBox } from '../map/shipGlyph'
+import { shipVisual } from '../map/shipVisual'
 import type { MapLocation } from '../map/mapTypes'
 import type { ShipFittingRow } from '../modules/modulesTypes'
 import type { CaptainInstance } from '../captains/captainsTypes'
@@ -163,7 +165,36 @@ export function ShipsView({
         }`}
       >
         <div className="flex items-center justify-between">
-          <span className={`truncate text-sm ${selected ? 'text-ink' : 'text-ink-muted'}`}>{s.name}</span>
+          {/* THE SHIP ITSELF — the SAME visual the map draws, from the SAME authority (map/shipVisual,
+              rendered by map/shipGlyph). The roster is where the owner will look for their spaceship
+              art once they add it ("it will be different when i add a space ship image"), and adding
+              it must not mean touching this file: the form arrives on the descriptor, so an `image`
+              arm renders here unchanged. `hull_type_id` and `max_hp` come off the condition row this
+              screen ALREADY reads — no new fetch, and no hull-catalog read. */}
+          <span className={`flex min-w-0 items-center gap-2 ${selected ? 'text-ink' : 'text-ink-muted'}`}>
+            {(() => {
+              const v = shipVisual({
+                typeId: row?.hull_type_id ?? null,
+                side: 'player',
+                kind: 'unit',
+                mass: row?.max_hp ?? null,
+                hpFrac: row && row.max_hp > 0 ? row.hp / row.max_hp : null,
+              })
+              return (
+                <svg
+                  data-testid={`fitting-row-ship-${s.main_ship_id}`}
+                  viewBox="0 0 24 24"
+                  width={18}
+                  height={18}
+                  aria-hidden="true"
+                  className="shrink-0"
+                >
+                  {renderShipVisual(v, shipGlyphFillsBox(v))}
+                </svg>
+              )
+            })()}
+            <span className="truncate text-sm">{s.name}</span>
+          </span>
           <span className="ml-3 flex shrink-0 items-center gap-2">
             {fittedCount !== null && fittedCount > 0 && (
               <span

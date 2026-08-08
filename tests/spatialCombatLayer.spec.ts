@@ -115,15 +115,89 @@ type Props = Record<string, unknown>
 const byTestId = (els: ReactElement[], id: string) =>
   els.find((e) => (e.props as Props)['data-testid'] === id)
 
-test('layer: one world-true range ring per armed ACTOR (r = range * SCALE, NOT /k)', () => {
+// ── THE REACH REGION — what is drawn IS the fire rule ─────────────────────────────────────────────
+// REPOINTED. This used to assert ONE dashed circle per actor, centred on its drawn point, with the
+// radius of its longest gun — which is exactly the defect the owner reported: "the range circle,
+// outer circle when fighting, did not even touch a fleet yet it shot." The engine's fire gate
+// measures EACH HULL from ITS OWN position, so a fleet's reachable set is the UNION of its hulls'
+// discs and a single lead-centred circle cannot state it. The assertion follows the real behaviour.
+const discsOf = (els: ReactElement[], key: string) => {
+  const g = byTestId(els, `spatial-combat-range-${key}`)
+  if (!g) return []
+  // createElement collapses a SINGLE child out of the array form, so normalise before reading.
+  const kids = (g.props as { children: ReactElement | ReactElement[] }).children
+  const list = Array.isArray(kids) ? kids : kids ? [kids] : []
+  return list.map((c) => c.props as { cx: number; cy: number; r: number; fill: string })
+}
+
+test('layer: a lone armed hull still gets exactly ONE world-true disc (r = range * SCALE, NOT /k)', () => {
   for (const k of [1, 4]) {
     const els = layer({ units: [unit({ id: 'u1', weapons_json: [{ range: 300 }] })], events: [], norm, k })
-    const ring = byTestId(els, 'spatial-combat-range-fleet-e1')!
-    const rp = ring.props as { r: number; strokeWidth: number; fill: string }
-    expect(rp.r).toBe(300 * WORLD_TO_VIEWBOX_SCALE) // world-true at every zoom
-    expect(rp.fill).toBe('none')
-    expect(rp.strokeWidth).toBe(1 / k) // only line weight is screen-constant
+    const discs = discsOf(els, 'fleet-e1')
+    expect(discs).toHaveLength(1)
+    expect(discs[0].r).toBe(300 * WORLD_TO_VIEWBOX_SCALE) // world-true at every zoom
+    expect(discs[0].cx).toBe(100)
   }
+})
+
+test('THE RING IS THE RULE — every hull that can fire contributes its OWN disc, from its OWN place', () => {
+  // THE MEASURED PRODUCTION ENCOUNTER, from the owner's most recent live fight: four alive hulls of
+  // range 5, the elected LEAD at (-53.13, 103.74), six alive enemies. TWO of the six were inside a
+  // lead-centred circle of radius 5 and FOUR were outside it at 5.06-6.86 — yet all six were
+  // legitimately shootable, because the escorts sit on a CHORD and reach further forward than the
+  // lead, which sits a full formation radius back.
+  const LEAD = { x: -53.13, y: 103.74 }
+  const REACH = 5
+  const hull = (id: string, dx: number, dy: number, aggro = 0) =>
+    unit({ id, pos_x: LEAD.x + dx, pos_y: LEAD.y + dy, aggro_priority: aggro, weapons_json: [{ range: REACH }] })
+  const hulls = [hull('p0', 0, 0, 100), hull('p1', 3, 0), hull('p2', 0, 3), hull('p3', -2, 2)]
+  // Six hostiles: two inside the lead's own circle, four OUTSIDE it but inside a real hull's reach.
+  const foes = [
+    { x: 3.2, y: 0 }, // 3.20 from the lead
+    { x: 0, y: 3.5 }, // 3.50
+    { x: 5.06, y: 0 }, // 5.06 — 2.06 from the escort at +3x
+    { x: 5.6, y: 0.3 }, // 5.61 — 2.62
+    { x: 6.2, y: -0.5 }, // 6.22 — 3.24
+    { x: 6.86, y: 0.2 }, // 6.86 — 3.87
+  ].map((o, i) =>
+    unit({ id: `e${i}`, side: 'enemy', aggro_priority: null, pos_x: LEAD.x + o.x, pos_y: LEAD.y + o.y }),
+  )
+  const rows = [...hulls, ...foes]
+  const els = layer({ units: rows, events: [], norm, k: 1 })
+  const discs = discsOf(els, 'fleet-e1')
+  expect(discs, 'one disc per living armed hull, not one for the fleet').toHaveLength(4)
+
+  // THE PROPERTY: every enemy the ENGINE would let some hull fire on is inside what is DRAWN.
+  // (`norm` is the identity here and the radii carry the world→viewBox scale, so the containment
+  // test is done in the drawn space, against the rendered circles themselves.)
+  const covered = (p: { x: number; y: number }) =>
+    discs.some((d) => Math.hypot(p.x - d.cx, p.y - d.cy) <= d.r / WORLD_TO_VIEWBOX_SCALE)
+  const shootable = (p: { x: number; y: number }) =>
+    hulls.some((h) => Math.hypot(p.x - (h.pos_x as number), p.y - (h.pos_y as number)) <= REACH)
+  for (const f of foes) {
+    const at = { x: f.pos_x as number, y: f.pos_y as number }
+    expect(shootable(at), 'the fixture must be a fight where every hostile IS reachable').toBe(true)
+    expect(covered(at), 'an enemy that can be shot must be inside the drawn reach').toBe(true)
+  }
+  // …and the RETIRED answer really did lie: only TWO of the six sat inside a lead-centred circle of
+  // the fleet's longest range, which is what the owner watched shoot at things it did not touch.
+  const insideLeadCircle = foes.filter(
+    (f) => Math.hypot((f.pos_x as number) - LEAD.x, (f.pos_y as number) - LEAD.y) <= REACH,
+  )
+  expect(insideLeadCircle).toHaveLength(2)
+})
+
+test('a DEAD hull contributes no reach — a wreck is not a gun the fleet still has', () => {
+  const els = layer({
+    units: [
+      unit({ id: 'p0', pos_x: 0, pos_y: 0, weapons_json: [{ range: 5 }] }),
+      unit({ id: 'p1', pos_x: 40, pos_y: 0, alive_count: 0, hp_current: 0, weapons_json: [{ range: 5 }] }),
+    ],
+    events: [],
+    norm,
+    k: 1,
+  })
+  expect(discsOf(els, 'fleet-e1')).toHaveLength(1)
 })
 
 test('layer: an unarmed actor draws a glyph but NO range ring', () => {
@@ -144,14 +218,21 @@ test('layer: player vs enemy glyphs are visually distinct (tone + silhouette) an
   expect((pg.props as Props)['data-side']).toBe('player')
   expect((eg.props as Props)['data-side']).toBe('enemy')
   expect((pg.props as { style: { pointerEvents: string } }).style.pointerEvents).toBe('none')
-  // The glyph group is [polygon, hull-track, hull-fill] since the per-unit hull pip landed; the
-  // silhouette is the FIRST child. Reading children[0] rather than `children` keeps this test about
-  // the silhouette instead of about how many things a unit draws.
-  const poly = (g: ReactElement) =>
-    (g.props as { children: ReactElement[] }).children[0].props as { fill: string; points: string }
-  expect(poly(pg).fill).toBe('var(--color-accent)')
-  expect(poly(eg).fill).toBe('var(--color-danger)')
-  expect(poly(pg).points).not.toBe(poly(eg).points) // up- vs down-pointing triangle
+  // REPOINTED. The group used to be [polygon, hull-track, hull-fill] and the silhouette was an inline
+  // `points` string built right here in the layer — one of the FOUR places a fleet's shape was
+  // hard-coded. The first child is now the ONE ship glyph (map/shipGlyph), and its form/tone come
+  // from map/shipVisual, so this test is about the SIDES reading differently rather than about which
+  // triangle the layer happens to type out.
+  const ship = (g: ReactElement) =>
+    (g.props as { children: ReactElement[] }).children[0].props as {
+      fill: string
+      d: string
+      'data-ship-form': string
+    }
+  expect(ship(pg)['data-ship-form']).toBe('paths')
+  expect(ship(pg).fill).toBe('var(--color-accent)')
+  expect(ship(eg).fill).toBe('var(--color-danger)')
+  expect(ship(pg).d).not.toBe(ship(eg).d) // ours noses UP, a raider comes DOWN at us
 })
 
 // ── the per-unit HULL PIP: health as a quantity, not a shade ──────────────────────────────────────
@@ -183,8 +264,7 @@ test('layer: positions project through norm (non-identity proves projection)', (
     norm: (p) => ({ x: p.x + 1, y: p.y + 1 }),
     k: 1,
   })
-  const ring = byTestId(els, 'spatial-combat-range-fleet-e1')!
-  expect(ring.props as { cx: number; cy: number }).toMatchObject({ cx: 11, cy: 21 })
+  expect(discsOf(els, 'fleet-e1')[0]).toMatchObject({ cx: 11, cy: 21 })
 })
 
 // ── resolveFireLines: latest-tick spatial salvos only ──

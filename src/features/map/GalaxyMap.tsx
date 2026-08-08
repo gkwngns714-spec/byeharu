@@ -183,11 +183,19 @@ export function GalaxyMap({
     combatUnits,
     combatEvents,
   )
+  // WHICH HULL IS WHICH CLASS — `hull_type_id` off the position projection the map already fetches
+  // (get_my_fleet_positions carries it as `class`). `combat_units` names the ship but not its class,
+  // so this is the join that lets a fleet's combat glyph wear the SAME ship the map badge wears. No
+  // extra read, and no client fetch of `main_ship_hull_types`.
+  const hullTypeByShip = useMemo(
+    () => new Map(fleetPositions.map((p) => [p.main_ship_id, p.class ?? null])),
+    [fleetPositions],
+  )
   // THE FLEET IS THE COMBAT ACTOR — "show only fleet. it is as a whole." One glyph per player fleet
   // (placed by the same fleetFightPosition rule that places its badge), one per living enemy hull.
   const combatActors = useMemo(
-    () => resolveCombatActors(liveCombatUnits, combatEncounters),
-    [liveCombatUnits, combatEncounters],
+    () => resolveCombatActors(liveCombatUnits, combatEncounters, hullTypeByShip),
+    [liveCombatUnits, combatEncounters, hullTypeByShip],
   )
   const [nowMs, setNowMs] = useState(() => Date.now())
   const anyMovement = movements.length > 0
@@ -479,6 +487,9 @@ export function GalaxyMap({
     locations,
     norm,
     k: view.k,
+    // The SAME letterbox scale the combat readout is sized from, so a fleet's badge and that fleet's
+    // combat glyph are one size on one screen — see ShipVisual.sizePx.
+    pxScale: pxPerViewBox,
     nowMs,
     encounters: combatEncounters,
     // The SMOOTHED rows, exactly as the spatial layer below receives them. The fleet layer stands a

@@ -1,23 +1,21 @@
 import { test, expect } from '@playwright/test'
-import {
-  fleetLayer,
-  TeamMovingMarkers,
-  FleetPointBadge,
-  TeamDockBadge,
-  TeamCombatBadge,
-} from '../src/features/map/teamMarkers'
+import type { ReactElement } from 'react'
+import { ICON_PATHS } from '../src/components/ui/icons'
+import { MARKER_BELOW_LABEL_OFFSET } from '../src/features/map/markerStyle'
+import { fleetLayer, TeamMovingMarkers, FleetPointBadge } from '../src/features/map/teamMarkers'
 import {
   FLEET_PRESENCE_STATES,
   resolveFleetPresence,
   type FleetPresenceState,
+  type PositionRow,
   type PresenceLocation,
 } from '../src/features/map/fleetPresence'
+import { shipVisual } from '../src/features/map/shipVisual'
 import { interpolateMovementPoint } from '../src/features/map/movementInterpolation'
 import type { FleetMovement } from '../src/features/fleets/fleetTypes'
 import type { GroupRow, ShipGroupMapEntry } from '../src/features/command/teamRoster'
 // type-only import — erased at compile, so the spec never loads teamApi's supabase client.
 import type { UnifiedGroupFleetLite } from '../src/features/command/teamApi'
-import type { FleetPosition } from '../src/features/map/mainshipApi'
 import type { FleetEncounterLite } from '../src/features/combat/encounterAnchor'
 import type { CombatUnit } from '../src/features/combat/combatTypes'
 
@@ -89,8 +87,13 @@ const crew = (groupId: string, n: number, offset = 0): Record<string, ShipGroupM
   return out
 }
 
-type Pos = Pick<FleetPosition, 'main_ship_id' | 'place' | 'location_id' | 'segment' | 'space_x' | 'space_y'>
+// The row shape is taken FROM the module under test (PositionRow) rather than restated here, so a
+// widening like `class` cannot drift between the fixture and its reader. `class` IS `hull_type_id`,
+// and all 77 live ships are `starter_frigate` — so that is what a fixture inherits unless it is
+// deliberately about another hull.
+type Pos = PositionRow
 const pos = (o: Partial<Pos> & Pick<Pos, 'main_ship_id' | 'place'>): Pos => ({
+  class: 'starter_frigate',
   location_id: null,
   segment: null,
   space_x: null,
@@ -340,7 +343,7 @@ test('N fleets at ONE port each keep their own badge, stacked — never one labe
     k: 1,
     nowMs: midMs,
   })
-  const docks = layer.elements.filter((e) => e.type === TeamDockBadge)
+  const docks = layer.elements.filter((e) => (e.props as { state?: string }).state === 'docked')
   expect(docks).toHaveLength(2)
   expect(docks.map((e) => (e.props as { stack: number }).stack)).toEqual([0, 1])
   // …and the naming rule is composed, not copied: a group already NAMED "Fleet 2" never doubles up.
@@ -508,32 +511,81 @@ test('output order is deterministic — the same rows always answer the same lis
   expect(build([G1, G2]).map((p) => p.groupId)).toEqual(['g1', 'g2'])
 })
 
-// ══ PRESENTATION — the state picks the glyph; every glyph answers to ONE testid ════════════════════
+// ══ PRESENTATION — the state picks the DECORATION; it never picks the ship ══════════════
+//
+// REPOINTED, and this is the whole point of the slice. There used to be THREE badge components here
+// (FleetPointBadge / TeamDockBadge / TeamCombatBadge) and the test below asserted only that all three
+// carried one testid — the strongest property available while three components existed. Two of them
+// are DELETED. There is ONE badge, it draws the ship from the ONE authority, and the state chooses
+// only the ring, the label side and the lane. So the property is now the owner's own words: "the
+// fleet shape changes when in a combat, and outside combat. I want it to be same."
 
-test('every badge kind carries the SAME fleet-marker testid, so "one marker" is one query', () => {
-  const ids = [
-    FleetPointBadge({ groupId: 'g1', label: 'x', x: 1, y: 2, k: 1 }),
-    TeamDockBadge({ groupId: 'g1', label: 'x', x: 1, y: 2, k: 1, stack: 0 }),
-    TeamCombatBadge({ groupId: 'g1', label: 'x', x: 1, y: 2, k: 1, stack: 0 }),
-  ].map((el) => (el.props as { 'data-testid': string })['data-testid'])
-  expect(ids).toEqual(['fleet-marker-g1', 'fleet-marker-g1', 'fleet-marker-g1'])
+const VISUAL = shipVisual({ typeId: 'starter_frigate', side: 'player', kind: 'fleet', mass: 2000 })
+const badgeIn = (state: FleetPresenceState, o: Record<string, unknown> = {}) =>
+  FleetPointBadge({ groupId: 'g1', label: 'x', x: 1, y: 2, k: 1, state, visual: VISUAL, ...o })
+const kidsOf = (el: ReactElement): (ReactElement | null)[] =>
+  (el.props as { children: (ReactElement | null)[] }).children
+const hullOf = (el: ReactElement) =>
+  kidsOf(el).find((c) => c && (c.props as Record<string, unknown>)['data-ship-form'])
+
+test('THE PROOF — the SHIP is identical in every state; only the decoration differs', () => {
+  const shipOf = (state: FleetPresenceState) => {
+    const { d, fill, fillOpacity } = hullOf(badgeIn(state))!.props as {
+      d: string
+      fill: string
+      fillOpacity: number
+    }
+    // the SHAPE, the tone and the dimming — not the transform, which carries the state's placement
+    return { d, fill, fillOpacity }
+  }
+  const inSpace = shipOf('in-space')
+  for (const state of ['moving', 'docked', 'in-combat'] as const) {
+    expect(shipOf(state), `${state} must draw the SAME ship as a resting fleet`).toEqual(inSpace)
+  }
+  // …and it is the design system's own ship silhouette, not a shape invented at a draw site.
+  expect(inSpace.d).toBe(ICON_PATHS.ship.join(' '))
+})
+
+test('a fleet whose fight is POSITIONED draws no second hull — the combat layer already has it', () => {
+  // Both layers stand a fighting fleet on the same point (map/fleetFightPosition), so a hull from
+  // each is one fleet drawn twice. `fightGlyph` is where that is decided, once, on the presence.
+  const badge = badgeIn('in-combat', { fightGlyph: true })
+  expect(hullOf(badge)).toBeUndefined()
+  // …but the ring and the label still say a fight is happening.
+  expect(JSON.stringify(badge.props)).toContain('--color-danger')
+})
+
+test('a DOCKED badge clears the port marker instead of burying it', () => {
+  // Live on the owner's map 2026-08-04: "Fleet 2 1/1" rendered across the Slagworks diamond. The
+  // clearance is markerStyle's (46 on-screen px, against the biggest marker's 27.6px halo) and it
+  // now has to hold for the whole badge — the ship as well as the text.
+  const badge = badgeIn('docked')
+  const half = VISUAL.sizePx // k = 1 and pxScale defaults to 1, so viewBox units == on-screen px
+  const laneTop = 2 + MARKER_BELOW_LABEL_OFFSET // y=2, plus the clearance markerStyle owns
+  // the glyph's CENTRE is one half-size below the clearance line, i.e. its top sits exactly on it
+  expect((hullOf(badge)!.props as { transform: string }).transform).toContain(
+    `translate(1 ${laneTop + half})`,
+  )
+  const label = kidsOf(badge).find((c) => c && c.type === 'text')!
+  expect((label.props as { y: number }).y).toBeGreaterThan(laneTop + 2 * half)
+})
+
+test('every state carries the SAME fleet-marker testid, so "one marker" is one query', () => {
+  const ids = FLEET_PRESENCE_STATES.map(
+    (state) => (badgeIn(state).props as { 'data-testid': string })['data-testid'],
+  )
+  expect(ids).toEqual(FLEET_PRESENCE_STATES.map(() => 'fleet-marker-g1'))
 })
 
 test('badges are pointer-transparent — a fleet label never steals the map’s tap target', () => {
-  for (const el of [
-    FleetPointBadge({ groupId: 'g1', label: 'x', x: 1, y: 2, k: 1 }),
-    TeamDockBadge({ groupId: 'g1', label: 'x', x: 1, y: 2, k: 1, stack: 0 }),
-    TeamCombatBadge({ groupId: 'g1', label: 'x', x: 1, y: 2, k: 1, stack: 0 }),
-  ]) {
-    expect((el.props as { style: { pointerEvents: string } }).style.pointerEvents).toBe('none')
+  for (const state of FLEET_PRESENCE_STATES) {
+    expect((badgeIn(state).props as { style: { pointerEvents: string } }).style.pointerEvents).toBe('none')
   }
 })
 
 test('a fight badge is danger-tinted and a resting one is not — the state is visible, not just written', () => {
-  expect(JSON.stringify(TeamCombatBadge({ groupId: 'g1', label: 'x', x: 0, y: 0, k: 1, stack: 0 }).props))
-    .toContain('--color-danger')
-  expect(JSON.stringify(FleetPointBadge({ groupId: 'g1', label: 'x', x: 0, y: 0, k: 1 }).props))
-    .toContain('--color-accent')
+  expect(JSON.stringify(badgeIn('in-combat').props)).toContain('--color-danger')
+  expect(JSON.stringify(badgeIn('in-space').props)).toContain('--color-accent')
 })
 
 test('co-fighting fleets at ONE site stack their labels — two fights, two readable badges', () => {
@@ -550,7 +602,7 @@ test('co-fighting fleets at ONE site stack their labels — two fights, two read
     k: 1,
     nowMs: midMs,
   })
-  const fights = layer.elements.filter((e) => e.type === TeamCombatBadge)
+  const fights = layer.elements.filter((e) => (e.props as { state?: string }).state === 'in-combat')
   expect(fights).toHaveLength(2)
   expect(fights.map((e) => (e.props as { stack: number }).stack)).toEqual([0, 1])
 })
@@ -568,7 +620,10 @@ test('every badge is placed THROUGH the map projection — the layer never draws
     k: 1,
     nowMs: midMs,
   })
-  const badge = layer.elements.find((e) => e.type === TeamDockBadge)!.props as { x: number; y: number }
+  const badge = layer.elements.find((e) => (e.props as { state?: string }).state === 'docked')!.props as {
+    x: number
+    y: number
+  }
   expect({ x: badge.x, y: badge.y }).toEqual(project({ x: SLAG.x, y: SLAG.y }))
 })
 
@@ -582,7 +637,7 @@ test('the layer keeps unplaced fleets OUT of the world tree and hands them over 
     k: 1,
     nowMs: midMs,
   })
-  expect(layer.elements.filter((e) => e.type === TeamDockBadge)).toHaveLength(1)
+  expect(layer.elements.filter((e) => (e.props as { state?: string }).state === 'docked')).toHaveLength(1)
   expect(layer.unplaced.map((p) => p.groupId)).toEqual(['g2'])
   expect(layer.unplaced[0].at).toBeNull()
 })

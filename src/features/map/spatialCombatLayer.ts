@@ -47,6 +47,8 @@ import {
   type ShotSightings,
 } from './combatMotion'
 import { WORLD_TO_VIEWBOX_SCALE } from './openSpaceTransform'
+import { renderShipVisual } from './shipGlyph'
+import { SIDE_TONE, shipVisual } from './shipVisual'
 
 /** The minimal spatial view of a combat unit — the subset the layer projects. Any CombatUnit with a
  *  position satisfies it. Kept explicit so the pure resolver + spec don't depend on the full row. */
@@ -198,7 +200,10 @@ export function resolveFireLines(
   return out
 }
 
-const SIDE_COLOR = { player: 'var(--color-accent)', enemy: 'var(--color-danger)' } as const
+/** The side→token map, composed from the ONE table (map/shipVisual.SIDE_TONE) rather than re-typed
+ *  here. It is used for the fire lines, the rounds and the damage numbers as well as the ships, so it
+ *  keeps its local name — but there is one set of values, in one file. */
+const SIDE_COLOR = SIDE_TONE
 
 /** ONE HIT, ONE NUMBER — the RS3 hitsplat read. */
 export interface HitSplatView {
@@ -377,7 +382,9 @@ const SPLAT_LIFT_PX = 20
 /** Horizontal gap between two splats landing on the SAME hull in one tick — wide enough that two
  *  three-digit numbers never touch. */
 const SPLAT_FAN_GAP_PX = 26
-const GLYPH_PX = 7
+// GLYPH_PX is GONE. A ship's size is not this file's decision any more — map/shipVisual's ordered
+// band table owns it, and its ceiling (FLEET_SIZE_CAP_PX) is exactly the `7 × 1.35` this constant
+// used to produce, so nothing on screen got bigger than what shipped.
 const PIP_W_PX = 22
 const PIP_H_PX = 3.5
 const PIP_LIFT_PX = 13
@@ -440,26 +447,54 @@ export function spatialCombatLayer(args: {
 
   const out: ReactElement[] = []
 
-  // ── 1) Weapon RANGE rings (world-true, faint, under the glyphs) ──
+  // ── 1) THE REACH REGION — what this actor can actually shoot (world-true, faint, under the glyphs)
+  //
+  // THE OWNER: "the range circle, outer circle when fighting, did not even touch a fleet yet it shot."
+  //
+  // It was ONE circle on the fleet's drawn point (its elected LEAD) with the radius of the fleet's
+  // longest gun. The engine's fire gate measures EACH HULL from ITS OWN position, so on the owner's
+  // last live encounter — 4 hulls of range 5, six enemies at 3.20-6.86 from the lead — the drawn
+  // circle held 2 of 6 while all 6 were legitimately shootable. The lead sits a formation RADIUS
+  // back; its escorts sit on a CHORD and reach further forward than it does.
+  //
+  // The fix is not a bigger circle: the set the gate allows is the UNION of the hulls' own discs, and
+  // that is not circular. So the union is what is drawn — one disc per living hull
+  // (CombatActorView.reach), FILLED and composited under a single group opacity, which is what makes
+  // overlapping discs render as one flat region with no internal seams and no darkened laps. WHAT IS
+  // DRAWN IS NOW THE RULE: nothing inside the region is out of reach and nothing outside it can fire.
+  //
+  // An enemy is one hull, so its region degenerates to exactly the single circle it always had.
   for (const u of views) {
-    if (u.range == null) continue // no ranged weapon → no ring
-    const p = args.norm({ x: u.x, y: u.y })
-    const ringR = u.range * WORLD_TO_VIEWBOX_SCALE // world-true: viewBox units, NOT /k
+    const discs = u.reach.filter((r): r is { dx: number; dy: number; range: number } =>
+      typeof r.range === 'number' && Number.isFinite(r.range) && r.range > 0,
+    )
+    if (discs.length === 0) continue // nothing aboard reaches out → no region (honest: it cannot)
     const color = SIDE_COLOR[u.side]
     out.push(
-      createElement('circle', {
-        key: `spatial-range-${u.key}`,
-        'data-testid': `spatial-combat-range-${u.key}`,
-        cx: p.x,
-        cy: p.y,
-        r: ringR,
-        fill: 'none',
-        stroke: color,
-        strokeOpacity: 0.35,
-        strokeWidth: 1 / args.k,
-        strokeDasharray: `${3 / args.k} ${3 / args.k}`,
-        style: { pointerEvents: 'none' as const },
-      }),
+      createElement(
+        'g',
+        {
+          key: `spatial-range-${u.key}`,
+          'data-testid': `spatial-combat-range-${u.key}`,
+          'data-hulls': String(discs.length),
+          opacity: 0.14, // group-level: the discs union instead of stacking into hot spots
+          style: { pointerEvents: 'none' as const },
+        },
+        ...discs.map((d, i) => {
+          const p = args.norm({ x: u.x + d.dx, y: u.y + d.dy })
+          return createElement('circle', {
+            key: `reach-${i}`,
+            cx: p.x,
+            cy: p.y,
+            // world-true: viewBox units, NOT /k — a reach is a real distance and scales with zoom,
+            // the same idiom as the territory and mining rings.
+            r: d.range * WORLD_TO_VIEWBOX_SCALE,
+            fill: color,
+            fillOpacity: 1,
+            stroke: 'none',
+          })
+        }),
+      ),
     )
   }
 
@@ -490,9 +525,17 @@ export function spatialCombatLayer(args: {
     )
   }
 
-  // ── 3) ACTOR GLYPHS on top: ONE per player fleet, one per living enemy hull. Player = accent
-  // chevron, enemy = danger triangle (screen-constant /k), each under its own HULL PIP — a two-tone
-  // bar of the server's own hp columns, summed across the actor.
+  // ── 3) ACTOR GLYPHS on top: ONE per player fleet, one per living enemy hull, each under its own
+  // HULL PIP — a two-tone bar of the server's own hp columns, summed across the actor.
+  //
+  // THE SHAPE IS NOT DECIDED HERE. It used to be: two inline `points` strings, an up-pointing
+  // triangle for us and a down-pointing one for them, sized `px(7) × 1.35` for a fleet — while the
+  // map badge for that SAME fleet drew a `5/k` diamond in teamMarkers, and a docked one drew no glyph
+  // at all. One fleet, three appearances, three files. The owner: "the fleet shape changes when in a
+  // combat, and outside combat. I want it to be same." Both inline shapes are DELETED; the form, the
+  // size, the tone and the dimming now come from map/shipVisual and are drawn by the one renderer in
+  // map/shipGlyph, which the map badge calls too. The state can still add DECORATION — the pip below,
+  // the hull count, the badge's danger ring — but it cannot touch the ship.
   //
   // The pip exists because "am I winning?" needs a QUANTITY, and the fill-opacity dimming that used
   // to be the only cue is not one: a 30%-hull actor and a 60%-hull actor differ by a shade. The
@@ -503,14 +546,16 @@ export function spatialCombatLayer(args: {
   // aggregate counts its max and none of its current), and the count says it in words as well.
   for (const u of views) {
     const p = args.norm({ x: u.x, y: u.y })
-    const r = px(GLYPH_PX) * (u.kind === 'fleet' ? 1.35 : 1) // a fleet is a bigger thing than a hull
+    // THE one policy call. Bulk decides size, the hull id decides the form, the side decides the tone,
+    // and the fleet's own summed condition decides the dimming — all of it in map/shipVisual.
+    const visual = shipVisual({
+      typeId: u.typeId,
+      side: u.side,
+      kind: u.kind,
+      mass: u.mass,
+      hpFrac: u.hpFrac,
+    })
     const color = SIDE_COLOR[u.side]
-    // Enemy pirates point DOWN (inbound from centre); player ships point UP — a distinct silhouette at
-    // a glance, not just a hue. Health dims the fill (a battered actor reads as failing).
-    const points =
-      u.side === 'enemy'
-        ? `${p.x},${p.y + r} ${p.x + r},${p.y - r} ${p.x - r},${p.y - r}` // down-pointing triangle
-        : `${p.x},${p.y - r} ${p.x + r},${p.y + r} ${p.x - r},${p.y + r}` // up-pointing triangle
     const pipW = px(PIP_W_PX)
     const pipH = px(PIP_H_PX)
     const pipY = p.y - px(PIP_LIFT_PX)
@@ -525,16 +570,11 @@ export function spatialCombatLayer(args: {
           'data-hp-frac': u.hpFrac.toFixed(3),
           'data-ships': String(u.ships),
           'data-ships-alive': String(u.shipsAlive),
+          'data-type-id': u.typeId ?? '',
+          'data-size-px': String(visual.sizePx),
           style: { pointerEvents: 'none' as const },
         },
-        createElement('polygon', {
-          points,
-          fill: color,
-          fillOpacity: 0.35 + 0.55 * u.hpFrac, // battered = fainter
-          stroke: color,
-          strokeWidth: 1,
-          vectorEffect: 'non-scaling-stroke' as const,
-        }),
+        renderShipVisual(visual, { x: p.x, y: p.y, k: args.k, pxScale: scale }, 'hull'),
         // the empty track, then the remaining hull over it — no number, no math, just the fraction
         createElement('rect', {
           x: p.x - pipW / 2,
