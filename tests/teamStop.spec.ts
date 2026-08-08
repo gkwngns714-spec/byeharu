@@ -147,6 +147,7 @@ test('an UN-DRAWABLE in-flight fleet is STILL stoppable (the Stop must not inher
     positions: [
       {
         main_ship_id: 's1',
+        class: 'starter_frigate', // hull_type_id — all 77 live ships are this one
         place: 'transit',
         location_id: null,
         space_x: null,

@@ -5,6 +5,7 @@ import type { CombatUnit } from '../combat/combatTypes'
 import type { FleetEncounterLite } from '../combat/encounterAnchor'
 import { liveEncounterForFleet } from '../combat/encounterAnchor'
 import { resolveFleetFightPosition } from './fleetFightPosition'
+import { fleetFormHull, nominalFleetMass, shipVisual, type ShipVisual } from './shipVisual'
 import { interpolateMovementPoint } from './movementInterpolation'
 import { territoryAt } from './territoryAt'
 import { fleetLabel } from '../command/fleetLabel'
@@ -88,6 +89,20 @@ export interface FleetPresence {
   memberCount: number
   /** How many members the world could place. 0 ⇔ 'unplaced'. */
   placedCount: number
+  /** WHAT THIS FLEET LOOKS LIKE — the ONE descriptor (map/shipVisual), identical in every state.
+   *
+   *  The owner: "the fleet shape changes when in a combat, and outside combat. I want it to be same."
+   *  It is on the PRESENCE, not on the badge, for the same reason the position is: a fact resolved
+   *  once per fleet cannot differ between the surfaces that read it. The combat glyph asks shipVisual
+   *  with the fight's measured `hp_max`; this asks it with the hull catalog's `base_hp`, and
+   *  production says those are the same number (every live ship's `max_hp` is exactly 500, its hull's
+   *  base_hp) — which is how the two agree WITHOUT the map ever reading a ship's HP. */
+  visual: ShipVisual
+  /** true ⇔ the spatial combat layer is drawing this fleet's own ship at this exact point (its fight
+   *  is positioned and `resolveFleetFightPosition` answered a real hull). The badge then contributes
+   *  the danger ring and the label and NOT a second hull — one fleet, one glyph, and which layer owns
+   *  it is decided here rather than guessed twice. */
+  fightGlyph: boolean
 }
 
 /**
@@ -129,7 +144,14 @@ export type PresenceLocation = Pick<MapLocation, 'id' | 'name' | 'x' | 'y' | 'te
 /** get_my_fleet_positions carries the parked coordinate for the 'in_space' arm (the fleet-first read
  *  added by FLEET-GO 3c-3 and live in the deployed body). The row type is widened at its source
  *  (mainshipApi.FleetPosition); this alias documents what this module needs of it. */
-export type PositionRow = Pick<FleetPosition, 'main_ship_id' | 'place' | 'location_id' | 'segment' | 'space_x' | 'space_y'>
+export type PositionRow = Pick<
+  FleetPosition,
+  // `class` IS `hull_type_id` — already on the wire (mainshipApi.FleetPosition) and already fetched
+  // every poll; this Pick was the only thing dropping it, which is why a fleet's SHAPE was unknowable
+  // on the map and had to be a hard-coded diamond. Widening it is the whole cost of the fix: no new
+  // fetch, no server change, no read of `main_ship_hull_types` from the map.
+  'main_ship_id' | 'class' | 'place' | 'location_id' | 'segment' | 'space_x' | 'space_y'
+>
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
@@ -239,6 +261,21 @@ export function resolveFleetPresence(input: {
     const name = fleetLabel(g.name)
     const counts = `${placedCount}/${memberCount}`
 
+    // ── WHAT THIS FLEET LOOKS LIKE — resolved ONCE, before the state arms, so no arm can differ. ────
+    // Over EVERY member, not only the placed ones: a fleet is its ships, and a member the world cannot
+    // currently place has not stopped being part of it. `class` is the hull id the server already sent;
+    // the bulkiest hull speaks for the fleet's form and the summed catalog bulk sets its size — both
+    // through the ONE rule in map/shipVisual. No hpFrac is passed: there is no ship HP on this read
+    // and the map does not go and fetch one (FleetStatusPanel refuses that duplication for the same
+    // reason), so a fleet's badge is drawn undimmed and the condition read stays where it belongs.
+    const hulls = members.map((shipId) => ({ typeId: posByShip.get(shipId)?.class ?? null, key: shipId }))
+    const visual = shipVisual({
+      typeId: fleetFormHull(hulls),
+      side: 'player',
+      kind: 'fleet',
+      mass: nominalFleetMass(hulls.map((h) => h.typeId)),
+    })
+
     // ── PRECEDENCE: the strongest thing this fleet is doing decides where it is drawn. ────────────
     // A fight outranks everything (that is where the player's attention is); a leg outranks a park;
     // a park outranks a dock. Each arm below composes an EXISTING authority for its point.
@@ -273,6 +310,11 @@ export function resolveFleetPresence(input: {
           locationId: site?.id ?? null,
           memberCount,
           placedCount,
+          visual,
+          // The spatial combat layer draws this fleet's hull exactly when this same authority answered
+          // a real one ('unit'); on the fallback arm the fight is aggregate/unpositioned, nothing is
+          // drawn there, and the badge carries the ship itself.
+          fightGlyph: at.source === 'unit',
         })
         continue
       }
@@ -290,6 +332,8 @@ export function resolveFleetPresence(input: {
         locationId: null,
         memberCount,
         placedCount,
+        visual,
+        fightGlyph: false,
       })
       continue
     }
@@ -305,6 +349,8 @@ export function resolveFleetPresence(input: {
         locationId: null,
         memberCount,
         placedCount,
+        visual,
+        fightGlyph: false,
       })
       continue
     }
@@ -322,6 +368,8 @@ export function resolveFleetPresence(input: {
         locationId: docked.locationId,
         memberCount,
         placedCount,
+        visual,
+        fightGlyph: false,
       })
       continue
     }
@@ -336,6 +384,8 @@ export function resolveFleetPresence(input: {
       locationId: null,
       memberCount,
       placedCount,
+      visual,
+      fightGlyph: false,
     })
   }
   // Deterministic output order (the groups read is slot-ordered, but pin it anyway).

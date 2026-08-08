@@ -1,11 +1,10 @@
 import { test, expect } from '@playwright/test'
 import { resolveFleetFightPosition } from '../src/features/map/fleetFightPosition'
 import { resolveCombatActors } from '../src/features/map/combatActors'
-import { resolveFleetPresence } from '../src/features/map/fleetPresence'
+import { resolveFleetPresence, type PositionRow } from '../src/features/map/fleetPresence'
 import type { CombatUnit } from '../src/features/combat/combatTypes'
 import type { FleetEncounterLite } from '../src/features/combat/encounterAnchor'
 import type { GroupRow, ShipGroupMapEntry } from '../src/features/command/teamRoster'
-import type { FleetPosition } from '../src/features/map/mainshipApi'
 
 // WHERE IS THIS FLEET WHILE IT FIGHTS — pure specs for the ONE shared rule. No I/O, no clock.
 //
@@ -497,9 +496,10 @@ test('STABILITY: the lead arm is a pure function of the rows, and order is not a
 // this spec is what stops a future change giving either caller a rule of its own.
 const G1: GroupRow = { group_id: 'g1', group_index: 1, name: 'Alpha' }
 const MEMBERSHIP: Record<string, Pick<ShipGroupMapEntry, 'group_id'>> = { s1: { group_id: 'g1' } }
-const PARKED: Pick<FleetPosition, 'main_ship_id' | 'place' | 'location_id' | 'segment' | 'space_x' | 'space_y'> = {
+const PARKED: PositionRow = {
   main_ship_id: 's1',
   place: 'in_space',
+  class: 'starter_frigate', // hull_type_id — all 77 live ships are this one
   location_id: null,
   segment: null,
   space_x: RESTING.x,
