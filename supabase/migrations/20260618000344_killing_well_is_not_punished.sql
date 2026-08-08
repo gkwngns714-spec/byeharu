@@ -146,9 +146,11 @@
 --      payout authority beside the site's reward_tier.
 --   7  The next_wave_at pause on both arms: it paced a thing that no longer happens.
 --   8  Both calls to pirate_loot_for_wave, and its depth ladder as an engine input.
---   9  Five game_config rows that nothing reads after this: enemy_hp_danger_scale,
---      enemy_attack_danger_scale, reward_danger_scale, danger_time_divisor_seconds,
---      enemy_synthetic_max_units. A live knob that gates nothing is a liability — 0320's finding.
+--   9  Four game_config rows that nothing reads after this: enemy_hp_danger_scale,
+--      enemy_attack_danger_scale, reward_danger_scale and danger_time_divisor_seconds. A live
+--      knob that gates nothing is a liability — 0320's finding. NOT enemy_synthetic_max_units:
+--      resolve_location_encounter still reads it as its authored-plan ceiling, so only the TICK's
+--      read of it is deleted (asserted 0). See section 4.
 --  10  The write of combat_encounters.danger_level. The column stops carrying a meaning here and
 --      is dropped by 0349 (the contract's own sequencing). Until then both arms write the
 --      constant 1 rather than leaving a stale escalation number on a live row.
@@ -214,9 +216,9 @@
 --      file, verbatim, in the VALUES list — nothing has to be reconstructed from a dump or from an
 --      older migration file (copying from an older FILE is what reverted this function's mode line
 --      three times; the tick's own header records it).
---   2. Re-insert the five game_config rows deleted in section 4, at their pre-0344 values:
---      enemy_hp_danger_scale 0.6, enemy_attack_danger_scale 0.25, reward_danger_scale 0.25,
---      danger_time_divisor_seconds 180, enemy_synthetic_max_units 6; and set reward_metal_base
+--   2. Re-insert the four game_config rows deleted in section 4, at their pre-0344 values:
+--      enemy_hp_danger_scale 0.6, enemy_attack_danger_scale 0.25, reward_danger_scale 0.25 and
+--      danger_time_divisor_seconds 180; and set reward_metal_base
 --      back to 10. (Their absence is what makes the coalesce fallbacks in the OLD body correct
 --      again, so the order does not matter — but the metal knob does, and it is one write.)
 --   3. drop function public.combat_pressure_step(uuid, integer, double precision, double
@@ -367,7 +369,7 @@
 -- this file's own hunk banners name the very identifiers being asserted absent — the 0222 vacuity
 -- trap, in reverse. Each block proves its probe is live BEFORE it concludes anything from a zero.
 --   (a) THE CLASS GUARD. In the tick: v_danger appears ZERO times; e.waves_cleared appears ZERO
---       times (a READ of the kill count is what D3 forbids); the five danger knobs appear zero
+--       times (a READ of the kill count is what D3 forbids); all five danger-knob NAMES appear zero
 --       times; pirate_loot_for_wave and resolve_encounter_reward_inputs appear zero times. It
 --       CANNOT pass vacuously: the same block first requires the two waves_cleared WRITE
 --       statements to be present exactly twice and the stripped body to exceed 40,000 chars and be
@@ -393,7 +395,7 @@
 --       every location_pressure row has a positive cadence and a cap >= 1; every seeded loot row
 --       names an item_types row.
 --   (g) NOTHING DARK: no game_config key exists for this slice — asserted ABSENT, not promised —
---       the five danger knobs are GONE, and reward_metal_base is 20.
+--       the four now-unread danger knobs are GONE, and reward_metal_base is 20.
 --   (h) THE NEW SURFACES ARE ENGINE-INTERNAL: both leaves revoked from PUBLIC BY NAME (the 0309
 --       lesson) and from anon and authenticated, then asserted unreachable; both new tables carry
 --       no client INSERT/UPDATE/DELETE.
@@ -644,12 +646,24 @@ values ('reward_metal_base', '20'::jsonb,
 on conflict (key) do update
   set value = excluded.value, description = excluded.description, updated_at = now();
 
--- THE FIVE ROWS NOTHING READS ANY MORE. A live knob that gates nothing is not harmless: it is a
--- thing a later slice will find, believe, and wire to something. 0320 deleted eight of these for
--- the same reason. Their absence is asserted in (g), not promised.
+-- THE FOUR ROWS NOTHING READS ANY MORE. A live knob that gates nothing is not harmless: it is a
+-- thing a later slice will find, believe, and wire to something. 0320 deleted eight for the same
+-- reason. Their absence is asserted in (g), not promised.
+--
+-- ⛔ enemy_synthetic_max_units IS DELIBERATELY *NOT* IN THIS LIST, and the reason is a correction
+-- to this file's own first draft. It was originally deleted here as a fifth dead knob. It is NOT
+-- dead: public.resolve_location_encounter still reads it as the ceiling that trims an AUTHORED
+-- plan — `v_ceiling := greatest(1, coalesce(cfg_num('enemy_synthetic_max_units'), 6)::integer)`
+-- (0260:290, re-created 0261:190 and 0272:270) — and that function is not touched by this slice.
+-- Deleting the row would leave that clamp on its coalesce fallback of 6, which is invisible if
+-- production still holds 6 and a SILENT ceiling change if production has drifted off it. I cannot
+-- read production from here, so the safe act is to leave the row alone: this slice's requirement is
+-- that the TICK stops reading it, and assert (a) proves exactly that (0 occurrences in the tick).
+-- scripts/elite-stat-wiring-proof.sql:391 also WRITES this key to establish that clamp as its own
+-- precondition — deleting a row a proof owns is the harness-vs-drop trap that cost 0232.
 delete from public.game_config
  where key in ('enemy_hp_danger_scale', 'enemy_attack_danger_scale', 'reward_danger_scale',
-               'danger_time_divisor_seconds', 'enemy_synthetic_max_units');
+               'danger_time_divisor_seconds');
 
 
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1601,10 +1615,14 @@ begin
     from public.game_config
    where key ilike '%pressure_step%' or key ilike '%killing_well%' or key ilike '%reinforcement%'
       or key in ('enemy_hp_danger_scale', 'enemy_attack_danger_scale', 'reward_danger_scale',
-                 'danger_time_divisor_seconds', 'enemy_synthetic_max_units');
+                 'danger_time_divisor_seconds');
   if v_keys <> '' then
-    raise exception '0344 ASSERT (g) FAIL: game_config still carries (%). 0344 ships NO flag of its own, and the five danger knobs it deletes must be gone — a knob that could restore kill escalation is the adapter this slice exists to delete', v_keys;
+    raise exception '0344 ASSERT (g) FAIL: game_config still carries (%). 0344 ships NO flag of its own, and the four now-unread danger knobs must be gone — a knob that could restore kill escalation is the adapter this slice exists to delete', v_keys;
   end if;
+  -- enemy_synthetic_max_units is deliberately NOT swept: it survives as resolve_location_encounter's
+  -- authored-plan ceiling (see section 4). What matters for D3 is that the TICK no longer reads it,
+  -- which assert (a) proves at 0 occurrences. Asserting the ROW absent here would delete a live
+  -- clamp's only tuning point to make a slogan true.
   select value into v_metal from public.game_config where key = 'reward_metal_base';
   if v_metal is null or (v_metal #>> '{}')::double precision <> 20 then
     raise exception '0344 ASSERT (g) FAIL: reward_metal_base is % (want 20) — the measured compensation for deleting the danger term from the payout was not applied, and this slice would halve the metal faucet for every live player', coalesce(v_metal::text, 'absent');
@@ -1647,5 +1665,5 @@ begin
   if v_bad is not null then
     raise exception '0344 ASSERT (h) FAIL: a client can write the pressure or loot content: %. Content is authored by the owner, never by a player', v_bad;
   end if;
-  raise notice '0344 self-assert ok: KILLING WELL IS NOT PUNISHED. The tick READS e.waves_cleared ZERO times and names v_danger ZERO times; the body-count sizer greatest(1, v_danger), both (1 + v_danger * scale) HP factors, both attack factors, the reward_danger_scale multiplier, both pirate_loot_for_wave calls, the resolved-plan reward branch and the five danger knobs are all GONE, and the two conditions that were the arrow from a death to a spawn ("if v_e_before <= 0 then", "if e.enemy_integrity_current <= 0 then") occur ZERO times. Pressure now comes from exactly ONE function — public.combat_pressure_step, proved by a schema sweep whose probe had to match the authority itself first — which reads the SITE row, the CLOCK and the FIELD, names waves_cleared / wave_number / danger / secs_inside ZERO times, contains NO loop (so a suppressed arrival is lost and can never be banked and released by a death), advances its clock past every elapsed slot in exactly one skip-forward expression, and is the only writer of combat_encounters.next_reinforcement_at in the database. Cadence and cap are ROWS — Snare 45s/cap 3, Reaver 36s/cap 4, Blackden 30s/cap 6, asserted by name against the measured profile — never computed from base_difficulty. Loot is a fixed per-enemy value from 10 authored location_loot rows plus reward_metal_base x reward_tier, with reward_metal_base raised 10 -> 20 as the measured income compensation. Every fight in flight was given a full cadence of grace, and an unstamped row is due at started_at, so no encounter can reach a state the new clock cannot resolve. NO feature flag, NO game_config key of this slice''s own (asserted ABSENT); both new leaves revoked from PUBLIC BY NAME and unreachable by anon and authenticated; both new content tables carry no client INSERT/UPDATE/DELETE; and the whole tick is production''s own bytes with eleven marked hunks and nothing else changed.';
+  raise notice '0344 self-assert ok: KILLING WELL IS NOT PUNISHED. The tick READS e.waves_cleared ZERO times and names v_danger ZERO times; the body-count sizer greatest(1, v_danger), both (1 + v_danger * scale) HP factors, both attack factors, the reward_danger_scale multiplier, both pirate_loot_for_wave calls, the resolved-plan reward branch and the four now-unread danger knobs are all GONE, and the two conditions that were the arrow from a death to a spawn ("if v_e_before <= 0 then", "if e.enemy_integrity_current <= 0 then") occur ZERO times. Pressure now comes from exactly ONE function — public.combat_pressure_step, proved by a schema sweep whose probe had to match the authority itself first — which reads the SITE row, the CLOCK and the FIELD, names waves_cleared / wave_number / danger / secs_inside ZERO times, contains NO loop (so a suppressed arrival is lost and can never be banked and released by a death), advances its clock past every elapsed slot in exactly one skip-forward expression, and is the only writer of combat_encounters.next_reinforcement_at in the database. Cadence and cap are ROWS — Snare 45s/cap 3, Reaver 36s/cap 4, Blackden 30s/cap 6, asserted by name against the measured profile — never computed from base_difficulty. Loot is a fixed per-enemy value from 10 authored location_loot rows plus reward_metal_base x reward_tier, with reward_metal_base raised 10 -> 20 as the measured income compensation. Every fight in flight was given a full cadence of grace, and an unstamped row is due at started_at, so no encounter can reach a state the new clock cannot resolve. NO feature flag, NO game_config key of this slice''s own (asserted ABSENT); both new leaves revoked from PUBLIC BY NAME and unreachable by anon and authenticated; both new content tables carry no client INSERT/UPDATE/DELETE; and the whole tick is production''s own bytes with eleven marked hunks and nothing else changed.';
 end $h$;
