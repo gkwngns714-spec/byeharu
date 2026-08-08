@@ -1948,15 +1948,31 @@ end $$;
 --   THRESHOLD (rate 1) — wave 1 stays scrap-only at ANY rate (the wave >= 2 gate — the live
 --            verify-phase5 `wave 1 → scrap only` exact pin must never go flaky post-flip);
 --   DEEP SHAPE (rate 1) — wave 10 == the legacy bundle || the one shard.
--- The rate is then LEFT at 1 (in-txn only; ROLLBACK reverts) so TEAMSETTLE's real won encounter
--- below carries a shard END-TO-END through the unchanged bundle path.
+-- Both endpoints are SET by this block (0344) rather than inherited: see the note at the rate-0 pin.
+-- The rate is then LEFT at 1 (in-txn only; ROLLBACK reverts) because SHIPYARD-0 below depends on that
+-- exact carry for its own bundle shapes. It no longer reaches a FIGHT: 0344 deletes the tick's two
+-- calls to pirate_loot_for_wave, so this is a direct unit test of a function with no caller left, and
+-- the faucet it gates now lives in public.location_loot.drop_chance.
 do $$
 declare v_legacy jsonb; v_got jsonb; n int;
 begin
-  -- the committed knob seed is 0 (dark) — the migration's inert-by-default posture.
-  if (select value #>> '{}' from public.game_config where key = 'captain_shard_drop_rate') is distinct from '0' then
-    raise exception 'SHARDDROP FAIL: committed captain_shard_drop_rate is % (want 0 — the 0171 dark seed)',
-      (select value #>> '{}' from public.game_config where key = 'captain_shard_drop_rate'); end if;
+  -- ██ (0344) THIS BLOCK OWNS BOTH ENDPOINTS NOW — IT USED TO ASSERT A SEEDED WORLD ██
+  -- IT READ: `the committed captain_shard_drop_rate is '0' — the 0171 dark seed`, and then tested the
+  -- rate-0 behaviour against a value it had never written. That is asserting a WORLD rather than a
+  -- property (proofs-never-assert-ambient-defaults), and it only ever passed because nothing had
+  -- changed the row. 0344 changes it: the faucet MOVED to public.location_loot.drop_chance, its rate
+  -- copied across from this very knob at apply time, and the knob is then DELETED because after this
+  -- slice pirate_loot_for_wave has no caller and a knob controlling nothing is the liability the same
+  -- migration deletes four others for. cfg_num on a deleted key returns NULL, so the assert failed on
+  -- a CORRECT chain — the same shape SHIPYARD-0 below already learned from 0300 in 2026-07-27.
+  -- IT NOW SETS what it tests, at BOTH deterministic endpoints, and verifies the write LANDED.
+  -- set_game_config UPSERTS, so it establishes the value whether or not the row survived this slice —
+  -- which a bare `update ... where key = ...` would not: on a deleted row that is a silent no-op that
+  -- establishes nothing and leaves the block passing on the function's own coalesce fallback.
+  perform public.set_game_config('captain_shard_drop_rate', '0'::jsonb);
+  if public.cfg_num('captain_shard_drop_rate') is distinct from 0 then
+    raise exception 'SHARDDROP FAIL: the in-txn rate-0 precondition did not take (cfg_num reads %) — every rate-0 pin below would be measuring the function''s coalesce fallback instead of a value this block set',
+      public.cfg_num('captain_shard_drop_rate'); end if;
 
   -- PARITY at rate 0: byte-identical to the proof's OWN independently-built 0041 bundle (the
   -- head's exact append order), deep wave and wave 1.
@@ -2488,9 +2504,15 @@ begin
   -- ★ security-shaped property), so it now SETS the flag dark in-txn like every other scenario in this
   -- ★ file, and the lit accrual below flips it back on exactly as it always did.
   update public.game_config set value='false'::jsonb where key='captain_growth_enabled';
-  if (select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant') is distinct from '10' then
-    raise exception 'CAPXP FAIL: committed captain_xp_per_combat_grant is % (want 10 — the 0177 knob seed)',
-      (select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant'); end if;
+  -- (0344 sweep) OWNED, NOT INHERITED. This asserted the committed 0177 seed of 10 and then did its
+  -- accrual arithmetic against a number it had never written — the same class that broke SHARDDROP
+  -- above the moment a migration legitimately changed a row. The row still EXISTS (nothing in this
+  -- slice touches it) and that is still worth pinning, because a vanished knob means 0177's owner
+  -- changed shape; what is NOT asserted any more is its VALUE, which this block now sets for itself.
+  -- The value written is the seeded 10, so no other block's arithmetic moves.
+  if not exists (select 1 from public.game_config where key = 'captain_xp_per_combat_grant') then
+    raise exception 'CAPXP FAIL: the captain_xp_per_combat_grant row does not exist — 0177 owns that knob and this block composes it, so its absence is a real change and not something to paper over with a default'; end if;
+  perform public.set_game_config('captain_xp_per_combat_grant', '10'::jsonb);
 
   -- additive defaults: every instance (the C0/D0/D2 fixtures included) sits at xp 0 / level 1.
   select count(*) into n from public.captain_instances where xp <> 0 or level <> 1;
@@ -2643,10 +2665,14 @@ declare s_on jsonb; s_off jsonb; b_on jsonb; b_off jsonb; n int;
   c1 uuid := (select v from tcmd where k='c1'); b1 uuid := (select v from tcmd where k='b1');
   v_knob numeric; v_hull numeric; v_cap numeric; v_lvl numeric;
 begin
-  -- committed seed (nothing in-txn has touched this key): the 0180 knob at 0.10.
-  if (select value #>> '{}' from public.game_config where key = 'captain_level_bonus_per_level') is distinct from '0.10' then
-    raise exception 'CAPLEVEL FAIL: committed captain_level_bonus_per_level is % (want ''0.10'' — the 0180 knob seed)',
-      (select value #>> '{}' from public.game_config where key = 'captain_level_bonus_per_level'); end if;
+  -- (0344 sweep) OWNED, NOT INHERITED. This asserted the committed 0180 seed of 0.10 — a seeded
+  -- WORLD, and the same class that broke SHARDDROP above. It was also the weakest link in this block
+  -- by construction: every number below already DERIVES from v_knob, so the literal was buying
+  -- nothing the derivation did not already give. The row's existence is still pinned (a vanished knob
+  -- means 0180's owner changed shape); the value is set here and then read back into the derivation.
+  if not exists (select 1 from public.game_config where key = 'captain_level_bonus_per_level') then
+    raise exception 'CAPLEVEL FAIL: the captain_level_bonus_per_level row does not exist — 0180 owns that knob and every expectation in this block derives from it'; end if;
+  perform public.set_game_config('captain_level_bonus_per_level', '0.10'::jsonb);
   v_knob := public.cfg_num('captain_level_bonus_per_level');
 
   -- FIXTURE REPAIR (CI 2026-07-12): the TEAMHUNT degrade case zeroed b1's captain_slots mid-flight
@@ -3049,7 +3075,18 @@ begin
   -- ★ asserting the committed seeds failed on a correct chain. The inert BEHAVIOUR is what this block
   -- ★ proves, and both keys are reversible, so the arm establishes its own precondition in-txn.
   update public.game_config set value='false'::jsonb where key='shipyard_enabled';
-  update public.game_config set value='0'::jsonb     where key='blueprint_fragment_drop_rate';
+  -- ██ (0344) THIS ONE WRITE HAD TO CHANGE FORM, AND THE REASON IS THE WHOLE DISEASE ██
+  -- It was `update public.game_config set value='0' where key='blueprint_fragment_drop_rate'`. 0344
+  -- DELETES that row (the fragment faucet moved to public.location_loot.drop_chance at Blackden, its
+  -- rate copied across from this knob), and an UPDATE against a row that is not there matches ZERO
+  -- rows, raises nothing, and establishes NOTHING. The rate-0 parity pins below would then have gone
+  -- green off pirate_loot_for_wave's own `coalesce(cfg_num(...), 0)` fallback rather than off a
+  -- precondition this block set — a pass for the wrong reason, which is worse than a red.
+  -- set_game_config UPSERTS, so it lands whether or not the row survived, and the write is VERIFIED.
+  perform public.set_game_config('blueprint_fragment_drop_rate', '0'::jsonb);
+  if public.cfg_num('blueprint_fragment_drop_rate') is distinct from 0 then
+    raise exception 'SHIPYARD0 FAIL: the in-txn rate-0 blueprint precondition did not take (cfg_num reads %) — the parity pins below would be reading the function''s coalesce fallback, not a value this block established',
+      public.cfg_num('blueprint_fragment_drop_rate'); end if;
   -- the SHARDDROP fixture carry this block's exact bundles depend on (see header).
   if public.cfg_num('captain_shard_drop_rate') is distinct from 1 then
     raise exception 'SHIPYARD0 FAIL: in-txn captain_shard_drop_rate is % (want 1 — the SHARDDROP block''s fixture carry)',
@@ -3334,13 +3371,21 @@ declare r jsonb; n int; uS uuid; s1 uuid;
   v_hp_before integer; v_maxhp_before integer; v_hp_after integer; v_maxhp_after integer;
   v_shield integer; v_src text; v_val text;
 begin
-  -- ── committed knob seeds: both '0', asserted, never touched ──────────────────────────────────
+  -- ── (0344 sweep) BOTH REGEN KNOBS ARE SET INERT HERE, NOT ASSERTED INERT ─────────────────────
+  -- This read the committed 0191 seeds and required both to be '0'. That is asserting a WORLD: the
+  -- inert BEHAVIOUR below is the property, and it was resting on a value this block never wrote —
+  -- exactly what broke SHARDDROP above when 0344 legitimately removed a row, and exactly what 0300
+  -- did to SHIPYARD-0 in 2026-07-27. Both rows must still EXIST (a vanished knob means 0191's owner
+  -- changed shape) and both are then set to the inert 0 this block's pins need. The value written is
+  -- the seeded one, so nothing downstream — NANGUARD's entry posture included — moves.
   select value #>> '{}' into v_val from public.game_config where key = 'shield_regen_combat_pct';
-  if v_val is distinct from '0' then
-    raise exception 'SHIELD0 FAIL: committed shield_regen_combat_pct is % (want ''0'' — the 0191 dark seeds)', coalesce(v_val, '<missing>'); end if;
+  if v_val is null then
+    raise exception 'SHIELD0 FAIL: the shield_regen_combat_pct row does not exist — 0191 owns that knob and this block proves its inert behaviour'; end if;
   select value #>> '{}' into v_val from public.game_config where key = 'shield_regen_idle_pct';
-  if v_val is distinct from '0' then
-    raise exception 'SHIELD0 FAIL: committed shield_regen_idle_pct is % (want ''0'' — the 0191 dark seeds)', coalesce(v_val, '<missing>'); end if;
+  if v_val is null then
+    raise exception 'SHIELD0 FAIL: the shield_regen_idle_pct row does not exist — 0191 owns that knob and this block proves its inert behaviour'; end if;
+  perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);
+  perform public.set_game_config('shield_regen_idle_pct',   '0'::jsonb);
 
   -- ── schema shape pins: the 3 integer default-0 columns, the 2 nullable no-default snapshot
   --    columns, the 5 named CHECKs (incl. the member-only pairing), the regen partial index ─────
@@ -3997,10 +4042,14 @@ declare s0 jsonb; s1 jsonb; m0 jsonb; m1 jsonb; n int; r jsonb;
   v_hull numeric; v_base_sum numeric; v_match numeric; v_hullx numeric; v_capx numeric;
   v_src text;
 begin
-  -- committed seed (nothing in-txn has touched this key — this block is its only toucher): '0'.
-  if (select value #>> '{}' from public.game_config where key = 'station_affinity_bonus') is distinct from '0' then
-    raise exception 'DECKS3 FAIL: committed station_affinity_bonus is % (want ''0'' — the 0196 affinity seed)',
-      (select value #>> '{}' from public.game_config where key = 'station_affinity_bonus'); end if;
+  -- (0344 sweep) OWNED, NOT INHERITED. This asserted the committed 0196 seed of '0' before doing its
+  -- knob-0 baseline — a seeded WORLD, and the same class that broke SHARDDROP above. The row must
+  -- still exist (a vanished knob means 0196's owner changed shape); the inert value this block's
+  -- baseline needs is now written by this block. It is the seeded value, so the restore at the end of
+  -- this block still hands NANGUARD the same posture it has always seen.
+  if not exists (select 1 from public.game_config where key = 'station_affinity_bonus') then
+    raise exception 'DECKS3 FAIL: the station_affinity_bonus row does not exist — 0196 owns that knob and this block is its only toucher'; end if;
+  perform public.set_game_config('station_affinity_bonus', '0'::jsonb);
 
   -- preconditions: growth lit (the CAPLEVEL exit posture — the composition arm needs a real level
   -- multiplier), traits dark (SOUL1's exit posture — exact decomposition needs the fold skipped),

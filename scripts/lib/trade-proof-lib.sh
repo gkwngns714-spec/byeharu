@@ -120,6 +120,30 @@ $hit
   block passes over a precondition it never set). Re-premise it on public.location_pressure — a cadence
   and a concurrent cap, per site — and on combat_encounters.next_reinforcement_at."
   done
+  # ── (0344) THE TWO FAUCET RATES: READABLE ONLY BY A BLOCK THAT WROTE THEM ───────────────────────
+  # 0344 also deletes captain_shard_drop_rate and blueprint_fragment_drop_rate. They are NOT in the
+  # loop above, because unlike the four danger knobs a proof may legitimately WRITE them: both gate
+  # public.pirate_loot_for_wave, which 0344 leaves standing (its retirement is 0350's, and two
+  # activation scripts still read its prosrc), so the direct unit tests of that function must set the
+  # rate they exercise. What is forbidden is READING one as though it were still authored.
+  # THIS IS THE EXACT REGRESSION THAT REDDENED THE MATRIX: SHARDDROP asserted
+  # `the committed captain_shard_drop_rate is '0' — the 0171 dark seed` and went red on a CORRECT
+  # chain the moment the row was deleted; SHIPYARD-0 closed its faucet with a bare
+  # `update ... where key = ...`, which matches ZERO rows once the row is gone, established NOTHING,
+  # and would have gone GREEN off the function's own coalesce fallback. A silent green is the worse
+  # of the two. The rule below is file-scoped and therefore has no false positives: read it only if
+  # you also write it. set_game_config UPSERTS; a bare UPDATE does not, so the write must be that form.
+  for k in captain_shard_drop_rate blueprint_fragment_drop_rate; do
+    reads="$(sed -E 's/--.*//' "$sql" | grep -nE "cfg_num\('$k'\)|where key *= *'$k'" || true)"
+    [ -z "$reads" ] && continue
+    grep -qF "set_game_config('$k'" "$sql" || fail "$(basename "$sql") READS the game_config key '$k' without ever writing it:
+$reads
+  0344 deletes that row — the faucet moved to public.location_loot.drop_chance, its rate copied across
+  from this very knob at apply time — so a read inherits pirate_loot_for_wave's own coalesce fallback
+  instead of an authored value. A block that tests behaviour at a given rate must SET that rate through
+  public.set_game_config (which UPSERTS, so it lands whether or not the row survived) and then verify
+  the write took. A bare 'update ... where key = ...' matches zero rows and establishes nothing."
+  done
   hit="$(sed -E 's/--.*//' "$sql" | grep -nE 'v_danger|1[[:space:]]*\+[[:space:]]*(e\.)?waves_cleared' || true)"
   [ -z "$hit" ] || fail "$(basename "$sql") still evaluates the DELETED kill-escalation term in executable SQL:
 $hit

@@ -352,8 +352,18 @@ if [ "$MODE" = "selftest" ]; then
   #    them in prose cannot false-green): committed seed 0; rate-0 byte-parity with the 0041
   #    bundle; the knob raised via the REAL set_game_config; rate-1 wave-2 exactly-one-shard +
   #    the wave-1 threshold; and the end-to-end carry (bundle + player_inventory deposit). ─────────
-  grep -qF "(want 0 — the 0171 dark seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed captain_shard_drop_rate seed is 0"
+  # ── 0344 SWEEP: NO PROOF BLOCK MAY ASSERT A COMMITTED game_config SEED ──────────────────────────
+  # Six blocks in this file read a knob they had never written and required it to equal a literal —
+  # "the 0171 dark seed", "the 0177 knob seed", and so on. That is asserting a WORLD, not a property.
+  # It went red on a CORRECT chain the moment 0344 legitimately deleted captain_shard_drop_rate, and
+  # SHIPYARD-0 had already been bitten the same way by 0300 in 2026-07-27. Each block now SETS what it
+  # tests through the real set_game_config (which UPSERTS, so it cannot silently no-op on a row a
+  # migration removed — a bare `update ... where key = ...` can, and did) and pins that the row still
+  # EXISTS, which is the part that is genuinely a property rather than a world. The pins below follow.
+  grep -qF "perform public.set_game_config('captain_shard_drop_rate', '0'::jsonb)" "$SQL" \
+    || fail "SHARDDROP no longer SETS its rate-0 endpoint — it must not go back to asserting the committed 0171 seed, which 0344 deletes; a block that tests rate-0 behaviour has to establish rate 0"
+  grep -qF "the in-txn rate-0 precondition did not take" "$SQL" \
+    || fail "SHARDDROP does not VERIFY its rate-0 write landed — set_game_config upserts, but a future edit back to a bare UPDATE would silently establish nothing and the pins would pass on the function's own coalesce fallback"
   grep -qF "rate-0 loot diverges from the legacy 0041 bundle" "$SQL" \
     || fail "harness does not ASSERT rate-0 byte-parity with the 0041 loot bundle"
   grep -qF "set_game_config('captain_shard_drop_rate', '1'::jsonb)" "$SQL" \
@@ -403,8 +413,10 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not set captain_growth_enabled dark in-txn before the reject-before-read arm"
   grep -qF "CAPXP FAIL dark:" "$SQL" \
     || fail "harness does not ASSERT the dark reject-before-read envelope"
-  grep -qF "(want 10 — the 0177 knob seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed captain_xp_per_combat_grant seed is 10"
+  grep -qF "perform public.set_game_config('captain_xp_per_combat_grant', '10'::jsonb)" "$SQL" \
+    || fail "CAPXP no longer SETS the grant it accrues against — it must not go back to asserting the committed 0177 seed"
+  grep -qF "the captain_xp_per_combat_grant row does not exist" "$SQL" \
+    || fail "CAPXP does not pin that 0177's knob ROW still exists (the part that is a property rather than a world — a vanished knob means its owner changed shape)"
   grep -qF "CAPXP FAIL dark:" "$SQL" \
     || fail "harness does not ASSERT the dark accrual no-op envelope"
   grep -qF "dark run left % ledger row(s) (want 0)" "$SQL" \
@@ -437,8 +449,10 @@ if [ "$MODE" = "selftest" ]; then
   #    level-2 fixture; the exact-bonus compare (baseline + knob × Σ(level-1)×attack); the
   #    dark-at-level-2 absolute baseline (hull + Σ captain attack); the only-combat_power-moves
   #    isolation pin; the flag-on-at-level-1 byte-identity; and the real-bonus (never 0=0) guard. ──
-  grep -qF "(want ''0.10'' — the 0180 knob seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed captain_level_bonus_per_level seed is 0.10"
+  grep -qF "perform public.set_game_config('captain_level_bonus_per_level', '0.10'::jsonb)" "$SQL" \
+    || fail "CAPLEVEL no longer SETS the per-level bonus its expectations derive from — it must not go back to asserting the committed 0180 seed"
+  grep -qF "the captain_level_bonus_per_level row does not exist" "$SQL" \
+    || fail "CAPLEVEL does not pin that 0180's knob ROW still exists"
   grep -qF "s_on := public.calculate_expedition_stats(uC, c1, '[]'::jsonb, 'none')" "$SQL" \
     || fail "harness does not call the adapter directly on the level-2 fixture (lit arm)"
   grep -qF "(s_off->>'combat_power')::numeric + round(v_knob * v_lvl, 2)" "$SQL" \
@@ -523,8 +537,13 @@ if [ "$MODE" = "selftest" ]; then
   # 0300 lit shipyard_enabled and opened the faucet to 0.15, so the inert arm sets both dark in-txn.
   grep -qF "update public.game_config set value='false'::jsonb where key='shipyard_enabled';" "$SQL" \
     || fail "harness does not set shipyard_enabled dark in-txn before its inert arm"
-  grep -qF "where key='blueprint_fragment_drop_rate';" "$SQL" \
-    || fail "harness does not close the blueprint faucet in-txn before its inert arm"
+  # 0344 deletes this row (the fragment faucet moved to location_loot.drop_chance), so the old bare
+  # `update ... where key=...` matched ZERO rows and established nothing while the parity pins went
+  # green off the function's coalesce fallback. It must be an UPSERT, and it must be verified.
+  grep -qF "perform public.set_game_config('blueprint_fragment_drop_rate', '0'::jsonb)" "$SQL" \
+    || fail "harness does not close the blueprint faucet in-txn through set_game_config — a bare UPDATE cannot land on a row 0344 deletes, and the rate-0 parity pins would then pass on a coalesce fallback rather than on an established precondition"
+  grep -qF "the in-txn rate-0 blueprint precondition did not take" "$SQL" \
+    || fail "SHIPYARD-0 does not VERIFY its blueprint rate-0 write landed"
   grep -viE '^[[:space:]]*--' "$SQL" \
     | grep -qE "set value='true'::jsonb where key='shipyard_enabled'" \
     && fail "harness flips shipyard_enabled (must stay dark even in-txn — no shipyard RPC exists to exercise)" || true
@@ -609,7 +628,7 @@ if [ "$MODE" = "selftest" ]; then
   #    the exact schema-shape pins; the total-inertness pins; the leaf smoke (floor/ceiling/
   #    in-range clamps, missing-ship zero rows, the shield_le_max CHECK probe) and the
   #    one-leaf-one-concern hp-untouched pin + the shield-only prosrc pin. ───────────────────────
-  grep -qF "(want ''0'' — the 0191 dark seeds)" "$SQL" \
+  grep -qF "the shield_regen_combat_pct row does not exist" "$SQL" \
     || fail "harness does not ASSERT the committed shield regen knob seeds are '0'"
   for knob in shield_regen_combat_pct shield_regen_idle_pct; do
     grep -qF "key = '$knob'" "$SQL" \
@@ -790,7 +809,7 @@ if [ "$MODE" = "selftest" ]; then
   #    byte-identity; and the structural unstationed pins (LEFT join + the literal-1 ELSE). The
   #    knob is a numeric KNOB (the SHARDDROP/CAPXP posture), never a gate — its committed-'0'
   #    honesty check runs in local mode below. ─────────────────────────────────────────────────────
-  grep -qF "(want ''0'' — the 0196 affinity seed)" "$SQL" \
+  grep -qF "the station_affinity_bonus row does not exist" "$SQL" \
     || fail "harness does not ASSERT the committed station_affinity_bonus seed is '0'"
   grep -qF "diverged from the pre-DECKS3 expectation" "$SQL" \
     || fail "harness does not ASSERT knob-0 byte-parity (the pre-DECKS3 expectation with a stationed matching captain)"
