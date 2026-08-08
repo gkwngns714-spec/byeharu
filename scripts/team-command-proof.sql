@@ -299,6 +299,14 @@ begin
   return v;
 end $$;
 
+-- ── (0344) PRESSURE STAGING — shared, not re-copied ──────────────────────────────────────────────
+-- TEAMSETTLE needs to make a reinforcement slot COME DUE, because after 0344 an enemy body arrives on
+-- the site's own cadence and now() is FROZEN for this whole transaction — so no number of ticks makes
+-- a time-driven clock fire. pg_temp.pressure_site / pg_temp.pressure_fill live in
+-- scripts/lib/pressure-staging.sql, shared with danger-combat-proof.sql; a second copy here is exactly
+-- what the next slice would have to keep in step by hand.
+\ir lib/pressure-staging.sql
+
 -- ★ THE TWO LIGHTS-ON FIXTURE HELPERS (added 2026-07-27) ────────────────────────────────────────────
 -- 0300 lit every capability this file was written against while dark. Two of them changed what a
 -- VALID fixture is, so they are provisioned once here instead of being patched in at ~10 call sites.
@@ -372,9 +380,12 @@ end $$;
 -- MODE-AGNOSTIC BY CONSTRUCTION — it spends the wave in BOTH representations (the spatial arm's
 -- side='enemy' rows and the aggregate arm's `enemy_integrity_current` scalar), so this helper is
 -- correct whether or not `spatial_combat_enabled` is lit, and never re-acquires the ambient
--- dependency it exists to remove. `next_wave_at` is cleared because now() is FROZEN inside the
--- proof's single transaction: a wave-transition pause set to now()+N could never elapse and would
--- park every later tick on the `next_wave_incoming` branch.
+-- dependency it exists to remove.
+-- (0344) THE `next_wave_at = null` CLEAR IS GONE. It was here because now() is FROZEN inside the
+-- proof's single transaction, so a wave-transition pause set to now()+N could never elapse and would
+-- park every later tick on the `next_wave_incoming` branch. 0344 deletes that pause from both arms,
+-- so nothing reads the column: clearing it established NOTHING, which is the silent-precondition
+-- class this slice's sweep exists to end. Spending the field is now the whole job.
 --
 -- The knob is CAPTURED and RESTORED, never restored to a hard-coded literal — the committed seed is
 -- the chain's to own, not this file's.
@@ -390,8 +401,7 @@ create or replace function pg_temp.spend_wave(p_enc uuid) returns void language 
 begin
   delete from public.combat_units where encounter_id = p_enc and side = 'enemy';
   update public.combat_encounters
-     set enemy_integrity_current = 0,
-         next_wave_at            = null
+     set enemy_integrity_current = 0
    where id = p_enc;
 end $$;
 create or replace function pg_temp.wipe_tick(p_enc uuid) returns void language plpgsql as $$
@@ -1986,7 +1996,7 @@ begin
   if v_got is distinct from (v_legacy || jsonb_build_object('item_id', 'captain_memory_shard', 'quantity', 1)) then
     raise exception 'SHARDDROP FAIL: rate-1 wave-10 bundle wrong: %', v_got; end if;
 
-  raise notice 'TEAMCMD_PASS_SHARDDROP ok: committed seed 0 (dark); rate-0 byte-parity with the 0041 bundle (wave 10 + wave 1); rate-1 wave-2 gains exactly one appended shard (additive-only); wave-1 threshold holds at any rate; rate left 1 in-txn for the TEAMSETTLE end-to-end carry';
+  raise notice 'TEAMCMD_PASS_SHARDDROP ok: committed seed 0 (dark); rate-0 byte-parity with the 0041 bundle (wave 10 + wave 1); rate-1 wave-2 gains exactly one appended shard (additive-only); wave-1 threshold holds at any rate; rate left 1 in-txn. (0344: the rate no longer reaches a fight — the tick''s two calls to pirate_loot_for_wave are deleted, so this block is now a DIRECT test of that function and TEAMSETTLE carries the site''s own location_loot item instead. The drop logic stays proven; the faucet is disconnected, which is a finding recorded at TEAMSETTLE.)';
 end $$;
 
 -- ════════ BLOCK TEAMSETTLE (Slice D3, 0169): sortie settle — members return, reconcile home, M1 ════════
@@ -2036,7 +2046,7 @@ declare r jsonb; n int; i int; v_err text;
   gH uuid; v_hunt uuid; v_fleet uuid; v_enc uuid; v_pres uuid; v_rmv uuid;
   v_fleet3 uuid; v_mv3 uuid; v_enc3 uuid;
   v_rw jsonb; v_minspeed double precision; v_cbase uuid; v_metal_before double precision;
-  v_shard_before integer;
+  v_item_before integer;
   v_hp1 integer; v_hp2 integer;
   -- 0336: the DERIVED closing budget (see the loop) — every input read off this encounter's own rows
   -- and the same knobs the spawn arm evaluates, never a number typed into the harness.
@@ -2045,6 +2055,8 @@ declare r jsonb; n int; i int; v_err text;
   v_erange double precision; v_espeed double precision; v_bd double precision;
   v_close int; v_bound int; v_players int;
   v_status text; v_cleared int; v_ehp double precision;
+  -- (0344) the pressure-clock re-premise: the site's own authored loot, and the two due slots.
+  v_loot_item text; v_loot_qty int; v_wc0 int; v_phase int;
 begin
   -- config surgery re-applied (idempotent; the real set_game_config; all reverted by ROLLBACK).
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
@@ -2070,11 +2082,32 @@ begin
     where main_ship_id in (c1, c2) and status = 'hunting';
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: reconciler touched a mid-combat member (race guard): % hunting (want 2)', n; end if;
 
-  -- ── accrue a reward: tick until TWO waves clear (variance 0; bounded). Two, not one, since the
-  -- SHARDDROP block left captain_shard_drop_rate at 1 and the 0171 drop starts at wave 2 — the won
-  -- bundle must carry a shard for the end-to-end deposit pin below. Each tick needs a
-  -- last_resolved_at rewind, and the wave-2 spawn needs a next_wave_at rewind too, because now()
-  -- is txn-constant (the SHARDDROP-era extension of the same clock-rewind fixture kind).
+  -- ── accrue a reward: destroy a body on EACH of TWO due reinforcement slots (variance 0; bounded).
+  --
+  -- ██ (0344) RE-PREMISED — THIS BLOCK WAS ASSERTING THE MECHANISM THE SLICE DELETES ██
+  -- WHAT IT DID: ticked until `waves_cleared >= 2`, rewinding next_wave_at each pass so the wave-2
+  -- spawn could fire, and then required the won bundle to carry a captain_memory_shard — because the
+  -- SHARDDROP block leaves captain_shard_drop_rate at 1 and pirate_loot_for_wave drops the shard from
+  -- WAVE 2 ONWARD. Every one of those three things is gone from the engine:
+  --   * the wave-clear -> respawn arrow is DELETED, so a second wave never arrives and the loop ran its
+  --     whole budget against an empty field. That is the CI failure verbatim — "waves_cleared 0,
+  --     encounter active, living enemy hp 0.00, rewards {}": the team HAD destroyed the field and was
+  --     waiting for a wave that cannot come. The absence of that wave is the feature.
+  --   * next_wave_at is no longer read by anything, so rewinding it established NOTHING;
+  --   * both calls to pirate_loot_for_wave are deleted from the tick, so no engine path can put a
+  --     captain_memory_shard in a bundle at all (see the note under the shard assert below).
+  -- WHY IT IS NOT SIMPLY LOWERED TO ONE WAVE: "two" was never the property. TEAMSETTLE proves the
+  -- SORTIE SETTLE LOOP — members return, the bundle is carried home, deposited, and the reconciler
+  -- re-homes them — and the second wave existed only to get an ITEM into the bundle so the end-to-end
+  -- deposit pin had something to deposit. The new model has a direct analogue that is STRONGER, so it
+  -- is used instead of a weaker one: a body arrives per due CLOCK SLOT, and loot is paid PER ENEMY
+  -- DESTROYED from public.location_loot. Two slots therefore still means two payout events, and the
+  -- bundle must ACCUMULATE across them — which is exactly what the old "wave 2 appends a shard" pin
+  -- bought, now asserted against the site's own authored rows rather than a hard-coded item.
+  -- WHY TWO PHASES RATHER THAN ONE LOOP WITH THE CLOCK REWOUND EVERY TICK: the authority spawns BEFORE
+  -- the damage step, so a slot left due while the team is killing would drop a fresh body onto the
+  -- field on the very tick the block exits — and the "exactly 2 units alive" pin below counts BOTH
+  -- sides. One slot per phase, made due once, keeps the field empty at the exit by construction.
   --
   -- ── 0336: THE BUDGET GREW BY A DERIVABLE AMOUNT, AND ONLY BY THAT AMOUNT ────────────────────────
   -- The exit condition is unchanged and is still the OBSERVATION — waves_cleared reaching 2 with a
@@ -2117,32 +2150,72 @@ begin
     raise exception 'TEAMSETTLE FAIL: neither side can move (member speed %, wave speed %) — a wave that spawns outside the fleet''s reach could never be reached and no bound would be honest', v_pspeed, v_espeed; end if;
   v_close := greatest(0, ceil((2 * v_extent + v_erange + 1 - v_preach) / (v_pspeed + v_espeed))::int);
   v_bound := 60 + 2 * v_close;
-  for i in 1..v_bound loop
-    select total_rewards_json into v_rw from public.combat_encounters where id = v_enc;
-    exit when v_rw is not null and v_rw <> '{}'::jsonb
-          and (select waves_cleared from public.combat_encounters where id = v_enc) >= 2;
-    update public.combat_encounters
-       set last_resolved_at = last_resolved_at - interval '1 minute',
-           next_wave_at     = next_wave_at - interval '1 minute'
-     where id = v_enc;
-    perform public.process_combat_ticks();
+
+  -- THE SITE'S OWN AUTHORED LOOT, read from the row the engine reads. This is what a kill pays now,
+  -- and deriving it here is what keeps the deposit pin below honest through a content change: the
+  -- quantity asserted is the site's, never a number typed into this harness.
+  select ll.item_id, ll.quantity into v_loot_item, v_loot_qty
+    from public.location_loot ll
+    join public.combat_encounters ce on ce.location_id = ll.location_id
+   where ce.id = v_enc
+   order by ll.item_id
+   limit 1;
+  if v_loot_item is null or v_loot_qty is null or v_loot_qty < 1 then
+    raise exception 'TEAMSETTLE FAIL: the sortie site authors no public.location_loot row (item %, qty %) — a kill would pay metal only, and the end-to-end ITEM deposit this block exists to close would have nothing to carry',
+      v_loot_item, v_loot_qty; end if;
+  -- OWN THE PRESSURE ROW. Cap 1 means at most ONE body stands at a time, so each phase is exactly one
+  -- arrival and exactly one kill — and the "2 units alive" pin below can never be reading a straggler.
+  perform pg_temp.pressure_site(v_enc, 45.0, 1);
+  select waves_cleared into v_wc0 from public.combat_encounters where id = v_enc;
+
+  for v_phase in 1 .. 2 loop
+    -- ONE slot comes due. The authority delivers a body and then skips its clock a full cadence out,
+    -- so nothing else arrives while the team kills this one (RULE 2, relied on rather than restated).
+    update public.combat_encounters set next_reinforcement_at = now() - interval '1 second' where id = v_enc;
+    for i in 1..v_bound loop
+      exit when (select waves_cleared from public.combat_encounters where id = v_enc) >= v_wc0 + v_phase;
+      update public.combat_encounters
+         set last_resolved_at = last_resolved_at - interval '1 minute'
+       where id = v_enc;
+      perform public.process_combat_ticks();
+    end loop;
+    select total_rewards_json, waves_cleared, status into v_rw, v_cleared, v_status
+      from public.combat_encounters where id = v_enc;
+    if v_cleared < v_wc0 + v_phase then
+      select coalesce(sum(hp_current), 0) into v_ehp from public.combat_units
+       where encounter_id = v_enc and side = 'enemy';
+      raise exception 'TEAMSETTLE FAIL: the body due on slot % of 2 was not destroyed in % ticks (60 damage + 2 x % derived closing, from extent % / wave range % / weakest member reach % / speeds %+%): waves_cleared % (want %), encounter %, living enemy hp %, rewards %',
+        v_phase, v_bound, v_close, round(v_extent::numeric,2), round(v_erange::numeric,2), round(v_preach::numeric,2),
+        round(v_pspeed::numeric,2), round(v_espeed::numeric,2), v_cleared, v_wc0 + v_phase, v_status,
+        round(v_ehp::numeric,2), v_rw; end if;
+    -- THE BUNDLE ACCUMULATES ACROSS PAYOUT EVENTS, and it is checked after EACH one rather than only
+    -- at the end: a bundle that was overwritten instead of merged would still show the right item on
+    -- the last look. This is the property the old "wave 2 appends a shard" pin actually bought.
+    select count(*) into n from jsonb_array_elements(v_rw->'items') e
+      where e->>'item_id' = v_loot_item and (e->>'quantity')::int = v_loot_qty * v_phase;
+    if n <> 1 then
+      raise exception 'TEAMSETTLE FAIL: after % kill(s) the bundle carries % element(s) of % at quantity % (want exactly 1 — public.site_loot_for_kill pays the site''s authored % per enemy and loot_merge_items must ACCUMULATE, not replace): %',
+        v_phase, n, v_loot_item, v_loot_qty * v_phase, v_loot_qty, v_rw; end if;
   end loop;
-  -- re-read after the loop: the exit test reads v_rw at the TOP of an iteration, so on exhaustion the
-  -- variable is one tick stale — and the shard assert below consumes it.
-  select total_rewards_json, waves_cleared, status into v_rw, v_cleared, v_status
-    from public.combat_encounters where id = v_enc;
-  if v_rw is null or v_rw = '{}'::jsonb or v_cleared < 2 then
-    select coalesce(sum(hp_current), 0) into v_ehp from public.combat_units
-     where encounter_id = v_enc and side = 'enemy';
-    raise exception 'TEAMSETTLE FAIL: two waves not cleared in % ticks (60 damage + 2 x % derived closing, from extent % / wave range % / weakest member reach % / speeds %+%): waves_cleared %, encounter %, living enemy hp %, rewards %',
-      v_bound, v_close, round(v_extent::numeric,2), round(v_erange::numeric,2), round(v_preach::numeric,2),
-      round(v_pspeed::numeric,2), round(v_espeed::numeric,2), v_cleared, v_status, round(v_ehp::numeric,2), v_rw; end if;
-  -- THE 0171 SHARD CARRY: at rate 1 the wave-2 clear must have merged EXACTLY one shard element
-  -- (qty 1 — wave 1 contributes none, the threshold) into the pending bundle.
-  select count(*) into n from jsonb_array_elements(v_rw->'items') e
-    where e->>'item_id' = 'captain_memory_shard' and (e->>'quantity')::int = 1;
-  if n <> 1 then
-    raise exception 'TEAMSETTLE FAIL: won bundle carries % shard elements (want exactly 1 — the 0171 drop at rate 1): %', n, v_rw; end if;
+
+  if v_rw is null or v_rw = '{}'::jsonb then
+    raise exception 'TEAMSETTLE FAIL: the won bundle is empty after two destroyed bodies — there is nothing for the settle to carry home and every deposit pin below would be vacuous'; end if;
+  -- ██ THE 0171 SHARD CARRY IS DELETED HERE, AND IT IS NOT REPLACED BY A WEAKER FORM ██
+  -- It required the bundle to carry exactly one captain_memory_shard at captain_shard_drop_rate 1.
+  -- That item has EXACTLY ONE source in the game — public.pirate_loot_for_wave, wave >= 2 (0171) — and
+  -- 0344 deletes both calls to that function from the tick. No arrangement of knobs, waves or clocks
+  -- puts a shard in a bundle any more, so the assertion could not be re-premised: it is not that this
+  -- fixture stopped reaching it, it is that the faucet is disconnected. The end-to-end ITEM carry it
+  -- was serving is preserved above and below, against the item the engine now really pays.
+  -- ⚠ THAT IS A FINDING ABOUT THE MIGRATION, NOT ABOUT THIS PROOF, AND IT IS RECORDED RATHER THAN
+  -- QUIETLY ABSORBED: captain_memory_shard is the shared gating ingredient on all six captain recruit
+  -- recipes (0125), and 0171 exists precisely because "recruiting is dead-ended without a shard
+  -- source". 0344's section 2 re-authors five deterministic ladder items into public.location_loot and
+  -- does not carry the two CONFIG-GATED drops across — the shard, and 0185's blueprint_fragment. Their
+  -- knobs (captain_shard_drop_rate, blueprint_fragment_drop_rate) survive as live knobs that now gate
+  -- nothing, which is the liability 0344's own section 4 cites as its reason for deleting dead knobs.
+  -- The direct unit tests of pirate_loot_for_wave in TEAMCMD_PASS_SHARDDROP above still pass — the
+  -- function is untouched — so the drop LOGIC remains proven; what is gone is the engine consuming it.
   select count(*) into n from public.combat_units where encounter_id = v_enc and alive_count > 0;
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members alive before retreat (want 2)', n; end if;
 
@@ -2216,9 +2289,11 @@ begin
   select id into v_cbase from public.bases where player_id = uC and status = 'active' order by created_at limit 1;
   select coalesce((select amount from public.base_resources where base_id = v_cbase and resource_code = 'metal'), 0)
     into v_metal_before;
-  -- 0333: a balance is always AT a port. The shard lands in whatever base the settle hands
+  -- 0333: a balance is always AT a port. The carried ITEM lands in whatever base the settle hands
   -- reward_grant — the SAME v_cbase the metal assertion below pins — so measure it THERE.
-  v_shard_before := public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard');
+  -- (0344) The item measured is the SITE'S OWN authored loot, resolved above from public.location_loot,
+  -- not a hard-coded one: what a kill pays is content now, and a proof that names the item defeats that.
+  v_item_before := public.inventory_get_balance(uC, v_cbase, v_loot_item);
   update public.fleet_movements
      set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
    where id = v_rmv;
@@ -2235,14 +2310,18 @@ begin
     where base_id = v_cbase and resource_code = 'metal'
       and amount is not distinct from v_metal_before + (v_rw->>'metal')::double precision;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: base metal did not grow by the carried reward metal'; end if;
-  -- THE 0171 SHARD DEPOSIT: the carried shard landed in THIS BASE's item store (0333 base_items —
-  -- reward_grant's item arm now deposits into the very base it is handed, the same one the metal
-  -- above landed in) — the recruit currency (0125: every recipe costs exactly 1 shard) really
-  -- arrives, and it arrives somewhere. Asserting it AT v_cbase is the stronger statement: a deposit
-  -- that landed in some other port of uC's would now fail here instead of passing invisibly.
-  if public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard') is distinct from v_shard_before + 1 then
-    raise exception 'TEAMSETTLE FAIL: carried shard not deposited into the settling base''s item store (have %, want % — the recruit currency)',
-      public.inventory_get_balance(uC, v_cbase, 'captain_memory_shard'), v_shard_before + 1; end if;
+  -- THE ITEM DEPOSIT, END TO END: the carried item landed in THIS BASE's item store (0333 base_items —
+  -- reward_grant's item arm deposits into the very base it is handed, the same one the metal above
+  -- landed in). Asserting it AT v_cbase is the stronger statement: a deposit that landed in some other
+  -- port of uC's would fail here instead of passing invisibly.
+  -- (0344) The quantity is the SITE'S authored per-kill amount times the TWO bodies destroyed, so this
+  -- one line now closes the whole new loot path end to end — public.site_loot_for_kill priced it per
+  -- enemy, loot_merge_items accumulated it across two payout events, the escape attached the bundle to
+  -- the return leg, and the settle deposited exactly that much at the port the fleet came home to.
+  if public.inventory_get_balance(uC, v_cbase, v_loot_item) is distinct from v_item_before + v_loot_qty * 2 then
+    raise exception 'TEAMSETTLE FAIL: the carried % was not deposited into the settling base''s item store (have %, want % = % before + the site''s authored % per kill x 2 bodies destroyed)',
+      v_loot_item, public.inventory_get_balance(uC, v_cbase, v_loot_item), v_item_before + v_loot_qty * 2,
+      v_item_before, v_loot_qty; end if;
   -- the base settle itself never touches member ships (untagged fleet): still 'returning'.
   select count(*) into n from public.main_ship_instances
     where main_ship_id in (c1, c2) and status = 'returning';

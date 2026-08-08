@@ -409,7 +409,7 @@ begin
 end $$;
 
 do $$
-declare p jsonb; v_ceiling int := 6; v_sum int;
+declare p jsonb; v_ceiling int := coalesce(public.cfg_num('enemy_synthetic_max_units'),6)::int; v_sum int;
 begin
   -- FIX 3: a fleet rolling 10 units is clamped to the synthetic ceiling (6).
   p := public.resolve_location_encounter((select v from erfx where k='loc_big'), (select v from erfx where k='loc_big')::text);

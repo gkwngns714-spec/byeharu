@@ -21,7 +21,9 @@
 # plus the captains-launch shard-drop block (0171: the once-deferred captain-slot bump now SHIPS as
 # a migration — asserted in setup, no longer fixtured in-txn — and pirate_loot_for_wave's
 # config-gated captain_memory_shard drop: rate-0 byte-parity with the 0041 head, rate-1 wave-2
-# drop, wave-1 threshold, and the TEAMSETTLE end-to-end carry into player_inventory) plus the
+# drop and the wave-1 threshold — all DIRECT tests of pirate_loot_for_wave, which 0344 leaves intact
+# even though it deletes the tick's two calls to it, so the drop LOGIC stays proven while the engine
+# no longer consumes it; TEAMSETTLE's end-to-end carry is repointed onto the site's location_loot) plus the
 # CAPXP captain-XP-foundation block (0177: captain_xp_accrue over the TEAMSETTLE fixture — dark
 # no-op with grants present, current-assignment accrual crediting the 3 assigned manifest captains
 # exactly knob×1 grant each with the level-2 boundary at 100 xp, the per-(grant, captain)
@@ -360,12 +362,26 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT the rate-1 wave-2 exactly-one-shard drop"
   grep -qF "rate-1 wave-1 loot is not scrap-only (threshold breach)" "$SQL" \
     || fail "harness does not ASSERT the wave-1 threshold holds at rate 1"
-  grep -qF "won bundle carries % shard elements" "$SQL" \
-    || fail "harness does not ASSERT the won encounter's bundle carries the shard (end-to-end)"
+  # ── 0344 REPOINTS THE END-TO-END ITEM CARRY OFF THE SHARD, BECAUSE THE SHARD HAS NO SOURCE LEFT ──
+  # These two pinned "the won bundle carries a captain_memory_shard" and "that shard was deposited".
+  # captain_memory_shard has exactly ONE source in the game — pirate_loot_for_wave, wave >= 2 (0171) —
+  # and 0344 deletes both calls to that function from the tick, so no engine path can put one in a
+  # bundle. Pinning them would DEMAND a faucet the migration disconnected. The PROPERTY they served —
+  # an item is earned in combat, carried home on the return leg and deposited at the settling port —
+  # is preserved and now runs through the new authority: public.site_loot_for_kill prices the site's
+  # own public.location_loot rows PER ENEMY DESTROYED, loot_merge_items must ACCUMULATE across the two
+  # payout events, and the deposit must equal the site's authored quantity x 2 bodies. The item is
+  # DERIVED from the site's rows, never named here, so a content change cannot silently gut this.
+  grep -qF "loot_merge_items must ACCUMULATE, not replace" "$SQL" \
+    || fail "harness does not ASSERT the won bundle ACCUMULATES the site's per-kill loot across BOTH payout events (the property the old wave-2 shard pin actually bought — a bundle that was replaced rather than merged would still look right on the last read)"
+  grep -qF "the sortie site authors no public.location_loot row" "$SQL" \
+    || fail "harness lacks TEAMSETTLE's authored-loot non-vacuity guard (a site with no loot row pays metal only, and every ITEM deposit pin below it would be vacuous)"
   # 0333: the global player_inventory pool is DROPPED — items live PER PORT in base_items — so the
-  # .sql assertion now names the base the settle deposited into, and this pin follows it there.
-  grep -qF "carried shard not deposited into the settling base" "$SQL" \
-    || fail "harness does not ASSERT the shard deposit into the settling base's item store (the recruit currency)"
+  # .sql assertion names the base the settle deposited into, and this pin follows it there.
+  grep -qF "was not deposited into the settling base" "$SQL" \
+    || fail "harness does not ASSERT the carried item's deposit into the settling base's item store (the end-to-end carry)"
+  grep -qF "per kill x 2 bodies destroyed" "$SQL" \
+    || fail "harness does not ASSERT the deposited QUANTITY against the site's authored per-kill amount times the bodies destroyed — a deposit of the right item at the wrong quantity is how a per-kill payout silently becomes a per-fight one"
 
   # ── CAPXP (0177) pins, in assert form (a gutted .sql that only mentions them in prose cannot
   #    false-green): the accrual fn is exercised; the committed flag/knob seeds are pinned; the dark
@@ -734,7 +750,7 @@ if [ "$MODE" = "selftest" ]; then
   n="$(grep -c 'perform pg_temp\.spend_wave(' "$SQL" || true)"
   [ "$n" = "2" ] || fail "expected exactly 2 pg_temp.spend_wave() call sites (wipe_tick + TEAMHUNT's give-back), found $n"
   grep -qF "enemy row(s) survived the wave spend" "$SQL" \
-    || fail "harness does not ASSERT that TEAMHUNT's give-back really removed the wave minted at the borrowed enemy_hp_base (the TEAMSETTLE 'two waves not cleared' root cause)"
+    || fail "harness does not ASSERT that TEAMHUNT's give-back really removed the field minted at the borrowed enemy_hp_base (the original 'two waves not cleared' root cause)"
   grep -qF "the lethal wave never closed into its own range" "$SQL" \
     || fail "harness does not bound wipe_tick's 0336 loop with a loud failure (one tick is no longer lethal — it must drive until the wave is spent)"
   grep -qF "there is no live fight to make lethal" "$SQL" \
@@ -742,6 +758,16 @@ if [ "$MODE" = "selftest" ]; then
   # ── TEAMSETTLE's tick budget must be DERIVED, never a raised round number ────────────────────────
   grep -qF "for i in 1..v_bound loop" "$SQL" \
     || fail "TEAMSETTLE's clear loop is bounded by a literal again — 0336 added closing ticks, and the extra must be derived from the encounter's own rows"
+  # ── 0344: TEAMSETTLE STAGES ITS OWN DUE SLOTS, AND SHARES THE ONE STAGING ────────────────────────
+  # After 0344 a body arrives on the site's CADENCE and now() is frozen for the whole txn, so no tick
+  # budget can make a second body appear — that is precisely how this block failed CI at "waves_cleared
+  # 0, living enemy hp 0.00": the team had won and was waiting for a wave that cannot come.
+  grep -q 'ir lib/pressure-staging.sql' "$SQL" \
+    || fail "harness no longer includes scripts/lib/pressure-staging.sql — TEAMSETTLE must make a reinforcement slot COME DUE to earn a second kill, and a local copy of that staging is the duplication the lib exists to prevent"
+  grep -qF "pg_temp.pressure_site(v_enc, 45.0, 1)" "$SQL" \
+    || fail "TEAMSETTLE no longer OWNS the site's pressure row at cap 1 — with a larger cap a second body can stand while the first is being killed, and the 'exactly 2 units alive' pin would be counting a straggler"
+  grep -qF "the body due on slot % of 2 was not destroyed" "$SQL" \
+    || fail "TEAMSETTLE no longer drives TWO due reinforcement slots — one kill proves a payout but not that the bundle ACCUMULATES, which is what the deleted wave-2 pin was really testing"
   grep -qF "the closing budget would be a default rather than a measurement" "$SQL" \
     || fail "harness lacks TEAMSETTLE's positioned-living-member non-vacuity guard (a defaulted extent looks exactly like a real measurement)"
   grep -qF "neither side can move (member speed %, wave speed %)" "$SQL" \

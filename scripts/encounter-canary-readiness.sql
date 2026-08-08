@@ -401,13 +401,8 @@ begin
   select b.encounter_profile_id into v_ep from public.location_encounter_bindings b where b.id = v_binding;
   select max(version)::text into v_head from supabase_migrations.schema_migrations;
   v_elite_ok := v_head is not null and v_head >= v_elite_mig;
-  -- (0344) THE CEILING IS THE RESOLVER'S OWN FALLBACK NOW. The key was deleted with the four other
-  -- kill-escalation knobs; the ONE reader left is resolve_location_encounter's plan clamp,
-  -- greatest(1, coalesce(cfg_num(<that key>), 6)), and with nobody authoring the key that coalesce always
-  -- takes its second branch. Reading it here would report the same 6 as if it were an authored value.
-  -- The number is the resolver's, this line cites where it comes from, and CH16 below still compares the
-  -- authored fleet against the clamp the resolver would really apply.
-  v_ceiling := 6;
+  v_ceiling := greatest(1, coalesce(case when to_regprocedure('public.cfg_num(text)') is not null
+                                         then public.cfg_num('enemy_synthetic_max_units') end, 6)::integer);
 
   for r in
     select ft.id as ft_id, ft.key as ft_key, ft.active as ft_active, ft.revision as ft_rev

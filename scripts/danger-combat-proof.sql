@@ -319,79 +319,12 @@ begin
   perform public.process_combat_ticks();
 end $$;
 
--- ── (0344) PRESSURE STAGING — the ONE way a block asks for a FIELD, and it asks the CLOCK ────────
--- 0344 deletes the arrow "the enemy side is empty -> spawn a wave, sized 1 + waves_cleared". Enemy
--- bodies now come from public.combat_pressure_step, which is a CLOCK: at most ONE body per call, only
--- while the field is under its site's authored cap, and NEVER because anything died. So a block that
--- needs n bodies standing together has to SAY so, and these two helpers are how it says it — once,
--- here, rather than in every block that needs one (the same reason ae_tick exists).
---
--- WHY A BLOCK CANNOT JUST DRIVE TICKS UNTIL n BODIES STAND. Two independent reasons, both structural:
---   1. now() is FROZEN for this whole txn and the authority skips its clock past every elapsed slot in
---      ONE step (that is what "a missed arrival is LOST, not banked" means), so the first tick of a
---      fresh fight brings exactly one body and the next slot is a full cadence away — a cadence that
---      can never elapse in here.
---   2. Driving ticks lets the FIGHT proceed between arrivals. By the time a third body landed the
---      first two would have closed different distances and been shot at, so there would be no tick on
---      which the field exists as ONE ring. Every geometry, volley and ordering property below is about
---      a field that stands together; that is the precondition, and it is owned rather than hoped for.
---
--- WHAT THEY MAY WRITE, AND WHY IT IS THE SAME LAW AS rewind_leg / ae_tick:
---   * pressure_site — public.location_pressure, which is CONTENT: a cadence and a concurrent cap,
---     authored per site as ROWS. A block that needs a field of six OWNS the cap that admits six
---     instead of inheriting whichever number the seed happens to carry (the
---     proofs-never-assert-ambient-defaults law). The cap is INERT on its own: nothing arrives until a
---     clock slot comes due, so a block that leaves the cap raised cannot hand a later block a body.
---   * pressure_fill — combat_encounters.next_reinforcement_at, a CLOCK, and nothing else. No status,
---     no geometry, no hp, and NEVER a combat_units row: every body it produces comes out of
---     public.combat_spawn_wave_units through the authority itself, at the same slot the tick would
---     have passed (the population before the arrival), so the ring is the ring a live fight gets —
---     one radius, the measured formation extent plus that body's own range plus one, on 0338's
---     arrival bearing. It is the tick's own call, made n times against n elapsed slots.
-create or replace function pg_temp.pressure_site(p_enc uuid, p_cadence double precision, p_cap int)
-returns void language plpgsql as $$
-declare v_loc uuid;
-begin
-  select location_id into v_loc from public.combat_encounters where id = p_enc;
-  if v_loc is null then
-    raise exception 'pressure_site: encounter % resolves no site — an unauthored fight hosts no reinforcements at all, so every arrival a block asked for would be SILENTLY suppressed and the block would pass over an empty field', p_enc;
-  end if;
-  insert into public.location_pressure (location_id, reinforcement_seconds, concurrent_cap, note)
-  values (v_loc, p_cadence, p_cap, 'danger-combat-proof: cadence + cap OWNED by the block under test')
-  on conflict (location_id) do update
-    set reinforcement_seconds = excluded.reinforcement_seconds,
-        concurrent_cap        = excluded.concurrent_cap,
-        note                  = excluded.note,
-        updated_at            = now();
-end $$;
+-- ── (0344) PRESSURE STAGING — shared, not re-copied ──────────────────────────────────────────────
+-- pg_temp.pressure_site / pg_temp.pressure_fill live in scripts/lib/pressure-staging.sql because
+-- team-command-proof.sql needs the same two helpers. Read that file for why a block cannot simply
+-- drive ticks until n bodies stand, and for the law governing what these are allowed to write.
+\ir lib/pressure-staging.sql
 
-create or replace function pg_temp.pressure_fill(p_enc uuid, p_n int) returns int language plpgsql as $$
-declare
-  v_tick int; v_ax double precision; v_ay double precision;
-  v_lx double precision; v_ly double precision;
-  v_arr int; v_got int := 0; i int;
-begin
-  for i in 1 .. p_n loop
-    -- the caller's facts, resolved exactly as the tick resolves them: the anchor is
-    -- coalesce(engagement_x, loc.x) and the site is the encounter's own location row.
-    select ce.tick_number, coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), l.x, l.y
-      into v_tick, v_ax, v_ay, v_lx, v_ly
-      from public.combat_encounters ce
-      join public.locations l on l.id = ce.location_id
-     where ce.id = p_enc;
-    if not found then
-      raise exception 'pressure_fill: encounter % does not resolve a site row — there is no cadence, no cap and no arrival bearing to fill a field from', p_enc;
-    end if;
-    update public.combat_encounters set next_reinforcement_at = now() - interval '1 second' where id = p_enc;
-    select p.o_arrived into v_arr
-      from public.combat_pressure_step(p_enc, v_tick, v_ax, v_ay, v_lx, v_ly, 0, false) p;
-    -- a suppressed arrival is LOST, never banked: at the cap the authority answers 0 and stops, and
-    -- the caller finds out by counting rather than by getting an extra body later.
-    exit when coalesce(v_arr, 0) = 0;
-    v_got := v_got + v_arr;
-  end loop;
-  return v_got;
-end $$;
 
 -- ════════ SETUP: reveal starter ports, one funded fixture player ═════════════════════════════════════
 do $$

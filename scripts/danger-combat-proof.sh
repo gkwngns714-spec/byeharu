@@ -835,23 +835,36 @@ if [ "$MODE" = "selftest" ]; then
   # historical source text, not live reads. Editing one would break its --check — which is the gate three
   # blocks above — while proving nothing. They are covered by that gate instead, and it is green.
   swept=0
-  for f in "$REPO_ROOT"/scripts/*.sql; do
+  for f in "$REPO_ROOT"/scripts/*.sql "$REPO_ROOT"/scripts/lib/*.sql; do
     [ -f "$f" ] || continue
     tp_assert_no_kill_escalation "$f"
     swept=$((swept + 1))
   done
   [ "$swept" -gt 10 ] \
     || fail "the kill-escalation class guard swept only $swept scripts/*.sql file(s) — it must never pass over an empty or near-empty set (the same non-vacuity law the generator gate above learned the hard way)"
-  # The two staging helpers. They are the ONLY way a block asks for a multi-body field, and the only
-  # place this proof composes the pressure authority directly — one authority, not one per block.
-  grep -q "create or replace function pg_temp.pressure_site" "$SQL" \
-    || fail "harness lost pg_temp.pressure_site — a block that needs a field of n bodies must OWN the site's cadence and concurrent cap as a row rather than inherit whichever numbers the seed carries (proofs-never-assert-ambient-defaults, in its content form)"
-  grep -q "create or replace function pg_temp.pressure_fill" "$SQL" \
-    || fail "harness lost pg_temp.pressure_fill — with the clock skip-forward and a txn-frozen now(), a block cannot fill a field by driving ticks, and filling it by hand would break the combat_units sole-writer law"
-  n="$(grep -c 'public\.combat_pressure_step(' "$SQL" || true)"
-  [ "$n" = "1" ] || fail "expected exactly 1 composition of the pressure authority in this harness (inside pg_temp.pressure_fill), found $n — a second call site is a second staging idiom, and the next slice would have to keep them in step by hand"
-  grep -q "set next_reinforcement_at = now() - interval" "$SQL" \
-    || fail "harness lost its CLOCK-ONLY reinforcement rewind (the only write pressure staging is allowed: no status, no geometry, no hp, and never a combat_units row)"
+  # ── THE STAGING IS SHARED, AND THAT IS ITSELF PINNED ────────────────────────────────────────────
+  # pg_temp.pressure_site / pg_temp.pressure_fill moved into scripts/lib/pressure-staging.sql the
+  # moment a SECOND suite needed them (team-command-proof.sql). Two copies of a staging idiom is the
+  # thing every later slice then has to keep in step by hand — the disease, not a convenience. These
+  # pins are what stop a copy growing back: the proof must INCLUDE the lib, the lib must define both
+  # helpers, and the pressure authority may be composed in exactly ONE place in the whole harness.
+  PRESSURE_LIB="$REPO_ROOT/scripts/lib/pressure-staging.sql"
+  [ -f "$PRESSURE_LIB" ] || fail "scripts/lib/pressure-staging.sql is MISSING — the shared pressure staging every multi-body block composes is gone, and a suite that re-copies it locally is how two copies drift"
+  grep -q 'ir lib/pressure-staging.sql' "$SQL" \
+    || fail "harness no longer includes scripts/lib/pressure-staging.sql — if it has grown its own copy of the staging helpers, delete the copy and include the lib"
+  grep -q "create or replace function pg_temp.pressure_site" "$PRESSURE_LIB" \
+    || fail "the shared lib lost pg_temp.pressure_site — a block that needs a field of n bodies must OWN the site's cadence and concurrent cap as a row rather than inherit whichever numbers the seed carries (proofs-never-assert-ambient-defaults, in its content form)"
+  grep -q "create or replace function pg_temp.pressure_fill" "$PRESSURE_LIB" \
+    || fail "the shared lib lost pg_temp.pressure_fill — with the clock skip-forward and a txn-frozen now(), a block cannot fill a field by driving ticks, and filling it by hand would break the combat_units sole-writer law"
+  # ONE composition of the authority across scripts/ AND scripts/lib/: the lib's, and nowhere else.
+  # Matched on the CALL form (`from public.combat_pressure_step(`) rather than the bare name, because
+  # elite-stat-wiring and encounter-resolver legitimately carry the name as a PROBE STRING — they
+  # strpos() the deployed tick for it to prove the tick composes the authority. A probe is not a call,
+  # and counting the two together would have made this pin unsatisfiable the moment either was written.
+  n="$(cat "$REPO_ROOT"/scripts/*.sql "$REPO_ROOT"/scripts/lib/*.sql 2>/dev/null | grep -c 'from public\.combat_pressure_step(' || true)"
+  [ "$n" = "1" ] || fail "expected exactly 1 composition of the pressure authority across scripts/ (inside pg_temp.pressure_fill in the shared lib), found $n — a second call site is a second staging idiom"
+  grep -q "set next_reinforcement_at = now() - interval" "$PRESSURE_LIB" \
+    || fail "the shared lib lost its CLOCK-ONLY reinforcement rewind (the only write pressure staging is allowed: no status, no geometry, no hp, and never a combat_units row)"
   # The block itself. Each of these is RED by construction on the deployed body, where the field is
   # sized by 1 + waves_cleared and a destroyed field is immediately replaced by a larger one.
   grep -q "want exactly 1) — the field is sized by a CLOCK now" "$SQL" \

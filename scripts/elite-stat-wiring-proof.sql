@@ -379,14 +379,14 @@ declare v_loc uuid := (select v from elfx where k='loc_split'); p jsonb; v_mult 
   v_n_elite int; v_n_norm int; v_bd_e double precision; v_bd_n double precision; v_sum int; v_ceiling int;
 begin
   v_mult   := coalesce(public.cfg_num('encounter_elite_difficulty_multiplier'), 2);
-  -- ── (0344) THE PLAN CEILING IS OWNED HERE, BECAUSE NOBODY AUTHORS IT ANY MORE ────────────────────
-  -- enemy_synthetic_max_units is one of the five rows 0344 deletes. The difference from the other four
-  -- is that this key still has a LIVE READER: resolve_location_encounter clamps its authored plan with
-  -- greatest(1, coalesce(cfg_num(...), 6)). So READING it here would inherit that function's own
-  -- fallback and look like an authored value — while WRITING it genuinely establishes a precondition,
-  -- because the resolver reads what this block writes. The value is set, then used; never read back.
-  -- 6 is chosen because it is the resolver's own fallback, so the clamp this file exercises is exactly
-  -- the one every other block in it (LEGACY_PARITY above ran with the row absent) already saw.
+  -- ── (0344) THE PLAN CEILING IS OWNED HERE RATHER THAN READ ───────────────────────────────────────
+  -- enemy_synthetic_max_units survives 0344 (772c42d: resolve_location_encounter still reads it as the
+  -- ceiling that trims an AUTHORED plan, so deleting the row would have left that clamp on its own
+  -- coalesce fallback — a silent ceiling change on a live game). The row is authored, so a read would be
+  -- legal here. It is still OWNED instead: a block that asserts a clamp should state the value the clamp
+  -- is given rather than inherit whatever the seed happens to carry, which is the
+  -- proofs-never-assert-ambient-defaults law. 6 is the seeded and fallback value, so the clamp exercised
+  -- here is the one every other block in this file already sees.
   v_ceiling := 6;
   perform public.set_game_config('enemy_synthetic_max_units', to_jsonb(v_ceiling));
   p := public.resolve_location_encounter(v_loc, 'split');

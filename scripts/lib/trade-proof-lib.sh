@@ -18,7 +18,7 @@
 #                                             the begin;..rollback; scope (list/loop form; a
 #                                             single flag is a one-element call)
 #   tp_assert_out_of_scope <sql>            — the proof references no src/ or migrations/ path
-#   tp_assert_no_kill_escalation <sql>      — (0344) the proof names none of the five DELETED
+#   tp_assert_no_kill_escalation <sql>      — (0344) the proof names none of the FOUR deleted
 #                                             kill-escalation knobs, and evaluates none of the
 #                                             deleted `1 + waves_cleared + elapsed/divisor` term,
 #                                             in executable SQL
@@ -87,7 +87,7 @@ tp_assert_out_of_scope() {
 #    Migration 0344 deletes the term `v_danger := 1 + e.waves_cleared + floor(secs_inside /
 #    danger_time_divisor_seconds)` and the five game_config rows it fed:
 #      enemy_hp_danger_scale · enemy_attack_danger_scale · reward_danger_scale ·
-#      danger_time_divisor_seconds · enemy_synthetic_max_units
+#      danger_time_divisor_seconds
 #    WHY THIS IS A STATIC GATE AND NOT A NOTE IN A COMMENT. A proof that READS one of those keys gets
 #    NULL and silently falls back to its old coalesce default, so its arithmetic is solved against a
 #    factor the engine no longer applies. A proof that WRITES one — `perform set_game_config(k, …)` to
@@ -99,23 +99,16 @@ tp_assert_out_of_scope() {
 #    prose to record why they are gone, and that prose must stay legal.
 #    The replacement surface is public.location_pressure (a cadence and a concurrent cap, authored per
 #    site as rows) plus combat_encounters.next_reinforcement_at (the clock).
-#    ONE KEY IS TREATED DIFFERENTLY, AND THE ASYMMETRY IS MEASURED RATHER THAN ASSUMED.
-#    enemy_synthetic_max_units is deleted by 0344 like the other four, but unlike them it still has a
-#    LIVE READER: public.resolve_location_encounter clamps its authored plan with
-#    `greatest(1, coalesce(cfg_num('enemy_synthetic_max_units'), 6))` (0272:270, that function's textual
-#    head). So a proof about the RESOLVER'S plan ceiling may WRITE the key — that write really does
-#    establish something, which is the whole difference — but it may never READ it as though the value
-#    were still authored, because after 0344 nobody authors it and the read would be inheriting the
-#    function's own coalesce fallback. Writes allowed, reads refused.
+#    enemy_synthetic_max_units IS DELIBERATELY NOT IN THIS GUARD, and the reason is a correction to this
+#    guard's own first draft. It was written while 0344 deleted five rows, so it refused READS of that
+#    key too. 0344 then STOPPED deleting it (772c42d): public.resolve_location_encounter still reads it
+#    as the ceiling that trims an AUTHORED plan — greatest(1, coalesce(cfg_num(...), 6)) at 0272:270,
+#    that function's textual head — and this slice does not touch that function. The row therefore
+#    survives, an authored value still exists, and refusing to read it would be this guard demanding a
+#    deletion the migration deliberately did not make. What 0344 requires of that key is that the TICK
+#    stops reading it, and the migration's own assert (a) proves exactly that at 0 occurrences.
 tp_assert_no_kill_escalation() {
   local sql="$1" k hit
-  hit="$(sed -E 's/--.*//' "$sql" | grep -n "cfg_num('enemy_synthetic_max_units'" || true)"
-  [ -z "$hit" ] || fail "$(basename "$sql") READS the DELETED game_config key 'enemy_synthetic_max_units':
-$hit
-  0344 deletes that row. The only live reader left is resolve_location_encounter's plan clamp, which
-  falls back to its own coalesce default — so a proof reading the key is inheriting that fallback rather
-  than an authored value. If the block needs a plan ceiling, SET the key (a write still reaches the
-  resolver) and derive from what it set; if it needs an enemy FIELD size, that is public.location_pressure."
   for k in enemy_hp_danger_scale enemy_attack_danger_scale reward_danger_scale \
            danger_time_divisor_seconds; do
     hit="$(sed -E 's/--.*//' "$sql" | grep -n "$k" || true)"
