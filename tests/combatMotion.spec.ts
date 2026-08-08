@@ -8,11 +8,14 @@ import {
   STEP_MIN_MS,
   SHOT_MAX_MS,
   SHOT_MIN_MS,
-  anyShotInFlight,
+  anyTickArtifactLive,
   anyUnitInMotion,
   motionPoint,
   observeCombatUnits,
-  observeShots,
+  observeCombatEvents,
+  isTickArtifact,
+  tickArtifactLive,
+  TICK_READOUT_MS,
   resolveEncounterLead,
   resolveOrdnance,
   resolveOrdnanceProfile,
@@ -398,7 +401,7 @@ const endpointsOf = (rows: readonly CombatUnit[]): ReadonlyMap<string, ShotEndpo
   )
 
 const shotWorld = (events: readonly CombatEvent[], rows: readonly CombatUnit[], nowMs: number, seenAt = T0) => {
-  const sightings = observeShots({}, events, seenAt)
+  const sightings = observeCombatEvents({}, events, seenAt)
   const latestTick = latestTickByEncounter(events, isSpatialSalvo)
   return resolveOrdnance({ events, latestTick, endpoints: endpointsOf(rows), units: rows, sightings, nowMs })
 }
@@ -458,8 +461,8 @@ test('a round flies from the firer to the target, monotonically, and is gone onc
 })
 
 test('the flight is the SERVER’s impact_delay_ms — a faster round lands first', () => {
-  const slowSeen = observeShots({}, [salvo({ impact_delay_ms: 200 })], T0)
-  const fastSeen = observeShots({}, [salvo({ impact_delay_ms: 100 })], T0)
+  const slowSeen = observeCombatEvents({}, [salvo({ impact_delay_ms: 200 })], T0)
+  const fastSeen = observeCombatEvents({}, [salvo({ impact_delay_ms: 100 })], T0)
   const common = { endpoints: endpointsOf([shooter, target]), units: [shooter, target] }
   const at = (sightings: typeof slowSeen, e: CombatEvent[], nowMs: number) =>
     resolveOrdnance({ ...common, events: e, latestTick: latestTickByEncounter(e, isSpatialSalvo), sightings, nowMs })
@@ -500,7 +503,7 @@ test('a zero-delay round ARRIVES at the floor — the damage number is not held 
     latestTick: latestTickByEncounter(events, isSpatialSalvo),
     endpoints: endpointsOf(rows),
     units: rows,
-    sightings: observeShots({}, events, T0),
+    sightings: observeCombatEvents({}, events, T0),
   })
   expect(arrivals.get('u2#0')).toBe(T0 + SHOT_MIN_MS)
 })
@@ -526,23 +529,67 @@ test('THE COPY CANNOT COME BACK: the flight formula lives on the server and nowh
 
 test('a round already in flight is NOT restarted when the same tick arrives on the next poll', () => {
   const events = [salvo()]
-  const first = observeShots({}, events, T0)
+  const first = observeCombatEvents({}, events, T0)
   // The 1.5 s poll hands back the identical event rows; the sighting must not move.
-  const second = observeShots(first, events.map((e) => ({ ...e })), T0 + 1500)
+  const second = observeCombatEvents(first, events.map((e) => ({ ...e })), T0 + 1500)
   expect(second[1]).toBe(T0)
 })
 
 test('a salvo that is gone from the feed is forgotten — the sighting ledger cannot grow forever', () => {
-  const first = observeShots({}, [salvo({ id: 1 }), salvo({ id: 2 })], T0)
+  const first = observeCombatEvents({}, [salvo({ id: 1 }), salvo({ id: 2 })], T0)
   expect(Object.keys(first)).toHaveLength(2)
-  expect(Object.keys(observeShots(first, [salvo({ id: 2 })], T0 + 1500))).toEqual(['2'])
+  expect(Object.keys(observeCombatEvents(first, [salvo({ id: 2 })], T0 + 1500))).toEqual(['2'])
 })
 
-test('anyShotInFlight is the other half of the loop’s stop condition', () => {
-  const seen = observeShots({}, [salvo()], T0)
-  expect(anyShotInFlight(seen, T0 + 10)).toBe(true)
-  expect(anyShotInFlight(seen, T0 + SHOT_MAX_MS + 1)).toBe(false)
-  expect(anyShotInFlight({}, T0)).toBe(false)
+test('anyTickArtifactLive is the other half of the loop’s stop condition', () => {
+  const seen = observeCombatEvents({}, [salvo()], T0)
+  expect(anyTickArtifactLive(seen, T0 + 10)).toBe(true)
+  // It outlasts the ROUND on purpose. The loop is what advances `nowMs`, and the damage number the
+  // round delivers is drawn until `nowMs` passes its own window — stop at the landing (SHOT_MAX_MS)
+  // and the clock freezes with the splat still on screen, which is exactly the corpse that would not
+  // let go of its damage. It stops one exchange after the shot, never sooner.
+  expect(anyTickArtifactLive(seen, T0 + SHOT_MAX_MS + 1)).toBe(true)
+  expect(anyTickArtifactLive(seen, T0 + TICK_READOUT_MS + 1)).toBe(false)
+  expect(anyTickArtifactLive({}, T0)).toBe(false)
+})
+
+// ── THE EXCHANGE'S OWN WINDOW ─────────────────────────────────────────────────────
+// The owner: "when fleet is destroyed, i want also a damage shown to be disappeared as well." A
+// tick's artifacts had a start and no end; this ledger is what gives them an age.
+test('the ledger tracks every artifact of an exchange, not just the salvos', () => {
+  const seen = observeCombatEvents(
+    {},
+    [
+      salvo({ id: 1 }),
+      salvo({ id: 2, event_type: 'hull_damage', payload_json: { unit_id: 'a', damage: 4 } }),
+      salvo({ id: 3, event_type: 'unit_destroyed', payload_json: { unit_id: 'a', count: 1 } }),
+    ],
+    T0,
+  )
+  expect(Object.keys(seen).sort()).toEqual(['1', '2', '3'])
+  // …and the AGGREGATE (dark-path) rows, which name a `group` and no unit, are drawn nowhere and
+  // therefore tracked nowhere — the same predicate the layer draws by.
+  expect(observeCombatEvents({}, [salvo({ id: 9, payload_json: { group: 'alpha', damage: 3 } })], T0)).toEqual({})
+  expect(isTickArtifact(salvo({ id: 9, payload_json: { group: 'alpha' } }))).toBe(false)
+  expect(isTickArtifact(salvo({ id: 1, event_type: 'wave_spawned', payload_json: { unit_id: 'a' } }))).toBe(false)
+  expect(isTickArtifact(salvo({ id: 1, event_type: 'hull_damage', payload_json: { unit_id: 'a' } }))).toBe(true)
+})
+
+test('an artifact is live for exactly one exchange, and an UNSEEN one is never hidden', () => {
+  const seen = observeCombatEvents({}, [salvo({ id: 7 })], T0)
+  expect(tickArtifactLive(seen, 7, T0)).toBe(true)
+  expect(tickArtifactLive(seen, 7, T0 + TICK_READOUT_MS - 1)).toBe(true)
+  expect(tickArtifactLive(seen, 7, T0 + TICK_READOUT_MS)).toBe(false)
+  // No ledger at all, or an id the ledger never saw → LIVE. A caller that keeps no sightings gets
+  // exactly the pre-expiry behaviour, and a real event is never dropped because the client blinked.
+  expect(tickArtifactLive(undefined, 7, T0 + 10 * TICK_READOUT_MS)).toBe(true)
+  expect(tickArtifactLive(seen, 8, T0 + 10 * TICK_READOUT_MS)).toBe(true)
+})
+
+// The window is DERIVED, never a second number: it is this file's own bound on one plausible server
+// tick, so a cadence change moves the readout with it.
+test('the exchange window IS the one-plausible-tick bound', () => {
+  expect(TICK_READOUT_MS).toBe(STEP_MAX_MS)
 })
 
 // ── ORDNANCE: THE FALLBACK IS VISIBLE END TO END ──────────────────────────────────────────────────
@@ -575,7 +622,7 @@ test('the k-th hit on a hull is paired with the k-th round aimed at it, in the S
     salvo({ id: 10, seq: 0, payload_json: { unit_id: 'u1', target_id: 'u2' }, impact_delay_ms: 100 }),
     salvo({ id: 12, seq: 2, payload_json: { unit_id: 'u3', target_id: 'u2' }, impact_delay_ms: 200 }),
   ]
-  const sightings = observeShots({}, events, T0)
+  const sightings = observeCombatEvents({}, events, T0)
   const arrivals = resolveShotArrivals({
     events,
     latestTick: latestTickByEncounter(events, isSpatialSalvo),
@@ -597,7 +644,7 @@ test('a damage row with NO matching round is left unpaired, so a real hit is nev
     latestTick: latestTickByEncounter(events, isSpatialSalvo),
     endpoints: endpointsOf(rows),
     units: rows,
-    sightings: observeShots({}, events, T0),
+    sightings: observeCombatEvents({}, events, T0),
   })
   expect(arrivals.size).toBe(0)
 })

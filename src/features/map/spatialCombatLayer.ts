@@ -44,7 +44,8 @@ import type { CombatActorView } from './combatActors'
 import {
   resolveOrdnance,
   resolveShotArrivals,
-  type ShotSightings,
+  tickArtifactLive,
+  type EventSightings,
 } from './combatMotion'
 import { WORLD_TO_VIEWBOX_SCALE } from './openSpaceTransform'
 import { renderShipVisual } from './shipGlyph'
@@ -184,6 +185,11 @@ export const isSpatialSalvo = (e: CombatEvent): boolean =>
 export function resolveFireLines(
   events: readonly CombatEvent[],
   points: ReadonlyMap<string, RenderPoint>,
+  /** The exchange's own window (combatMotion.tickArtifactLive). Omitted → no expiry, i.e. exactly the
+   *  behaviour before it existed. Supplied, a lane stops being drawn once its exchange is over —
+   *  otherwise the last salvo of a fight paints a permanent line at a wreck, for the same reason a
+   *  hitsplat used to become permanent (see resolveHitSplats). */
+  life?: { sightings: EventSightings; nowMs: number },
 ): FireLineView[] {
   const latest = latestTickByEncounter(events, isSpatialSalvo)
   if (latest.size === 0) return []
@@ -191,6 +197,7 @@ export function resolveFireLines(
   for (const e of events) {
     if (e.event_type !== 'missile_salvo') continue
     if (latest.get(e.encounter_id) !== e.tick_number) continue
+    if (life && !tickArtifactLive(life.sightings, e.id, life.nowMs)) continue
     const p = e.payload_json ?? {}
     const src = points.get(String(p['unit_id'] ?? ''))
     const tgt = points.get(String(p['target_id'] ?? ''))
@@ -255,13 +262,32 @@ export interface HitSplatView {
  *  The latest tick is resolved PER ENCOUNTER (see latestTickByEncounter). A splat whose unit never
  *  had a position draws nothing: a number floating over empty space is worse than no number. The
  *  aggregate (non-spatial) damage events carry `group` instead of `unit_id`, so they are naturally
- *  ignored — they have no position to float over. */
+ *  ignored — they have no position to float over.
+ *
+ *  ── 3. AND THEN IT NEVER LEFT (the owner: "when fleet is destroyed, i want also a damage shown to
+ *  be disappeared as well") ────────────────────────────────────────────────────────────────────────
+ *  Defect 2's fix is what created this one, and the two are one decision seen from both ends. A
+ *  splat is anchored through `points`, which is built from EVERY actor — the dead ones included —
+ *  precisely so a killing blow has somewhere to land. But the resolver had a START and no END: a
+ *  splat was returned on every frame for as long as its tick remained the encounter's newest.
+ *  Mid-fight that is three seconds. **On the blow that empties the field it is forever**: a
+ *  destroyed unit is never targeted again (0317), so no later tick carries a hit, so the kill tick
+ *  stays "latest" and its number and its ✕ sit on the wreck until something else gets shot — which,
+ *  between reinforcements, is not soon. The player's own report of it was a corpse still showing
+ *  its damage.
+ *  The bound is `life`, and it is deliberately NOT "hide it once the unit is dead": that would blank
+ *  the killing blow itself, which is defect 2 coming straight back. The exchange's DRAWING is bounded
+ *  by the exchange (combatMotion.TICK_READOUT_MS) — one rule over the whole class of tick artifacts,
+ *  shared with the fire lines, and one that cannot fire while a fight is still trading blows. */
 export function resolveHitSplats(
   events: readonly CombatEvent[],
   points: ReadonlyMap<string, RenderPoint>,
   /** WHEN each shot lands, keyed `${victimId}#${ordinal}` (combatMotion.resolveShotArrivals). Omitted
    *  → every splat is unpaired and shows immediately, which is exactly the pre-ordnance behaviour. */
   arrivals?: ReadonlyMap<string, number>,
+  /** WHEN THE EXCHANGE IS OVER (combatMotion.tickArtifactLive). Omitted → no expiry, i.e. exactly the
+   *  behaviour before it existed, which is what every spec that passes no ledger still measures. */
+  life?: { sightings: EventSightings; nowMs: number },
 ): HitSplatView[] {
   const isHit = (e: CombatEvent) =>
     (e.event_type === 'hull_damage' || e.event_type === 'unit_destroyed') &&
@@ -273,7 +299,12 @@ export function resolveHitSplats(
   // Deterministic order: the server's own (seq, id) sequence within the tick. Events arrive
   // newest-id-first from the API, so without this the fan could re-order between polls.
   const landed = events
-    .filter((e) => isHit(e) && latest.get(e.encounter_id) === e.tick_number)
+    .filter(
+      (e) =>
+        isHit(e) &&
+        latest.get(e.encounter_id) === e.tick_number &&
+        (!life || tickArtifactLive(life.sightings, e.id, life.nowMs)),
+    )
     .sort((a, b) => a.seq - b.seq || a.id - b.id)
 
   const out: (HitSplatView & { anchorKey: string })[] = []
@@ -394,6 +425,49 @@ const SHOT_MIN_R_PX = 2.2
 const SHOT_MAX_R_PX = 5
 /** Perpendicular spacing between rounds sharing one lane — a volley reads as several rounds. */
 const SHOT_LANE_GAP_PX = 7
+/** The reach region's boundary, in CSS px. Half of each stroke falls inside the region and is masked
+ *  away (see the edge pass), so the visible band is half this. */
+const REACH_EDGE_PX = 2.4
+
+/** One disc of a reach region, ALREADY PROJECTED — viewBox coordinates and a viewBox radius. */
+export interface ReachDisc {
+  cx: number
+  cy: number
+  r: number
+}
+
+/**
+ * PURE: the discs → ONE path whose interior is exactly their UNION.
+ *
+ * ── WHY A PATH EXISTS BESIDE THE CIRCLES (the owner: "my fleet range shape in blue is weird") ──────
+ * The region drawn was N separate filled `<circle>`s under one group opacity. That composites to a
+ * flat union with no darkened laps — but it has NO BOUNDARY, and without one a four-lobed cloud at
+ * 14% opacity does not read as a thing, it reads as a smudge. Measured on the owner's own encounter
+ * `49acbae0`: four hulls spanning 5.1 × 4.2 world units, every weapon range 5 — a formation as wide
+ * as its own reach, so the discs make a lumpy scalloped cloud ~15 units across with no edge at all,
+ * while the fleet itself is drawn as ONE glyph. One actor, four unoutlined lobes: those two
+ * decisions contradicted each other on screen.
+ *
+ * THE ANSWER IS AN EDGE, NOT A DIFFERENT SHAPE. The union IS the fire rule — the engine gates each
+ * hull from its OWN position — so shrinking it to a circle, or smoothing it, would put the drawing
+ * back to lying (that circle enclosed 2 of 6 legally shootable enemies; see HullReach's header).
+ * What changes is only that the region now has a silhouette: this path, stroked and masked to its own
+ * exterior, so the internal arcs where the discs overlap are cut away and only the OUTER boundary
+ * survives. One region, one edge, exactly the same set of points inside it.
+ *
+ * Each disc is one closed subpath of two half-arcs, all wound the same way, so `fill-rule="nonzero"`
+ * fills the union in a single paint (no seams, no double-covered laps) and the whole thing masks as
+ * one shape. The format is deliberately regular enough to read back — tests/spatialCombatLayer.spec.ts
+ * parses it to check containment against the same discs it passed in.
+ */
+export function reachRegionPath(discs: readonly ReachDisc[]): string {
+  return discs
+    .map(
+      (d) =>
+        `M${d.cx - d.r},${d.cy}A${d.r},${d.r} 0 1,0 ${d.cx + d.r},${d.cy}A${d.r},${d.r} 0 1,0 ${d.cx - d.r},${d.cy}Z`,
+    )
+    .join('')
+}
 
 /** The pure, hook-free GalaxyMap spatial-combat layer (the element-helper convention). Returns element
  *  DESCRIPTORS only — no hooks — so the unit spec calls this SAME function and inspects the tree. No
@@ -415,7 +489,7 @@ export function spatialCombatLayer(args: {
   pxScale?: number
   /** When each fire event was first seen (combatMotion.observeShots) + the clock to render at.
    *  Omitted → no ordnance and no splat delay, i.e. byte-identical to the pre-ordnance layer. */
-  sightings?: ShotSightings
+  sightings?: EventSightings
   nowMs?: number
 }): ReactElement[] {
   // viewBox units per CSS pixel, at the current camera and letterbox. The ONE place this layer turns
@@ -444,6 +518,10 @@ export function spatialCombatLayer(args: {
     sightings,
   }
   const arrivals = args.sightings ? resolveShotArrivals(shotArgs) : undefined
+  // THE EXCHANGE'S OWN WINDOW — passed to every artifact of a tick, so the lines and the numbers
+  // expire together. Absent ledger → undefined → no expiry anywhere (the pre-D7 behaviour, which is
+  // what a caller that keeps no sightings still gets).
+  const life = args.sightings ? { sightings, nowMs } : undefined
 
   const out: ReactElement[] = []
 
@@ -463,13 +541,30 @@ export function spatialCombatLayer(args: {
   // overlapping discs render as one flat region with no internal seams and no darkened laps. WHAT IS
   // DRAWN IS NOW THE RULE: nothing inside the region is out of reach and nothing outside it can fire.
   //
-  // An enemy is one hull, so its region degenerates to exactly the single circle it always had.
+  // ── AND THEN THE OWNER LOOKED AT IT: "my fleet range shape in blue is weird." ───────────────────
+  // The set was right and the DRAWING was still not a thing you could read. A flat 14% wash with no
+  // boundary is a smudge, and on the owner's real geometry — a formation as wide as its own reach —
+  // it is a lumpy four-lobed smudge, standing under a fleet that is drawn as ONE glyph. The union is
+  // not negotiable (it is the rule), so what it was missing is an EDGE: a second pass strokes the
+  // same discs as ONE path and masks that stroke to the region's own exterior, which deletes every
+  // internal arc and leaves precisely the outer silhouette. Same points inside, now with a border —
+  // one actor, one region, one outline.
+  //
+  // An enemy is one hull, so its region degenerates to exactly the single circle it always had, and
+  // its edge to that circle's own outline.
   for (const u of views) {
-    const discs = u.reach.filter((r): r is { dx: number; dy: number; range: number } =>
+    const reaching = u.reach.filter((r): r is { dx: number; dy: number; range: number } =>
       typeof r.range === 'number' && Number.isFinite(r.range) && r.range > 0,
     )
-    if (discs.length === 0) continue // nothing aboard reaches out → no region (honest: it cannot)
+    if (reaching.length === 0) continue // nothing aboard reaches out → no region (honest: it cannot)
     const color = SIDE_COLOR[u.side]
+    // PROJECTED ONCE, USED TWICE. The fill and the edge are two renderings of ONE set of discs, so
+    // they cannot disagree about where the region is. World-true radii: viewBox units, NOT /k — a
+    // reach is a real distance and scales with zoom, the same idiom as the territory/mining rings.
+    const discs: ReachDisc[] = reaching.map((d) => {
+      const p = args.norm({ x: u.x + d.dx, y: u.y + d.dy })
+      return { cx: p.x, cy: p.y, r: d.range * WORLD_TO_VIEWBOX_SCALE }
+    })
     out.push(
       createElement(
         'g',
@@ -480,26 +575,76 @@ export function spatialCombatLayer(args: {
           opacity: 0.14, // group-level: the discs union instead of stacking into hot spots
           style: { pointerEvents: 'none' as const },
         },
-        ...discs.map((d, i) => {
-          const p = args.norm({ x: u.x + d.dx, y: u.y + d.dy })
-          return createElement('circle', {
+        ...discs.map((d, i) =>
+          createElement('circle', {
             key: `reach-${i}`,
-            cx: p.x,
-            cy: p.y,
-            // world-true: viewBox units, NOT /k — a reach is a real distance and scales with zoom,
-            // the same idiom as the territory and mining rings.
-            r: d.range * WORLD_TO_VIEWBOX_SCALE,
+            cx: d.cx,
+            cy: d.cy,
+            r: d.r,
             fill: color,
             fillOpacity: 1,
             stroke: 'none',
-          })
+          }),
+        ),
+      ),
+    )
+    // ── THE SILHOUETTE. One path, stroked, masked to the region's OWN EXTERIOR ────────────────────
+    // The mask is white everywhere in the region's box and BLACK over the union itself, so the half
+    // of the stroke that falls inside is erased and the arcs buried under a neighbouring disc vanish
+    // whole. What is left is the outer boundary and nothing else — the difference between "four
+    // circles were drawn here" and "this is the area we cover". It is a SEPARATE element rather than
+    // a child of the group above because that group is at 14%, and an outline at 14% is not an
+    // outline.
+    const d = reachRegionPath(discs)
+    const edge = px(REACH_EDGE_PX)
+    const pad = edge * 2
+    const minX = Math.min(...discs.map((c) => c.cx - c.r)) - pad
+    const minY = Math.min(...discs.map((c) => c.cy - c.r)) - pad
+    const maxX = Math.max(...discs.map((c) => c.cx + c.r)) + pad
+    const maxY = Math.max(...discs.map((c) => c.cy + c.r)) + pad
+    const maskId = `reach-edge-mask-${u.key}`
+    out.push(
+      createElement(
+        'g',
+        {
+          key: `spatial-reach-edge-${u.key}`,
+          'data-testid': `spatial-combat-reach-edge-${u.key}`,
+          style: { pointerEvents: 'none' as const },
+        },
+        createElement(
+          'defs',
+          { key: 'defs' },
+          createElement(
+            'mask',
+            { id: maskId, maskUnits: 'userSpaceOnUse', x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+            createElement('rect', {
+              key: 'outside',
+              x: minX,
+              y: minY,
+              width: maxX - minX,
+              height: maxY - minY,
+              fill: '#fff',
+            }),
+            createElement('path', { key: 'inside', d, fill: '#000', fillRule: 'nonzero' as const }),
+          ),
+        ),
+        createElement('path', {
+          key: 'edge',
+          d,
+          fill: 'none',
+          stroke: color,
+          strokeOpacity: 0.7,
+          // Doubled on purpose: the mask keeps only the outer half, so this renders at REACH_EDGE_PX.
+          strokeWidth: edge * 2,
+          strokeLinejoin: 'round' as const,
+          mask: `url(#${maskId})`,
         }),
       ),
     )
   }
 
   // ── 2) FIRE lines (source→target, this tick's salvos), over rings, under glyphs ──
-  const lines = resolveFireLines(args.events, points)
+  const lines = resolveFireLines(args.events, points, life)
   if (lines.length > 0) {
     out.push(
       createElement(
@@ -689,7 +834,7 @@ export function spatialCombatLayer(args: {
   // own seq order — one splat per hit is the whole point (see resolveHitSplats).
   // A number appears when the ROUND that carried it arrives — damage never precedes its own shell.
   // Unpaired splats (arrivesAtMs null) show at once, so no real damage row can be hidden.
-  for (const s of resolveHitSplats(args.events, points, arrivals)) {
+  for (const s of resolveHitSplats(args.events, points, arrivals, life)) {
     if (s.arrivesAtMs !== null && nowMs < s.arrivesAtMs) continue
     const p = args.norm({ x: s.x, y: s.y })
     // Coloured by who is BLEEDING — red on your own ship is the RS read: this is hurting you.
