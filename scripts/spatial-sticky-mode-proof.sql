@@ -40,6 +40,27 @@
 -- MANUAL process_combat_ticks() invocation with clock-rewind — it does NOT exercise live production cron
 -- cadence (interval pacing / concurrency), which is out of scope for a disposable proof.
 
+-- ██████████████████████████████████████████████████████████████████████████████████████████████████
+-- ██ (0344) THIS SUITE IS NOT RE-PREMISED YET, AND THAT IS RECORDED HERE RATHER THAN DISCOVERED ██
+-- Migration 0344 deletes the WAVE LIFECYCLE this file is entirely about: the kill-escalation term
+-- (1 + waves_cleared + elapsed/divisor) that sized wave 1/2/3 as 1/2/3 units, the "enemy side is empty
+-- -> spawn a wave" arrow, and the next_wave_at pause between waves. Enemy bodies now arrive ONE at a
+-- time from public.combat_pressure_step on the site's own authored cadence, up to a concurrent cap.
+-- WHAT WAS DONE IN THE 0344 SWEEP: the four writes that used to establish this file's preconditions and
+-- that 0344 turns into writes-to-nothing were REMOVED (see the block below), because a write that
+-- silently establishes nothing is how a suite goes green over a property it never staged — which is
+-- worse than a red.
+-- WHAT WAS NOT DONE: the wave-lifecycle blocks themselves. They still assert waves_cleared advancing
+-- 1->2->3 with 1/2/3 pirates per wave and a pause tick between them, and NO arrangement of knobs
+-- reaches a branch 0344 removed from the source. RUN AS-IS THIS SUITE WILL BE RED, and it is not
+-- triggered on any branch that carries 0344.
+-- WHAT RE-PREMISING IT LOOKS LIKE, so the next author does not have to re-derive it: own the site's
+-- public.location_pressure row (cadence + concurrent_cap), rewind combat_encounters.next_reinforcement_at
+-- to make a slot due before each tick, and assert ONE arrival per due slot instead of N per wave. The
+-- worked example is DZCOMBAT_PASS_PRESSURE plus pg_temp.pressure_site / pg_temp.pressure_fill in
+-- scripts/danger-combat-proof.sql.
+-- ██████████████████████████████████████████████████████████████████████████████████████████████████
+
 \set ON_ERROR_STOP on
 
 begin;   -- everything below is transient; the trailing ROLLBACK leaves ZERO persisted state.
