@@ -283,6 +283,11 @@ const topLeftRail = (
       reach={
         <MapOverlayTabs
           encounters={ENCOUNTERS}
+          // The pinned fight row reads the wave clock through the ONE leaf, with the same rows and
+          // the same FIXED clock the fight tab's card gets — so the two are asserted to agree
+          // exactly, in every tab state, which is the whole point of pinning it there.
+          units={UNITS}
+          nowMs={NOW}
           onCombatChanged={() => {}}
           openTab={forcedTab}
           explore={

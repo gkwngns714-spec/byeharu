@@ -290,6 +290,47 @@ test('THE WAY OUT OF A FIGHT IS ON SCREEN EVEN WITH EVERY TAB FOLDED SHUT', asyn
   await expect(page.getByTestId('map-tab-fight-live')).toBeVisible()
 })
 
+// ── ██ THE WAVE TIMER IS ON SCREEN IN EVERY TAB STATE ██ ─────────────────────────────────────────
+// Owner, playing 2026-08-09: *"when a wave starts, i see no timer that indicates next wave"*.
+//
+// Nothing was broken on the wire and nothing was broken in the leaf. `combatApi` reads `select('*')`,
+// `CombatEncounter` declares all three pressure columns, and `combat/reinforcementClock` resolved
+// them correctly — into a tab that was not on screen. The countdown lived ONLY inside CombatMapCard
+// (the FIGHT tab's body) and ActiveCombatPanel (the Mission screen), and this shell mounts AT MOST
+// ONE BODY. Standing on the FLEETS tab, which is where he was, the words came from
+// `selectCombatPhase` — a pure function of the row that deliberately carries no time at all — so the
+// screen read "Next wave incoming" with no number, forever.
+//
+// A countdown visible in one of four tab states is a countdown the player does not have, for exactly
+// the reason the retreat control above is pinned. This sweeps all four.
+
+test('THE WAVE TIMER IS ON SCREEN IN EVERY TAB STATE — the countdown is not behind a fold', async ({ page }) => {
+  for (const t of TABS) {
+    await open(page, `fight&t=${t}`, PHONE)
+    const row = page.getByTestId('map-fight-row-wave-enc-1')
+    await expect(row, `no wave timer with tab "${t}" open`).toBeVisible()
+    // The exact countdown, from the harness's FIXED clock — the same one the fight tab's card reads,
+    // through the same leaf, so the two can never drift into two different answers.
+    await expect(row).toHaveText('Next wave in 12s')
+  }
+  // And when the fight tab IS open, there is still exactly ONE countdown per surface — the pinned
+  // signal and the card's own wave section, both from the leaf, never a third derivation.
+  await open(page, 'fight&t=fight', PHONE)
+  await expect(page.getByTestId('combat-map-wave-clock-enc-1')).toHaveText('Next wave in 12s')
+})
+
+test('THE PINNED ROW STAYS A SIGNAL, NOT A SECOND READOUT — no field count, no rule, no verdict', async ({ page }) => {
+  // The field/cap pair and REINFORCEMENT_RULE belong to the fight tab's card, which owns the whole
+  // wave section. Restating them on a row that is always on screen would be the duplication the tab
+  // shell exists to prevent — and the row must never predict an arrival either.
+  await open(page, 'fight&t=none', PHONE)
+  const text = await page.getByTestId('map-fight-row-enc-1').innerText()
+  expect(text).toMatch(/Next wave in \d+s/)
+  expect(text, 'the field count belongs to the card').not.toMatch(/4\/4|Field/i)
+  expect(text, 'the rule is stated once, on the card').not.toMatch(/under its limit/i)
+  expect(text, 'a countdown states time, never an outcome').not.toMatch(/arriv|nothing comes|no ship|1 ship/i)
+})
+
 test('THE FIGHT TAB CARRIES THE WAVE CLOCK AND THE HAUL — the two the owner asked for', async ({ page }) => {
   await open(page, 'fight&t=fight', MEASURED)
   // The wave section: the countdown against a FIXED clock, and the field against the STAMPED cap.
@@ -305,6 +346,57 @@ test('THE FIGHT TAB CARRIES THE WAVE CLOCK AND THE HAUL — the two the owner as
   await expect(page.getByTestId('combat-map-haul-m3-enc-1')).toContainText('7.5')
   await expect(page.getByTestId('combat-map-hold-enc-1')).toContainText('250')
   await expect(page.getByTestId('combat-map-drops-enc-1')).toContainText('Each kill here drops')
+})
+
+test('██ THE HAUL IS THE CARD’S OWN TYPE SIZE — it does not fall back to the document root ██', async ({ page }) => {
+  // Owner, playing 2026-08-09: *"the font for haul is too big"*. <ItemChip> INHERITS its font size by
+  // design — that is what lets it sit inside a log sentence — and the haul's chip row was the ONE
+  // element on this card that set none, so the chips took the document's 16px root while every other
+  // line here is 11px or 10px. MEASURED, not eyeballed: the chips must be the same size as the "Haul"
+  // heading beside them, and nothing on this card may be at the root size.
+  await open(page, 'fight&t=fight', MEASURED)
+  const sizes = await page.evaluate(() => {
+    const card = document.querySelector('[data-testid="combat-map-card-enc-1"]')!
+    const px = (el: Element) => parseFloat(getComputedStyle(el).fontSize)
+    // Only elements that OWN a text node are measured. A bare flex wrapper inherits 16px and draws
+    // nothing with it; the defect is a element that PRINTS at a size it never chose.
+    const inked = [...card.querySelectorAll('*')].filter((el) =>
+      [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim() !== ''),
+    )
+    return {
+      chips: [...card.querySelectorAll('[data-testid^="item-chip-"]')].map(px),
+      haulBlock: px(document.querySelector('[data-testid="combat-map-haul-enc-1"]')!),
+      oversized: inked
+        .filter((el) => px(el) >= 16)
+        .map((el) => `${el.tagName}.${el.getAttribute('class') ?? ''}: ${(el.textContent ?? '').slice(0, 40)}`),
+    }
+  })
+  expect(sizes.chips.length, 'the fixture must actually render a haul').toBeGreaterThan(0)
+  for (const s of sizes.chips) {
+    expect(s, 'a haul chip must not be bigger than the block it sits in').toBeLessThanOrEqual(sizes.haulBlock)
+  }
+  // The whole card lives in the small register; 16px is the document root fallback, and text sitting
+  // at it means the element never chose a size. That is exactly what the haul row did.
+  expect(sizes.oversized, 'text on the combat card renders at the document root size').toEqual([])
+})
+
+test('██ THE FLEET HOLD IS NOT INSIDE THE HAUL BLOCK — the haul does not land there ██', async ({ page }) => {
+  // Owner: *"fleet hold is not updated when fight is done"*. It never will be — combat loot rides the
+  // return leg and reward_grant deposits it into the arrival PORT'S storage (base_items); no arm of
+  // that chain writes fleet_items. The meter was standing INSIDE the Haul block under a sentence
+  // saying the haul would be "banked", which is the only reading the arrangement allowed.
+  await open(page, 'fight&t=fight', MEASURED)
+  const hold = page.getByTestId('combat-map-hold-enc-1')
+  await expect(hold).toBeVisible()
+  expect(
+    await page.evaluate(() => {
+      const haul = document.querySelector('[data-testid="combat-map-haul-enc-1"]')!
+      return haul.contains(document.querySelector('[data-testid="combat-map-hold-enc-1"]'))
+    }),
+    'the hold meter must not sit inside the haul block',
+  ).toBe(false)
+  // …and the stake sentence names where the haul actually goes.
+  await expect(page.getByTestId('combat-map-haul-enc-1')).toContainText('port')
 })
 
 // ── 3 · THE TOUCH FLOOR SURVIVES THE FIX ─────────────────────────────────────────────────────────

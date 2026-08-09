@@ -8963,6 +8963,7 @@ do $$
 declare
   r jsonb; n int; n_live int; n_rows int; i int;
   v_grow int; v_gcap int; v_idx int; v_ecap int; v_expcap int; v_arr int;
+  v_wsize int; v_wbefore int; v_wafter int; v_wpts int; v_wnext int; v_wexp int; wg record;
   v_nom double precision; v_emax double precision;
   uP3 uuid; sP3 uuid; gP3 uuid; uQ uuid; sQ uuid; gQ uuid;
   o_x double precision; o_y double precision; v_verts jsonb;
@@ -9166,14 +9167,23 @@ begin
   -- is that after six slots the ORDINAL reads 6 while exactly TWO bodies have arrived. An
   -- arrival-driven counter reads 2 there and the field never leaves 3.
   --
-  -- THIS BLOCK OWNS THE GROWTH. pg_temp.pressure_site authors cap_growth_every NULL — a FIXED cap,
-  -- 0344's behaviour value for value — precisely so every other block stays about the cap. This is
-  -- the one block that is about the growth, so it authors the period itself, here, in the open.
+  -- THIS BLOCK OWNS THE GROWTH. pg_temp.pressure_site authors growth_every NULL — a FIXED cap and a
+  -- wave of exactly one body, 0344's behaviour value for value — precisely so every other block stays
+  -- about the cap. This is the one block that is about the CAP's growth, so it authors the period
+  -- itself, here, in the open. (0350 renamed the column from cap_growth_every: one owner sentence,
+  -- one number on the row, now governing both the cap and the wave.)
+  --
+  -- ⚠ 0350 MAKES THE WAVE GROW TOO, AND THIS BLOCK IS STILL ABOUT THE CAP. On a FULL field the two
+  -- are separable by construction: the room never exceeds one slot (the cap notches by exactly one),
+  -- so the clamp — least(the wave's size, the room left) — delivers exactly one body on every slot
+  -- that admits anything, whatever the wave's size happens to be. The sequence below is therefore
+  -- unchanged by 0350 and remains a statement about the CAP alone. The wave's own size is proven on a
+  -- field with ROOM, which is DZCOMBAT_PASS_WAVEGROWS immediately after this.
   update public.location_pressure lp
-     set cap_growth_every = 3, cap_ceiling = null, updated_at = now()
+     set growth_every = 3, cap_ceiling = null, wave_size_ceiling = null, updated_at = now()
     from public.combat_encounters ce
    where ce.id = v_enc and lp.location_id = ce.location_id;
-  select lp.cap_growth_every, lp.concurrent_cap into v_grow, v_gcap
+  select lp.growth_every, lp.concurrent_cap into v_grow, v_gcap
     from public.location_pressure lp
     join public.combat_encounters ce on ce.location_id = lp.location_id
    where ce.id = v_enc;
@@ -9243,6 +9253,169 @@ begin
   end if;
   raise notice 'DZCOMBAT_PASS_FIELDGROWS ok: on a FULL field at a base cap of % with the site authoring one more body every % scheduled slots, six due slots produced the owner''s own sequence — cap 3,3,4,4,4,5 and a field of 3,3,4,4,4,5 — the ordinal reaching % while only % bodies arrived (a counter that could not advance at the cap would read % and the field would never leave 3, which is a death unlocking the growth), the effective cap STAMPED on the encounter for a client to read matching the number the spawn decision used on every one of the six, and the enemy bar''s denominator moving with the effective cap rather than the base one',
     v_gcap, v_grow, v_idx, v_arr, v_arr;
+
+  -- ══ (D) 0350 — THE WAVE ITSELF GROWS: EVERY THIRD SCHEDULED WAVE BRINGS ONE MORE BODY ═══════════
+  -- ██ THE OWNER, HAVING ALREADY SAID IT ONCE AND WATCHED 0347 BUILD SOMETHING ELSE: "only 1 ships
+  --    are comming out from the city, whereas i specifically told you to add 1 fleet every three
+  --    rounds..." ██
+  --
+  -- 0347 grew the CAP and left every slot spawning exactly one body, so on a field the player is
+  -- clearing the ceiling never binds and the growth is invisible — measured on his live fight, waves
+  -- 2 through 10 each brought ONE while the effective cap climbed to 5. FIELDGROWS above cannot catch
+  -- that: on a FULL field the room never exceeds one slot, so a wave of three and a wave of one are
+  -- indistinguishable there. THIS ARM IS THEREFORE THE MIRROR OF THAT ONE — the cap is put out of
+  -- reach so it can never be the binding number, and what is measured is the WAVE.
+  --
+  -- EVERY ASSERT BELOW IS RED BY CONSTRUCTION ON THE 0347 BODY, where the spawner is handed a literal
+  -- 1: the first three deliver 1 instead of 2, 3 and 4, and the clamp arm's payload carries no
+  -- wave_size at all.
+  --
+  -- THIS BLOCK OWNS ITS PREMISES. pg_temp.pressure_site authors growth_every NULL — no escalation at
+  -- all — so this arm authors the period itself, in the open, exactly as FIELDGROWS does. It also
+  -- owns the ORDINAL before every measurement: the wave size is a function of that number, and
+  -- inheriting whichever value the previous arm left would be asserting a world instead of a property.
+  if coalesce(public.cfg_num('combat_enemy_ingress_ticks'), -1) <> 0 then
+    raise exception 'WAVEGROWS FAIL: the ingress duration reads % (want 0, owned by pg_temp.pressure_site) — with an ingress phase every body of a wave is placed AT the city on the same point, and the distinct-position assert below would fail for a reason that has nothing to do with the wave''s size', public.cfg_num('combat_enemy_ingress_ticks');
+  end if;
+  -- A FIELD WITH ROOM. The cap is put far out of reach so it can never bind: if it could, this block
+  -- would be re-measuring FIELDGROWS. The period stays the owner's 3 and neither ceiling is set.
+  update public.location_pressure lp
+     set concurrent_cap = 400, growth_every = 3, cap_ceiling = null, wave_size_ceiling = null,
+         updated_at = now()
+    from public.combat_encounters ce
+   where ce.id = v_enc and lp.location_id = ce.location_id;
+  select lp.growth_every, lp.concurrent_cap into v_grow, v_gcap
+    from public.location_pressure lp
+    join public.combat_encounters ce on ce.location_id = lp.location_id
+   where ce.id = v_enc;
+  if v_grow is distinct from 3 or v_gcap is null or v_gcap < 100 then
+    raise exception 'WAVEGROWS FAIL: the site carries period % / cap % — this arm needs the owner''s own period of 3 and a cap that can never bind, or what it measures is the clamp rather than the wave', v_grow, v_gcap;
+  end if;
+
+  -- ── ██ THE OWNER'S BANDING, WALKED ACROSS THREE BOUNDARIES ██
+  --   ordinal 2 -> wave 3  -> 1 body   (the last wave of the first band)
+  --   ordinal 3 -> wave 4  -> 2 bodies (the FIRST notch — this is the assert the owner is missing)
+  --   ordinal 6 -> wave 7  -> 3 bodies
+  --   ordinal 11 -> wave 12 -> 4 bodies
+  -- The expected size is DERIVED from the site's own period (1 + ordinal / period) and then
+  -- cross-checked against the literal the owner stated, so a period that is not 3 fails loudly here
+  -- rather than quietly re-deriving a different table.
+  v_wpts := 0;
+  for wg in select t.idx, t.sz from (values (2,1),(3,2),(6,3),(11,4)) t(idx, sz) order by t.idx loop
+    v_wexp := 1 + (wg.idx / v_grow);   -- integer division IS floor((n - 1) / period) at n = idx + 1
+    if v_wexp <> wg.sz then
+      raise exception 'WAVEGROWS FAIL: at ordinal % the site''s own period of % derives a wave of % but the owner''s stated banding is % (waves 1-3 bring 1, 4-6 bring 2, 7-9 bring 3) — the two must agree or this block is measuring a table nobody asked for', wg.idx, v_grow, v_wexp, wg.sz;
+    end if;
+    update public.combat_encounters set pressure_wave_index = wg.idx where id = v_enc;
+    select count(*) into v_wbefore from public.combat_units
+     where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+    update public.combat_encounters set next_reinforcement_at = now() - interval '1 second' where id = v_enc;
+    perform pg_temp.ae_tick(v_enc);
+    select count(*) into v_wafter from public.combat_units
+     where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+    v_wsize := v_wafter - v_wbefore;
+    if v_wsize <> wg.sz then
+      raise exception 'WAVEGROWS FAIL: scheduled wave % delivered % bod(ies) against the owner''s % — "every 3 wave, i want wave to add one fleet" means the WAVE gets bigger, not the ceiling above it: a slot that always brings one body can never fill a rising cap, which is exactly what he saw ("only 1 ships are comming out from the city")', wg.idx + 1, v_wsize, wg.sz;
+    end if;
+    select pressure_wave_index, pressure_next_wave_size into v_idx, v_wnext
+      from public.combat_encounters where id = v_enc;
+    if v_idx <> wg.idx + 1 then
+      raise exception 'WAVEGROWS FAIL: after delivering wave % the ordinal reads % (want %) — the wave size is a function of this number, so an ordinal that does not advance on every due slot is a wave size that stops growing until something happens to move it', wg.idx + 1, v_idx, wg.idx + 1;
+    end if;
+    if v_wnext is distinct from 1 + ((wg.idx + 1) / v_grow) then
+      raise exception 'WAVEGROWS FAIL: after wave % the fight is stamped with a next-wave size of % but its own ordinal % over the site''s period % gives % — that stamp is the ONLY number a wave clock may announce, and a stamp that disagrees with the engine is the "1 ship incoming" caption over three ships coming out of the city', wg.idx + 1, v_wnext, v_idx, v_grow, 1 + ((wg.idx + 1) / v_grow);
+    end if;
+    -- THEY COME OUT OF THE CITY IN A FORMATION, NOT A PILE. Every living body on the field stands on
+    -- its own point: combat_spawn_wave_units walks its slot counter once per body, so a wave of four
+    -- that stacked would show fewer distinct points than bodies. (Measured in production before 0338:
+    -- distinct_enemy_points = 1 on every one of the owner's last eight fights.)
+    select count(*), count(distinct (pos_x, pos_y)) into v_wafter, v_wpts
+      from public.combat_units where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+    if v_wpts <> v_wafter then
+      raise exception 'WAVEGROWS FAIL: % living bod(ies) stand on only % distinct point(s) after wave % — a multi-body wave must arrive on its own arc slots, one body per slot, or "the wave got bigger" renders as one ship with a bigger number behind it', v_wafter, v_wpts, wg.idx + 1;
+    end if;
+  end loop;
+  if v_wsize < 4 then
+    raise exception 'WAVEGROWS FAIL: the largest wave this block ever observed brought % bod(ies) — the whole point is that a wave EXCEEDS one, and while it never does, every assert above is satisfied by the deployed body that spawns a literal 1', v_wsize;
+  end if;
+
+  -- ── ██ THE CLAMP: A WAVE OF 3 AGAINST 1 SLOT OF ROOM DELIVERS 1, AND STILL SPENDS ITS SLOT ██
+  -- The decision this migration had to make, as a number. All-or-nothing would deliver ZERO here, and
+  -- would then land nothing until three bodies DIED to open the whole wave at once — an arrow from a
+  -- death back into pressure, re-created inside the delivery rule. Under the clamp one slot of room
+  -- admits exactly one body, always, and the schedule is untouched by what did not fit.
+  select count(*) into v_wbefore from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  update public.location_pressure lp
+     set concurrent_cap = v_wbefore - 1, updated_at = now()   -- + floor(6/3) = one slot of room
+    from public.combat_encounters ce
+   where ce.id = v_enc and lp.location_id = ce.location_id;
+  update public.combat_encounters set pressure_wave_index = 6, next_reinforcement_at = now() - interval '1 second'
+   where id = v_enc;
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into v_wafter from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  select pressure_wave_index, pressure_effective_cap into v_idx, v_ecap
+    from public.combat_encounters where id = v_enc;
+  if v_ecap is distinct from v_wbefore + 1 then
+    raise exception 'WAVEGROWS FAIL: the clamp arm staged an effective cap of % against a field of % (want exactly one slot of room) — with any other headroom the count below would not be measuring the clamp at all', v_ecap, v_wbefore;
+  end if;
+  if v_wafter - v_wbefore <> 1 then
+    raise exception 'WAVEGROWS FAIL: a wave of 3 against ONE slot of room delivered % bod(ies) (want exactly 1). Zero would mean all-or-nothing: a big wave would then land only once enough enemies had DIED to open its whole size at once, which is the arrow from a death back into pressure that the owner has rejected three times; more than one would mean the cap is not a cap', v_wafter - v_wbefore;
+  end if;
+  if v_idx <> 7 then
+    raise exception 'WAVEGROWS FAIL: the ordinal reads % after a CLAMPED wave (want 7) — what did not fit is spent, never banked, and a clamp that stalled the schedule would owe bodies that a later death could call in', v_idx;
+  end if;
+  -- ...AND THE CLAMP IS LEGIBLE, NOT SILENT. The event says what the wave WANTED beside what LANDED,
+  -- so a clamped wave cannot be mistaken in the feed for a small one.
+  select (payload_json->>'units')::int, (payload_json->>'wave_size')::int into n, v_wsize
+    from public.combat_events
+   where encounter_id = v_enc and event_type = 'wave_spawned'
+     and tick_number = (select tick_number from public.combat_encounters where id = v_enc)
+   order by seq desc limit 1;
+  if n is distinct from 1 or v_wsize is distinct from 3 then
+    raise exception 'WAVEGROWS FAIL: the clamped wave''s event reports units=% wave_size=% (want 1 and 3) — a wave that was cut down by the field must SAY so, or the only visible difference between "the field was full" and "the wave is small" is nothing at all', n, v_wsize;
+  end if;
+
+  -- ── AND A WAVE WITH NO ROOM AT ALL STILL SPENDS ITS SLOT, exactly as 0344's suppressed body does.
+  select count(*) into v_wbefore from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  update public.location_pressure lp
+     set concurrent_cap = v_wbefore - 2, updated_at = now()   -- + floor(6/3) = no room at all
+    from public.combat_encounters ce
+   where ce.id = v_enc and lp.location_id = ce.location_id;
+  update public.combat_encounters set pressure_wave_index = 6, next_reinforcement_at = now() - interval '1 second'
+   where id = v_enc;
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into v_wafter from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  select pressure_wave_index into v_idx from public.combat_encounters where id = v_enc;
+  if v_wafter <> v_wbefore or v_idx <> 7 then
+    raise exception 'WAVEGROWS FAIL: a wave of 3 against NO room left % bod(ies) standing (was %) at ordinal % (want unchanged, and 7) — a suppressed wave is LOST and its slot is still SPENT; a slot that survived would be a debt that the next death pays out', v_wafter, v_wbefore, v_idx;
+  end if;
+
+  -- ── AND A SITE THAT AUTHORS NO ESCALATION IS 0344, VALUE FOR VALUE. This is what pg_temp.
+  -- pressure_site relies on for every OTHER block in this harness, so it is pinned here rather than
+  -- trusted: a NULL period must give a wave of exactly one body at ANY ordinal.
+  update public.location_pressure lp
+     set concurrent_cap = 400, growth_every = null, updated_at = now()
+    from public.combat_encounters ce
+   where ce.id = v_enc and lp.location_id = ce.location_id;
+  select count(*) into v_wbefore from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  update public.combat_encounters set pressure_wave_index = 11, next_reinforcement_at = now() - interval '1 second'
+   where id = v_enc;
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into v_wafter from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  if v_wafter - v_wbefore <> 1 then
+    raise exception 'WAVEGROWS FAIL: at ordinal 11 with NO authored period the slot delivered % bod(ies) (want exactly 1) — a NULL period means the site does not escalate, and every other block in this harness stages its field through pg_temp.pressure_site on exactly that promise', v_wafter - v_wbefore;
+  end if;
+  if (select status from public.combat_encounters where id = v_enc) <> 'active' then
+    raise exception 'WAVEGROWS FAIL: A''s encounter left ''active'' during the wave arithmetic — a non-active fight is refused reinforcement by design, so every count above would have been measuring the status gate instead of the wave';
+  end if;
+  raise notice 'DZCOMBAT_PASS_WAVEGROWS ok: on a field with ROOM at a site authoring one more body every % scheduled waves, waves 3, 4, 7 and 12 delivered 1, 2, 3 and 4 bodies — the owner''s "every 3 wave, i want wave to add one fleet", which the deployed body answers with 1, 1, 1, 1 — each wave landing on its own arc points out of the city rather than in a pile, each stamping the NEXT wave''s size onto the encounter for a clock to announce, a wave of 3 against ONE slot of room delivering exactly 1 and SAYING so in its own event (units 1, wave_size 3) while still spending its slot, a wave of 3 against no room delivering nothing and still spending its slot, and a site with no authored period still delivering exactly one body at ordinal 11',
+    v_grow;
 
   -- ══ (B) THE DIRECTIVE: DESTROYING THE FIELD BRINGS NOTHING BACK ═════════════════════════════════
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)

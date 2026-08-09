@@ -297,9 +297,17 @@ export function CombatMapCard({
               <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
                 Haul
               </span>
-              <p className="mt-0.5 flex flex-wrap gap-1">
+              {/* ██ THE CHIP ROW CARRIES ITS OWN TYPE SIZE ██ — owner, 2026-08-09: *"the font for haul
+                  is too big"*. <ItemChip> INHERITS the surrounding font size by design (its own
+                  header says so: "font-size inherited from the surrounding text", which is what lets
+                  it sit inside a log sentence). This row was the ONE element on the card that set
+                  none, so the chips fell back to the document's 16px root while every other line
+                  here is 11px or 10px — the haul rendered half again as large as the hull bars above
+                  it. It is not a special size for one number: it is this card's own body size, the
+                  same `text-[11px]` the heading beside it and the volume line below it already use. */}
+              <p className="mt-0.5 flex flex-wrap gap-1 text-[11px]">
                 {haul.empty ? (
-                  <span className="text-[11px] text-ink-faint">Nothing won yet.</span>
+                  <span className="text-ink-faint">Nothing won yet.</span>
                 ) : (
                   haul.entries.map((r) => <ItemChip key={r.id} id={r.id} qty={r.qty} />)
                 )}
@@ -311,29 +319,21 @@ export function CombatMapCard({
                 </p>
               )}
               {!haul.empty && <p className="mt-0.5 text-[10px] text-warning">{HAUL_AT_STAKE}</p>}
-              {/* TOTAL CARGO SPACE — the server's own numbers (get_my_hold, 0333), formatted by the
-                  ONE hold formatter. Never a client-side sum of per-ship capacities: that fold is
-                  exactly what fleetStatusModel refuses, and this is the authority it points at. */}
-              {meter && (
-                <p className="mt-1 text-[10px] text-ink-muted" data-testid={`combat-map-hold-${e.id}`}>
-                  Fleet hold <span className="font-mono tabular-nums">{meter.label}</span>
-                </p>
-              )}
               {/* WHAT ONE MORE KILL IS WORTH HERE — the site's own loot table (0348). Quantities are
                   PER ENEMY DESTROYED, which is the unit the server pays in; nothing is multiplied by
                   a kill count nobody has. A chance under 1 is stated, because a drop that is not
-                  certain must not read as certain. */}
+                  certain must not read as certain. The chip row states its own 10px for the same
+                  reason the haul row above does — a chip inherits, and this line is the card's
+                  smallest register. */}
               {drops && drops.length > 0 && (
                 <div className="mt-1" data-testid={`combat-map-drops-${e.id}`}>
                   <p className="text-[10px] text-ink-faint">Each kill here drops</p>
-                  <p className="mt-0.5 flex flex-wrap gap-1">
+                  <p className="mt-0.5 flex flex-wrap gap-1 text-[10px]">
                     {drops.map((d) => (
                       <span key={d.item_id} className="inline-flex items-center gap-0.5">
                         <ItemChip id={d.item_id} qty={d.quantity} />
                         {d.drop_chance < 1 && (
-                          <span className="text-[10px] text-ink-faint">
-                            {Math.round(d.drop_chance * 100)}%
-                          </span>
+                          <span className="text-ink-faint">{Math.round(d.drop_chance * 100)}%</span>
                         )}
                       </span>
                     ))}
@@ -341,6 +341,33 @@ export function CombatMapCard({
                 </div>
               )}
             </div>
+
+            {/* ██ THE FLEET HOLD IS ITS OWN FACT, NOT THE HAUL'S DESTINATION ██
+                Owner, 2026-08-09: *"fleet hold is not updated when fight is done"*. It never will be,
+                and that is the DATABASE's settled design, not a stale read: combat loot rides the
+                return leg as `fleet_movements.reward_payload_json` and `reward_grant` deposits it
+                into the arrival PORT'S storage (`base_items`). No arm of that chain writes
+                `fleet_items`, which is what the hold is — see fightHaul.HAUL_AT_STAKE's header for
+                the traced call chain.
+
+                So this meter was standing INSIDE the Haul block, under a sentence that said the haul
+                would be "banked", and the only reasonable way to read that arrangement is that the
+                haul lands here. It does not. The sentence now names the port, and the meter has been
+                lifted OUT of the haul block into its own line: what the fleet is carrying, which is a
+                separate and genuinely useful fact (it is why the hold is fetched once per fight —
+                a hold does not change while a fight runs).
+
+                The numbers themselves are untouched and remain the server's own (get_my_hold, 0333),
+                formatted by the ONE hold formatter — never a client-side sum of per-ship capacities,
+                which is the fold fleetStatusModel refuses and this is the authority it points at. */}
+            {meter && (
+              <p
+                className="mt-3 border-t border-edge pt-2 text-[10px] text-ink-muted"
+                data-testid={`combat-map-hold-${e.id}`}
+              >
+                Fleet hold <span className="font-mono tabular-nums">{meter.label}</span>
+              </p>
+            )}
 
             {/* WHO IS WINNING THIS EXCHANGE — the server's own per-tick damage totals, both ways,
                 from the same three seconds. Two static bars cannot show a rate; this can. */}

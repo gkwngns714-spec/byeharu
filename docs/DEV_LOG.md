@@ -5,6 +5,190 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-09 — THE WAVE ITSELF GROWS (`slice-the-wave-itself-grows`, migration 0350)
+
+**The owner, twice:** *"every 3 wave, i want wave to add one fleet"* — and then, playing 0347's
+deployed result: *"only 1 ships are comming out from the city, whereas i specifically told you to add
+1 fleet every three rounds..."*
+
+**He is right; 0347 built the wrong thing.** It grew the **concurrent cap** — the ceiling on how many
+bodies may stand on the field — while every scheduled slot still spawned exactly ONE body. One arrival
+per slot can never fill a rising ceiling, so on a field the player is clearing the ceiling is never the
+binding constraint and the growth is invisible.
+
+**Measured read-only on his own fight, not inferred.** Encounter
+`9855381f-a105-4e3f-b360-291cf1b88a01` at Snare, now completed: `pressure_wave_index` reached **40**,
+`pressure_effective_cap` reached **16**, and of the 41 `wave_spawned` events it emitted, the 40 that
+carry a unit count read `1,1,1,…,1` — **forty waves, forty single bodies**, while the ceiling climbed
+from 3 to 16 and was never once the number that decided anything.
+
+### What 0350 does
+
+    wave_size = 1 + floor((pressure_wave_index - 1) / growth_every)      -- period is CONTENT, per site
+
+| wave *n* | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **bodies** | 1 | 1 | 1 | 2 | 2 | 2 | 3 | 3 | 3 | 4 | 4 | 4 |
+| Snare effective cap (0347, unchanged) | 3 | 3 | 4 | 4 | 4 | 5 | 5 | 5 | 6 | 6 | 6 | 7 |
+
+- **`public.combat_wave_size(wave_index, period, ceiling)`** is minted as THE one answer, **IMMUTABLE
+  with three scalar arguments**. That signature is a *type-level* proof of the owner's absolute
+  constraint — an immutable function reading no table cannot see a death, a kill count or the state of
+  the fight — and self-assert (c) fails the deploy if the volatility or the argument list changes.
+- **`combat_pressure_field`** is re-minted (dropped and re-created: the return type changes) and
+  composes that leaf **twice** — the wave that is due, and the next one. `arriving boolean` becomes
+  **`arriving_count integer`**; the boolean is removed rather than kept beside the count, because a
+  boolean that is exactly `count > 0` is a second spelling of one fact.
+- **`combat_pressure_step`** hands the spawner `f.arriving_count` instead of the literal `1`. That one
+  argument is the fix. `combat_spawn_wave_units` already loops over a count and places each body on its
+  own formation arc slot with its own ingress from the city (verified against the **deployed** body,
+  read-only, and asserted in section 0) — so nothing about spawning is rewritten and a wave of three
+  arrives as three bodies on three points, not a pile.
+- **The tick is not touched at all.** Same name, same eight arguments, same three OUT parameters;
+  `o_arrived` simply carries a number that could always have been greater than one — the aggregate arm
+  already folds it as `v_pressure_arrived * v_body_hp`. Self-assert (f) pins `md5(prosrc)` across the
+  whole file, so the eleven generators that assert 0299 is the newest textual re-create stay green.
+
+### The three decisions, made deliberately
+
+1. **CLAMP, not all-or-nothing.** `arriving_count = least(wave_size, max(effective_cap − population, 0))`.
+   A wave of 3 against one slot of room delivers **1**. All-or-nothing was rejected because (a) the
+   owner's complaint is that too few arrive, (b) it inverts escalation — a bigger wave would be *less*
+   likely to land — and decisively (c) **on a full field it would land nothing until three enemies DIED
+   to open the whole wave at once**, which is the death→pressure arrow re-created inside the delivery
+   rule. What did not fit is lost, never banked, exactly as 0344's suppressed slot is.
+2. **The cap growth STAYS.** The owner approved it explicitly (*"yes, cap should grow. go ahead"*) and
+   0347's expression survives character for character — self-assert (d) requires it. It does **not**
+   double-count: the two answer different questions (how many ARRIVE vs how many may STAND) and compose
+   by clamp, so at any instant the smaller binds and they never add. Delete the cap growth and a long
+   fight's field is pinned at its authored floor forever; delete the wave growth — which is what
+   shipped — and the ceiling rises over an empty room. The notches are deliberately one slot apart (cap
+   at slot 3, wave at slot 4) so **the room arrives before the bodies that need it**.
+3. **Unbounded, as a data row.** `location_pressure.wave_size_ceiling` is NULL at every site; the apply
+   NOTICEs it per site so the deploy log records the unbounded state. Bounding one later is one UPDATE
+   and no deploy. Inventing a limit the owner has not ruled on would be balance smuggled in as an
+   implementation detail.
+
+**One column for "every 3", not two.** `location_pressure.cap_growth_every` is **renamed to
+`growth_every`**: it is the same number out of the same owner sentence and it now governs both notches,
+so a name that says "cap" is a name that lies — and the next person would be right to add
+`wave_growth_every` beside it, which is two spellings of one decision. The rename is catalog-only and
+the column had exactly one reader in the schema.
+
+### The proof
+
+**`DZCOMBAT_PASS_WAVEGROWS`** (danger-combat, disposable Postgres — the only real gate). It is the
+mirror of `FIELDGROWS`: that block needs a FULL field, where the room never exceeds one slot and a wave
+of three is indistinguishable from a wave of one; this one puts the cap out of reach so what is measured
+is the **wave**. Waves 3/4/7/12 must deliver **1/2/3/4** bodies, each on its own distinct point; the
+ordinal must advance every slot; `pressure_next_wave_size` must be stamped with the next band; a wave of
+3 against ONE slot of room must deliver exactly 1 **and say so in its event** (`units 1, wave_size 3`)
+while still spending its slot; a wave of 3 against no room must deliver nothing and still spend its
+slot; and a site with no authored period must still deliver exactly one body at ordinal 11 (the promise
+every other block's staging relies on). **Every one of these is red by construction on the 0347 body.**
+`FIELDGROWS` is unchanged and still passes — on a full field the clamp delivers exactly one per notch.
+
+### ⚠ THE CLIENT HALF — SPEC, NOT SHIPPED HERE
+
+`src/features/combat/*` and `src/features/map/*` are owned by the concurrent slice
+`slice-the-readout-tells-you`, so this branch **does not touch them**. It does not have to for the data:
+`combat_encounters` is fetched `select('*')` under `combat_encounters_select_own`, so the new stamp
+**`combat_encounters.pressure_next_wave_size`** is already on the wire, and self-assert (h) pins that
+column-level SELECT reachability.
+
+**But one sentence in `src/features/combat/reinforcementClock.ts` is made FALSE by this migration and
+must land with it.** The exact delta:
+
+1. `ReinforcementInput` — add `pressure_next_wave_size?: number | null`.
+2. `ReinforcementView` — add `waveSize: number | null` ("how many bodies the next scheduled wave brings,
+   straight off the engine's stamp; null until the fight has evaluated its first slot"). Populate it in
+   `resolveReinforcement` with the existing `finiteOrNull(encounter.pressure_next_wave_size)`. **Do not
+   derive it** — the band is `1 + floor(ordinal / growth_every)` and `growth_every` is not on the wire,
+   deliberately; `tests/combatMapCard.spec.ts` now fails any client that names `growth_every`.
+3. `REINFORCEMENT_RULE` currently reads *"A wave brings one more ship only while the field is under its
+   limit. A wave that finds it full is spent, not saved."* — **the first clause is now wrong.** Replace
+   with: *"A wave brings as many ships as the field has room for. What does not fit is spent, not
+   saved."* That is true at every instant and at every wave size, so it still cannot go stale.
+4. The surface (`CombatMapCard` / the Fight-Fleets section) may print `waveSize` beside the countdown —
+   e.g. *"Next wave in 12s · 3 ships"* — because the SIZE is fully determined by the ordinal and the
+   site row and cannot be wrong the way an arrival prediction can. It must still print no verdict about
+   whether anything will arrive; that remains the rule's job, per the file's own reasoning.
+5. `src/features/combat/combatTypes.ts:54-71` documents the pressure columns; add the new one there and
+   fix the line that names `cap_growth_every` (renamed to `growth_every` by this migration).
+
+### ⚠ CI round 1 (PR #408, 43 pass / 2 fail) — the pin caught a REAL defect, and it was mine
+
+Both `disposable-matrix` legs, same assertion, `danger-combat-proof.sql`:
+
+    FIELDGROWS FAIL slot 1: the enemy bar's denominator reads 2999955 but one body's
+    nominal hp (1000000) times the EFFECTIVE cap (3) is 3000000
+
+Off by 45 in 3,000,000 — 0.0015% — which *reads* like float noise from an accumulated sum and is
+not. **The exact-product premise was sound; the engine was wrong.** Established, in this order:
+
+1. **Production says the product is exact.** Read-only on encounter `9855381f`: `enemy_integrity_max`
+   = 2240 and `base_difficulty × enemy_hp_base × pressure_effective_cap` = 10 × 14 × 16 = 2240. No
+   variance, no rounding, no accumulation — so an assert demanding the exact product is right to.
+2. **`process_combat_ticks` is its sole writer** (swept `pg_proc` on prod: one function, two write
+   sites, both `enemy_integrity_max = v_enemy_hp`), and `v_enemy_hp` is the step's `o_ceiling_hp`
+   *unless* the tick takes its documented fallback at `:476` —
+   `greatest(coalesce(e.enemy_integrity_max,0), v_e_before)` — where `v_e_before` is
+   `sum(hp_current)`: accumulated, and damage-bearing.
+3. **Reproduced on a disposable Postgres** with a tick faithful to that ceiling path. Trace:
+   `o_ceiling_hp = 0` on **every** tick. Not null — zero.
+
+**The cause: re-minting `combat_pressure_field`, this slice DROPPED the line
+`ceiling_hp := body_hp_nominal * effective_cap;`.** 0347 had it; the 0350 draft replaced that whole
+region with the wave-size block and lost it. plpgsql does not complain — the OUT parameter simply
+keeps the `0` the function's own "no answer yet" block gave it. The failure is silent and three
+layers deep, and it is **player-visible**: leaf answers 0 → step hands the tick `o_ceiling_hp = 0` →
+the tick falls back to accumulated hp → **the enemy health bar divides by a number that drifts with
+damage instead of by the site's ceiling.**
+
+**Pre-existing or introduced? Introduced, entirely by this slice.** 0347's leaf carries the line;
+`FIELDGROWS` was green on it and is green again now. The assert was never fragile: after the fix it
+passes with `sum(hp_current) = 2,999,820` — a *damaged* field — precisely because the denominator is
+a stable ceiling, which is the property it exists to state.
+
+**Fixed the CLASS, not the instance.** Restoring one line would leave the next re-mint free to drop
+`population` or `due_at` the same way. New **self-assert (i)** reads the OUT-parameter list *from the
+catalog* and requires every one to be assigned at least twice — once in the "no answer yet" block and
+once on the authored path — so a parameter added later is covered the day it is added. It also pins
+the denominator to 0347's whole identity (not a substring — the lesson from (d)), and on real data
+requires every live fight's `ceiling_hp` to be non-zero and equal to that identity. Three new
+mutations prove it red: dropping the line, re-tuning it to `base_cap`, and dropping `population`'s
+assignment. **Nine mutations now, all refused.**
+
+**Two harness lessons, recorded rather than swallowed:**
+- My local behavioural suite went green on the broken build because *it never read the leaf's whole
+  answer*. It now asserts that no OUT parameter comes back NULL and that the step hands the tick a
+  non-zero ceiling equal to the leaf's.
+- My mutation rehearsal reported one defect as "not gated" when it was: a bare `String.replace` hit
+  the same literal inside a **comment** I had just written, so it mutated prose, not code. Mutations
+  are now anchored to a line starting with exactly two spaces. *A rehearsal that can silently mutate
+  nothing reports false green.*
+
+### In-flight behaviour at apply time (prod is a LIVE ~30-player game)
+
+**Nothing is reset.** A fight sitting at ordinal 7 gets a wave of **3** on its next slot rather than 1 —
+a real, visible step-up mid-fight, and the correct one: the ordinal says eight waves have come due and
+the owner's rule says wave 8 brings 3. Resetting live fights to ordinal 0 would delete the schedule of
+every fight in progress to make a number look smoother. The step-up is bounded by the clamp, so a fight
+already at its cap still receives only what fits. `pressure_next_wave_size` is backfilled for every
+non-terminal encounter at an authored site **by calling the authority**, never by re-deriving the
+formula. Unauthored sites are untouched and fail closed. Everything is one transaction, so a cron pass
+already executing finishes on the old leaf and resolves its encounter fully.
+
+**Rollback boundary** (in one transaction, in order): rename `growth_every` back to `cap_growth_every`;
+`drop function public.combat_pressure_field(uuid)` and re-run 0347's block at
+`20260618000347_the_field_grows.sql:457-598` verbatim; re-run 0347's `combat_pressure_step` at
+`:647-741` verbatim; `drop function public.combat_wave_size(integer,integer,integer)`; drop
+`location_pressure.wave_size_ceiling`; optionally drop `combat_encounters.pressure_next_wave_size`
+(safe to leave — nothing writes or reads it after the restore). It deletes no enemy row, disturbs no
+haul and resets no ordinal. **There is no config value that switches the growth off**, deliberately.
+
+---
+
 ## 2026-08-09 — A FLEET COMES HOME TOGETHER (`slice-a-fleet-comes-home-together`, migration 0349)
 
 **The owner:** *"when i retreated after my hp was set during combat, 5 ships, 4 of them went to haven
