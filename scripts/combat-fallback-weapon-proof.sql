@@ -68,18 +68,30 @@
 --                                 entry, module_type_id='autocannon_battery', power/range equal to its
 --                                 CATALOG row (derived at assert time) — the fallback did NOT
 --                                 overwrite an already-armed ship.
---   CFALLBACK_PASS_DAMAGE       — after tick 1 the pirate's hp_current fell below its frozen hp_max,
---                                 and the attribution is now NAMED rather than inferred: the wave
---                                 stands exactly on combat_formation_point(anchor, ring + its OWN
---                                 range + 1, slot 0, the 0338 arrival phase) — pinned against a point predicted
---                                 from the knobs BEFORE the tick; s_fb's PRE-MOVE distance is inside
---                                 the synthesized weapon's own reach and s_arm's is outside its
---                                 catalog gun's; the derived count of in-reach player hulls is 1, the
---                                 observed tick-1 player salvo count equals it, and that salvo's own
---                                 payload unit_id IS s_fb's combat unit. The pirate fired nothing,
---                                 which is likewise derived (every hull is beyond its reach). So the
---                                 synthesized fallback weapon dealt the damage (NONZERO after the
---                                 fix, ZERO before).
+--   CFALLBACK_PASS_DAMAGE       — (0351 REPOINTED — the old per-hull attribution INVERTED) THE RULE
+--                                 first: combat_fleet_actor(enc).reach = least(the unarmed lead's
+--                                 synthesized fallback, the armed escort's catalog gun). The
+--                                 fallback participates in the fold on exactly equal terms with a
+--                                 catalog gun, and whichever is SHORTER is the fleet's one circle —
+--                                 here the CATALOG gun, which is the reverse of the "an unarmed hull
+--                                 drags the fleet down" direction that danger-combat-proof's
+--                                 DZCOMBAT_PASS_SHORTGUN proves. Both are the same rule, so the rule
+--                                 is what is asserted. Then: the wave stands exactly on
+--                                 combat_formation_point(anchor, ring + its OWN range + 1, slot 0,
+--                                 the 0338 arrival phase), predicted BEFORE the tick; tick 1 is
+--                                 SILENT and the pirate's hp is UNTOUCHED (the old per-hull gate
+--                                 fired the fallback there, because 23 <= its own 30); the fleet then
+--                                 closes for exactly ceil((gap - reach) / fleet speed) ticks —
+--                                 DERIVED from the engine's own recurrence over the frozen rows,
+--                                 never a literal index — every one of them silent; and on the
+--                                 arrival tick BOTH hulls fire together, the fallback salvo carrying
+--                                 s_fb's own unit id and the basic_player_weapon projectile type,
+--                                 with the wave's hp falling by EXACTLY the sum of the two frozen
+--                                 0331 power shares. Pre-0262 (weapons_json = []) that sum is short
+--                                 by the fallback's whole share — the original defect, still caught,
+--                                 still by a number. 47 production hulls carry no weapon at all, so
+--                                 this is also the guard that screams if the aggregate is ever
+--                                 changed without them in mind.
 --
 -- Self-rolling-back (begin;...rollback;, no COMMIT); every dark flag flipped ONLY inside the txn;
 -- provisioning is 100% real-RPC/real-writer (commission_first_main_ship / commission_additional_main_ship
@@ -101,6 +113,20 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', p_sub::text, 'role','authenticated')::text, true);
   execute 'select ' || p_fn into v;
   return v;
+end $$;
+
+-- ── THE ONE AUTHORITY IN THIS HARNESS FOR "ADVANCE ONE TICK" (0351) ──────────────────────────────
+-- Until 0351 this file drove exactly one tick, inline. The fleet's circle is now folded to
+-- least(fallback, catalog gun), so the DAMAGE block is an APPROACH of a DERIVED number of ticks and
+-- the clock rewind + the cron leaf have to be one composable thing rather than a copied couplet: a
+-- rewind without the call advances nothing, a call without the rewind is a no-op because the
+-- encounter is not due yet. ONE textual process_combat_ticks() call site in the whole file, which is
+-- what the .sh gate counts — the combat-spatial-proof (pg_temp.cs_tick) and danger-combat-proof
+-- (pg_temp.ae_tick) idiom, mirrored rather than re-invented.
+create or replace function pg_temp.cfb_tick(p_enc uuid) returns void language plpgsql as $$
+begin
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = p_enc;
+  perform public.process_combat_ticks();
 end $$;
 
 -- ════════ SETUP: reveal starter ports (fresh disposable chain seeds them INACTIVE — commission hard-
@@ -176,6 +202,16 @@ begin
   -- hull's reach by construction" invariant is then read off the spawn geometry itself.
   perform public.set_game_config('enemy_synthetic_speed_base', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  -- ── 0351 FORCES THIS SUITE TO OWN THE PLAYER'S COMBAT SPEED ────────────────────────────────────
+  -- Until 0351 the lead fired on tick 1 from where it spawned and nothing in this file ever moved,
+  -- so the world-to-combat speed factor was irrelevant here. Now the fleet's circle is
+  -- least(fallback 30, catalog 5) = 5 against a spawn radius of 23, so the DAMAGE block is an
+  -- APPROACH and this knob decides how long it is: at the seeded 0.2 it would be dozens of ticks.
+  -- 1 is the top of the band 0316's own self-assert declares legal (0 < scale <= 1), and it is read
+  -- ONCE at encounter creation to freeze combat_units.move_speed — which is why it is set HERE, in
+  -- setup, before the send/settle, and not inside the block that consumes it. The number of closing
+  -- ticks is still DERIVED from the frozen row, never from this value.
+  perform public.set_game_config('combat_player_speed_scale', '1'::jsonb);
 end $$;
 
 -- ════════ PROVISION: 2 ships via the real commission RPCs; s_fb gets a CAPTAIN (attack, NO weapon),
@@ -375,10 +411,60 @@ begin
   raise notice 'CFALLBACK_PASS_ARMED ok: s_arm keeps its real autocannon_battery — the catalog RANGE % byte-for-byte, and power % = its own folded combat_power (0317), not the catalog share weight %', v_range, v_power, v_cat.power;
 end $$;
 
--- ════════ BLOCK DAMAGE: tick 1 — the synthesized weapon deals REAL damage to the pirate ═══════════════
+-- ════════ BLOCK DAMAGE: the synthesized weapon deals REAL damage — and the fold that lets it ═══════
+--
+-- ── ██ 0351: THIS BLOCK'S ATTRIBUTION INVERTED, AND THE RULE REPLACES BOTH ANECDOTES ██ ──────────
+-- WHAT IT PROTECTED: that on TICK 1 exactly ONE player hull was in reach — s_fb, the unarmed lead,
+-- whose synthesized fallback (range owned at 30) covered the full spawn radius of 23 while s_arm's
+-- catalog autocannon (5) did not cover its chord of 8.89 — so the single tick-1 salvo, and therefore
+-- the pirate's hp loss, was s_fb's alone.
+-- WHY IT INVERTS. 0351 folds the reach: the fleet's circle is `min` over its LIVING HULLS of `min`
+-- over their guns, so this fleet's reach is least(30, 5) = 5 against a gap of 23. The fleet cannot
+-- fire on tick 1 at all, and every one of the old attribution guards ("s_fb is in reach", "s_arm is
+-- not", "the derivation expects exactly 1 in-reach hull") is a statement about a model that no
+-- longer exists.
+-- ██ AND NOTE WHICH WAY ROUND IT IS HERE. The cap comes from the ARMED escort's CATALOG GUN, not
+-- from the unarmed hull's long fallback — the reverse of the "an unarmed hull drags the fleet down"
+-- framing that the same fold produces elsewhere (danger-combat-proof's DZCOMBAT_PASS_SHORTGUN, where
+-- a fitted hull's short gun caps a fleet whose unarmed escort reaches further). Both directions are
+-- the SAME RULE, so this block asserts the rule rather than either anecdote:
+--
+--     combat_fleet_actor(enc).reach = least(v_r_fb, v_r_arm)
+--
+-- — the synthesized fallback participates in the fold on exactly equal terms with a catalog gun, and
+-- whichever is shorter is the fleet's one circle. The fixture is deliberately the case where the
+-- fallback is the LONGER of the two, so a fold that special-cased or skipped synthesized weapons
+-- would still produce 5 here and pass; what would NOT pass is a fold that took the max (30), or the
+-- lead's own (30), or the point-hull's own (30). Each of those is printed against the observed value
+-- when this fails.
+-- WHY THIS BLOCK MATTERS BEYOND ITS OWN SUITE: 47 production hulls carry no weapon at all. Every one
+-- of them hands its fleet a synthesized fallback range as a candidate for the fleet's reach. This
+-- assert is the guard that screams if someone changes the aggregate without thinking about them.
+--
+-- WHAT IT PROTECTS NOW, and every part of it fails the old engine:
+--   • THE FOLD, above — combat_fleet_actor does not exist on the old body, and no per-hull gate
+--     produces a single number that is least() over two hulls' weapons.
+--   • TICK 1 IS SILENT. The old engine fired s_fb's fallback on tick 1 and damaged the pirate; the
+--     new one cannot, at a gap of 23 against a circle of 5. 0 <> 1, and the pirate's hp is required
+--     to be untouched where the old body had already reduced it.
+--   • THE DAMAGE WITNESS MOVES TO THE DERIVED ARRIVAL TICK — ceil((gap - fleet reach) / fleet speed),
+--     computed from the engine's own recurrence over this encounter's frozen rows, never a literal
+--     index — and on that tick BOTH hulls fire (all-or-none), which the old per-hull gate never did
+--     on any single tick in this geometry.
+--   • THE SUBJECT STILL FIRES, AND ITS DAMAGE IS SEPARATED OUT AS A NUMBER. The pirate's hp falls by
+--     EXACTLY the sum of the two frozen power shares, and the salvo carrying s_fb's own unit id and
+--     the basic_player_weapon projectile type is required to be there. Pre-0262 (weapons_json = [])
+--     that ship contributed nothing, so the sum would be short by the fallback's whole share.
+--
+-- ── THE ONE KNOB THIS REPOINT FORCES THE SUITE TO OWN ────────────────────────────────────────────
+-- The approach is now 18 units long instead of zero, so combat_player_speed_scale stops being
+-- irrelevant to this file and becomes the thing that decides how many ticks it takes. It is OWNED in
+-- the setup block (see there) rather than inherited, and the tick count is DERIVED from the frozen
+-- move_speed the encounter actually carries — a literal tick index is the fixture assumption that
+-- has cost this repo real CI rounds.
 do $$
 declare
-  n int; v_enc uuid := (select v from cfb where k='v_enc');
+  n int; i int; v_enc uuid := (select v from cfb where k='v_enc');
   s_fb uuid := (select v from cfb where k='s_fb');
   s_arm uuid := (select v from cfb where k='s_arm');
   u_fb uuid; u_arm uuid; u_en uuid;
@@ -391,9 +477,18 @@ declare
   v_arm_x double precision; v_arm_y double precision;
   v_dist_fb double precision; v_dist_arm double precision;
   v_r_fb double precision; v_r_arm double precision; v_r_en double precision;
-  v_e_hpmax double precision; v_e_hpcur double precision;
-  v_pirate_fire int; v_exp_fire int; v_firer uuid;
+  v_p_fb double precision; v_p_arm double precision;
+  v_e_hpmax double precision; v_e_hpcur double precision; v_e_shield double precision;
+  v_pirate_fire int; v_firers int;
   v_hp_fb0 double precision; v_hp_arm0 double precision; v_hp_fb1 double precision; v_hp_arm1 double precision;
+  v_fb_mid text;
+  -- ── 0351: the fleet as ONE actor, and the derived arrival the damage witness moves to ──────────
+  v_fl_x double precision; v_fl_y double precision;
+  v_fl_reach double precision; v_fl_speed double precision;
+  v_fl_gap double precision; v_gap_pre double precision;
+  v_sim double precision; v_pred_tick int; v_steps int := 0; v_hit_tick int;
+  v_hp0 double precision; v_hp1 double precision; v_drop double precision;
+  n_fb int; n_arm int; n_hulls int;
 begin
   -- THE ENGAGEMENT ANCHOR, resolved exactly as the tick resolves it
   -- (v_anchor_x := coalesce(e.engagement_x, loc.x), 0294/0299) — never the location row alone.
@@ -405,10 +500,6 @@ begin
   -- 0336's spawn geometry, PREDICTED from the knobs BEFORE the tick, through the very leaf the tick
   -- composes: radius = ring + the wave's OWN range + 1, slot 0, the arrival phase. Predicting first
   -- and comparing after is what makes this a pin on 0336 rather than a restatement of the row.
-  -- 0338 REPOINTED: the phase is the bearing to this encounter's OWN site, taken from the one
-  -- authority (combat_wave_arrival_phase) at the same arguments the tick composes it with. The radius
-  -- is untouched, so the LEAD's distance to the wave — the full radius, because the lead stands on
-  -- the anchor — is unchanged; only the direction moves.
   v_er_pred := coalesce(public.cfg_num('enemy_synthetic_range_base'), 120)
                + v_diff * coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 5);
   if v_anchor_x is null or v_anchor_y is null or v_ring is null or v_er_pred is null then
@@ -418,33 +509,92 @@ begin
     from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring + v_er_pred + 1, 0,
            public.combat_wave_arrival_phase(v_anchor_x, v_anchor_y, v_site_x, v_site_y, 0)) fp;
 
-  -- the PRE-MOVE player positions and each hull's own frozen reach (its weapons_json, never the
-  -- catalog): 0299's fire gate compares the PRE-MOVE distance, so that is what attribution must use.
+  -- the PRE-MOVE player positions, each hull's own frozen reach and each hull's own frozen 0331
+  -- power share (its weapons_json, never the catalog).
   select id, pos_x, pos_y, hp_current into u_fb,  v_fb_x,  v_fb_y,  v_hp_fb0
     from public.combat_units where encounter_id = v_enc and main_ship_id = s_fb;
   select id, pos_x, pos_y, hp_current into u_arm, v_arm_x, v_arm_y, v_hp_arm0
     from public.combat_units where encounter_id = v_enc and main_ship_id = s_arm;
-  select max((w->>'range')::double precision) into v_r_fb
+  select max((w->>'range')::double precision), max((w->>'power')::double precision) into v_r_fb, v_p_fb
     from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_fb;
-  select max((w->>'range')::double precision) into v_r_arm
+  select max((w->>'range')::double precision), max((w->>'power')::double precision) into v_r_arm, v_p_arm
     from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_arm;
   v_dist_fb  := public.osn_distance(v_fb_x,  v_fb_y,  v_px, v_py);
   v_dist_arm := public.osn_distance(v_arm_x, v_arm_y, v_px, v_py);
-  if v_r_fb is null or v_r_arm is null or v_dist_fb is null or v_dist_arm is null then
-    raise exception 'DAMAGE FAIL: a frozen weapon range (fb %, arm %) or a pre-move distance (fb %, arm %) is NULL — the attribution below would be vacuous', v_r_fb, v_r_arm, v_dist_fb, v_dist_arm;
+  if v_r_fb is null or v_r_arm is null or v_dist_fb is null or v_dist_arm is null
+     or v_p_fb is null or v_p_arm is null then
+    raise exception 'DAMAGE FAIL: a frozen weapon range (fb %, arm %), power share (fb %, arm %) or pre-move distance (fb %, arm %) is NULL — the fold and the damage identity below would both be vacuous', v_r_fb, v_r_arm, v_p_fb, v_p_arm, v_dist_fb, v_dist_arm;
+  end if;
+  v_fb_mid := coalesce((select value #>> '{}' from public.game_config
+                         where key = 'combat_player_fallback_weapon_module_type_id'), 'basic_player_weapon');
+
+  -- ── ★ THE RULE, ASSERTED AS A RULE (0351) — READ BEFORE THE SPAWN TICK ────────────────────────
+  -- The fleet's reach is least() over the two hulls' own frozen weapons: the synthesized fallback on
+  -- exactly equal terms with a catalog gun. Here the SHORTER one is the ARMED escort's, so the cap
+  -- comes from a real gun and not from the unarmed hull; DZCOMBAT_PASS_SHORTGUN proves the other
+  -- direction of the same rule.
+  -- IT IS READ HERE, BEFORE THE TICK, ON PURPOSE. The gate compares the PRE-MOVE fleet point against
+  -- the wave, and the fleet MOVES on the spawn tick (it is in CLOSE at a gap of 23 against a circle
+  -- of 5) — so an actor read afterwards would be a different point, and comparing it against the
+  -- pre-move hull distances measured above would be comparing two different instants.
+  select a.x, a.y, a.reach, a.speed into v_fl_x, v_fl_y, v_fl_reach, v_fl_speed
+    from public.combat_fleet_actor(v_enc) a;
+  if v_fl_x is null or v_fl_y is null or v_fl_reach is null or v_fl_speed is null then
+    raise exception 'DAMAGE FAIL: combat_fleet_actor answers point (%,%), reach %, speed % — a NULL in any of the four makes every assert below vacuous', v_fl_x, v_fl_y, v_fl_reach, v_fl_speed;
+  end if;
+  if abs(v_fl_reach - least(v_r_fb, v_r_arm)) > 1e-9 then
+    raise exception 'DAMAGE FAIL attribution: the fleet''s reach is % but least(the unarmed lead''s synthesized fallback %, the armed escort''s catalog gun %) is % — 0351 folds the circle with min() over living hulls and the fallback takes part on exactly equal terms with a catalog gun. A max() would answer %, the lead''s own would answer %, and either would let the fleet shoot from outside the circle the player is shown',
+      v_fl_reach, v_r_fb, v_r_arm, least(v_r_fb, v_r_arm), greatest(v_r_fb, v_r_arm), v_r_fb;
+  end if;
+  -- NON-VACUITY for the rule: the two reaches must actually DIFFER, or least() and max() and
+  -- "the lead's own" all coincide and the assert above could not tell any of them apart.
+  if v_r_fb <= v_r_arm then
+    raise exception 'DAMAGE FAIL attribution: the synthesized fallback reaches % against the catalog gun''s % — this fixture needs the fallback to be strictly the LONGER one, so that least() is distinguishable from max() and from the lead''s own reach. Own combat_player_fallback_weapon_range above the catalog range rather than loosening the fold assert',
+      v_r_fb, v_r_arm;
+  end if;
+  -- the fleet stands on its 0315-elected lead, which is s_fb on the anchor — so the circle the gate
+  -- uses is centred where the client draws the glyph.
+  if abs(v_fl_x - v_fb_x) > 1e-9 or abs(v_fl_y - v_fb_y) > 1e-9 then
+    raise exception 'DAMAGE FAIL attribution: the fleet stands at (%,%) but its elected lead s_fb is at (%,%) — every distance below is measured from the fleet point, and it must be the hull 0315 elected', v_fl_x, v_fl_y, v_fb_x, v_fb_y;
+  end if;
+  -- the SPAWN gap: the pre-move fleet point to the point the wave is about to occupy (pinned to be
+  -- where it actually lands, immediately after the tick). Identical to s_fb's own pre-move distance
+  -- BECAUSE the fleet's point is s_fb — asserted, not assumed.
+  v_fl_gap := public.osn_distance(v_fl_x, v_fl_y, v_px, v_py);
+  if v_fl_gap is null or abs(v_fl_gap - v_dist_fb) > 1e-9 then
+    raise exception 'DAMAGE FAIL attribution: the fleet''s gap to the wave is % but s_fb''s own pre-move distance is % — the fleet point is not the lead and the recurrence below would be run on the wrong number', v_fl_gap, v_dist_fb;
+  end if;
+  if v_fl_speed <= 0 then
+    raise exception 'DAMAGE FAIL: the fleet''s frozen speed is % — it can never close and this block would spin', v_fl_speed;
+  end if;
+  -- ── THE ARRIVAL TICK, DERIVED FROM THE ENGINE'S OWN RECURRENCE, BEFORE A SINGLE TICK IS DRIVEN ──
+  -- The wave is PARKED (its speed knobs are owned at 0 in setup), so the close arm shortens the gap
+  -- by exactly the fleet's frozen speed each tick until the PRE-MOVE gap is inside the fleet's reach.
+  -- Counting from the spawn tick as tick 1 — which is the engine's own combat_encounters.tick_number
+  -- — the fleet fires on the tick this loop lands on. Never a literal index.
+  v_sim := v_fl_gap; v_pred_tick := 1;
+  while v_sim > v_fl_reach and v_pred_tick <= 60 loop
+    v_sim := v_sim - least(v_fl_speed, v_sim);
+    v_pred_tick := v_pred_tick + 1;
+  end loop;
+  if v_pred_tick < 2 then
+    raise exception 'DAMAGE FAIL: the recurrence says the fleet is already inside its own circle at spawn (gap %, reach %) — there is nothing to close and the arrival witness would be the spawn tick again', v_fl_gap, v_fl_reach;
+  end if;
+  if v_pred_tick > 40 then
+    raise exception 'DAMAGE FAIL: the recurrence needs % ticks to close (gap %, fleet reach %, fleet speed %) — this suite OWNS combat_player_speed_scale so the approach stays a handful of ticks; an approach this long means the knob it owns stopped landing', v_pred_tick, v_fl_gap, v_fl_reach, v_fl_speed;
   end if;
 
   -- no enemy yet — wave 1 spawns and takes its first fire pass INSIDE this tick call.
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
   if n <> 0 then raise exception 'DAMAGE FAIL precondition: % enemy rows before the first tick (want 0)', n; end if;
 
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
+  perform pg_temp.cfb_tick(v_enc);
 
   -- exactly ONE synthetic pirate (danger 1), and it stands where 0336 puts it.
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy' and unit_type_id = 'pirate_synthetic';
   if n <> 1 then raise exception 'DAMAGE FAIL: % synthetic pirate row(s) (want exactly 1 — one unit means slot 0, which is the point pinned below)', n; end if;
-  select id, pos_x, pos_y into u_en, v_ex, v_ey from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  select id, pos_x, pos_y, shield_current into u_en, v_ex, v_ey, v_e_shield
+    from public.combat_units where encounter_id = v_enc and side = 'enemy';
   select max((w->>'range')::double precision) into v_r_en
     from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_en;
   if v_ex is null or v_ey is null or v_r_en is null then
@@ -457,57 +607,147 @@ begin
     raise exception 'DAMAGE FAIL: the wave stands at %,% but combat_formation_point(anchor, ring % + its own range % + 1, slot 0, the arrival phase) is %,% — 0336''s wave-spawn geometry is not what landed, so every pre-move distance above was measured to the wrong point', v_ex, v_ey, v_ring, v_r_en, v_px, v_py;
   end if;
 
-  -- ── ATTRIBUTION, all of it DERIVED from the measured geometry ──────────────────────────────────
-  -- (1) s_fb can reach: its PRE-MOVE distance (the full radius Re, because the lead stands on the
-  --     anchor) is inside the SYNTHESIZED weapon's own range. Without this the DAMAGE assert below
-  --     would be testing an engine that never fired at all.
-  if v_dist_fb > v_r_fb then
-    raise exception 'DAMAGE FAIL attribution: s_fb is % from the wave, OUTSIDE its own synthesized % range — after 0336 the lead opens at (ring + the wave''s range + 1), so the fallback range must be owned above that or this proof''s subject never fires', v_dist_fb, v_r_fb;
-  end if;
-  -- (2) s_arm cannot: its chord to the wave is outside its own catalog gun, so it CLOSEs in silence.
-  if v_dist_arm <= v_r_arm then
-    raise exception 'DAMAGE FAIL attribution: s_arm is % from the wave, within its % range (it would fire and muddy attribution) — after 0336 the escort is the NEAR hull, so the ring must be owned large enough that its chord clears the catalog gun', v_dist_arm, v_r_arm;
-  end if;
-  -- (3) the wave reaches nobody: 0336 stands it at least its own range + 1 from EVERY player hull.
-  if least(v_dist_fb, v_dist_arm) <= v_r_en then
-    raise exception 'DAMAGE FAIL attribution: the nearest player hull is % from the wave, inside its own % reach — 0336''s spawn invariant does not hold in this world and the pirate could fire', least(v_dist_fb, v_dist_arm), v_r_en;
-  end if;
-  select count(*) into v_pirate_fire from public.combat_events
-    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'pirate';
-  if v_pirate_fire <> 0 then raise exception 'DAMAGE FAIL attribution: pirate fired % time(s) on tick 1 (want 0 — every player hull is outside its own reach at spawn)', v_pirate_fire; end if;
-
-  -- (4) exactly ONE player hull was in reach, so exactly one player salvo — and it is s_fb's. Each
-  --     hull here carries exactly one weapon (asserted above), so the derived count IS the salvo
-  --     count, and the event's own payload names the firer rather than leaving it to be inferred.
-  v_exp_fire := (case when v_dist_fb  <= v_r_fb  then 1 else 0 end)
-              + (case when v_dist_arm <= v_r_arm then 1 else 0 end);
-  if v_exp_fire <> 1 then
-    raise exception 'DAMAGE FAIL attribution: the derivation expects % in-reach player hull(s) on tick 1 (want exactly 1 — s_fb alone)', v_exp_fire;
+  -- ── ★ TICK 1 IS SILENT, AND THAT IS THE INVERSION ──────────────────────────────────────────────
+  -- The old engine fired s_fb's fallback here (23 <= its own 30) and the pirate's hp was already
+  -- down by this line. Under one circle the fleet opens at % of a reach of % and fires nothing.
+  if v_fl_gap <= v_fl_reach then
+    raise exception 'DAMAGE FAIL attribution: the fleet opens INSIDE its own circle (gap % <= reach %) — this scenario is now an APPROACH, and a fleet born in range would prove nothing about the fold or about the arrival tick below', v_fl_gap, v_fl_reach;
   end if;
   select count(*) into n from public.combat_events
     where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'player';
-  if n < 1 then raise exception 'DAMAGE FAIL: no player missile_salvo on tick 1 (the fallback weapon did not fire)'; end if;
-  if n <> v_exp_fire then
-    raise exception 'DAMAGE FAIL attribution: % player missile_salvo event(s) on tick 1, derivation expects % (pre-move distances fb %, arm % against reaches %, %)', n, v_exp_fire, v_dist_fb, v_dist_arm, v_r_fb, v_r_arm;
+  if n <> 0 then
+    raise exception 'DAMAGE FAIL attribution: % player missile_salvo event(s) on tick 1, and the derivation expects 0 — the fleet stands % from the wave against a circle of least(fallback %, catalog %) = %, so a salvo here is a hull firing on its OWN distance, which is the per-hull gate 0351 deleted',
+      n, v_fl_gap, v_r_fb, v_r_arm, v_fl_reach;
   end if;
-  select (payload_json->>'unit_id')::uuid into v_firer from public.combat_events
-    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'player';
-  if v_firer is distinct from u_fb then
-    raise exception 'DAMAGE FAIL attribution: the tick-1 player salvo came from unit % , not from s_fb''s unit % — the damage below is not the synthesized weapon''s', v_firer, u_fb;
+  -- (3) the wave reaches nobody either: 0336 stands it at least its own range + 1 from every hull,
+  --     and since 0351 the distance ITS gate reads is the one to the FLEET POINT.
+  if v_fl_gap <= v_r_en or least(v_dist_fb, v_dist_arm) <= v_r_en then
+    raise exception 'DAMAGE FAIL attribution: the fleet point is % from the wave and its nearest hull % , against the wave''s own % reach — 0336''s spawn invariant does not hold in this world and the pirate could fire', v_fl_gap, least(v_dist_fb, v_dist_arm), v_r_en;
   end if;
-
-  -- the pirate's hp fell below its frozen max: the synthesized weapon dealt REAL damage.
+  select count(*) into v_pirate_fire from public.combat_events
+    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'pirate';
+  if v_pirate_fire <> 0 then raise exception 'DAMAGE FAIL attribution: pirate fired % time(s) on tick 1 (want 0 — the fleet point is outside its reach at spawn)', v_pirate_fire; end if;
   select hp_max, hp_current into v_e_hpmax, v_e_hpcur from public.combat_units where id = u_en;
-  if v_e_hpcur >= v_e_hpmax then
-    raise exception 'DAMAGE FAIL: pirate hp_current (%) is not below hp_max (%) — the fallback weapon dealt ZERO damage', v_e_hpcur, v_e_hpmax; end if;
-
-  -- and no player ship was hit (the pirate fired nothing) — a clean tick.
+  if v_e_hpcur is distinct from v_e_hpmax then
+    raise exception 'DAMAGE FAIL: pirate hp_current (%) is not its untouched hp_max (%) on the spawn tick, with the whole fleet outside its own circle — some path is still firing on a hull''s own distance', v_e_hpcur, v_e_hpmax;
+  end if;
+  -- and no player ship was hit either — a clean tick.
   select hp_current into v_hp_fb1  from public.combat_units where id = u_fb;
   select hp_current into v_hp_arm1 from public.combat_units where id = u_arm;
   if v_hp_fb1 is distinct from v_hp_fb0 or v_hp_arm1 is distinct from v_hp_arm0 then
     raise exception 'DAMAGE FAIL: a player ship took damage on tick 1 (pirate should have fired nothing)'; end if;
 
-  raise notice 'CFALLBACK_PASS_DAMAGE ok: tick 1 — the wave stands exactly on combat_formation_point(anchor, ring % + its own range % + 1, slot 0, the 0338 arrival phase); pirate hp fell %->% (NONZERO, from s_fb''s synthesized weapon ALONE — the single tick-1 player salvo carries s_fb''s own unit id, s_fb in reach at pre-move dist % against its synthesized %, s_arm out of reach at % against its catalog %, pirate fired 0); pre-fix (empty weapons_json) this ship would have dealt ZERO', v_ring, v_r_en, v_e_hpmax, v_e_hpcur, v_dist_fb, v_r_fb, v_dist_arm, v_r_arm;
+  -- ── ★ DRIVE TO THE DERIVED ARRIVAL TICK, AND REQUIRE EVERY TICK BEFORE IT TO BE SILENT ────────
+  select count(*) into n_hulls from public.combat_units
+   where encounter_id = v_enc and side = 'player' and alive_count > 0;
+  if n_hulls <> 2 then
+    raise exception 'DAMAGE FAIL: % living player hull(s) entering the approach (want the 2 this fixture staged) — the all-or-none volley assert below would be measuring a different formation', n_hulls;
+  end if;
+  v_hit_tick := null;
+  for i in 1 .. v_pred_tick + 4 loop
+    -- STOP ONE TICK SHORT. The loop drives the SILENT ticks 2 .. (arrival - 1); the arrival tick
+    -- itself is driven below, on its own, so the hp either side of it brackets exactly one volley.
+    -- Exiting at `>= v_pred_tick` instead would drive the arrival inside the loop and then drive a
+    -- second tick after it, and the damage identity would be measuring the wrong instant.
+    select tick_number into v_steps from public.combat_encounters where id = v_enc;
+    exit when v_steps >= v_pred_tick - 1;
+    select public.osn_distance(a.x, a.y, e.pos_x, e.pos_y) into v_gap_pre
+      from public.combat_fleet_actor(v_enc) a, public.combat_units e where e.id = u_en;
+    if v_gap_pre is null then
+      raise exception 'DAMAGE FAIL: the pre-move fleet gap is NULL before tick % — an unpositioned unit makes every range check in the approach vacuous', v_steps + 1;
+    end if;
+    -- every tick strictly before the derived arrival must be OUTSIDE the circle, by the same
+    -- recurrence that predicted the arrival. If it is not, the recurrence and the engine disagree
+    -- and the arrival tick below would be measuring the wrong instant.
+    if v_gap_pre <= v_fl_reach then
+      raise exception 'DAMAGE FAIL: the fleet is already inside its own % circle (gap %) before tick %, but the mover''s own recurrence ceil((gap - reach) / speed) predicts arrival on tick % — the tick is not stepping the fleet at the fleet''s speed %',
+        v_fl_reach, v_gap_pre, v_steps + 1, v_pred_tick, v_fl_speed;
+    end if;
+    perform pg_temp.cfb_tick(v_enc);
+    select tick_number into v_steps from public.combat_encounters where id = v_enc;
+    select count(*) into n from public.combat_events
+     where encounter_id = v_enc and tick_number = v_steps
+       and event_type = 'missile_salvo' and source = 'player';
+    if n <> 0 then
+      raise exception 'DAMAGE FAIL attribution: % player salvo(s) on tick % at a pre-move fleet gap of % against a circle of % — nothing may fire before the fleet is inside its own reach', n, v_steps, v_gap_pre, v_fl_reach;
+    end if;
+  end loop;
+  -- the ARRIVAL tick itself: the pre-move gap is inside the circle, and this is where the witness is.
+  select public.osn_distance(a.x, a.y, e.pos_x, e.pos_y) into v_gap_pre
+    from public.combat_fleet_actor(v_enc) a, public.combat_units e where e.id = u_en;
+  if v_gap_pre is null or v_gap_pre > v_fl_reach then
+    raise exception 'DAMAGE FAIL: entering the derived arrival tick % the fleet stands % from the wave, still OUTSIDE its own % circle — the engine is not closing at the frozen speed % the recurrence was run on',
+      v_pred_tick, v_gap_pre, v_fl_reach, v_fl_speed;
+  end if;
+  select hp_current into v_hp0 from public.combat_units where id = u_en;
+  perform pg_temp.cfb_tick(v_enc);
+  select tick_number into v_hit_tick from public.combat_encounters where id = v_enc;
+  select hp_current into v_hp1 from public.combat_units where id = u_en;
+  if v_hit_tick is distinct from v_pred_tick then
+    raise exception 'DAMAGE FAIL: the fleet entered its own circle on tick % but the mover''s own recurrence ceil((gap - reach) / speed) predicts % (spawn gap %, reach %, speed %) — the tick is not stepping the fleet at the fleet''s speed', v_hit_tick, v_pred_tick, v_fl_gap, v_fl_reach, v_fl_speed;
+  end if;
+
+  -- ── ★ ON THAT TICK BOTH HULLS FIRE, AND THE SUBJECT IS ONE OF THEM, BY NAME ────────────────────
+  select count(*) filter (where projectile_type = v_fb_mid),
+         count(*) filter (where projectile_type = 'autocannon_battery'),
+         count(distinct payload_json->>'unit_id')
+    into n_fb, n_arm, v_firers
+    from public.combat_events
+   where encounter_id = v_enc and tick_number = v_hit_tick
+     and event_type = 'missile_salvo' and source = 'player';
+  if n_fb < 1 then
+    raise exception 'DAMAGE FAIL: no % salvo on the derived arrival tick % (pre-move fleet gap % inside the fleet''s % circle) — the synthesized fallback weapon did not fire, which is this proof''s entire subject', v_fb_mid, v_hit_tick, v_gap_pre, v_fl_reach;
+  end if;
+  if v_firers <> n_hulls then
+    raise exception 'DAMAGE FAIL attribution: the arrival volley (tick %) came from % of the fleet''s % living hull(s), and the derivation expects ALL of them — 0351 gates every gun on ONE circle about ONE point, so a subset is the per-hull gate this slice deleted (fleet gap %, reach %, fallback %, catalog %)',
+      v_hit_tick, v_firers, n_hulls, v_gap_pre, v_fl_reach, v_r_fb, v_r_arm;
+  end if;
+  if n_fb <> 1 or n_arm <> 1 then
+    raise exception 'DAMAGE FAIL attribution: the arrival volley carried % % salvo(s) and % autocannon_battery salvo(s) (want exactly 1 each — one weapon per hull, both inside the one circle)', n_fb, v_fb_mid, n_arm;
+  end if;
+  if (select count(*) from public.combat_events
+       where encounter_id = v_enc and tick_number = v_hit_tick and event_type = 'missile_salvo'
+         and source = 'player' and projectile_type = v_fb_mid
+         and (payload_json->>'unit_id')::uuid = u_fb) <> 1 then
+    raise exception 'DAMAGE FAIL attribution: the arrival tick''s % salvo does not carry s_fb''s own unit id % — the fallback damage below would not be the synthesized weapon''s', v_fb_mid, u_fb;
+  end if;
+
+  -- ── ★ AND THE FALLBACK'S SHARE LANDED, SEPARATED OUT AS A NUMBER ───────────────────────────────
+  -- Both variance knobs are zeroed in setup and player fire on an enemy is never defense-mitigated
+  -- (0299:897), so a landed shot removes EXACTLY its frozen power share. The pirate's hp therefore
+  -- falls by (fallback share + catalog share). Asserting the SUM rather than "hp fell" is what keeps
+  -- the attribution exact now that the escort fires in the same volley: pre-0262 the unarmed ship
+  -- carried weapons_json = [] and contributed nothing, so the drop would be short by v_p_fb — the
+  -- original defect, still caught, still by a number.
+  if v_e_shield is not null and v_e_shield <> 0 then
+    raise exception 'DAMAGE FAIL: the wave carries shield_current % — the absorb step would eat part of the volley and the exact damage identity below would be measuring the shield, not the weapons', v_e_shield;
+  end if;
+  if v_hp0 is null or v_hp1 is null then
+    raise exception 'DAMAGE FAIL: the wave''s hp around the arrival tick is % -> % — a NULL makes the damage identity vacuous', v_hp0, v_hp1;
+  end if;
+  v_drop := v_hp0 - v_hp1;
+  if v_drop <= 0 then
+    raise exception 'DAMAGE FAIL: pirate hp_current did not fall on the derived arrival tick (% -> %) — the fallback weapon dealt ZERO damage', v_hp0, v_hp1;
+  end if;
+  if abs(v_drop - (v_p_fb + v_p_arm)) > 1e-6 then
+    raise exception 'DAMAGE FAIL: the wave lost % hp on the arrival tick but the two frozen 0331 power shares that fired sum to % (synthesized fallback %, catalog autocannon %) — a drop short by exactly % is the pre-0262 empty weapons_json, in which the unarmed hull logged nothing and dealt nothing',
+      v_drop, v_p_fb + v_p_arm, v_p_fb, v_p_arm, v_p_fb;
+  end if;
+
+  -- and STILL no player ship has been hit: the fleet's circle (5) is wider than the wave's reach (2),
+  -- so the formation comes to rest at its own edge and the wave never gets a shot at all.
+  select count(*) into v_pirate_fire from public.combat_events
+    where encounter_id = v_enc and event_type = 'missile_salvo' and source = 'pirate';
+  select hp_current into v_hp_fb1  from public.combat_units where id = u_fb;
+  select hp_current into v_hp_arm1 from public.combat_units where id = u_arm;
+  if v_pirate_fire <> 0 or v_hp_fb1 is distinct from v_hp_fb0 or v_hp_arm1 is distinct from v_hp_arm0 then
+    raise exception 'DAMAGE FAIL: the pirate fired % salvo(s) across the whole approach and the player hp went fb %->%, arm %->% — the fleet''s reach % exceeds the wave''s % , so the formation stops at its own edge and the wave can never reach it; a hit means the enemy gate is not measuring to the fleet point',
+      v_pirate_fire, v_hp_fb0, v_hp_fb1, v_hp_arm0, v_hp_arm1, v_fl_reach, v_r_en;
+  end if;
+
+  raise notice 'CFALLBACK_PASS_DAMAGE ok: the wave stands exactly on combat_formation_point(anchor, ring % + its own range % + 1, slot 0, the 0338 arrival phase); the FLEET''S CIRCLE is % = least(the unarmed lead''s synthesized fallback %, the armed escort''s catalog gun %) — the fallback folds in on equal terms with a real gun and the SHORTER one wins, which here is the CATALOG gun (DZCOMBAT_PASS_SHORTGUN proves the same rule with the cap coming from a fitted hull instead). At a spawn gap of % the fleet therefore fired NOTHING on tick 1 and the pirate''s hp was untouched (the pre-0351 per-hull gate fired the fallback here, because 23 <= its own 30); the fleet then closed for exactly % tick(s) — ceil((gap - reach) / fleet speed %), derived from the engine''s own recurrence, never a literal — and on arrival tick % BOTH hulls fired together, one % salvo carrying s_fb''s own unit id and one autocannon_battery, dropping the wave''s hp by exactly % = the two frozen 0331 shares (% + %). Pre-fix (empty weapons_json) that drop would have been short by the fallback''s whole %',
+    v_ring, v_r_en, v_fl_reach, v_r_fb, v_r_arm, round(v_fl_gap::numeric, 3), v_pred_tick - 1,
+    round(v_fl_speed::numeric, 4), v_hit_tick, v_fb_mid, round(v_drop::numeric, 4), v_p_fb, v_p_arm, v_p_fb;
 end $$;
 
 do $$ begin raise notice 'COMBAT-FALLBACK PROOF PASSED'; end $$;

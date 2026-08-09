@@ -143,27 +143,36 @@
 --                              construction); set_group_auto_exit enforces its bounds ([5,95],
 --                              NaN refused, null toggle refused, cross-player refused) and the
 --                              table CHECK refuses NaN / out-of-range even on a direct write.
---   DZCOMBAT_PASS_CLOSURE    — (0313) with the seeded ranges cut below the 30-unit escort spawn gap,
---                              units MOVE: an escort and its pirate close on each other across real
---                              ticks (pos_x/pos_y changing), neither fires while the gap exceeds its
---                              own range, the escort's FIRST shot lands only on a tick whose pre-move
---                              distance is inside its range (after at least one silent closing tick),
---                              the pirate's first shot obeys ITS range the same way. This is the
---                              CLOSE arm of combat_unit_decide_move running at SEEDED values for the
---                              first time in the game's history. (0336 re-premised: the wave no
---                              longer spawns ON the anchor, so the opening tick is SILENT ON BOTH
---                              SIDES rather than the lead firing from distance 0, and the wave's
---                              spawn point is derived from the MEASURED formation extent — the one
---                              authority the engine itself uses — never from the ring knob.)
+--   DZCOMBAT_PASS_CLOSURE    — (0313) with the seeded ranges cut below the escort spawn gap, units
+--                              MOVE: the fight closes across real ticks (pos_x/pos_y changing),
+--                              nobody fires while the gap exceeds their reach, and the first shot
+--                              lands only on a tick whose PRE-MOVE distance is inside it — after at
+--                              least one silent closing tick. This is the CLOSE arm of
+--                              combat_unit_decide_move running at SEEDED values. (0336 re-premised:
+--                              the wave no longer spawns ON the anchor, so the opening tick is
+--                              SILENT ON BOTH SIDES, and its spawn point is derived from the
+--                              MEASURED formation extent — the engine's own input — never from the
+--                              ring knob.) (0351 REPOINTED: the closing actor is the FLEET. Its
+--                              point is the 0315-elected lead, its reach the SHORTEST gun over its
+--                              living hulls, its speed the slowest of them — all three read from
+--                              combat_fleet_actor. Both hulls move by the IDENTICAL delta, the wave
+--                              closes on the FLEET'S POINT rather than on the lowest-aggro hull, and
+--                              the first volley is fired by EVERY hull at once on the tick the
+--                              recurrence predicts. 0338's worst-BEARING bound collapses into one
+--                              direct bound, because the lead holds the anchor and its gap to the
+--                              wave is the spawn RADIUS at every bearing.)
 --   DZCOMBAT_PASS_LEAD       — (0315) EVERY fleet entering combat has a lead, whether or not any ship
 --                              carries the flag. A three-hull fleet with NO command ship anywhere
 --                              elects one by the stated rule (a real flag first, then the greatest
 --                              max_hp, then the lowest main_ship_id, over living hulls) — capacities
 --                              engineered so neither key can be the accidental reason — anchors
 --                              exactly that hull on the engagement point at aggro 100 with both
---                              escorts at 0 on their unchanged ring slots, and FIRES ON TICK 1 from
---                              the anchor alone (the ring provably exceeds an escort's range, so no
---                              escort could have opened the fight). A fleet that DOES carry a
+--                              escorts at 0 on their unchanged ring slots. (0336/0338 re-premised,
+--                              then 0351 REPOINTED: the opening tick is SILENT, the whole formation
+--                              closes RIGIDLY off the anchor at the FLEET's own speed, and on the
+--                              predicted joining tick EVERY living hull fires — the elected lead is
+--                              now the fleet's firing POINT, so 0338's derived "nearest hull" is
+--                              deleted rather than repointed.) A fleet that DOES carry a
 --                              designated command ship is placed exactly as it is today even though
 --                              the fallback would have named the other hull on both derived keys —
 --                              the derivation is a fallback, never an override. A single-hull fleet
@@ -197,11 +206,25 @@
 --                              zone is deactivated in-txn before the first fixture is drawn, so a
 --                              randomly-shaped seed blob can never again cover a fixed test
 --                              coordinate on some runs and not others.
---   DZCOMBAT_PASS_RANGEINVARIANT — (0336) a wave must never arrive inside its own reach. The knob
---                              inequality over EVERY location with a positive difficulty (hidden
---                              ones included), the SAME thing measured on a real staged wave, and
---                              the kite band the closing enemy stops in proven to be inside the
---                              player's own shortest gun.
+--   DZCOMBAT_PASS_RANGEINVARIANT — (0336) a wave must never arrive inside its own reach: measured on
+--                              a real staged wave, and the kite band the closing enemy stops in
+--                              proven to be inside the shortest reach that can be brought to a
+--                              fight, over EVERY location with a positive difficulty (hidden ones
+--                              included). (0351: the clearance is also asserted on the distance the
+--                              ENEMY's gate actually reads — to combat_fleet_actor's point — and
+--                              that shortest reach has stopped being one unlucky hull's gun and
+--                              become the circle the WHOLE fleet gets whenever any of its hulls
+--                              carries it.)
+--   DZCOMBAT_PASS_FLEETKITE  — (0351) MOVED HERE from combat-spatial-proof's COMBATSPATIAL_PASS_KITE,
+--                              which could not keep KITE and SCREEN in one fixture once the fleet
+--                              became one actor (kite needs wave_reach < gap <= fleet_reach; a
+--                              landed pirate hit needs gap <= wave_reach — disjoint). A fleet that
+--                              out-ranges the wave BACKS OFF as one body: the arm comes from
+--                              combat_unit_decide_move itself at fleet arguments, every hull moves by
+--                              the IDENTICAL delta on every retreating tick, each step is exactly
+--                              least(fleet speed, fleet reach - gap), the gap NEVER crosses the
+--                              fleet's own edge, and the formation rests on that edge — the SHORTEST
+--                              gun on the field, not the point hull's own longer one.
 --   DZCOMBAT_PASS_VOLLEY     — (0336) a kill does not disarm the rest of the volley: a THREE-gun
 --                              hull against a wave larger than its gun count fires 3 salvos at 3
 --                              DISTINCT targets, lands 3 hits and destroys 3. The head resolved the
@@ -233,10 +256,20 @@
 --                              tick_number both ADVANCE.
 --   DZCOMBAT_PASS_ORDERSTABLE — (0336) the actor loop order is decided: over two consecutive ticks,
 --                              six firing units emit their salvos in ascending combat_units.id.
---   DZCOMBAT_PASS_SHORTGUN   — (0336) a longer gun no longer disables a shorter one: a hull with an
---                              autocannon and an Mk-II passes through the band where only the Mk-II
---                              reaches and then settles inside its SHORTEST gun, with both module
---                              types on the record.
+--   DZCOMBAT_PASS_SHORTGUN   — (0336, REPOINTED 0351) the shortest gun decides the circle. The 0336
+--                              HULL property ("a hull settles inside its own shortest gun") NO
+--                              LONGER EXISTS — a hull has no engagement range of its own — and the
+--                              old non-vacuity pin ("a tick on which only the LONGER gun could
+--                              reach") is structurally unsatisfiable, so it is retired rather than
+--                              preserved. It is now a FLEET property: the circle is the shortest gun
+--                              ANY living hull carries, the fleet fires NOTHING across the band in
+--                              which the old per-hull gate fired the Mk-II alone, both guns fire
+--                              together on the tick the circle is entered (with the wave's hp falling
+--                              by exactly the sum of the frozen 0331 shares, so the better gun is
+--                              shown still buying DAMAGE where it no longer buys STANDOFF), and the
+--                              formation rests EXACTLY on that circle. This is the same gate/mover
+--                              collapse that caused 0336's defect 7, now deliberate and symmetric:
+--                              gate and mover read ONE aggregate, so there is no second one to drift.
 --   DZCOMBAT_PASS_RETREATCLEAR — (0336) all four terminal arms consume fleets.retreat_target_*: the
 --                              DEATH arm (which leaked on the head) clears it, and the SETTLE arm
 --                              still both clears it and USES it.
@@ -3122,50 +3155,71 @@ end $$;
 -- sees, which is worse than either a real error or no check at all. This very comment was written
 -- that way on the first attempt and the depth walk caught it.
 
--- ════════ DZCOMBAT_PASS_CLOSURE (0313, re-premised 0316): CUT RANGES MAKE POSITION MATTER ═══════════
+-- ════════ DZCOMBAT_PASS_CLOSURE (0313, re-premised 0316/0336/0338, REPOINTED 0351) ══════════════════
 -- The behaviour nobody had ever observed in this game: before 0313, every range (120–245) dwarfed
 -- every spawn distance (0–30), so combat_unit_decide_move returned 'hold' on every tick of every
 -- real fight and no combat_units row ever changed its pos_x/pos_y. This block stages a fresh
 -- TWO-ship group (command + one escort) through the REAL ambush chain at the SEEDED knob/catalog
--- values (no range/ring/speed tuning — the seeds ARE the subject), and drives the REAL tick:
---   • premise, derived not assumed: ring > escort range AND ring > pirate range (if a later retune
---     re-buries the mechanic, this raises honestly);
---   • tick 1: the LEAD hull (dist 0) FIRES — combat still starts instantly — while the escort
---     and the pirate both MOVE (positions change, their gap shrinks) and neither fires;
---   • across ticks: the escort's FIRST salvo lands only on a tick whose recorded PRE-MOVE distance
---     is within its own range, with at least one earlier silent tick (fire strictly AFTER closure),
---     and the pirate's first salvo at the escort obeys ITS OWN shorter range the same way.
+-- values (no range/ring/speed tuning — the seeds ARE the subject), and drives the REAL tick.
 --
--- ── 0336 RE-PREMISED AGAIN: THE WAVE NO LONGER STANDS ON THE ANCHOR ──────────────────────────────
--- 0336 moved the enemy wave off the engagement anchor and onto a formation ring (radius
--- spatial_formation_ring_radius, on the bearing to the zone's own city since 0338). THREE of this
--- block's premises were statements about the OLD geometry and every one of them had to be
--- repointed rather than left to rot green:
---   (1) THE RECURRENCE SEED. It used to be the ring radius, which was correct only while the pirate
---       stood on the anchor and the escort on the ring. The wave now stands on a ring of its own —
---       further out than the player's, by its own weapon range plus one — at a different phase, so
---       the escort-pirate gap is a chord between two different radii and is not the ring at all.
---       The seed is now that gap, MEASURED by this block off combat_formation_point — the very leaf
---       the tick composes to place the wave — at the very radius the tick derives: the MEASURED
---       formation extent plus the wave's own range plus one. (An intermediate draft SOLVED for a
---       ring instead and wrote the knob; see the one-authority paragraph below for why that was
---       wrong and why the solve is deleted rather than corrected.)
+-- ── ██ 0351: WHAT THIS BLOCK PROTECTED, WHAT IT PROTECTS NOW, AND THE SENTENCE THAT IS RETIRED ██ ─
+-- WHAT IT PROTECTED. That each hull derived its own arm from its OWN position against its OWN gun,
+-- and that the fight therefore turned on WHICH HULL was nearest the wave. Both this block and
+-- DZCOMBAT_PASS_LEAD stated that in one sentence, and it is quoted here VERBATIM so that a later
+-- reader can see it was retired deliberately rather than lost:
+--
+--     ⛔ RETIRED (0351): "the lead alone on the anchor is a full RADIUS from the wave while each
+--        escort is a CHORD from it. The escorts are NEARER and open the fight; the lead is the LAST
+--        hull that can reach, not the first, and there is no ring radius that inverts a chord and a
+--        radius."
+--
+-- 0351 does not make that sentence false — the geometry is unchanged, the escort really is on a
+-- chord — it makes it IRRELEVANT. The player side now acquires, measures, fires AND moves from ONE
+-- point (its 0315-elected lead) with ONE reach (its shortest gun over living hulls) and ONE speed
+-- (its slowest living hull). The escort's chord stops being an input to anything. Nobody "opens the
+-- fight" any more: THE FLEET opens it, on the lead's radius, all guns together or none.
+--
+-- WHAT IT PROTECTS NOW. Exactly the same property — position matters, and the number of ticks it
+-- takes is pinned — restated about the actor that now exists:
+--   • the fleet's point IS the elected lead and IS the engagement anchor (asserted through
+--     combat_fleet_actor, the engine's own authority, never a copy of its rule);
+--   • the fleet's reach is the SHORTEST gun over its living hulls;
+--   • the opening tick is silent on both sides;
+--   • the formation closes RIGIDLY — every hull by the IDENTICAL delta — at the fleet's own speed;
+--   • the wave closes on the FLEET'S POINT, not on whichever hull is nearest;
+--   • and the first salvo lands on exactly the tick the engine's own recurrence predicts, fired by
+--     EVERY living hull at once.
+--
+-- WHY THE NEW FORM FAILS THE OLD ENGINE, on two independent lines, neither of which depends on the
+-- bearing to the city (i.e. neither can be rescued by a lucky fixture):
+--   (1) THE RIGID DELTA. The old mover decided per hull: the lead stepped along the unit vector from
+--       the ANCHOR to the wave, the escort along the unit vector from the RING SLOT to the wave.
+--       Those two vectors differ whenever the escort is not standing on the anchor — which is the
+--       whole point of a ring — so the two deltas cannot be equal at any tuning.
+--   (2) THE WAVE'S LANDING POINT. The old enemy closed on the lowest-aggro living row (the ESCORT);
+--       0351's enemy closes on the FLEET POINT (the lead), while v_target_id still names the escort
+--       so the aggro screen is untouched. The escort and the lead stand a full formation extent
+--       apart, so the predicted landing point below names a different point on the two bodies.
+-- The all-or-none salvo count is a third, and it is the one that would catch a half-applied gate.
+--
+-- ── 0336: THE WAVE NO LONGER STANDS ON THE ANCHOR (unchanged by 0351) ────────────────────────────
+-- 0336 lays the wave out through combat_formation_point at
+--     radius = the MEASURED formation extent + THAT WAVE'S OWN weapon range + 1
+--     phase  = combat_wave_arrival_phase(anchor, the zone's own city)   (0338)
+-- and the player formation is untouched (lead ON the anchor, escorts on the ring at phase 0).
+--   (1) THE RECURRENCE SEED. It used to be the ring radius; then 0336 made it the escort-to-wave
+--       CHORD, measured off combat_formation_point. 0351 makes it the FLEET's gap, which is the
+--       spawn RADIUS itself — the lead stands on the anchor, and the wave stands the radius out from
+--       the anchor, so the two are the same number at EVERY bearing. It is still MEASURED here (off
+--       the same leaf the tick composes) and then cross-checked against `extent + range + 1`.
 --   (2) "THE PIRATE MOVED OFF ITS SPAWN ANCHOR" compared the pirate's post-tick position against
 --       combat_encounters.engagement_x/y. After 0336 it never spawns there, so that comparison
 --       passes for free and proves nothing — a vacuity hole, not merely a wrong message. It now
 --       compares against the pirate's OWN spawn point and demands the step be exactly its own
---       frozen move_speed.
---   (3) "THE LEAD (dist 0) FIRES ON TICK 1" is DEAD, and it cannot be rescued. The lead stands on
---       the anchor and every escort stands on the ring, so nothing is at distance 0 from the wave
---       any more. WHICH hull is nearest is no longer a fixed fact either: 0338 makes the wave arrive
---       on the bearing to the zone's own city, so an escort is the near hull when the city lies
---       roughly its way and the LEAD is the near hull when it does not — the escort-to-wave chord
---       ranges over [range + 1, range + 1 + 2*extent] while the lead's gap is the constant radius.
---       Nothing here may assume an ordering between them. THE HONEST REPOINT, and it is the STRONGER
---       statement because it does not need one: after 0336 the opening tick
---       of a fight is SILENT ON BOTH SIDES — the wave spawns outside every gun's reach, both sides
---       CLOSE, and the first shot is fired after an approach. This block now asserts that, over
---       every unit of both sides, and the lead is covered by it like everybody else.
+--       frozen move_speed, toward the fleet's point.
+--   (3) "THE LEAD (dist 0) FIRES ON TICK 1" is DEAD and unrescuable: nothing stands at distance 0
+--       from the wave any more. The honest repoint is the STRONGER statement — after 0336 the
+--       OPENING TICK OF A FIGHT IS SILENT ON BOTH SIDES — asserted over every unit of both sides.
 -- ── THE WAVE RADIUS HAS EXACTLY ONE AUTHORITY, AND IT IS THE MEASURED EXTENT ─────────────────────
 -- THE BUG THIS PARAGRAPH REPLACES (CI, 02e7d87): `the pirate moved 1.9398 from the slot-0 formation
 -- point but its own frozen move_speed is 1`. An earlier draft OWNED spatial_formation_ring_radius:
@@ -3173,47 +3227,49 @@ end $$;
 -- ring), then SOLVED for a new ring value, wrote the knob, and predicted the wave's spawn point from
 -- the solved value. But 0336 does not read that knob when it places a wave. It measures
 --   max(distance from the anchor to each LIVING player unit)
--- and spawns at `that MEASURED extent + the wave's own weapon range + 1`. The extent is the escort's
--- ACTUAL position — the committed ring it was created on — so the block was predicting from a knob
--- that no longer controls the thing it predicts. Two authorities for one radius, silently out of
--- step, and the step assert (correctly) caught it.
+-- and spawns at `that MEASURED extent + the wave's own weapon range + 1`. Two authorities for one
+-- radius, silently out of step, and the step assert (correctly) caught it.
 -- THE FIX IS A DELETION, not a second correction: the ring solve, the knob write and its restore are
--- GONE, and the block now MEASURES the formation extent exactly the way the spawn arm measures it,
--- then predicts the slot-0 point through combat_formation_point from that. One authority, no pair to
--- keep in step, and NO geometry knob written at all — which is what this block always claimed ("the
--- seeds ARE the subject"). The knob is still READ, for one thing only: pinning that the escort
--- spawned on the committed ring.
--- WHAT THAT COSTS, STATED: the spawn gap is now MEASURED rather than chosen, so the closing tick
--- count is a property of the seeded world instead of of a constructed one. It is not unpinned — it
--- is still asserted twice over (the engine's own recurrence must PREDICT it, the observed first
--- salvo must LAND on it, and the answer must be 2 or 3), which is the same bound 0316's own (f6)
--- self-assert carries. A retune that breaks it fails here, loudly, exactly as before.
+-- GONE, and the block MEASURES the formation extent exactly the way the spawn arm measures it, then
+-- predicts the slot-0 point through combat_formation_point from that. NO geometry knob is written at
+-- all — which is what this block always claimed ("the seeds ARE the subject"). The knob is still
+-- READ, for one thing only: pinning that the escort spawned on the committed ring.
 -- WHY MEASURED AND NOT THE KNOB, AT THE ENGINE LEVEL — DO NOT REGRESS THIS: 0336 measures the extent
 -- precisely so a LONE hull, which is its own lead and therefore stands ON the anchor at extent 0,
--- gets its fight immediately instead of waiting out an approach it has no screen to justify. That
--- was 9-15 SECONDS of silence per wave at live knobs, on endless waves, for the 71 of 77 production
--- ships that are in no fleet at all. This block reads the extent; it must never re-introduce a knob
--- that overrides it.
+-- gets its fight immediately instead of waiting out an approach it has no screen to justify.
 --
--- ── 0316 RE-PREMISED: THE TICK COUNT IS NOW A PINNED PROPERTY, NOT AN OBSERVATION ────────────────
--- 0316 divided every combat DISTANCE and every combat RATE by 5 together (gun 25→5, ring 30→6,
--- pirate range 18+0.2·D→3.6+0.04·D, pirate speed 3+0.2·D→0.6+0.04·D, and the player's world-travel
--- speed converted into a combat speed by combat_player_speed_scale). Because both the distances and
--- the per-tick steps scaled by the same factor, the geometry is SIMILAR to the old one and every
--- tick count is unchanged: one silent closing tick, first escort salvo on TICK 2.
--- The old wording of this block treated that number as whatever came out. It is now ASSERTED, twice
--- over, and both halves are derived from the rows this very encounter carries:
+-- ── 0338's BEARING DEPENDENCE IS GONE, AND THE ANTI-SPRAWL TEETH GET SHARPER FOR IT ──────────────
+-- 0338 made the wave arrive on the bearing to the zone's own city. That turned the ESCORT-to-wave
+-- chord into a function of where the settlement lies — it ranges over [range+1, range+1+2*extent] —
+-- so this block had to compute its anti-sprawl bound at the WORST bearing the geometry admits and
+-- compare the fixture's own chord against it. Under 0351 the measured gap is the LEAD's, and the
+-- lead stands ON the anchor: its distance to the wave is the spawn RADIUS, which is
+-- `extent + range + 1` at every bearing without exception. So the worst case IS the actual case,
+-- the two-step worst-bearing comparison collapses into ONE bound on the ONE derived tick count, and
+-- that bound is knob-only again by construction rather than by a separate calculation. This is a
+-- tightening, not a relaxation: the old pair permitted any fixture chord at or under the worst
+-- bearing's tick count; the new single bound applies to the number the fight actually runs.
+--
+-- ── 0316: THE TICK COUNT IS A PINNED PROPERTY, NOT AN OBSERVATION ────────────────────────────────
+-- 0316 divided every combat DISTANCE and every combat RATE by 5 together, so the geometry is SIMILAR
+-- to the old one and every tick count is unchanged. That number is ASSERTED, twice over, and both
+-- halves are derived from the rows this very encounter carries:
 --   • PREDICTED — the engine's own recurrence (both sides step from the same frozen pre-move
 --     snapshot, 0299:802-813, each capped at the remaining distance, 0234:249) run over this
---     encounter's real ring, real weapon range and real frozen move_speeds;
---   • OBSERVED  — the tick the escort's first salvo actually landed on.
--- They must AGREE, and the answer must be tick 2 or 3. A retune that reintroduces the sprawl — a
--- range cut without the ring, or a ring left large against a small gun — pushes the predicted tick
--- past 3 and fails HERE instead of in a playtest, which is exactly what 0313's cut-without-the-ring
--- would have done (25 units to close at ~1.2/tick ≈ 21 ticks ≈ a minute of nothing).
+--     encounter's real measured gap, real frozen fleet reach and real frozen speeds;
+--   • OBSERVED  — the tick the fleet's first salvo actually landed on.
+-- A retune that reintroduces the sprawl — a range cut without the ring, or a ring left large against
+-- a small gun — pushes the predicted tick past the bound and fails HERE instead of in a playtest.
 -- Damage knobs are owned in-block (pirate attack tiny so the escort survives the approach; hp_base
 -- is already 1000 from setup so the wave survives) and restored after — the geometry knobs are NOT
 -- touched, that is the point.
+--
+-- ── ONE VOLLEY, AND WHY THAT IS THE HARNESS AND NOT THE ENGINE ───────────────────────────────────
+-- now() is frozen for the whole transaction (the harness rewinds last_resolved_at, never the clock),
+-- and since 0314 a fired weapon is re-armed at `now() + cooldown_seconds`. So inside a proof txn
+-- EVERY weapon fires exactly ONCE, whatever the cooldown is — this was already true at 0314's 2.5s
+-- and 0351's 5s does not change it. The first-salvo asserts below are therefore about the ONE volley
+-- each side gets, which is precisely what makes "every hull fired on the same tick" observable.
 do $$
 declare
   r jsonb; n int; i int;
@@ -3223,32 +3279,41 @@ declare
   v_fleet uuid; v_mv uuid; v_enc uuid;
   mv record; pi record;
   u_cmd uuid; u_esc uuid; u_en uuid;
-  v_r_esc double precision; v_r_en double precision; v_ring double precision;
+  v_r_esc double precision; v_r_lead double precision; v_r_en double precision; v_ring double precision;
   ex0 double precision; ey0 double precision; ex1 double precision; ey1 double precision;
+  cx0 double precision; cy0 double precision; cx1 double precision; cy1 double precision;
   nx0 double precision; ny0 double precision; nx1 double precision; ny1 double precision;
   d_pre double precision; d_t1 double precision;
   v_tick int;
-  v_esc_fire_tick int := null; v_esc_fire_dist double precision := null;
+  v_fl_fire_tick int := null; v_fl_fire_dist double precision := null;
   v_en_fire_tick int := null; v_en_fire_dist double precision := null;
-  n_silent int := 0;
+  n_silent int := 0; n_firers int; n_hulls int;
   v_eab_before double precision;
   -- 0316: the predicted-vs-observed closure arithmetic. Every input is READ off this encounter's
-  -- own rows (the frozen move_speeds, the frozen weapon range, the seeded ring) — nothing here is a
-  -- number typed into the harness.
-  v_sp_esc double precision; v_sp_en double precision;
+  -- own rows (the frozen speeds, the frozen reaches, the seeded ring) — nothing here is a number
+  -- typed into the harness.
+  v_sp_en double precision;
   v_exp_tick int; v_sim double precision;
   -- 0336: the MEASURED formation extent and the spawn geometry derived from it (never from a knob).
-  v_r_fb double precision;
   v_extent double precision; v_players int;       -- the extent the spawn arm itself measures
   v_fx double precision; v_fy double precision;   -- the pirate's own spawn point, through the leaf
   v_px double precision; v_py double precision;   -- where that spawn point must be after ONE close
-  v_gap0 double precision;                        -- the escort<->pirate gap AT SPAWN (never the ring)
   v_step double precision;                        -- how far the pirate actually moved on tick 1
   v_bd double precision;                          -- the site difficulty both wave formulas take
   v_r_en_pred double precision;                   -- the wave's range, derived BEFORE it exists
   v_sp_en_pred double precision;                  -- ditto its speed; both re-asserted against the row
   v_site_x double precision; v_site_y double precision;  -- (0338) the zone's city: where the wave comes FROM
-  v_worst_gap double precision; v_worst_tick int;        -- (0338) the WORST-BEARING approach, knobs only
+  -- ── 0351: THE FLEET AS ONE ACTOR. Read from combat_fleet_actor — the engine's OWN authority for
+  --    "what and where is this fleet" — never re-derived here, so a drift in the rule fails rather
+  --    than being reproduced by a second copy of it.
+  v_fl_x double precision; v_fl_y double precision;
+  v_fl_reach double precision; v_fl_speed double precision;
+  v_fl_reach_exp double precision;                -- min over living hulls of min over their guns
+  v_gap0 double precision;                        -- the FLEET <-> wave gap AT SPAWN (the RADIUS)
+  v_gap_pre double precision;                     -- ditto, re-measured before each approach tick
+  v_esc_gap0 double precision;                    -- the ESCORT's chord — the old engine's own input
+  v_dx_lead double precision; v_dy_lead double precision;
+  v_dx_esc double precision; v_dy_esc double precision;
 begin
   -- ── fresh funded player, two ships, ONE group, command designated — 100% real RPCs. ────────────
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -3315,17 +3380,18 @@ begin
   select id into u_esc from public.combat_units where encounter_id = v_enc and main_ship_id = s2;
   if u_cmd is null or u_esc is null then raise exception 'CLOSURE FAIL: the 2-ship roster did not seed 2 units'; end if;
 
-  -- the escort's own range, from its OWN frozen weapons_json (fitted or fallback — derived, never
-  -- assumed), and the seeded ring it spawned on.
+  -- each hull's own frozen reach, from its OWN weapons_json (fitted or fallback — derived, never
+  -- assumed), and the seeded ring the escort spawned on.
   select max((w->>'range')::double precision) into v_r_esc
     from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_esc;
-  if v_r_esc is null then raise exception 'CLOSURE FAIL: the escort carries no ranged weapon at all (want the fitted/fallback range)'; end if;
+  select max((w->>'range')::double precision) into v_r_lead
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_cmd;
+  if v_r_esc is null or v_r_lead is null then raise exception 'CLOSURE FAIL: a hull carries no ranged weapon at all (lead %, escort % — want the fitted/fallback range on each)', v_r_lead, v_r_esc; end if;
   select public.osn_distance(e.pos_x, e.pos_y, c.pos_x, c.pos_y) into d_pre
     from public.combat_units e, public.combat_units c where e.id = u_esc and c.id = u_cmd;
   -- NULL IS FAILURE, not a pass. combat_units.pos_x/pos_y are NULLABLE (0234:173), so an
   -- unpositioned row makes osn_distance NULL, `abs(NULL - v_ring) > 0.01` NULL, and this whole spawn
-  -- pin silently vacuous. Every positional comparison in this block is null-pinned for that reason
-  -- (same defect class as the position(x in NULL) probe found on this chain).
+  -- pin silently vacuous. Every positional comparison in this block is null-pinned for that reason.
   if d_pre is null then
     raise exception 'CLOSURE FAIL: the escort/command distance is NULL — one of them is unpositioned, so the spawn-ring pin would prove nothing';
   end if;
@@ -3335,12 +3401,10 @@ begin
 
   -- ── 0336: DERIVE THE WAVE'S SPAWN POINT FROM THE MEASURED EXTENT — THE ENGINE'S OWN INPUT. ─────
   -- The tick places slot k of a wave at combat_formation_point(anchor, EXTENT + THAT WAVE'S OWN
-  -- weapon range + 1, k, 0.5), where EXTENT is `max(distance from the anchor to each LIVING player
-  -- unit)` measured at spawn — NOT the ring knob. Both terms are readable before the wave exists:
-  -- the extent off the rows this encounter already carries, measured with the same expression and
-  -- the same predicates the spawn arm uses, and the wave's range from the same
-  -- base + difficulty*per_difficulty formula the spawn arm evaluates. So this block MEASURES the
-  -- geometry it is about to observe instead of legislating a second one.
+  -- weapon range + 1, k, the arrival phase), where EXTENT is `max(distance from the anchor to each
+  -- LIVING player unit)` measured at spawn — NOT the ring knob. Both terms are readable before the
+  -- wave exists, so this block MEASURES the geometry it is about to observe instead of legislating a
+  -- second one.
   select engagement_x, engagement_y into nx0, ny0 from public.combat_encounters where id = v_enc;
   if nx0 is null or ny0 is null then
     raise exception 'CLOSURE FAIL: the encounter carries no engagement anchor (engagement_x/y is NULL) — the spawn point this assert compares against does not exist';
@@ -3357,8 +3421,9 @@ begin
   if v_players <> 2 then
     raise exception 'CLOSURE FAIL: % positioned living player row(s) entering the spawn tick (want the 2 this block staged — lead on the anchor, escort on the ring) — the measured extent below would not be this formation''s', v_players;
   end if;
+  n_hulls := v_players;
   select pos_x, pos_y into ex0, ey0 from public.combat_units where id = u_esc;
-  select move_speed into v_sp_esc from public.combat_units where id = u_esc;
+  select pos_x, pos_y into cx0, cy0 from public.combat_units where id = u_cmd;
   -- (0338) the site is read HERE, from the same row the difficulty comes from, because it is now
   -- also where the wave comes FROM. One read, one join, the encounter's own link.
   select l.base_difficulty, l.x, l.y into v_bd, v_site_x, v_site_y
@@ -3369,17 +3434,17 @@ begin
   if v_site_x is null or v_site_y is null then
     raise exception 'CLOSURE FAIL: the ambushed encounter carries no linked site — the wave has no city to arrive from, the arrival leaf falls back to the plain ring, and the spawn point predicted below would be the fallback rather than the bearing this block is measuring';
   end if;
-  if ex0 is null or ey0 is null or v_sp_esc is null or v_bd is null
+  if ex0 is null or ey0 is null or cx0 is null or cy0 is null or v_bd is null
      or v_r_en_pred is null or v_sp_en_pred is null then
-    raise exception 'CLOSURE FAIL: the escort spawn (%,%), its frozen speed (%), the site difficulty (%) or the derived wave range/speed (% / %) is NULL — the wave spawn point this block has to predict cannot be derived',
-      ex0, ey0, v_sp_esc, v_bd, v_r_en_pred, v_sp_en_pred;
+    raise exception 'CLOSURE FAIL: the escort spawn (%,%), the lead spawn (%,%), the site difficulty (%) or the derived wave range/speed (% / %) is NULL — the wave spawn point this block has to predict cannot be derived',
+      ex0, ey0, cx0, cy0, v_bd, v_r_en_pred, v_sp_en_pred;
   end if;
-  if v_sp_esc <= 0 or v_sp_en_pred <= 0 then
-    raise exception 'CLOSURE FAIL: a closing speed is not positive (escort %, wave %) — one side cannot close at all, so the approach is not a phase of the fight', v_sp_esc, v_sp_en_pred;
+  if v_sp_en_pred <= 0 then
+    raise exception 'CLOSURE FAIL: the wave''s derived closing speed is % — one side cannot close at all, so the approach is not a phase of the fight', v_sp_en_pred;
   end if;
   -- THE ESCORT IS THE OUTERMOST PLAYER HULL, so it IS the extent. Pinned rather than assumed: if a
   -- future fixture ever puts a hull further out, the wave stands clear of THAT hull instead and the
-  -- chord this block measures below is no longer the one the recurrence models.
+  -- radius this block measures below is no longer the one the recurrence models.
   if abs(v_extent - d_pre) > 1e-6 then
     raise exception 'CLOSURE FAIL: the measured formation extent is % but the escort stands % from the anchor — some other hull is now the outermost one, so the wave is standing clear of a ship this block is not tracking', v_extent, d_pre;
   end if;
@@ -3392,14 +3457,59 @@ begin
   if v_fx is null or v_fy is null then
     raise exception 'CLOSURE FAIL: the wave slot-0 point is NULL — the closure recurrence would have no gap to start from';
   end if;
-  -- THE SPAWN GAP IS MEASURED, never chosen: the chord between the escort (radius = the extent, slot
-  -- 0, phase 0) and the wave (radius = extent + its own range + 1, slot 0, the arrival phase). Under
-  -- 0338 that chord is a function of the BEARING to the city as well as of the knobs, which is why
-  -- every bound below is derived from it rather than typed in.
-  v_gap0 := public.osn_distance(ex0, ey0, v_fx, v_fy);
-  if v_gap0 is null or v_gap0 <= 0 then
-    raise exception 'CLOSURE FAIL: the escort-to-wave spawn gap measures % — there is no approach to observe', v_gap0;
+
+  -- ── ██ 0351: THE FLEET'S OWN ACTOR, TAKEN FROM THE ENGINE'S AUTHORITY ██ ───────────────────────
+  -- Point, reach and speed together, because they are one concept. Everything below measures from
+  -- this point; if the engine ever stood the fleet somewhere else, these three pins fail rather than
+  -- letting the block quietly measure a circle the gate does not use.
+  select a.x, a.y, a.reach, a.speed into v_fl_x, v_fl_y, v_fl_reach, v_fl_speed
+    from public.combat_fleet_actor(v_enc) a;
+  if v_fl_x is null or v_fl_y is null or v_fl_reach is null or v_fl_speed is null then
+    raise exception 'CLOSURE FAIL: combat_fleet_actor answers point (%,%), reach %, speed % — a NULL in any of the four makes every fleet assert below vacuous', v_fl_x, v_fl_y, v_fl_reach, v_fl_speed;
   end if;
+  -- THE FLEET STANDS ON ITS ELECTED LEAD, WHICH STANDS ON THE ANCHOR. Both halves in one pin: the
+  -- 0315 election put the designated command ship on the engagement point, and 0351 measures from it.
+  if abs(v_fl_x - cx0) > 1e-9 or abs(v_fl_y - cy0) > 1e-9 then
+    raise exception 'CLOSURE FAIL: the fleet stands at (%,%) but its elected lead is at (%,%) — combat_fleet_actor is not standing the fleet on its lead, so the one circle the player sees is not the one the gate uses', v_fl_x, v_fl_y, cx0, cy0;
+  end if;
+  if abs(v_fl_x - nx0) > 1e-6 or abs(v_fl_y - ny0) > 1e-6 then
+    raise exception 'CLOSURE FAIL: the fleet''s point (%,%) is not the engagement anchor (%,%) — this block''s whole geometry is "the lead is the spawn RADIUS from the wave", and that is only true while the lead holds the anchor', v_fl_x, v_fl_y, nx0, ny0;
+  end if;
+  -- THE FLEET'S REACH IS THE SHORTEST GUN IN IT — not the lead's own, and not the longest. Derived
+  -- here with the same aggregate the leaf uses (min over living hulls, min over positive ranges).
+  select min(g.r) into v_fl_reach_exp
+    from public.combat_units cu
+    cross join lateral (select (w->>'range')::double precision as r
+                          from jsonb_array_elements(cu.weapons_json) w) g
+   where cu.encounter_id = v_enc and cu.side = 'player' and cu.alive_count > 0 and g.r > 0;
+  if v_fl_reach_exp is null or abs(v_fl_reach - v_fl_reach_exp) > 1e-9 then
+    raise exception 'CLOSURE FAIL: the fleet''s reach is % but the shortest gun over its living hulls is % (lead %, escort %) — a max() or a lead-only reach would draw a circle claiming reach the fleet does not have', v_fl_reach, v_fl_reach_exp, v_r_lead, v_r_esc;
+  end if;
+  if v_fl_speed <= 0 then
+    raise exception 'CLOSURE FAIL: the fleet''s frozen speed is % — it can never close and this block would spin', v_fl_speed;
+  end if;
+
+  -- THE SPAWN GAP IS MEASURED, never chosen: fleet point to the wave's slot-0 point. Under 0351 this
+  -- is the spawn RADIUS itself at every bearing (the lead holds the anchor), which is cross-checked
+  -- against `extent + the wave's own range + 1` immediately below — two independent routes to one
+  -- number, so a drift in either the election or the spawn radius fails here.
+  v_gap0 := public.osn_distance(v_fl_x, v_fl_y, v_fx, v_fy);
+  if v_gap0 is null or v_gap0 <= 0 then
+    raise exception 'CLOSURE FAIL: the fleet-to-wave spawn gap measures % — there is no approach to observe', v_gap0;
+  end if;
+  if abs(v_gap0 - (v_extent + v_r_en_pred + 1)) > 1e-6 then
+    raise exception 'CLOSURE FAIL: the fleet stands % from the wave but the spawn radius is % (measured extent % + the wave''s own range % + 1) — either the election stopped anchoring the lead on the engagement point, or the wave is no longer going out at the radius 0336 established',
+      v_gap0, v_extent + v_r_en_pred + 1, v_extent, v_r_en_pred;
+  end if;
+  -- THE ESCORT'S CHORD, kept for ONE purpose: it is the quantity the OLD per-hull engine steered and
+  -- fired on, and the discriminating asserts below are only sharp while the old engine would have
+  -- had the escort CLOSING too (i.e. its chord outside its own gun). Measured, never assumed.
+  v_esc_gap0 := public.osn_distance(ex0, ey0, v_fx, v_fy);
+  if v_esc_gap0 is null or v_esc_gap0 <= v_r_esc then
+    raise exception 'CLOSURE FAIL premise: the escort''s chord to the wave is % against its own % reach — the OLD per-hull engine would have had it firing or kiting rather than closing, and the identical-delta assert below would be discriminating the two bodies on a weaker case than it claims',
+      v_esc_gap0, v_r_esc;
+  end if;
+
   perform pg_temp.ae_tick(v_enc);
   select count(*) into n from public.combat_units
    where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
@@ -3417,86 +3527,63 @@ begin
     from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_en;
   if v_r_en is null then raise exception 'CLOSURE FAIL: the pirate carries no range in its weapons_json'; end if;
 
-  -- THE PREMISE 0313 ESTABLISHES, asserted not assumed — now against the MEASURED spawn gap rather
-  -- than the ring, because after 0336 the ring is no longer the distance between these two units.
-  if v_gap0 <= v_r_esc or v_gap0 <= v_r_en then
-    raise exception 'CLOSURE FAIL premise: the % spawn gap does not exceed both ranges (escort %, pirate %) — the seeded world no longer forces closure and this scenario proves nothing',
-      v_gap0, v_r_esc, v_r_en;
+  -- THE PREMISE 0313 ESTABLISHES, asserted not assumed — now against the MEASURED FLEET gap, because
+  -- after 0351 that is the one distance either side's gate reads.
+  if v_gap0 <= v_fl_reach or v_gap0 <= v_r_en then
+    raise exception 'CLOSURE FAIL premise: the % spawn gap does not exceed both ranges (fleet reach %, pirate %) — the seeded world no longer forces closure and this scenario proves nothing',
+      v_gap0, v_fl_reach, v_r_en;
   end if;
 
-  -- ── 0316 THE PREDICTED CLOSURE TICK, from the engine's own recurrence over THIS encounter's rows.
-  -- Both sides step from the same pre-move snapshot within a tick, so the gap closes by the sum of
-  -- the two frozen move_speeds, each capped at what is left; the escort fires on the first tick
-  -- whose PRE-MOVE gap is inside its own range. NULL IS FAILURE: combat_units.move_speed is
-  -- nullable (0234:175), and a NULL would make the recurrence NULL and every comparison below
-  -- vacuously true — the same defect class as the position pins in this block.
-  select move_speed into v_sp_esc from public.combat_units where id = u_esc;
-  select move_speed into v_sp_en  from public.combat_units where id = u_en;
-  if v_sp_esc is null or v_sp_en is null then
-    raise exception 'CLOSURE FAIL: a frozen move_speed is NULL (escort %, pirate %) — the closure recurrence would have no speeds in it and the tick-count assert would prove nothing', v_sp_esc, v_sp_en;
+  -- ── 0316/0351 THE PREDICTED CLOSURE TICK, from the engine's own recurrence over THIS encounter.
+  -- Both sides step from the same pre-move snapshot and BOTH now measure the SAME scalar — the fleet
+  -- point to the wave — so the gap closes by the sum of the fleet's frozen speed and the wave's,
+  -- each capped at what is left. The fleet fires on the first tick whose PRE-MOVE gap is inside its
+  -- own reach. NULL IS FAILURE: combat_units.move_speed is nullable (0234:175), and a NULL would make
+  -- the recurrence NULL and every comparison below vacuously true.
+  select move_speed into v_sp_en from public.combat_units where id = u_en;
+  if v_sp_en is null then
+    raise exception 'CLOSURE FAIL: a frozen move_speed is NULL (fleet %, pirate %) — the closure recurrence would have no speeds in it and the tick-count assert would prove nothing', v_fl_speed, v_sp_en;
   end if;
-  if v_sp_esc <= 0 or v_sp_en <= 0 then
-    raise exception 'CLOSURE FAIL: a frozen move_speed is not positive (escort %, pirate %) — one side cannot close at all, so the approach is not a phase of the fight', v_sp_esc, v_sp_en;
+  if v_sp_en <= 0 then
+    raise exception 'CLOSURE FAIL: a frozen move_speed is not positive (fleet %, pirate %) — one side cannot close at all, so the approach is not a phase of the fight', v_fl_speed, v_sp_en;
   end if;
   -- THE DERIVATION THAT PLACED THE SLOT-0 POINT MUST MATCH THE WAVE THAT ACTUALLY ARRIVED. The spawn
-  -- point was derived from a PREDICTED range and speed (base + difficulty*per_difficulty, the same
-  -- two expressions the spawn arm evaluates) because the wave did not exist yet. If the row
-  -- disagrees, every number downstream was derived for a fight that is not the one on the table.
+  -- point was derived from a PREDICTED range and speed (the same two expressions the spawn arm
+  -- evaluates) because the wave did not exist yet. If the row disagrees, every number downstream was
+  -- derived for a fight that is not the one on the table.
   if abs(v_r_en - v_r_en_pred) > 1e-6 or abs(v_sp_en - v_sp_en_pred) > 1e-6 then
     raise exception 'CLOSURE FAIL: the wave arrived with range % and speed % but this block derived its spawn point for % and % — the synthetic wave formulas moved and the geometry below was chosen for the wrong fight',
       v_r_en, v_sp_en, v_r_en_pred, v_sp_en_pred;
   end if;
-  -- THE MODEL'S OWN PREMISE, asserted rather than assumed: the recurrence below applies BOTH sides'
-  -- CLOSE step on every tick it runs, which is only correct while BOTH are out of their own range.
-  -- The loop condition covers the escort; the pirate is covered only if its range is the shorter of
-  -- the two. That ordering is exactly what 0313/0316's (f3) invariant establishes for the seeded
-  -- world, and if a retune ever inverts it this recurrence would silently model the wrong fight.
-  if v_r_en >= v_r_esc then
-    raise exception 'CLOSURE FAIL premise: the pirate range % is not strictly under the escort range % — the closure recurrence assumes the escort out-ranges the pirate (otherwise the pirate KITEs or HOLDs during the approach and the predicted tick models a fight that is not happening)',
-      v_r_en, v_r_esc;
+  -- THE MODEL'S OWN PREMISE, asserted rather than assumed: the recurrence applies BOTH sides' CLOSE
+  -- step on every tick it runs, which is only correct while BOTH are out of their own range. The
+  -- loop condition covers the fleet; the pirate is covered only if its range is the shorter of the
+  -- two. Under 0351 the comparison is fleet reach against pirate range — one circle each.
+  if v_r_en >= v_fl_reach then
+    raise exception 'CLOSURE FAIL premise: the pirate range % is not strictly under the fleet reach % — the closure recurrence assumes the FLEET out-ranges the pirate (otherwise the pirate KITEs or HOLDs during the approach and the predicted tick models a fight that is not happening)',
+      v_r_en, v_fl_reach;
   end if;
   v_sim := v_gap0; v_exp_tick := 1;
-  while v_sim > v_r_esc and v_exp_tick <= 24 loop
-    v_sim := v_sim - least(v_sp_esc, v_sim) - least(v_sp_en, v_sim);
+  while v_sim > v_fl_reach and v_exp_tick <= 24 loop
+    v_sim := v_sim - least(v_fl_speed, v_sim) - least(v_sp_en, v_sim);
     v_exp_tick := v_exp_tick + 1;
   end loop;
-  -- THE BOUND THE SLICE SHIPS, REPOINTED BY 0338 — AND WIDENED HONESTLY RATHER THAN DELETED.
-  -- 0336 could type the number 3 here because it stood the wave at a FIXED bearing, half a slot off
-  -- the escort ring, so the escort-to-wave chord was a function of the knobs alone. 0338 makes the
-  -- bearing the direction of the zone's own city, so that chord is a function of the knobs AND of
-  -- where the fleet happens to be relative to the settlement: it ranges over
-  --   [ (extent + range + 1) - extent , (extent + range + 1) + extent ] = [ range + 1 , range + 1 + 2*extent ].
-  -- The floor is 0336's structural clearance and is UNCHANGED. The ceiling is the cost of the origin,
-  -- and it is bounded by the FLEET'S OWN FORMATION EXTENT — never by how far away the city is. A lone
-  -- hull is its own lead standing ON the anchor, so its extent is 0 and its approach is identical at
-  -- every bearing; that is the 71-of-77-ships case, untouched.
-  -- SO THE ANTI-SPRAWL TEETH ARE KEPT AS A KNOB-ONLY PROPERTY: the bound below is computed at the
-  -- WORST bearing, from the same knobs and the same recurrence, and it does not move when the fixture
-  -- happens to sit in a different direction from its site. A range cut made without the matching ring
-  -- and speed cuts still fails HERE rather than in a playtest — it just fails on the worst case the
-  -- geometry admits instead of on one arbitrary bearing's chord.
-  v_worst_gap := (v_extent + v_r_en_pred + 1) + v_extent;
-  v_sim := v_worst_gap; v_worst_tick := 1;
-  while v_sim > v_r_esc and v_worst_tick <= 60 loop
-    v_sim := v_sim - least(v_sp_esc, v_sim) - least(v_sp_en, v_sim);
-    v_worst_tick := v_worst_tick + 1;
-  end loop;
-  if v_worst_tick > 12 then
-    raise exception 'CLOSURE FAIL: at the WORST bearing the seeded world needs % ticks for an escort to reach firing range (worst-case gap %, extent %, wave range %, escort range %, escort speed %, pirate speed %) — the sprawl is back; closure must complete within one or two silent ticks of the structural floor, and a formation this wide turns the wave''s own arrival direction into a minute of a fight in which nobody shoots',
-      v_worst_tick, v_worst_gap, v_extent, v_r_en, v_r_esc, v_sp_esc, v_sp_en;
-  end if;
-  -- and THIS fight, at THIS bearing, must be inside that same bound — a derived comparison, so a
-  -- fixture that drifts into an absurd approach still fails even while the knobs stay legal.
-  if v_exp_tick > v_worst_tick then
-    raise exception 'CLOSURE FAIL: this fight needs % ticks to close but the worst bearing the geometry admits needs only % (spawn gap %, worst-case gap %) — the measured chord is outside the range the formation extent can produce, so the wave is not standing on the radius this block derived',
-      v_exp_tick, v_worst_tick, v_gap0, v_worst_gap;
+  -- ── THE ANTI-SPRAWL BOUND, AND WHY IT IS NOW ONE COMPARISON INSTEAD OF TWO ──────────────────────
+  -- 0338 forced this into a WORST-BEARING calculation because the escort-to-wave chord depended on
+  -- where the settlement lay. 0351 measures from the LEAD, whose gap is the spawn radius at every
+  -- bearing, so the fixture's own number is already the knob-only number and the bound applies
+  -- directly to it. A range cut made without the matching ring and speed cuts still fails HERE
+  -- rather than in a playtest — and now it fails on the tick count the fight actually runs.
+  if v_exp_tick > 12 then
+    raise exception 'CLOSURE FAIL: the seeded world needs % ticks for the FLEET to reach firing range (spawn radius % = measured extent % + wave range % + 1, fleet reach %, fleet speed %, pirate speed %) — the sprawl is back; closure must complete within one or two silent ticks of the structural floor, and an approach this long is a minute of a fight in which nobody shoots',
+      v_exp_tick, v_gap0, v_extent, v_r_en, v_fl_reach, v_fl_speed, v_sp_en;
   end if;
   if v_exp_tick < 2 then
-    raise exception 'CLOSURE FAIL: the recurrence says the escort is already in range at spawn (gap %, escort range %) — there would be nothing to close and this block would prove nothing',
-      v_gap0, v_r_esc;
+    raise exception 'CLOSURE FAIL: the recurrence says the fleet is already in range at spawn (gap %, fleet reach %) — there would be nothing to close and this block would prove nothing',
+      v_gap0, v_fl_reach;
   end if;
   -- and the approach must not be a TELEPORT either: a single tick that swallows the whole gap puts
-  -- the pirate on top of the escort and every unit HOLDs at contact forever after, which is position
+  -- the pirate on top of the fleet and everything HOLDs at contact forever after, which is position
   -- ceasing to matter — the very thing this block exists to witness.
   if v_sp_en > v_gap0 / 2 then
     raise exception 'CLOSURE FAIL: the pirate closes % of the % spawn gap in one tick — it arrives on top of its target and the CLOSE/KITE arms run for a single tick before everything HOLDs at contact',
@@ -3504,47 +3591,57 @@ begin
   end if;
 
   -- ── 0336 REPOINT: TICK 1 IS SILENT ON BOTH SIDES, AND THAT IS THE STRONGER STATEMENT. ───────────
-  -- This assert used to read "the command ship (dist 0) FIRED on tick 1 — the fight starts instantly
-  -- despite the gap", and it was true only because every pirate spawned ON the engagement anchor,
-  -- which is where the lead stands. 0336 deletes that: the wave spawns on a formation ring, so
-  -- NOTHING is at distance 0 from anybody any more. 0338 then removed the ordering too: the wave
-  -- arrives on the bearing to the zone's own city, so whether the near hull is an escort or the lead
-  -- depends on which way the settlement lies. No ring radius rescues the old assert, and no
-  -- assertion here may depend on which hull is nearest.
-  -- So the property is repointed to what 0336 actually establishes, quantified over EVERY unit of
-  -- BOTH sides rather than over one hull: the opening tick of a fight is silent, because the wave
-  -- arrives outside every gun's reach and both sides must CLOSE before anyone shoots. The lead is
-  -- covered by that like everybody else, and a body that let anything fire across the spawn gap —
-  -- either side — fails here.
+  -- This assert used to read "the command ship (dist 0) FIRED on tick 1", true only because every
+  -- pirate spawned ON the engagement anchor. 0336 deletes that; 0338 then removed the ordering too;
+  -- 0351 removes the question. Quantified over EVERY unit of BOTH sides: the opening tick of a fight
+  -- is silent, because the wave arrives outside the fleet's one circle and outside its own reach.
   select count(*) into n from public.combat_events
     where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo';
   if n <> 0 then
-    raise exception 'CLOSURE FAIL: % salvo(s) on tick 1 — the wave is meant to arrive OUTSIDE every gun on the field (escort gap %, escort range %, pirate range %), so the opening tick cannot start instantly any more; something fired across the spawn gap',
-      n, v_gap0, v_r_esc, v_r_en;
+    raise exception 'CLOSURE FAIL: % salvo(s) on tick 1 — the wave is meant to arrive OUTSIDE the fleet''s own circle and outside its own reach (fleet gap %, fleet reach %, pirate range %), so the opening tick cannot start instantly any more; something fired across the spawn gap',
+      n, v_gap0, v_fl_reach, v_r_en;
   end if;
 
-  -- tick 1, the escort and the pirate both MOVED (the first observed movement in a real fight)...
-  -- Every operand is null-pinned FIRST. `x is not distinct from NULL` is FALSE for any real number,
-  -- so a NULL on either side of these comparisons would skip the raise and pass an assert that
-  -- proved nothing — the exact shape that let a moved/unmoved check go vacuous elsewhere on this
-  -- chain. Absence of a coordinate is failure here, never evidence of movement.
+  -- ── ██ 0351 RIGID: ONE ORDER, ONE BODY ██ ──────────────────────────────────────────────────────
+  -- Tick 1 moved both hulls, and it moved them by the SAME VECTOR — not merely in the same
+  -- direction. That is what makes the formation the encounter builder laid out survive the journey
+  -- instead of being reconciled from two separate decisions.
+  -- THIS IS THE LINE THE OLD ENGINE CANNOT PASS. Its mover ran per hull: the lead stepped along
+  -- (wave - anchor) normalised, the escort along (wave - ring slot) normalised. Two different unit
+  -- vectors whenever the escort is off the anchor, which the ring guarantees. No tuning makes two
+  -- different directions equal.
+  -- Every operand is null-pinned FIRST: `x is not distinct from NULL` is FALSE for any real number,
+  -- so a NULL on either side would skip the raise and pass an assert that proved nothing.
   select pos_x, pos_y into ex1, ey1 from public.combat_units where id = u_esc;
-  if ex0 is null or ey0 is null or ex1 is null or ey1 is null then
-    raise exception 'CLOSURE FAIL: the escort has a NULL coordinate (pre %,% / post %,%) — an unpositioned unit cannot prove it moved', ex0, ey0, ex1, ey1;
+  select pos_x, pos_y into cx1, cy1 from public.combat_units where id = u_cmd;
+  if ex1 is null or ey1 is null or cx1 is null or cy1 is null then
+    raise exception 'CLOSURE FAIL: a hull has a NULL coordinate after tick 1 (escort %,% / lead %,%) — an unpositioned unit cannot prove it moved', ex1, ey1, cx1, cy1;
   end if;
-  if ex1 = ex0 and ey1 = ey0 then
-    raise exception 'CLOSURE FAIL: the escort did not move on tick 1 (still at %,%) — the CLOSE arm never ran', ex0, ey0;
+  v_dx_lead := cx1 - cx0;  v_dy_lead := cy1 - cy0;
+  v_dx_esc  := ex1 - ex0;  v_dy_esc  := ey1 - ey0;
+  if abs(v_dx_lead) + abs(v_dy_lead) < 1e-12 then
+    raise exception 'CLOSURE FAIL: the fleet''s delta on tick 1 is (%, %) — the CLOSE arm never ran, and a zero delta would make the equality below pass for a formation that never moved', v_dx_lead, v_dy_lead;
   end if;
-  -- ── 0336 REPOINT: the pirate is measured against ITS OWN SPAWN POINT, never against the anchor.
-  -- This used to compare the pirate's post-tick position with combat_encounters.engagement_x/y. That
-  -- was only a movement test while the wave spawned ON the anchor; after 0336 it never spawns there,
-  -- so the comparison would pass for free on every run — a VACUITY hole, not a wrong message. It now
-  -- compares against (v_fx, v_fy), the slot-0 point combat_formation_point itself produces from the
-  -- MEASURED formation extent, and it demands not merely the right STEP LENGTH but the exact right
-  -- END POINT — spawn point, direction and cap pinned in one assert. IF THE WAVE'S SPAWN RADIUS EVER
-  -- STOPS BEING (measured extent + its own range + 1), this is the line that fails, loudly and
-  -- diagnosably, because (v_fx, v_fy) will no longer be where the unit started: re-derive the
-  -- prediction above against whatever the spawn arm now measures, do not loosen this.
+  if abs(v_dx_esc - v_dx_lead) > 1e-9 or abs(v_dy_esc - v_dy_lead) > 1e-9 then
+    raise exception 'CLOSURE FAIL: the hulls moved by DIFFERENT deltas on tick 1 — lead (%, %), escort (%, %). 0351 decides ONE step at the fleet point and applies it to every hull as a rigid translation, so a formation that reconciles two separate per-hull decisions is the mover this slice deleted',
+      v_dx_lead, v_dy_lead, v_dx_esc, v_dy_esc;
+  end if;
+  -- and the step is the FLEET's own speed, capped by the FLEET's own gap — the mover's close arm
+  -- composed with fleet arguments, which is exactly what the tick now hands it.
+  if abs(sqrt(v_dx_lead*v_dx_lead + v_dy_lead*v_dy_lead) - least(v_fl_speed, v_gap0)) > 1e-6 then
+    raise exception 'CLOSURE FAIL: the formation moved % on tick 1 but the fleet''s own speed capped by its own gap is % — the step is not the one combat_unit_decide_move hands back for the FLEET',
+      sqrt(v_dx_lead*v_dx_lead + v_dy_lead*v_dy_lead), least(v_fl_speed, v_gap0);
+  end if;
+
+  -- ── 0336/0351 REPOINT: the pirate is measured against ITS OWN SPAWN POINT, and it closes on the
+  -- FLEET'S POINT. This used to compare the pirate's post-tick position with engagement_x/y, which
+  -- after 0336 it never occupies — a VACUITY hole. It now compares against (v_fx, v_fy), the slot-0
+  -- point combat_formation_point itself produces from the MEASURED extent, and demands not merely
+  -- the right STEP LENGTH but the exact right END POINT.
+  -- ██ AND THE END POINT IS THE SECOND LINE THE OLD ENGINE CANNOT PASS ██ — the old enemy closed on
+  -- the lowest-aggro living row, i.e. the ESCORT, which stands a full formation extent away from the
+  -- point predicted here. v_target_id still names the escort (0301's aggro screen is untouched by
+  -- 0351); only the distance and the steering point became the fleet's.
   select pos_x, pos_y into nx1, ny1 from public.combat_units where id = u_en;
   if nx1 is null or ny1 is null then
     raise exception 'CLOSURE FAIL: the pirate has a NULL position after tick 1 — an unpositioned enemy cannot prove it moved off the anchor';
@@ -3557,58 +3654,63 @@ begin
     raise exception 'CLOSURE FAIL: the pirate moved % from the slot-0 formation point (%,%) but its own frozen move_speed is % — either the wave did not spawn where combat_formation_point puts it (re-derive against the MEASURED formation extent, which is the one authority for the wave radius) or the CLOSE step is no longer capped by move_speed',
       v_step, v_fx, v_fy, v_sp_en;
   end if;
-  -- …and it stepped along the RIGHT LINE. The pirate closes on the lowest-aggro alive row — the
-  -- escort — from the FROZEN pre-move snapshot, so its post-tick point is determined exactly:
-  -- spawn + (escort - spawn)/gap * min(speed, gap). Length alone would pass for a step in any
-  -- direction; this pins the target choice, the direction and the cap together.
-  v_px := v_fx + (ex0 - v_fx) / v_gap0 * least(v_sp_en, v_gap0);
-  v_py := v_fy + (ey0 - v_fy) / v_gap0 * least(v_sp_en, v_gap0);
+  -- …and it stepped along the RIGHT LINE: spawn + (FLEET POINT - spawn)/gap * min(speed, gap).
+  -- Length alone would pass for a step in any direction; this pins the steering target, the
+  -- direction and the cap together.
+  v_px := v_fx + (v_fl_x - v_fx) / v_gap0 * least(v_sp_en, v_gap0);
+  v_py := v_fy + (v_fl_y - v_fy) / v_gap0 * least(v_sp_en, v_gap0);
   if abs(nx1 - v_px) > 1e-6 or abs(ny1 - v_py) > 1e-6 then
-    raise exception 'CLOSURE FAIL: the pirate stands at (%,%) after tick 1 but closing its own frozen speed % on the escort from the slot-0 point (%,%) lands at (%,%) — it either closed on a different hull than the lowest-aggro escort or it did not start where the measured extent puts it',
-      nx1, ny1, v_sp_en, v_fx, v_fy, v_px, v_py;
+    raise exception 'CLOSURE FAIL: the pirate stands at (%,%) after tick 1 but closing its own frozen speed % on the FLEET POINT (%,%) from the slot-0 point (%,%) lands at (%,%) — it either closed on something other than the fleet''s own point (the pre-0351 engine steered at the lowest-aggro HULL, which stands % away from that point) or it did not start where the measured extent puts it',
+      nx1, ny1, v_sp_en, v_fl_x, v_fl_y, v_fx, v_fy, v_px, v_py, v_extent;
   end if;
-  -- ...toward each other: the gap after tick 1 is smaller than the MEASURED spawn gap.
-  select public.osn_distance(e.pos_x, e.pos_y, x.pos_x, x.pos_y) into d_t1
-    from public.combat_units e, public.combat_units x where e.id = u_esc and x.id = u_en;
+  -- ...toward each other: the FLEET's gap after tick 1 is smaller than the measured spawn gap.
+  select public.osn_distance(a.x, a.y, x.pos_x, x.pos_y) into d_t1
+    from public.combat_fleet_actor(v_enc) a, public.combat_units x where x.id = u_en;
   if d_t1 is null then
-    raise exception 'CLOSURE FAIL: the escort-pirate gap after tick 1 is NULL — the closure comparison would be vacuous';
+    raise exception 'CLOSURE FAIL: the fleet-pirate gap after tick 1 is NULL — the closure comparison would be vacuous';
   end if;
   if d_t1 >= v_gap0 then
-    raise exception 'CLOSURE FAIL: the escort-pirate gap after tick 1 is % (want < the % spawn gap) — they are not closing', d_t1, v_gap0;
+    raise exception 'CLOSURE FAIL: the fleet-pirate gap after tick 1 is % (want < the % spawn gap) — they are not closing', d_t1, v_gap0;
   end if;
-  -- ...and NEITHER of them fired (both pre-move distances were the full ring, beyond both ranges).
+  -- ...and NOTHING fired (the pre-move gap was the full radius, beyond both circles).
   select count(*) into n from public.combat_events
     where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
-      and payload_json->>'unit_id' in (u_esc::text, u_en::text);
+      and payload_json->>'unit_id' in (u_cmd::text, u_esc::text, u_en::text);
   if n <> 0 then
-    raise exception 'CLOSURE FAIL: % salvo(s) from the escort/pirate on tick 1 — something fired across a gap larger than its own range', n;
+    raise exception 'CLOSURE FAIL: % salvo(s) from the fleet/pirate on tick 1 — something fired across a gap larger than its own range', n;
   end if;
 
-  -- ── THE APPROACH: pre-move distance recorded BEFORE each tick; first fire checked against it. ───
-  -- (0338) THE OBSERVATION WINDOW IS DERIVED, not typed. The approach is now as long as the bearing
-  -- to the city makes it, bounded by v_worst_tick above, so a fixed 12 would turn a legitimate long
-  -- approach into a "never fired" failure that says the wrong thing. The window is the worst case the
-  -- geometry admits plus a margin for the shorter-ranged pirate to close after the escort stops.
-  for i in 2 .. greatest(12, v_worst_tick + 4) loop
-    exit when v_esc_fire_tick is not null and v_en_fire_tick is not null;
-    select public.osn_distance(e.pos_x, e.pos_y, x.pos_x, x.pos_y) into d_pre
-      from public.combat_units e, public.combat_units x where e.id = u_esc and x.id = u_en;
-    -- null-pinned like every other distance here: a NULL d_pre would make both `d_pre > v_r_esc`
-    -- (the silent-tick counter) and the later `v_esc_fire_dist > v_r_esc + 1e-6` range check NULL,
-    -- so the whole approach would be measured against nothing and still report PASS.
-    if d_pre is null then
-      raise exception 'CLOSURE FAIL: the escort-pirate pre-move distance is NULL on tick % — an unpositioned unit makes every range check in the approach vacuous', i;
+  -- ── THE APPROACH: the FLEET's pre-move gap recorded BEFORE each tick; first fire checked against
+  --    it. The observation window is DERIVED from the recurrence, not typed, plus a margin for the
+  --    shorter-ranged pirate to close after the fleet stops. ─────────────────────────────────────
+  for i in 2 .. greatest(12, v_exp_tick + 4) loop
+    exit when v_fl_fire_tick is not null and v_en_fire_tick is not null;
+    select public.osn_distance(a.x, a.y, x.pos_x, x.pos_y) into v_gap_pre
+      from public.combat_fleet_actor(v_enc) a, public.combat_units x where x.id = u_en;
+    -- null-pinned like every other distance here: a NULL would make both the silent-tick counter and
+    -- the later range check NULL, so the whole approach would be measured against nothing and still
+    -- report PASS.
+    if v_gap_pre is null then
+      raise exception 'CLOSURE FAIL: the fleet-pirate pre-move distance is NULL on tick % — an unpositioned unit makes every range check in the approach vacuous', i;
     end if;
     perform pg_temp.ae_tick(v_enc);
     select tick_number into v_tick from public.combat_encounters where id = v_enc;
-    if v_esc_fire_tick is null then
-      select count(*) into n from public.combat_events
-        where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo'
-          and payload_json->>'unit_id' = u_esc::text;
+    if v_fl_fire_tick is null then
+      -- ONE COUNT, TWO FACTS: how many salvos the fleet put up, and how many DISTINCT hulls they came
+      -- from. Under 0351 a firing tick is all-or-none over the formation, so the second is the one
+      -- that discriminates the bodies.
+      select count(*), count(distinct payload_json->>'unit_id') into n, n_firers
+        from public.combat_events
+       where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo'
+         and payload_json->>'unit_id' in (u_cmd::text, u_esc::text);
       if n > 0 then
-        v_esc_fire_tick := v_tick; v_esc_fire_dist := d_pre;
-      elsif d_pre > v_r_esc then
-        n_silent := n_silent + 1;   -- a closing tick with the escort still legitimately silent
+        v_fl_fire_tick := v_tick; v_fl_fire_dist := v_gap_pre;
+        if n_firers <> n_hulls then
+          raise exception 'CLOSURE FAIL: the fleet''s first volley (tick %) came from % of its % living hull(s) at pre-move fleet gap % against a fleet reach of % — under 0351 the gate is ONE circle about ONE point, so every hull fires together or none does; a subset is the per-hull gate this slice deleted, firing on each hull''s own distance',
+            v_tick, n_firers, n_hulls, v_gap_pre, v_fl_reach;
+        end if;
+      elsif v_gap_pre > v_fl_reach then
+        n_silent := n_silent + 1;   -- a closing tick with the fleet still legitimately silent
       end if;
     end if;
     if v_en_fire_tick is null then
@@ -3616,50 +3718,54 @@ begin
         where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo'
           and payload_json->>'unit_id' = u_en::text;
       if n > 0 then
-        v_en_fire_tick := v_tick; v_en_fire_dist := d_pre;
+        v_en_fire_tick := v_tick; v_en_fire_dist := v_gap_pre;
       end if;
     end if;
   end loop;
 
-  if v_esc_fire_tick is null then
-    raise exception 'CLOSURE FAIL: the escort NEVER fired within the derived observation window — closure stalled (the recurrence over this encounter''s own rows predicted its first salvo on tick %, and the worst bearing the geometry admits needs %)', v_exp_tick, v_worst_tick;
+  if v_fl_fire_tick is null then
+    raise exception 'CLOSURE FAIL: the FLEET NEVER fired within the derived observation window — closure stalled (the recurrence over this encounter''s own rows predicted its first volley on tick %, from a spawn radius of % at a fleet speed of % against a pirate closing at %)', v_exp_tick, v_gap0, v_fl_speed, v_sp_en;
   end if;
   -- ── 0316: OBSERVED MUST EQUAL PREDICTED. The recurrence above is the arithmetic the scaling
   -- decision was made on; this is where the engine is made to agree with it. A disagreement means
   -- either the tick no longer moves both sides from one frozen snapshot, or the fire gate no longer
   -- reads the PRE-move distance — both silent, both invisible to every static check in the repo.
-  if v_esc_fire_tick is distinct from v_exp_tick then
-    raise exception 'CLOSURE FAIL: the escort''s first salvo landed on tick % but the engine''s own recurrence over this encounter (spawn gap %, escort range %, escort speed %, pirate speed %) predicts tick % — the movement/fire arithmetic no longer matches the geometry the knobs were chosen for',
-      v_esc_fire_tick, v_gap0, v_r_esc, v_sp_esc, v_sp_en, v_exp_tick;
+  if v_fl_fire_tick is distinct from v_exp_tick then
+    raise exception 'CLOSURE FAIL: the fleet''s first volley landed on tick % but the engine''s own recurrence over this encounter (spawn radius %, fleet reach %, fleet speed %, pirate speed %) predicts tick % — the movement/fire arithmetic no longer matches the geometry the knobs were chosen for',
+      v_fl_fire_tick, v_gap0, v_fl_reach, v_fl_speed, v_sp_en, v_exp_tick;
   end if;
-  if v_esc_fire_dist > v_r_esc + 1e-6 then
-    raise exception 'CLOSURE FAIL: the escort''s first salvo (tick %) left at pre-move distance % — OUTSIDE its own % range; the fire gate is not honouring the cut range',
-      v_esc_fire_tick, v_esc_fire_dist, v_r_esc;
+  if v_fl_fire_dist > v_fl_reach + 1e-6 then
+    raise exception 'CLOSURE FAIL: the fleet''s first volley (tick %) left at pre-move fleet gap % — OUTSIDE its own % reach; the fire gate is not honouring the cut range',
+      v_fl_fire_tick, v_fl_fire_dist, v_fl_reach;
   end if;
   -- non-vacuity: the first shot must come strictly AFTER a verified silent closing tick. Tick 1 is
-  -- that tick by construction (the premise pinned gap > range, and the tick-1 assert above pinned
-  -- zero escort salvos), so the first fire may never be tick 1 itself.
-  if v_esc_fire_tick < 2 then
-    raise exception 'CLOSURE FAIL: the escort fired on tick % with no silent closing tick before it — the gap never exceeded its range and closure was not exercised (vacuous)', v_esc_fire_tick;
+  -- that tick by construction (the premise pinned gap > reach, and the tick-1 assert above pinned
+  -- zero salvos), so the first fire may never be tick 1 itself.
+  if v_fl_fire_tick < 2 then
+    raise exception 'CLOSURE FAIL: the fleet fired on tick % with no silent closing tick before it — the gap never exceeded its reach and closure was not exercised (vacuous)', v_fl_fire_tick;
   end if;
   if v_en_fire_tick is null then
-    raise exception 'CLOSURE FAIL: the pirate NEVER fired at the escort within the derived observation window — the enemy approach stalled';
+    raise exception 'CLOSURE FAIL: the pirate NEVER fired at the fleet within the derived observation window — the enemy approach stalled';
   end if;
+  -- the pirate's own gate now reads ITS distance to the FLEET POINT (0351 hunk [3]), so that is the
+  -- distance its first salvo has to be inside — not a per-hull chord.
   if v_en_fire_dist > v_r_en + 1e-6 then
-    raise exception 'CLOSURE FAIL: the pirate''s first salvo (tick %) left at pre-move distance % — OUTSIDE its own % range', v_en_fire_tick, v_en_fire_dist, v_r_en;
+    raise exception 'CLOSURE FAIL: the pirate''s first salvo (tick %) left at a pre-move distance of % to the FLEET POINT — OUTSIDE its own % range', v_en_fire_tick, v_en_fire_dist, v_r_en;
   end if;
-  if v_en_fire_tick < v_esc_fire_tick then
-    raise exception 'CLOSURE FAIL: the short-ranged pirate (range %) fired on tick %, BEFORE the longer-ranged escort (range %, tick %) — the out-range order inverted',
-      v_r_en, v_en_fire_tick, v_r_esc, v_esc_fire_tick;
+  if v_en_fire_tick < v_fl_fire_tick then
+    raise exception 'CLOSURE FAIL: the short-ranged pirate (range %) fired on tick %, BEFORE the longer-reaching fleet (reach %, tick %) — both now measure the SAME scalar (the fleet point to the wave), so the out-range order inverted',
+      v_r_en, v_en_fire_tick, v_fl_reach, v_fl_fire_tick;
   end if;
 
-  -- the ONE knob this block owned. The formation ring is NOT among them any more: it is read for the
+  -- the ONE knob this block owned. The formation ring is NOT among them: it is read for the
   -- escort-spawn pin and never written, so there is nothing to give back and nothing that could leak
   -- into DZCOMBAT_PASS_RANGEINVARIANT below.
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
 
-  raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED ranges, speeds and formation ring (escort range %, pirate range %, escort speed %, pirate speed %, committed ring %) — no geometry knob written by this block at all — the wave arrived on combat_formation_point(anchor, the MEASURED formation extent % + its own range + 1, slot 0, the 0338 arrival phase toward the zone''s own city), a MEASURED % from the escort: outside every gun on the field, so tick 1 was SILENT ON BOTH SIDES (0336 moved the wave off the anchor and out past its own reach; nothing stands at distance 0 any more) — and the escort and the pirate then MOVED toward each other (gap % -> % after tick 1, the pirate landing on EXACTLY the point one frozen-speed close on the escort puts it) and held fire until closure: escort''s first salvo tick %, EXACTLY the tick the engine''s own recurrence predicts, at pre-move distance % (<= its range); pirate''s tick % at % (<= its range); % additional silent closing tick(s): position matters in a real fight, and the number of ticks it takes is still pinned',
-    v_r_esc, v_r_en, v_sp_esc, v_sp_en, v_ring, v_extent, v_gap0, v_gap0, d_t1, v_esc_fire_tick, round(v_esc_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
+  raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED ranges, speeds and formation ring (fleet reach % = the shortest gun over lead % / escort %, pirate range %, fleet speed %, pirate speed %, committed ring %) — no geometry knob written by this block at all — the wave arrived on combat_formation_point(anchor, the MEASURED formation extent % + its own range + 1, slot 0, the 0338 arrival phase toward the zone''s own city), a MEASURED % from the FLEET POINT (which is the spawn RADIUS itself, at every bearing, because the elected lead holds the anchor — the escort''s own chord of % is no longer an input to anything): outside every circle on the field, so tick 1 was SILENT ON BOTH SIDES, and BOTH HULLS then moved by the IDENTICAL delta (%, %) at the fleet''s own speed while the pirate closed on the FLEET''S POINT (gap % -> % after tick 1, landing on EXACTLY the point one frozen-speed close on that point puts it); fire was held until closure: the fleet''s first volley on tick %, EXACTLY the tick the engine''s own recurrence predicts, fired by ALL % hull(s) at once at pre-move gap % (<= its reach); pirate''s tick % at % (<= its range); % additional silent closing tick(s): position matters in a real fight, the fleet is ONE actor while it does, and the number of ticks it takes is still pinned',
+    v_fl_reach, v_r_lead, v_r_esc, v_r_en, v_fl_speed, v_sp_en, v_ring, v_extent, round(v_gap0::numeric, 3), round(v_esc_gap0::numeric, 3),
+    round(v_dx_lead::numeric, 4), round(v_dy_lead::numeric, 4), round(v_gap0::numeric, 3), round(d_t1::numeric, 3),
+    v_fl_fire_tick, n_hulls, round(v_fl_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_LEAD (0315): EVERY FLEET ENTERING COMBAT HAS A LEAD ══════════════════════════
@@ -3712,14 +3818,27 @@ declare
   v_r_en_pred double precision; v_sp_en_pred double precision;
   v_sp_pl double precision; v_sp_lead double precision;
   v_fx double precision; v_fy double precision;      -- the wave's slot-0 point, through the leaf
-  v_gap0 double precision;                            -- the NEAREST hull -> wave, at spawn (0338:
-                                                      -- which hull that is depends on the bearing)
-  u_near uuid; v_sp_near double precision; v_r_near double precision;
   v_site_x double precision; v_site_y double precision;  -- (0338) the zone's city
-  v_worst_gap double precision; v_worst_tick int;        -- (0338) the WORST-BEARING approach
   v_lead_d0 double precision; v_lead_d1 double precision;
-  v_lx double precision; v_ly double precision;      -- where ONE close puts the lead
+  v_lx double precision; v_ly double precision;      -- where ONE close puts the FLEET
   v_sim double precision; v_exp_tick int; v_obs_tick int; i int; u_en uuid;
+  -- ── 0351: THE FLEET AS ONE ACTOR. Taken from combat_fleet_actor, the engine's OWN authority for
+  --    "what and where is this fleet", so a drift in that rule fails here instead of being
+  --    faithfully reproduced by a second copy of it living in this harness.
+  v_fl_x double precision; v_fl_y double precision;
+  v_fl_reach double precision; v_fl_speed double precision;
+  v_fl_reach_exp double precision; v_fl_speed_exp double precision;
+  v_gap0 double precision;                            -- the FLEET -> wave gap at spawn (the RADIUS)
+  v_gap_pre double precision;                         -- ditto, before the observed joining tick
+  n_hulls int; n_firers int;
+  -- pre-move positions of ALL THREE hulls, so the rigid-translation assert is about the whole
+  -- formation rather than about one witness.
+  v_l0x double precision; v_l0y double precision;     -- the lead (on the anchor)
+  v_a0x double precision; v_a0y double precision;     -- the escort on ring slot 0 (u_e0)
+  v_b0x double precision; v_b0y double precision;     -- the escort on ring slot 1 (u_e1)
+  v_dx_l double precision; v_dy_l double precision;
+  v_dx_a double precision; v_dy_a double precision;
+  v_dx_b double precision; v_dy_b double precision;
 begin
   -- ══ ARM A — three hulls, NO command ship anywhere ═══════════════════════════════════════════════
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -3861,41 +3980,58 @@ begin
       px, py, ax + v_ring * cos(2 * pi() / 8), ay + v_ring * sin(2 * pi() / 8);
   end if;
 
-  -- ★ ── 0336 RE-PREMISED: THE FLEET STILL JOINS THE FIGHT, ON THE TICK THE ENGINE PREDICTS ────────
+  -- ★ ── 0336 RE-PREMISED, THEN 0351 REPOINTED: THE FLEET JOINS ON THE TICK THE ENGINE PREDICTS ────
   -- ★ WHAT THIS ASSERTED BEFORE: a salvo on TICK 1 whose unit_id is the LEAD (so a flagless fleet is
   -- ★ not helpless), with ZERO escort salvos on tick 1 as the attribution, premised on
   -- ★ `ring > escort range` so no escort could have opened the fight instead.
-  -- ★ EVERY ONE OF THOSE THREE IS A STATEMENT ABOUT THE PRE-0336 WORLD, and two of them are now
-  -- ★ inverted rather than merely late:
+  -- ★ ALL THREE WERE STATEMENTS ABOUT THE PRE-0336 WORLD:
   -- ★   • "on tick 1" — 0336 stands a wave at (the MEASURED formation extent + its own weapon range
-  -- ★     + 1), strictly outside its own reach of every player ship, so the opening tick is SILENT ON
-  -- ★     BOTH SIDES by construction. The lead fired on tick 1 only because the wave used to be
-  -- ★     inserted ON the anchor, which is where the lead stands — at distance 0.
-  -- ★   • "the LEAD fires, an escort cannot" — DEAD, and unrescuable. This fixture is THREE hulls, so
-  -- ★     the extent is the escort ring (6), not 0: the lead alone on the anchor is a full RADIUS
-  -- ★     from the wave while each escort is a CHORD from it. Measured on the real fixture: the lead
-  -- ★     stands 11.0 away and both escorts 5.92. The escorts are nearer and open the fight; the lead
-  -- ★     is the LAST hull that can reach, not the first, and there is no ring radius that inverts a
-  -- ★     chord and a radius (the same finding CLOSURE's header records).
-  -- ★   • the `ring > escort range` premise measured the wrong gap: what decides who can fire is the
-  -- ★     ESCORT-TO-WAVE gap, which is not the ring at all once the wave stops spawning on the anchor.
+  -- ★     + 1), strictly outside every reach on the field, so the opening tick is SILENT ON BOTH
+  -- ★     SIDES by construction. The lead fired on tick 1 only because the wave used to be inserted
+  -- ★     ON the anchor, which is where the lead stands — at distance 0.
+  -- ★   • "the LEAD fires, an escort cannot" — dead at 0336, and the replacement 0336/0338 wrote is
+  -- ★     itself now retired. It is quoted VERBATIM so a later reader can see it was retired
+  -- ★     deliberately rather than lost:
+  -- ★
+  -- ★         ⛔ RETIRED (0351): "the lead alone on the anchor is a full RADIUS from the wave while
+  -- ★            each escort is a CHORD from it. Measured on the real fixture: the lead stands 11.0
+  -- ★            away and both escorts 5.92. The escorts are nearer and open the fight; the lead is
+  -- ★            the LAST hull that can reach, not the first, and there is no ring radius that
+  -- ★            inverts a chord and a radius."
+  -- ★
+  -- ★     The geometry in that sentence is still true. What 0351 deletes is its RELEVANCE: the fleet
+  -- ★     is ONE actor, it measures from ONE point (its 0315-elected lead — this very hull) with ONE
+  -- ★     reach, and no hull "opens the fight" any more. An escort's chord stops being an input, so
+  -- ★     the derived "nearest hull" that 0338 introduced to keep the old sentence bearing-safe is
+  -- ★     deleted with it rather than repointed: under one actor it is not a weaker question, it is
+  -- ★     the wrong one.
+  -- ★   • the `ring > escort range` premise measured the wrong gap even at 0336; under 0351 the gap
+  -- ★     that decides who can fire is the FLEET POINT to the wave, which is the spawn RADIUS.
   -- ★ WHAT IS ASSERTED NOW, AND WHY IT IS AT LEAST AS STRONG. The defect this block guards —
-  -- ★ A FLAGLESS FLEET OPENS A FIGHT IT CANNOT JOIN — is proven by two things instead of one, and
-  -- ★ neither of them is "fires eventually":
+  -- ★ A FLAGLESS FLEET OPENS A FIGHT IT CANNOT JOIN — is proven by three things, none of which is
+  -- ★ "fires eventually":
   -- ★   (1) THE FLEET JOINS ON EXACTLY THE PREDICTED TICK. The engine's own recurrence (both sides
   -- ★       step from the same frozen pre-move snapshot, each capped at the remaining distance) is
-  -- ★       run over this encounter's real frozen speeds, real frozen ranges and the MEASURED extent;
+  -- ★       run over this encounter's real fleet reach, real fleet speed and the MEASURED extent;
   -- ★       ticks are then driven until a salvo is OBSERVED, and the two must AGREE. A fleet that
   -- ★       cannot join never fires and fails; a fleet whose silence GROWS fires later than the
-  -- ★       recurrence says and fails on the same line. Bounded 2..3, the bound 0316 already ships.
-  -- ★   (2) THE LEAD IS CLOSING, EXACTLY, FROM THE ANCHOR. On the spawn tick the lead's CLOSE arm
-  -- ★       must run and land it on the EXACT point one step of its own frozen move_speed toward the
-  -- ★       wave puts it. This is the direct "it can join" evidence and it is STRICTLY MORE than the
-  -- ★       old form ever had: the old assert only proved the lead fired BECAUSE it happened to be
-  -- ★       standing at distance 0, and it could not have caught a lead that was stranded.
-  -- ★ Plus the attribution, repointed to the statement that is now true and load-bearing: the lead is
-  -- ★ STRICTLY FURTHER from the wave than every escort — which is the formation working, and is
-  -- ★ exactly why electing a lead onto the anchor at aggro 100 behind an aggro-0 screen is the fix.
+  -- ★       recurrence says and fails on the same line.
+  -- ★   (2) THE WHOLE FORMATION IS CLOSING, RIGIDLY, OFF THE ANCHOR. On the spawn tick the fleet's
+  -- ★       CLOSE arm must run and land the LEAD on the EXACT point one step of the FLEET's own
+  -- ★       frozen speed toward the wave puts it — and BOTH ESCORTS must move by the IDENTICAL
+  -- ★       delta. This is the direct "it can join" evidence and it is STRICTLY MORE than the old
+  -- ★       form ever had, which only proved the lead fired BECAUSE it stood at distance 0.
+  -- ★   (3) THE VOLLEY IS ALL-OR-NONE. On the joining tick EVERY living hull fires, because there is
+  -- ★       one circle and every hull is inside it or none is.
+  -- ★ WHY (2) AND (3) FAIL THE OLD ENGINE, at any tuning and at any bearing: the old mover stepped
+  -- ★ the lead along (wave - anchor) and each escort along (wave - its own ring slot) — three
+  -- ★ different unit vectors, so three different deltas; and the old per-hull gate let the nearest
+  -- ★ hull fire alone on the tick its own chord came inside its own gun, so the firer count on the
+  -- ★ first firing tick was 1, not 3.
+  -- ★ The attribution the old form carried (which hull is nearest) is replaced by the property the
+  -- ★ election actually owns and which holds at EVERY bearing: THE LEAD STANDS EXACTLY THE SPAWN
+  -- ★ RADIUS FROM THE WAVE, and the fleet's point IS that hull. The SCREEN itself is proven where it
+  -- ★ lives — in aggro, above: exactly one row at 100 and every other at 0.
   select max((w->>'range')::double precision) into v_r_esc
     from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_e0;
   if v_r_esc is null then
@@ -3940,28 +4076,55 @@ begin
   if v_fx is null or v_fy is null then
     raise exception 'LEAD FAIL: the wave slot-0 point is NULL — the recurrence would have no gap to start from';
   end if;
-  -- ── (0338) WHICH HULL IS NEAREST IS NO LONGER A FIXED FACT, SO IT IS MEASURED. ────────────────
-  -- 0336 stood the wave half a slot off the escort ring, which made an escort nearer than the lead
-  -- BY CONSTRUCTION and let this block say so. 0338 stands it on the bearing to the zone's own city,
-  -- so the escort-to-wave chord ranges over [range + 1, range + 1 + 2*extent] while the lead's gap
-  -- is the constant radius: an escort is the near hull when the settlement lies roughly its way, and
-  -- the LEAD is the near hull when it does not. Both are correct fights. The block therefore DERIVES
-  -- the near hull over every living positioned player row instead of asserting an ordering, and
-  -- every number after this — the recurrence, the predicted tick, the opener — follows from that one
-  -- measurement. This is strictly stronger than the assert it replaces, which could only ever hold
-  -- for one arrangement of the world.
-  select u.id, public.osn_distance(u.pos_x, u.pos_y, v_fx, v_fy), coalesce(u.move_speed, 0),
-         (select max((w->>'range')::double precision) from jsonb_array_elements(u.weapons_json) w)
-    into u_near, v_gap0, v_sp_near, v_r_near
-    from public.combat_units u
-   where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0
-     and u.pos_x is not null and u.pos_y is not null
-   order by public.osn_distance(u.pos_x, u.pos_y, v_fx, v_fy) asc, u.id asc
-   limit 1;
-  v_lead_d0 := public.osn_distance(ax, ay, v_fx, v_fy);
-  if u_near is null or v_gap0 is null or v_lead_d0 is null or v_gap0 <= 0 or v_lead_d0 <= 0
-     or v_sp_near is null or v_r_near is null then
-    raise exception 'LEAD FAIL: the spawn geometry measures nearest-hull gap % / lead gap % (hull %, speed %, range %) — there is no approach to observe', v_gap0, v_lead_d0, u_near, v_sp_near, v_r_near;
+  -- ── ██ 0351: THERE IS NO "NEAREST HULL" ANY MORE — THERE IS ONE ACTOR ██ ──────────────────────
+  -- 0338 made this block DERIVE the nearest hull, because the bearing to the city decided whether an
+  -- escort's chord or the lead's radius was shorter. 0351 deletes the question: the player side
+  -- acquires, measures, fires and moves from ONE point with ONE reach and ONE speed. The derivation
+  -- is therefore replaced by a read of combat_fleet_actor — the engine's own authority — and every
+  -- number after this (the recurrence, the predicted tick, the volley) follows from those three
+  -- values. Which hull is nearest is no longer a fact this fight depends on at any bearing.
+  select a.x, a.y, a.reach, a.speed into v_fl_x, v_fl_y, v_fl_reach, v_fl_speed
+    from public.combat_fleet_actor(v_enc) a;
+  if v_fl_x is null or v_fl_y is null or v_fl_reach is null or v_fl_speed is null then
+    raise exception 'LEAD FAIL: combat_fleet_actor answers point (%,%), reach %, speed % — a NULL in any of the four makes every assert below vacuous', v_fl_x, v_fl_y, v_fl_reach, v_fl_speed;
+  end if;
+  -- THE FLEET'S POINT IS THE ELECTED LEAD, WHICH IS THE HULL ON THE ANCHOR. Both halves in one pin,
+  -- and it is the whole reason a flagless fleet needed a lead at all: 0315 elects the hull, 0351
+  -- makes that hull the point the guns and the glyph both use.
+  select pos_x, pos_y into v_l0x, v_l0y from public.combat_units where id = u_lead;
+  if v_l0x is null or v_l0y is null then
+    raise exception 'LEAD FAIL: the elected lead carries a NULL coordinate before the spawn tick — an unpositioned hull cannot prove where it spawned';
+  end if;
+  if abs(v_fl_x - v_l0x) > 1e-9 or abs(v_fl_y - v_l0y) > 1e-9 then
+    raise exception 'LEAD FAIL: the fleet stands at (%,%) but its elected lead is at (%,%) — combat_fleet_actor is not standing the fleet on the hull 0315 elected, so the one circle the player sees is not the one the gate uses', v_fl_x, v_fl_y, v_l0x, v_l0y;
+  end if;
+  if abs(v_fl_x - ax) > 1e-9 or abs(v_fl_y - ay) > 1e-9 then
+    raise exception 'LEAD FAIL: the fleet''s point (%,%) is not the engagement anchor (%,%) — the spawn-radius property below holds only while the elected lead holds the anchor', v_fl_x, v_fl_y, ax, ay;
+  end if;
+  -- THE FLEET'S REACH IS THE SHORTEST GUN OVER ITS LIVING HULLS, and its SPEED the slowest of them.
+  -- Both derived here with the aggregates the leaf itself uses, so a max() or a lead-only reach —
+  -- either of which would draw a circle claiming reach the fleet does not have — fails loudly.
+  select min(g.r) into v_fl_reach_exp
+    from public.combat_units cu
+    cross join lateral (select (w->>'range')::double precision as r
+                          from jsonb_array_elements(cu.weapons_json) w) g
+   where cu.encounter_id = v_enc and cu.side = 'player' and cu.alive_count > 0 and g.r > 0;
+  select min(cu.move_speed), count(*) into v_fl_speed_exp, n_hulls
+    from public.combat_units cu
+   where cu.encounter_id = v_enc and cu.side = 'player' and cu.alive_count > 0;
+  if v_fl_reach_exp is null or abs(v_fl_reach - v_fl_reach_exp) > 1e-9 then
+    raise exception 'LEAD FAIL: the fleet''s reach is % but the shortest gun over its living hulls is % — the circle the gate uses is not the fold 0351 defines', v_fl_reach, v_fl_reach_exp;
+  end if;
+  if v_fl_speed_exp is null or abs(v_fl_speed - v_fl_speed_exp) > 1e-9 then
+    raise exception 'LEAD FAIL: the fleet''s speed is % but the slowest of its % living hull(s) is % — a fleet moves at its slowest ship', v_fl_speed, n_hulls, v_fl_speed_exp;
+  end if;
+  if n_hulls <> 3 then
+    raise exception 'LEAD FAIL: % living hull(s) in arm A''s fleet (want the 3 it staged) — the all-or-none volley assert below would be measuring a different formation', n_hulls;
+  end if;
+  v_gap0     := public.osn_distance(v_fl_x, v_fl_y, v_fx, v_fy);
+  v_lead_d0  := public.osn_distance(ax, ay, v_fx, v_fy);
+  if v_gap0 is null or v_lead_d0 is null or v_gap0 <= 0 or v_lead_d0 <= 0 or v_fl_speed <= 0 then
+    raise exception 'LEAD FAIL: the spawn geometry measures fleet gap % / lead gap % at fleet reach % and fleet speed % — there is no approach to observe', v_gap0, v_lead_d0, v_fl_reach, v_fl_speed;
   end if;
   -- THE PROPERTY THAT REPLACES THE ORDERING, and it is the one the election actually owns: THE LEAD
   -- STANDS EXACTLY THE SPAWN RADIUS FROM THE WAVE. That is true at every bearing, and it is only
@@ -3972,15 +4135,23 @@ begin
     raise exception 'LEAD FAIL premise: the lead stands % from the wave but the spawn radius is % (measured extent % + the wave''s own range % + 1) — either the election stopped anchoring exactly one hull on the engagement point, or the wave is no longer going out at the radius 0336 established',
       v_lead_d0, v_extent + v_r_en_pred + 1, v_extent, v_r_en_pred;
   end if;
-  -- and NOTHING can fire on the spawn tick: the NEAREST hull is outside its own range (whichever
-  -- hull that is), and the wave is outside its own by the structural +1. Derived, so a retune that
-  -- buries it raises honestly.
-  if v_gap0 <= v_r_near then
-    raise exception 'LEAD FAIL premise: the nearest hull''s spawn gap % does not exceed its own range % — a hull could open the fight from its spawn slot and the silent opening tick below would prove nothing',
-      v_gap0, v_r_near;
+  -- and NOTHING can fire on the spawn tick: the FLEET's own gap is outside the FLEET's own reach,
+  -- and the wave is outside its own by the structural +1. Derived, so a retune that buries it raises
+  -- honestly. (Pre-0351 this measured the nearest HULL's chord against that hull's own gun; under one
+  -- actor there is one circle, and this is it.)
+  if v_gap0 <= v_fl_reach then
+    raise exception 'LEAD FAIL premise: the fleet''s spawn gap % does not exceed its own reach % — a hull could open the fight from its spawn slot and the silent opening tick below would prove nothing',
+      v_gap0, v_fl_reach;
   end if;
 
-  -- ── THE SPAWN TICK: silent across the whole field, and the lead CLOSES off the anchor. ─────────
+  -- ── THE SPAWN TICK: silent across the whole field, and the FORMATION CLOSES off the anchor. ────
+  -- Every hull's PRE-MOVE position is captured first, because 0351's property is about the DELTA
+  -- each of them receives, not about where any one of them ends up.
+  select pos_x, pos_y into v_a0x, v_a0y from public.combat_units where id = u_e0;
+  select pos_x, pos_y into v_b0x, v_b0y from public.combat_units where id = u_e1;
+  if v_a0x is null or v_a0y is null or v_b0x is null or v_b0y is null then
+    raise exception 'LEAD FAIL: an escort carries a NULL coordinate before the spawn tick — an unpositioned hull cannot prove where it spawned';
+  end if;
   perform pg_temp.ae_tick(v_enc);
   select count(*) into n from public.combat_units
    where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
@@ -3992,21 +4163,40 @@ begin
   select count(*) into n from public.combat_events
    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo';
   if n <> 0 then
-    raise exception 'LEAD FAIL: % salvo(s) on the spawn tick — 0336 stands the wave at (measured extent % + its own range % + 1), outside every gun on the field (nearest hull %, its range %), so the opening tick cannot start instantly any more',
-      n, v_extent, v_r_en_pred, v_gap0, v_r_esc;
+    raise exception 'LEAD FAIL: % salvo(s) on the spawn tick — 0336 stands the wave at (measured extent % + its own range % + 1), outside the fleet''s one circle (fleet gap %, fleet reach %) and outside its own reach, so the opening tick cannot start instantly any more',
+      n, v_extent, v_r_en_pred, v_gap0, v_fl_reach;
   end if;
-  -- (2) THE LEAD IS JOINING, NOT STRANDED — and the point is EXACT, not merely "it moved". A step
-  -- length alone would pass for a step in any direction; this pins the target choice, the direction
-  -- and the move_speed cap together, off the anchor the election put it on.
-  v_lx := ax + (v_fx - ax) / v_lead_d0 * least(v_sp_lead, v_lead_d0);
-  v_ly := ay + (v_fy - ay) / v_lead_d0 * least(v_sp_lead, v_lead_d0);
+  -- ── (2) THE FORMATION IS JOINING, NOT STRANDED — RIGIDLY, AND THE POINT IS EXACT. ──────────────
+  -- A step LENGTH alone would pass for a step in any direction, so the lead's landing point pins the
+  -- steering target, the direction and the cap together — computed from the FLEET's own frozen speed
+  -- (the slowest living hull), which is the quantity 0351's mover is handed.
+  -- ██ AND THEN THE DELTA IS REQUIRED TO BE THE SAME VECTOR FOR ALL THREE HULLS. That is the line the
+  -- old engine cannot pass: it stepped the lead along (wave - anchor) normalised and each escort
+  -- along (wave - its own ring slot) normalised, so the three deltas differ by construction whenever
+  -- the escorts are off the anchor — which the ring guarantees. No tuning makes them equal.
+  v_lx := ax + (v_fx - ax) / v_lead_d0 * least(v_fl_speed, v_lead_d0);
+  v_ly := ay + (v_fy - ay) / v_lead_d0 * least(v_fl_speed, v_lead_d0);
   select pos_x, pos_y into px, py from public.combat_units where id = u_lead;
   if px is null or py is null then
     raise exception 'LEAD FAIL: the lead carries a NULL coordinate after the spawn tick — an unpositioned hull cannot prove it is closing, and a NULL would pass the comparison below while proving nothing';
   end if;
   if abs(px - v_lx) > 1e-6 or abs(py - v_ly) > 1e-6 then
-    raise exception 'LEAD FAIL: the lead stands at (%,%) after the spawn tick but one close of its own frozen speed % from the anchor (%,%) toward the wave lands at (%,%) — a flagless fleet still opens a fight its lead cannot join',
-      px, py, v_sp_lead, ax, ay, v_lx, v_ly;
+    raise exception 'LEAD FAIL: the lead stands at (%,%) after the spawn tick but one close at the FLEET''s own frozen speed % from the anchor (%,%) toward the wave lands at (%,%) — a flagless fleet still opens a fight its lead cannot join',
+      px, py, v_fl_speed, ax, ay, v_lx, v_ly;
+  end if;
+  v_dx_l := px - v_l0x;  v_dy_l := py - v_l0y;
+  select pos_x - v_a0x, pos_y - v_a0y into v_dx_a, v_dy_a from public.combat_units where id = u_e0;
+  select pos_x - v_b0x, pos_y - v_b0y into v_dx_b, v_dy_b from public.combat_units where id = u_e1;
+  if v_dx_a is null or v_dy_a is null or v_dx_b is null or v_dy_b is null then
+    raise exception 'LEAD FAIL: an escort carries a NULL coordinate after the spawn tick — an unpositioned hull cannot prove where it spawned';
+  end if;
+  if abs(v_dx_l) + abs(v_dy_l) < 1e-12 then
+    raise exception 'LEAD FAIL: the fleet''s delta on the spawn tick is (%, %) — a zero delta would make the equality below pass for a formation that never moved', v_dx_l, v_dy_l;
+  end if;
+  if abs(v_dx_a - v_dx_l) > 1e-9 or abs(v_dy_a - v_dy_l) > 1e-9
+     or abs(v_dx_b - v_dx_l) > 1e-9 or abs(v_dy_b - v_dy_l) > 1e-9 then
+    raise exception 'LEAD FAIL: the three hulls moved by DIFFERENT deltas on the spawn tick — lead (%, %), ring-slot-0 escort (%, %), ring-slot-1 escort (%, %). 0351 decides ONE step at the fleet point and applies it to every hull as a rigid translation, so a formation that reconciles three separate per-hull decisions is the mover this slice deleted',
+      v_dx_l, v_dy_l, v_dx_a, v_dy_a, v_dx_b, v_dy_b;
   end if;
   select public.osn_distance(px, py, e.pos_x, e.pos_y) into v_lead_d1
     from public.combat_units e where e.id = u_en;
@@ -4015,45 +4205,42 @@ begin
   end if;
 
   -- ── (1) THE PREDICTED JOINING TICK, from the engine's own recurrence over THIS encounter's rows.
-  -- The near hull is whichever one the MEASUREMENT above named; both sides step from the same frozen
-  -- pre-move snapshot, so the gap shrinks by the two frozen speeds together, each capped at what is
-  -- left, and a hull fires on the first tick whose PRE-MOVE gap is inside its own range.
+  -- Both sides step from the same frozen pre-move snapshot and both now measure the SAME scalar —
+  -- the FLEET POINT to the wave (0351 hunk [3] re-points the enemy's distance onto it) — so the gap
+  -- shrinks by the fleet's frozen speed plus the wave's, each capped at what is left, and the fleet
+  -- fires on the first tick whose PRE-MOVE gap is inside its own reach.
   v_sim := v_gap0; v_exp_tick := 1;
-  while v_sim > v_r_near and v_exp_tick <= 60 loop
-    v_sim := v_sim - least(v_sp_near, v_sim) - least(v_sp_en_pred, v_sim);
+  while v_sim > v_fl_reach and v_exp_tick <= 60 loop
+    v_sim := v_sim - least(v_fl_speed, v_sim) - least(v_sp_en_pred, v_sim);
     v_exp_tick := v_exp_tick + 1;
   end loop;
   if v_exp_tick < 2 then
-    raise exception 'LEAD FAIL: the recurrence says a hull is already in range at spawn (gap %, range %) — there would be nothing to close and the silent opening tick above would be vacuous', v_gap0, v_r_near;
+    raise exception 'LEAD FAIL: the recurrence says the fleet is already in range at spawn (gap %, fleet reach %) — there would be nothing to close and the silent opening tick above would be vacuous', v_gap0, v_fl_reach;
   end if;
-  -- THE ANTI-SPRAWL BOUND, REPOINTED BY 0338 THE SAME WAY CLOSURE'S IS. The literal 3 was a
-  -- knob-only property only while the wave stood at a fixed bearing. Now the approach also depends on
-  -- where the settlement lies, over [range + 1, range + 1 + 2*extent] — bounded by the FLEET'S OWN
-  -- FORMATION EXTENT, never by how far away the city is, and identically zero-cost for a lone hull,
-  -- which is its own lead on the anchor at extent 0. So the teeth are kept as a knob-only statement:
-  -- the bound is computed at the WORST bearing the geometry admits and does not move when a fixture
-  -- happens to sit in a different direction from its site.
-  v_worst_gap := (v_extent + v_r_en_pred + 1) + v_extent;
-  v_sim := v_worst_gap; v_worst_tick := 1;
-  while v_sim > v_r_near and v_worst_tick <= 60 loop
-    v_sim := v_sim - least(v_sp_near, v_sim) - least(v_sp_en_pred, v_sim);
-    v_worst_tick := v_worst_tick + 1;
-  end loop;
-  if v_worst_tick > 12 then
-    raise exception 'LEAD FAIL: at the WORST bearing the fleet needs % ticks to join its own fight (worst-case gap %, extent %, near-hull range %, hull speed %, wave speed %) — the sprawl is back; a flagless fleet must open fire within one or two silent closing ticks of the structural floor, not stall',
-      v_worst_tick, v_worst_gap, v_extent, v_r_near, v_sp_near, v_sp_en_pred;
+  -- ── THE ANTI-SPRAWL BOUND, AND WHY 0338'S WORST-BEARING PAIR COLLAPSES INTO ONE COMPARISON ──────
+  -- 0338 forced a worst-bearing calculation here because the ESCORT-to-wave chord depended on where
+  -- the settlement lay, over [range + 1, range + 1 + 2*extent]. 0351 measures from the LEAD, whose
+  -- gap is the spawn RADIUS at every bearing without exception, so the fixture's own number is
+  -- already the knob-only number. The teeth are kept and applied directly to the tick count the
+  -- fight actually runs — a tightening, not a relaxation: the old pair permitted any fixture chord
+  -- at or under the worst bearing's count, and this bounds the count itself.
+  if v_exp_tick > 12 then
+    raise exception 'LEAD FAIL: the fleet needs % ticks to join its own fight (spawn radius % = measured extent % + wave range % + 1, fleet reach %, fleet speed %, wave speed %) — the sprawl is back; a flagless fleet must open fire within one or two silent closing ticks of the structural floor, not stall',
+      v_exp_tick, v_gap0, v_extent, v_r_en_pred, v_fl_reach, v_fl_speed, v_sp_en_pred;
   end if;
-  if v_exp_tick > v_worst_tick then
-    raise exception 'LEAD FAIL: this fight needs % ticks to join but the worst bearing the geometry admits needs only % (spawn gap %, worst-case gap %) — the measured gap is outside the range the formation extent can produce, so the wave is not standing on the radius this block derived',
-      v_exp_tick, v_worst_tick, v_gap0, v_worst_gap;
-  end if;
-  -- OBSERVED: drive ticks until the fleet actually fires. The exit condition is the OBSERVATION.
-  -- (0338) the window is DERIVED for the same reason CLOSURE's is: a legitimate long approach must
-  -- not be reported as "the fleet never fired".
-  for i in 1 .. greatest(12, v_worst_tick + 4) loop
+  -- OBSERVED: drive ticks until the fleet actually fires. The exit condition is the OBSERVATION, and
+  -- the window is DERIVED from the recurrence so a legitimate long approach is not reported as "the
+  -- fleet never fired". The FLEET's pre-move gap is recorded on the way, because the volley assert
+  -- below has to state the distance the gate actually read.
+  for i in 1 .. greatest(12, v_exp_tick + 4) loop
     exit when v_obs_tick is not null;
     if (select status from public.combat_encounters where id = v_enc) <> 'active' then
       raise exception 'LEAD FAIL: arm A''s encounter left ''active'' during the approach — the scenario is not measuring a live fight';
+    end if;
+    select public.osn_distance(a.x, a.y, e.pos_x, e.pos_y) into v_gap_pre
+      from public.combat_fleet_actor(v_enc) a, public.combat_units e where e.id = u_en;
+    if v_gap_pre is null then
+      raise exception 'LEAD FAIL: the fleet-to-wave pre-move distance is NULL on approach tick % — an unpositioned unit makes every range check in the approach vacuous', i;
     end if;
     perform pg_temp.ae_tick(v_enc);
     select tick_number into v_obs_tick from public.combat_events
@@ -4061,22 +4248,30 @@ begin
      order by tick_number asc limit 1;
   end loop;
   if v_obs_tick is null then
-    raise exception 'LEAD FAIL: the fleet never fired within 12 ticks of the spawn (derived window %) — a flagless fleet still opens a fight it cannot join', greatest(12, v_worst_tick + 4);
+    raise exception 'LEAD FAIL: the fleet never fired within 12 ticks of the spawn (derived window %) — a flagless fleet still opens a fight it cannot join', greatest(12, v_exp_tick + 4);
   end if;
   if v_obs_tick is distinct from v_exp_tick then
-    raise exception 'LEAD FAIL: the fleet joined its fight on tick % but the engine''s own recurrence over this encounter''s rows predicts tick % (spawn gap %, near-hull range %, hull speed %, wave speed %) — the movement/fire arithmetic no longer matches the geometry the formation was laid out for',
-      v_obs_tick, v_exp_tick, v_gap0, v_r_near, v_sp_near, v_sp_en_pred;
+    raise exception 'LEAD FAIL: the fleet joined its fight on tick % but the engine''s own recurrence over this encounter''s rows predicts tick % (spawn radius %, fleet reach %, fleet speed %, wave speed %) — the movement/fire arithmetic no longer matches the geometry the formation was laid out for',
+      v_obs_tick, v_exp_tick, v_gap0, v_fl_reach, v_fl_speed, v_sp_en_pred;
   end if;
-  -- and it is the hull this block MEASURED as nearest that opened it — whichever hull that is. Under
-  -- 0338 the wave arrives on the bearing to the city, so naming "an escort" here would be asserting
-  -- one arrangement of the world; naming the measured hull asserts the engine's own targeting and
-  -- fire gate agree with the geometry, at every bearing.
-  select count(*) into n from public.combat_events
+  -- ── (3) AND EVERY LIVING HULL OPENED IT, NOT WHICHEVER ONE HAPPENED TO BE NEAREST ───────────────
+  -- 0338 had this block name the hull it MEASURED as nearest, because at some bearings that is an
+  -- escort and at others the lead. 0351 removes the choice: the gate is one circle about one point,
+  -- so a firing tick is all-or-none over the formation. Counting DISTINCT firers is what makes that
+  -- a real assert — the old per-hull gate put exactly ONE hull in reach on the tick its own chord
+  -- crossed its own gun (the others being further away by up to the formation extent), so it scores
+  -- 1 where this requires 3. A fleet whose gate is still per hull fails here with the count printed.
+  select count(distinct payload_json->>'unit_id') into n_firers from public.combat_events
    where encounter_id = v_enc and tick_number = v_obs_tick and event_type = 'missile_salvo'
-     and payload_json->>'unit_id' = u_near::text;
-  if n < 1 then
-    raise exception 'LEAD FAIL: the tick-% opening salvo did not come from the hull this block measured as nearest to the wave (unit %, gap %, against the lead on the anchor at %) — an opener that is not the near hull means the fire gate is not reading the geometry the formation was laid out for',
-      v_obs_tick, u_near, v_gap0, v_lead_d0;
+     and source = 'player';
+  if n_firers <> n_hulls then
+    raise exception 'LEAD FAIL: the tick-% opening volley came from % of the fleet''s % living hull(s) at a pre-move fleet gap of % against a fleet reach of % (the lead standing exactly the spawn radius % out) — under 0351 every hull fires together or none does, so a subset is the per-hull gate this slice deleted, firing on one hull''s own chord',
+      v_obs_tick, n_firers, n_hulls, v_gap_pre, v_fl_reach, v_lead_d0;
+  end if;
+  -- and it happened inside the circle the gate is supposed to be using. Derived from the same
+  -- pre-move gap the recurrence predicted against, so an off-by-one in the freeze fails here.
+  if v_gap_pre > v_fl_reach + 1e-6 then
+    raise exception 'LEAD FAIL: the fleet''s opening volley (tick %) left at a pre-move fleet gap of % — OUTSIDE its own reach of %; the fire gate is not reading the circle 0351 defines', v_obs_tick, v_gap_pre, v_fl_reach;
   end if;
   if (select status from public.combat_encounters where id = v_enc) <> 'active' then
     raise exception 'LEAD FAIL: arm A''s encounter left ''active'' by the tick it joined the fight — the scenario is not measuring a live fight';
@@ -4222,8 +4417,9 @@ begin
     raise exception 'LEAD FAIL: the single hull did not lead its own fleet — it stands % from the anchor at priority % (want 0 and 100)', d0, v_pri;
   end if;
 
-  raise notice 'DZCOMBAT_PASS_LEAD ok: a THREE-hull fleet with no command ship anywhere elected its lead by the rule — capacity beat the id-first hull (% vs %) and the uuid tie-break broke the equal pair — anchoring exactly ONE hull on the engagement point at priority 100 with both escorts at 0 on ring slots 0 and 1, and the wave then arriving on the bearing to the zone''s own city, whose NEAREST hull this block MEASURES rather than assumes (0338: at some bearings that is an escort on the ring, at others the lead on the anchor) — the lead standing EXACTLY the spawn radius out, the opening tick SILENT across the field, and the fleet joining on EXACTLY the tick the engine''s own recurrence predicts, opened by that measured near hull (ring %, escort range %); a fleet that DOES carry a designated command ship placed that ship on the anchor at 100 even though the fallback would have named the stronger, id-first hull on both of its own keys, with the escort still on ring slot 0 exactly; and a single-hull fleet is its own lead at distance 0, priority 100',
-    cap2, cap1, v_ring, v_r_esc;
+  raise notice 'DZCOMBAT_PASS_LEAD ok: a THREE-hull fleet with no command ship anywhere elected its lead by the rule — capacity beat the id-first hull (% vs %) and the uuid tie-break broke the equal pair — anchoring exactly ONE hull on the engagement point at priority 100 with both escorts at 0 on ring slots 0 and 1 (ring %, escort''s own gun %); and 0351 then makes that elected hull the FLEET''S POINT: combat_fleet_actor stands the fleet on it (asserted against both the hull and the anchor), its reach is the SHORTEST gun over the % living hulls (%) and its speed the slowest of them (%), so the lead''s gap to the wave is the spawn RADIUS % at EVERY bearing and 0338''s nearest-hull question is deleted rather than repointed. The opening tick was SILENT across the field, all THREE hulls then moved by the IDENTICAL delta (%, %) — one order, one body, at the fleet''s own speed — and the fleet joined on EXACTLY tick %, the tick the engine''s own recurrence predicts, with ALL % hull(s) firing in the SAME volley at a pre-move fleet gap of % (<= its reach). A fleet that DOES carry a designated command ship placed that ship on the anchor at 100 even though the fallback would have named the stronger, id-first hull on both of its own keys, with the escort still on ring slot 0 exactly; and a single-hull fleet is its own lead at distance 0, priority 100',
+    cap2, cap1, v_ring, v_r_esc, n_hulls, v_fl_reach, v_fl_speed, round(v_lead_d0::numeric, 3),
+    round(v_dx_l::numeric, 4), round(v_dy_l::numeric, 4), v_obs_tick, n_hulls, round(v_gap_pre::numeric, 3);
 end $$;
 
 -- ════════ DZCOMBAT_PASS_NOLIVE (0312): NO LIVING SHIPS, NO ORDERS ════════════════════════════════════
@@ -6063,6 +6259,9 @@ declare
   v_name text; v_status text; v_bd double precision; v_need double precision;
   v_er double precision; v_espd double precision;
   v_minsep double precision; v_wr double precision;
+  -- 0351: the distance the ENEMY's fire gate actually reads (to combat_fleet_actor's point), and the
+  -- count of staged player hulls the two measurements are reconciled over.
+  v_fl_minsep double precision; n_players int;
   n_locs int; n_enemy int; n_null int;
 begin
   -- ── THE KNOBS THE QUANTIFIED HALF IS MADE OF, read from the live rows, none assumed. v_ring is
@@ -6094,10 +6293,19 @@ begin
     from public.locations l where l.base_difficulty > 0;
 
   -- ── (2) WHERE THE CLOSING ENEMY STOPS. The kite band is enemy_range - player_speed; a wave that
-  --    settles beyond the player's own shortest gun rebuilds the standoff even though (1) holds. The
-  --    player's reach is the SMALLEST thing that can be brought to a fight: the synthesized fallback
-  --    weapon, or the shortest FIRING module in the catalog (a rig is not a gun — 0308's predicate
-  --    is the authority, reused rather than re-stated). ──────────────────────────────────────────
+  --    settles beyond the player's reach rebuilds the standoff even though (1) holds. That reach is
+  --    the SMALLEST thing that can be brought to a fight: the synthesized fallback weapon, or the
+  --    shortest FIRING module in the catalog (a rig is not a gun — 0308's predicate is the
+  --    authority, reused rather than re-stated).
+  --    ── 0351 SHARPENS WHAT THIS NUMBER MEANS WITHOUT CHANGING ITS VALUE ─────────────────────────
+  --    Before 0351, `least(fallback, shortest catalog gun)` was the worst case for ONE HULL, and a
+  --    fleet could still reach the wave with some OTHER hull's longer gun. 0351 folds the reach with
+  --    min() over living hulls, so this is now the reach of ANY fleet containing a hull that carries
+  --    that weapon: one short gun caps the whole formation. The quantity and the comparison are
+  --    unchanged; what changed is that it has stopped being a bound on one ship's bad luck and
+  --    become a statement about the circle every such fleet actually gets. That makes it MORE
+  --    load-bearing, not less — 47 production hulls carry no weapon at all and therefore hand their
+  --    fleet the fallback range as its reach. ────────────────────────────────────────────────────
   v_fb := public.cfg_num('combat_player_fallback_weapon_range');
   select min(t.range) into v_cat from public.module_types t
    where t.range is not null and public.module_is_firing_weapon(t);
@@ -6128,7 +6336,17 @@ begin
   --    real ambush chain, the real tick, then the minimum distance from EVERY player unit to EVERY
   --    enemy unit against the wave's own frozen weapon range. Enemy speed is zeroed for the
   --    measurement so the positions read back are the SPAWN positions and not wherever the CLOSE arm
-  --    moved them; that knob is owned here and restored below. ─────────────────────────────────────
+  --    moved them; that knob is owned here and restored below.
+  --    ── 0351: THE DISTANCE THE ENEMY'S GATE READS IS THE ONE TO THE FLEET POINT ─────────────────
+  --    Under 0351 an enemy no longer measures to whichever hull is nearest: hunk [3] overwrites its
+  --    v_target_dist with the distance to combat_fleet_actor's point (v_target_id still names the
+  --    hull that ABSORBS, so the aggro screen is untouched). So "can the wave shoot from where it
+  --    arrived" is now a question about ONE distance, and this block asserts THAT distance as well
+  --    as the all-pairs minimum it always asserted. On this fixture — a single commissioned hull,
+  --    which is its own lead — the two are the same number, and saying so explicitly is the point:
+  --    the wording was per-hull and would have quietly stopped describing the gate on any fixture
+  --    with a second ship. Keeping BOTH is strictly stronger than swapping one for the other, since
+  --    the all-pairs form still catches a wave that parks on an escort. ──────────────────────────
   select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6) into v_spd_base;
   select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into v_spd_per;
   perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
@@ -6174,6 +6392,7 @@ begin
   perform pg_temp.ae_tick(v_enc);
 
   select count(*) into n_enemy from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  select count(*) into n_players from public.combat_units where encounter_id = v_enc and side = 'player';
   if n_enemy < 1 then
     raise exception 'RANGEINVARIANT FAIL: the tick spawned % enemy unit(s) — there is no wave to measure and the geometric half of this invariant would be vacuous', n_enemy;
   end if;
@@ -6201,13 +6420,376 @@ begin
     raise exception 'RANGEINVARIANT FAIL: the nearest player hull stands % from the wave, inside the wave own reach of % — measured on a real fight, the wave arrived where it can shoot without being shot. 0336 makes that clearance STRUCTURAL (spawn radius = ring + that wave own range + 1), so this is not a knob that drifted: the spawn expression itself has been changed or lost',
       v_minsep, v_wr;
   end if;
+  -- ── 0351: THE SAME CLEARANCE, ASSERTED ON THE DISTANCE THE ENEMY'S GATE ACTUALLY READS ─────────
+  -- The minimum above is over hull-to-body pairs, which is what the PER-HULL engine compared. Since
+  -- 0351 the enemy measures to combat_fleet_actor's point, so that is the distance its fire gate
+  -- tests — and it is asserted here in its own right rather than left to be inferred from a pairwise
+  -- minimum that happens to coincide on a one-hull fixture.
+  select min(public.osn_distance(a.x, a.y, e9.pos_x, e9.pos_y)) into v_fl_minsep
+    from public.combat_fleet_actor(v_enc) a, public.combat_units e9
+   where e9.encounter_id = v_enc and e9.side = 'enemy';
+  if v_fl_minsep is null then
+    raise exception 'RANGEINVARIANT FAIL: the FLEET-POINT-to-wave separation is NULL — combat_fleet_actor answered no point for a fleet that is standing in a live fight, and the distance the enemy gate reads would be unmeasured';
+  end if;
+  if v_fl_minsep <= v_wr then
+    raise exception 'RANGEINVARIANT FAIL: the FLEET POINT stands % from the nearest wave body, inside that body own reach of % — since 0351 this is the distance the enemy fire gate tests, so a wave arriving here can shoot the fleet from outside the fleet own circle: the standoff, measured on the quantity the engine uses',
+      v_fl_minsep, v_wr;
+  end if;
+  -- and on a fixture whose fleet is ONE hull, the fleet point IS that hull, so the two measurements
+  -- must agree. Pinned, because a silent divergence would mean combat_fleet_actor had stopped
+  -- standing the fleet on a real row and the assert above would be measuring a phantom.
+  if abs(v_fl_minsep - v_minsep) > 1e-9 then
+    raise exception 'RANGEINVARIANT FAIL: the fleet point is % from the wave but the nearest of the % staged player hull(s) is % — on a single-hull fleet those are the same row, so combat_fleet_actor is not standing the fleet where its hull is',
+      v_fl_minsep, n_players, v_minsep;
+  end if;
 
   perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(v_spd_base));
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(v_spd_per));
   insert into dzn values ('ring0', v_ring);
 
-  raise notice 'DZCOMBAT_PASS_RANGEINVARIANT ok: measured on a REAL staged wave, the nearest player hull stood % away against a wave reach of % — the clearance is structural (spawn radius = ring % + that wave own range + 1), not a comparison between two knobs; and over all % location(s) with a positive difficulty (hidden ones included, widest synthetic range %) the closing enemy always stops inside the player shortest reach of %',
-    round(v_minsep::numeric, 3), v_wr, v_ring, n_locs, v_need, v_pmin;
+  raise notice 'DZCOMBAT_PASS_RANGEINVARIANT ok: measured on a REAL staged wave, the nearest of the % player hull(s) stood % from the wave and the FLEET POINT — the distance the enemy fire gate has read since 0351 — stood % , both against a wave reach of %: the clearance is structural (spawn radius = ring % + that wave own range + 1), not a comparison between two knobs; and over all % location(s) with a positive difficulty (hidden ones included, widest synthetic range %) the closing enemy always stops inside a reach of %, which since 0351 is not one unlucky hull''s gun but the circle the WHOLE fleet gets whenever any of its hulls carries it',
+    n_players, round(v_minsep::numeric, 3), round(v_fl_minsep::numeric, 3), v_wr, v_ring, n_locs, v_need, v_pmin;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_FLEETKITE (0351): ONE BODY BACKS OFF, AND NEVER PAST ITS OWN EDGE ═══════════
+--
+-- ── ██ WHERE THIS BLOCK CAME FROM, AND WHY IT COULD NOT STAY THERE ██ ────────────────────────────
+-- ORIGIN: scripts/combat-spatial-proof.sql, COMBATSPATIAL_PASS_KITE. It asserted that a hull which
+-- out-ranges the wave RETREATS rather than closing, and it lived beside COMBATSPATIAL_PASS_SCREEN
+-- (the wave lands a hit on an escort, never on the lead) in ONE fixture.
+-- WHY IT COULD NOT STAY. Under 0351 the fleet is one actor with ONE reach, so the two properties
+-- became mutually exclusive in a single fixture:
+--     the KITE arm needs      wave_reach < fleet_gap <= fleet_reach
+--     a LANDED pirate hit needs             fleet_gap <= wave_reach
+-- and those are disjoint. If the fleet out-ranges the wave it parks at its own edge and the wave can
+-- NEVER reach it (SCREEN dies); if it does not, the kite band is EMPTY (KITE dies). The old fixture
+-- got both at once ONLY because two hulls with different guns were in two different arms at the same
+-- instant — which is exactly what 0351 deleted. SCREEN stayed there, because 0351 explicitly
+-- preserves the aggro screen (v_target_id still names the hull that absorbs); the KITE witness came
+-- HERE, to the file whose fixtures already have the player out-ranging the wave and which already
+-- quantifies the kite band over every location with a positive difficulty
+-- (DZCOMBAT_PASS_RANGEINVARIANT, immediately above — this block is the behavioural half of the
+-- property that block states arithmetically).
+-- THIS IS A MOVE, NOT A NEW INVENTION, AND IT IS NOT A DELETION. combat-spatial-proof.sql says so in
+-- three places — its file header, its HOLD block's header and beside MARKERS in its .sh — each
+-- naming DZCOMBAT_PASS_FLEETKITE. If this block is ever removed, those three pointers become lies.
+--
+-- ── WHAT IT PROTECTED, WHAT IT PROTECTS NOW ──────────────────────────────────────────────────────
+-- PROTECTED: one HULL, out-ranging its target, retreats and never past its OWN range edge.
+-- PROTECTS NOW: the FLEET does — one arm, one edge, one delta:
+--   (1) the fleet's derived arm is 'kite', taken from combat_unit_decide_move ITSELF composed with
+--       the fleet's own arguments (never a copy of its case ladder), and the premise that makes that
+--       arm reachable — wave_reach < gap <= fleet_reach — is asserted, not assumed;
+--   (2) the formation retreats RIGIDLY: on every retreating tick EVERY hull moves by the IDENTICAL
+--       delta, and that delta's length is exactly least(fleet speed, fleet reach - gap), the mover's
+--       own kite expression evaluated at fleet arguments;
+--   (3) the fleet NEVER crosses its own reach edge — checked after EVERY tick, not just at the end —
+--       and comes to rest ON it.
+--
+-- ── ██ WHY THE NEW FORM FAILS THE OLD ENGINE — TWO INDEPENDENT NUMERIC LINES ██ ──────────────────
+-- The fixture is built so that the two hulls have DIFFERENT reaches, which is what makes this more
+-- than a restatement:
+--   • the LEAD is unarmed and carries the 0262 synthesized fallback, whose range this block OWNS
+--     LONG (the lead is the fleet's point, so under the old per-hull mover it would retreat to ITS
+--     OWN long edge);
+--   • the ESCORT carries a real autocannon, whose catalog range is SHORT, and that is therefore the
+--     fleet's reach.
+-- So:
+--   (A) THE RESTING PLACE. 0351 parks the formation on the SHORT gun's edge. The old engine parked
+--       the lead on its own LONG fallback edge — a different number by the whole gap between the two
+--       weapons, which this block asserts is strictly positive before it measures anything.
+--   (B) THE RIGID DELTA. The old mover retreated the lead along (lead - wave) normalised and the
+--       escort along (escort - wave) normalised, each capped by its OWN edge minus its OWN distance.
+--       Two different directions AND two different caps, so the deltas cannot be equal at any tuning.
+-- Neither line depends on the bearing to the city, so no fixture placement rescues the old body.
+--
+-- ── THE FIXTURE ──────────────────────────────────────────────────────────────────────────────────
+-- The wave must arrive INSIDE the fleet's circle, which 0336 makes a matter of arithmetic rather
+-- than of placement: it stands at (measured formation extent + its own reach + 1) from the anchor,
+-- and the fleet's point IS the anchor, so the opening gap is exactly that radius. A small ring and a
+-- tiny wave reach put it just inside a normal catalog gun. Every one of those knobs is OWNED here
+-- and RESTORED at the end — DZCOMBAT_PASS_RANGEINVARIANT captured the committed ring before any
+-- fixture touched it and the last block in this file re-asserts it, so a leak fails loudly.
+-- The wave is PARKED (speed 0) so that the only thing that moves is the formation, which is the
+-- whole measurement; its reach is left able to be exceeded but never met, so it never fires and the
+-- retreat is never confounded by damage.
+do $$
+declare
+  r jsonb; n int; i int;
+  uK uuid; sL uuid; sE uuid; gK uuid;
+  o_x double precision; o_y double precision;
+  v_mv uuid; v_enc uuid; mv record; pi record;
+  u_lead uuid; u_esc uuid; u_en uuid;
+  v_ax double precision; v_ay double precision;
+  v_extent double precision; v_players int; n_hulls int;
+  v_r_lead double precision; v_r_esc double precision; v_ren double precision;
+  v_fl_x double precision; v_fl_y double precision;
+  v_fl_reach double precision; v_fl_speed double precision;
+  v_fl_reach_exp double precision;
+  v_gap double precision; v_gap_pre double precision;
+  v_arm text; v_pred_x double precision; v_pred_y double precision;
+  v_l0x double precision; v_l0y double precision; v_e0x double precision; v_e0y double precision;
+  v_l1x double precision; v_l1y double precision; v_e1x double precision; v_e1y double precision;
+  v_dx_l double precision; v_dy_l double precision;
+  v_dx_e double precision; v_dy_e double precision;
+  v_step double precision; v_exp_step double precision;
+  n_retreat int := 0; v_max_gap double precision := 0;
+  k_ring double precision; k_ehp double precision; k_erb double precision; k_erp double precision;
+  k_esb double precision; k_esp double precision; k_pss double precision; k_fbr double precision;
+begin
+  select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
+  select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
+  select coalesce(public.cfg_num('enemy_synthetic_range_base'), 3.6)            into k_erb;
+  select coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 0.04) into k_erp;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
+  select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
+  select coalesce(public.cfg_num('combat_player_speed_scale'), 0.2)             into k_pss;
+  select coalesce(public.cfg_num('combat_player_fallback_weapon_range'), 5)     into k_fbr;
+  -- A SMALL ring so the wave lands INSIDE the fleet's circle (gap = ring + wave reach + 1), a tiny
+  -- wave reach so it is strictly under that gap and the wave can never fire, a PARKED wave so the
+  -- formation is the only thing that moves, and a LONG fallback so the lead's own edge is strictly
+  -- beyond the fleet's — which is what makes the resting-place assert discriminate the two engines.
+  perform public.set_game_config('spatial_formation_ring_radius',        '2'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_base',           '0.1'::jsonb);
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  perform public.set_game_config('enemy_hp_base',                        '100000'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_range',  '30'::jsonb);
+  perform public.set_game_config('combat_player_speed_scale',            '0.5'::jsonb);
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.fk.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uK;
+  insert into public.player_wallet (player_id, balance) values (uK, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uK, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETKITE FAIL: commission lead: %', r; end if;
+  select main_ship_id into sL from public.main_ship_instances where player_id = uK;
+  r := pg_temp.call_as(uK, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETKITE FAIL: commission escort: %', r; end if;
+  select main_ship_id into sE from public.main_ship_instances
+   where player_id = uK and main_ship_id <> sL limit 1;
+  if sE is null then raise exception 'FLEETKITE FAIL: no escort hull materialised — with one hull there is no rigid translation to observe, which is half of what this block proves'; end if;
+  -- THE ESCORT gets the real catalog gun, so IT owns the fleet's reach; the LEAD stays unarmed and
+  -- carries the long owned fallback. That asymmetry is the whole discrimination (see the header).
+  select jsonb_build_object('items', jsonb_agg(jsonb_build_object('item_id', ri.item_id, 'quantity', ri.qty)))
+    into r from public.module_recipe_ingredients ri where ri.module_type_id = 'autocannon_battery';
+  if r is null or jsonb_array_length(r->'items') < 1 then
+    raise exception 'FLEETKITE FAIL: module_recipe_ingredients carries no autocannon_battery recipe — the grant would be empty and the failure would surface as a craft error instead of this message';
+  end if;
+  perform public.reward_grant('combat', gen_random_uuid(), uK, null, r);
+  r := pg_temp.call_as(uK, format('public.craft_module(''dzc-fk-g'', ''autocannon_battery'', %L::uuid)', sE));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETKITE FAIL: craft gun: %', r; end if;
+  r := pg_temp.call_as(uK, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-fk-f'')', (r->>'instance_id')::uuid, sE));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETKITE FAIL: fit gun: %', r; end if;
+
+  r := pg_temp.call_as(uK, 'public.upsert_ship_group(1, ''Fleet Kite'')');
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETKITE FAIL: group: %', r; end if;
+  gK := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uK, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sL, gK));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETKITE FAIL: assign lead: %', r; end if;
+  r := pg_temp.call_as(uK, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sE, gK));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETKITE FAIL: assign escort: %', r; end if;
+  -- the UNARMED hull is the designated command ship, so 0315 elects it and 0351 stands the fleet on
+  -- it: the fleet's POINT carries the LONG gun while the fleet's REACH comes from the other hull.
+  r := pg_temp.call_as(uK, format('public.set_fleet_command_ship(%L::uuid, true)', sL));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETKITE FAIL: command ship: %', r; end if;
+  r := pg_temp.call_as(uK, format('public.set_group_auto_exit(%L::uuid, false, 30)', gK));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETKITE FAIL: auto-exit off: %', r; end if;
+
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uK and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gK
+   limit 1;
+  if o_x is null then raise exception 'FLEETKITE FAIL: could not resolve the docked origin'; end if;
+  r := pg_temp.call_as(uK, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gK, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETKITE FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'FLEETKITE FAIL: no pending ambush on the leg (the standing corridor should cover it)'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uK and status = 'active';
+  if v_enc is null then raise exception 'FLEETKITE FAIL: the ambush opened no encounter'; end if;
+
+  select id into u_lead from public.combat_units where encounter_id = v_enc and side = 'player' and main_ship_id = sL;
+  select id into u_esc  from public.combat_units where encounter_id = v_enc and side = 'player' and main_ship_id = sE;
+  if u_lead is null or u_esc is null then
+    raise exception 'FLEETKITE FAIL: the 2-ship roster seeded lead % / escort % — both are needed, one for the point and one for the reach', u_lead, u_esc;
+  end if;
+  select engagement_x, engagement_y into v_ax, v_ay from public.combat_encounters where id = v_enc;
+  if v_ax is null or v_ay is null then
+    raise exception 'FLEETKITE FAIL: the encounter carries no engagement anchor — every distance below would be NULL and vacuous';
+  end if;
+  select count(*), coalesce(max(public.osn_distance(v_ax, v_ay, u.pos_x, u.pos_y)), 0)
+    into v_players, v_extent
+    from public.combat_units u
+   where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0
+     and u.pos_x is not null and u.pos_y is not null;
+  if v_players <> 2 then
+    raise exception 'FLEETKITE FAIL: % positioned living player row(s) (want the 2 this block staged — the unarmed lead on the anchor, the armed escort on the ring) — the measured extent and the rigid-translation assert would both be about a different formation', v_players;
+  end if;
+  n_hulls := v_players;
+  select max((w->>'range')::double precision) into v_r_lead
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_lead;
+  select max((w->>'range')::double precision) into v_r_esc
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_esc;
+  if v_r_lead is null or v_r_esc is null then
+    raise exception 'FLEETKITE FAIL: a hull carries no ranged weapon (lead %, escort %) — the min() fold this block is about would have nothing to fold', v_r_lead, v_r_esc;
+  end if;
+
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  if n <> 1 then
+    raise exception 'FLEETKITE FAIL: % living pirate(s) after the spawn tick (want exactly 1 — the retreat this block measures is toward a single unambiguous body)', n;
+  end if;
+  select id into u_en from public.combat_units where encounter_id = v_enc and side = 'enemy' and alive_count > 0 limit 1;
+  select max((w->>'range')::double precision) into v_ren
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_en;
+  if v_ren is null then
+    raise exception 'FLEETKITE FAIL: the wave carries no reach in its frozen weapons_json — the kite premise compares against it and would be vacuous';
+  end if;
+
+  -- ── THE FLEET'S ONE ACTOR, AND THE PREMISE THAT MAKES 'KITE' REACHABLE AT ALL ───────────────────
+  select a.x, a.y, a.reach, a.speed into v_fl_x, v_fl_y, v_fl_reach, v_fl_speed
+    from public.combat_fleet_actor(v_enc) a;
+  if v_fl_x is null or v_fl_y is null or v_fl_reach is null or v_fl_speed is null then
+    raise exception 'FLEETKITE FAIL: combat_fleet_actor answers point (%,%), reach %, speed % — a NULL in any of the four makes every assert below vacuous', v_fl_x, v_fl_y, v_fl_reach, v_fl_speed;
+  end if;
+  if v_fl_speed <= 0 then
+    raise exception 'FLEETKITE FAIL: the fleet''s frozen speed is % — a formation that cannot move can never retreat and the whole measurement is vacuous', v_fl_speed;
+  end if;
+  select min(g.r) into v_fl_reach_exp
+    from public.combat_units cu
+    cross join lateral (select (w->>'range')::double precision as r
+                          from jsonb_array_elements(cu.weapons_json) w) g
+   where cu.encounter_id = v_enc and cu.side = 'player' and cu.alive_count > 0 and g.r > 0;
+  if v_fl_reach_exp is null or abs(v_fl_reach - v_fl_reach_exp) > 1e-9 then
+    raise exception 'FLEETKITE FAIL: the fleet''s reach is % but the shortest gun over its living hulls is % — the edge this block asserts the retreat stops on is not the fold 0351 defines', v_fl_reach, v_fl_reach_exp;
+  end if;
+  -- ★ THE ASYMMETRY THAT MAKES THE RESTING-PLACE ASSERT DISCRIMINATE. If the point's own gun were
+  --   not strictly longer than the fleet's reach, "it stopped at the fleet's edge" and "it stopped
+  --   at the lead's own edge" would be the same statement and the old engine would pass.
+  if v_r_lead <= v_fl_reach then
+    raise exception 'FLEETKITE FAIL: the fleet''s point carries a % gun against a fleet reach of % — the point''s own weapon must be STRICTLY longer, or "the formation stopped on the FLEET''s edge" is indistinguishable from "the lead stopped on its own" and the pre-0351 mover would satisfy this block (escort gun %, owned fallback %)',
+      v_r_lead, v_fl_reach, v_r_esc, k_fbr;
+  end if;
+  v_gap := public.osn_distance(v_fl_x, v_fl_y, (select pos_x from public.combat_units where id = u_en),
+                                               (select pos_y from public.combat_units where id = u_en));
+  if v_gap is null then
+    raise exception 'FLEETKITE FAIL: the fleet-to-wave gap is NULL — the kite premise and every step below would be vacuous';
+  end if;
+  -- ★ THE KITE BAND, ASSERTED: wave_reach < gap <= fleet_reach. Outside it the arm is CLOSE or HOLD
+  --   and this block would be measuring a different phase of the fight under this block's name.
+  if not (v_gap > v_ren and v_gap <= v_fl_reach) then
+    raise exception 'FLEETKITE FAIL premise: the fleet stands % from the wave against a wave reach of % and a fleet reach of % — the KITE arm needs wave_reach < gap <= fleet_reach, and outside that band the mover is CLOSING or HOLDING, so nothing below would be a retreat',
+      v_gap, v_ren, v_fl_reach;
+  end if;
+  -- ── ASK THE ENGINE, DO NOT MIRROR IT. The arm is taken from combat_unit_decide_move ITSELF, with
+  --    exactly what 0351's tick hands it: the fleet's point, reach and speed, and the target's
+  --    position and LONGEST gun. A hand-written case ladder in this harness could drift; the leaf
+  --    cannot disagree with itself.
+  select m.action, m.new_x, m.new_y into v_arm, v_pred_x, v_pred_y
+    from public.combat_fleet_actor(v_enc) a, public.combat_units f,
+         lateral public.combat_unit_decide_move(
+           a.x, a.y, coalesce(a.reach, 0), coalesce(a.speed, 0),
+           f.pos_x, f.pos_y,
+           coalesce((select max((w->>'range')::double precision) from jsonb_array_elements(f.weapons_json) w), 0)) m
+   where f.id = u_en;
+  if v_arm is distinct from 'kite' then
+    raise exception 'FLEETKITE FAIL: the ENGINE''s own mover returns arm ''%'' for the fleet''s arguments (point (%,%), reach %, speed %, gap %, wave reach %) — this block is named for the kite arm and there is none', v_arm, v_fl_x, v_fl_y, v_fl_reach, v_fl_speed, v_gap, v_ren;
+  end if;
+
+  -- ── THE RETREAT, ONE TICK AT A TIME. Three things are checked on EVERY tick, not just at the end:
+  --    the delta is identical across hulls, its length is the mover's own kite expression, and the
+  --    fleet has not crossed its own edge. The loop runs long enough to reach the edge from the
+  --    measured gap at the measured speed, plus a margin, and the bound is DERIVED not typed.
+  for i in 1 .. ceil((v_fl_reach - v_gap) / v_fl_speed)::int + 4 loop
+    select a.x, a.y into v_fl_x, v_fl_y from public.combat_fleet_actor(v_enc) a;
+    select public.osn_distance(v_fl_x, v_fl_y, e.pos_x, e.pos_y) into v_gap_pre
+      from public.combat_units e where e.id = u_en;
+    select pos_x, pos_y into v_l0x, v_l0y from public.combat_units where id = u_lead;
+    select pos_x, pos_y into v_e0x, v_e0y from public.combat_units where id = u_esc;
+    if v_gap_pre is null or v_l0x is null or v_l0y is null or v_e0x is null or v_e0y is null then
+      raise exception 'FLEETKITE FAIL: a pre-move coordinate is NULL on retreat tick % (gap %, lead %,%, escort %,%) — an unpositioned formation cannot prove it retreated', i, v_gap_pre, v_l0x, v_l0y, v_e0x, v_e0y;
+    end if;
+    -- the mover's OWN kite step, evaluated at fleet arguments: least(speed, my_range - dist).
+    v_exp_step := least(v_fl_speed, v_fl_reach - v_gap_pre);
+    perform pg_temp.ae_tick(v_enc);
+    select pos_x, pos_y into v_l1x, v_l1y from public.combat_units where id = u_lead;
+    select pos_x, pos_y into v_e1x, v_e1y from public.combat_units where id = u_esc;
+    if v_l1x is null or v_l1y is null or v_e1x is null or v_e1y is null then
+      raise exception 'FLEETKITE FAIL: a post-move coordinate is NULL on retreat tick % — an unpositioned formation cannot prove where it went', i;
+    end if;
+    v_dx_l := v_l1x - v_l0x;  v_dy_l := v_l1y - v_l0y;
+    v_dx_e := v_e1x - v_e0x;  v_dy_e := v_e1y - v_e0y;
+    -- ★ (2) RIGID: the SAME VECTOR, not merely the same direction. THE LINE THE OLD ENGINE CANNOT
+    --   PASS — it retreated each hull along ITS OWN (hull - wave) bearing, capped by ITS OWN edge
+    --   minus ITS OWN distance: two different directions and two different caps.
+    if abs(v_dx_e - v_dx_l) > 1e-9 or abs(v_dy_e - v_dy_l) > 1e-9 then
+      raise exception 'FLEETKITE FAIL: on retreat tick % the hulls moved by DIFFERENT deltas — lead (%, %), escort (%, %). 0351 decides ONE step at the fleet point and applies it to every hull as a rigid translation, so a formation that backs off along two separate bearings is the per-hull mover this slice deleted',
+        i, v_dx_l, v_dy_l, v_dx_e, v_dy_e;
+    end if;
+    -- ★ ...and the step is the mover's own kite expression at fleet arguments.
+    v_step := sqrt(v_dx_l*v_dx_l + v_dy_l*v_dy_l);
+    if abs(v_step - v_exp_step) > 1e-6 then
+      raise exception 'FLEETKITE FAIL: on retreat tick % the formation moved % but combat_unit_decide_move''s kite step at the FLEET''s arguments is least(speed %, reach % - gap %) = % — the retreat is not being decided at the fleet point',
+        i, v_step, v_fl_speed, v_fl_reach, v_gap_pre, v_exp_step;
+    end if;
+    if v_step > 1e-12 then n_retreat := n_retreat + 1; end if;
+    -- ★ (3) AND IT NEVER CROSSES ITS OWN EDGE — checked after EVERY tick. A kiter that overshoots is
+    --   a fleet that has retreated out of its own circle, which is the standoff this whole file
+    --   exists to prevent, arrived at from the player's side instead of the wave's.
+    select public.osn_distance(a.x, a.y, e.pos_x, e.pos_y) into v_gap_pre
+      from public.combat_fleet_actor(v_enc) a, public.combat_units e where e.id = u_en;
+    if v_gap_pre is null then
+      raise exception 'FLEETKITE FAIL: the post-move fleet gap is NULL on retreat tick % — the edge check would be vacuous', i;
+    end if;
+    if v_gap_pre > v_fl_reach + 1e-6 then
+      raise exception 'FLEETKITE FAIL: after retreat tick % the fleet stands % from the wave, OUTSIDE its own % circle — combat_unit_decide_move caps the kite step at (my_range - dist) precisely so a kiter never retreats past its own edge, and a fleet that backs out of its own reach can never fire again',
+        i, v_gap_pre, v_fl_reach;
+    end if;
+    if v_gap_pre > v_max_gap then v_max_gap := v_gap_pre; end if;
+    exit when v_step <= 1e-12;
+  end loop;
+
+  -- ★ (1)+(3) THE RESTING PLACE IS THE FLEET'S EDGE — the SHORTEST gun on the field, NOT the point's
+  --   own longer one. This is line (A) of the header: the old engine parks the lead on its own %
+  --   fallback edge, which is a different number by the whole gap between the two weapons.
+  if n_retreat = 0 then
+    raise exception 'FLEETKITE FAIL: the formation never moved at all across the derived retreat window (gap % against fleet reach %, wave reach %, fleet speed %) — with no motion the rigid-delta and edge asserts above are vacuous', v_gap, v_fl_reach, v_ren, v_fl_speed;
+  end if;
+  if abs(v_gap_pre - v_fl_reach) > 1e-6 then
+    raise exception 'FLEETKITE FAIL: the formation came to rest % from the wave but the fleet''s own circle is % (the point''s OWN gun reaches % — the pre-0351 mover would have backed the lead out to THAT edge) — a kiter settles on the edge of the range the mover was handed, so this names which range that was',
+      v_gap_pre, v_fl_reach, v_r_lead;
+  end if;
+  -- and the wave never fired at it, which is what keeps the retreat a retreat rather than a rout.
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and event_type = 'missile_salvo' and source = 'pirate';
+  if n <> 0 then
+    raise exception 'FLEETKITE FAIL: the wave fired % salvo(s) while the fleet stood at or beyond % against its own reach of % — the fixture is built so the wave can never reach, and a hit would mean the enemy gate is not measuring to the fleet point', n, v_gap_pre, v_ren;
+  end if;
+
+  perform public.set_game_config('spatial_formation_ring_radius',        to_jsonb(k_ring));
+  perform public.set_game_config('enemy_hp_base',                        to_jsonb(k_ehp));
+  perform public.set_game_config('enemy_synthetic_range_base',           to_jsonb(k_erb));
+  perform public.set_game_config('enemy_synthetic_range_per_difficulty', to_jsonb(k_erp));
+  perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
+  perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
+  perform public.set_game_config('combat_player_speed_scale',            to_jsonb(k_pss));
+  perform public.set_game_config('combat_player_fallback_weapon_range',  to_jsonb(k_fbr));
+
+  raise notice 'DZCOMBAT_PASS_FLEETKITE ok (MOVED here from combat-spatial-proof''s COMBATSPATIAL_PASS_KITE, which could not keep KITE and SCREEN in one fixture once the fleet became one actor): a 2-hull fleet whose POINT is an unarmed lead carrying a % fallback and whose REACH is the escort''s % catalog gun — min()-folded to % — opened % from a wave reaching only %, i.e. inside the kite band (wave reach < gap <= fleet reach), and combat_unit_decide_move ITSELF returned ''kite'' at the fleet''s own arguments. Over % retreating tick(s) BOTH hulls moved by the IDENTICAL delta every time, each step exactly least(fleet speed %, reach - gap), the gap never exceeded % (widest observed %), and the formation came to rest at % — the FLEET''s edge, not the point''s own % edge, which is where the pre-0351 per-hull mover would have parked it. The wave fired nothing throughout',
+    v_r_lead, v_r_esc, v_fl_reach, round(v_gap::numeric, 4), v_ren, n_retreat,
+    round(v_fl_speed::numeric, 4), v_fl_reach, round(v_max_gap::numeric, 4),
+    round(v_gap_pre::numeric, 4), v_r_lead;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_VOLLEY (0336): A KILL DOES NOT DISARM THE REST OF THE VOLLEY ════════════════
@@ -7395,20 +7977,80 @@ begin
     v_t1, v_t2, n_firers;
 end $$;
 
--- ════════ DZCOMBAT_PASS_SHORTGUN (0336): A LONGER GUN NO LONGER DISABLES A SHORTER ONE ══════════════
--- THE DEFECT, RED BY CONSTRUCTION BELOW. The population freeze carried my_range = MAX(range), and
--- the mover uses that one value for BOTH the close decision and the kite cap — while the fire gate
--- is PER WEAPON. So a ship carrying an Mk-II (range 6) beside an autocannon (range 5) parked itself
--- at ~6 and the autocannon never fired once: a strictly better gun buying LESS damage, which is the
--- very defect 0331 was written to end, recreated through geometry. 0336 passes my_min_range to the
--- mover (MY engagement range) while the TARGET's my_range stays the longest (what I must respect
--- about the enemy is its full reach) — two questions, two values.
--- THE FIXTURE is exactly the production-plausible one: one starter hull, one autocannon_battery
--- (slot 1) and one autocannon_battery_mk2 (slot 2) — three slots, both fitted, no room for a third.
--- The wave is parked outside both ranges at spawn and given no reach and no speed of its own, so the
--- ONLY thing that moves is the hull, and where it comes to rest is the whole measurement.
--- ON THE HEAD it settles at exactly the LONG range and the short gun never appears in the log; the
--- non-vacuity guard below proves the ship really did pass through that band first.
+-- ════════ DZCOMBAT_PASS_SHORTGUN (0336, REPOINTED 0351): THE SHORTEST GUN DECIDES THE CIRCLE ════════
+--
+-- ── ██ THE HULL PROPERTY THIS BLOCK USED TO PROVE NO LONGER EXISTS. SAYING SO IS THE POINT. ██ ────
+-- WHAT IT PROTECTED (0336): "a hull settles inside its own SHORTEST gun." The population freeze
+-- carried my_range = MAX(range) and the mover used that one value for BOTH the close decision and
+-- the kite cap, while the fire gate was PER WEAPON — so a ship carrying an Mk-II (range 6) beside an
+-- autocannon (range 5) parked itself at ~6 and the autocannon never fired once: a strictly better
+-- gun buying LESS damage, which is the very defect 0331 was written to end, recreated through
+-- geometry. That is 0336's defect 7. Its fix was to hand the mover my_min_range.
+--
+-- WHAT 0351 DID TO IT. A hull no longer has an engagement range of its own. The player side
+-- acquires, measures, FIRES and MOVES from one point with ONE reach — the shortest gun over the
+-- fleet's LIVING HULLS — so "where does a hull settle relative to its own guns" is not a weaker
+-- question, it is no longer a question at all. THE PROPERTY IS NOW A FLEET PROPERTY:
+--
+--     the fleet's circle is the shortest gun ANY of its living hulls carries, the formation comes to
+--     rest exactly on that circle, and every gun on every hull fires there — together.
+--
+-- AND THIS IS THE SAME GATE/MOVER COLLAPSE THAT CAUSED DEFECT 7, MADE DELIBERATE AND SYMMETRIC.
+-- Defect 7 was a DISAGREEMENT: the mover aggregated with max(), the gate with per-weapon. 0336 fixed
+-- it on one side (mover -> min). 0351 fixes it on the other and makes the two the SAME expression:
+-- the gate's radius and the mover's `p_my_range` are both v_fleet_reach, one value read once per
+-- encounter. Defect 7 cannot recur through this change, not because someone remembered to keep two
+-- aggregates in step, but because there is only one aggregate left.
+-- WHAT IT COSTS, STATED HONESTLY: a longer gun no longer buys STANDOFF — the Mk-II fires from the
+-- autocannon's 5, not from its own 6. It still buys DAMAGE (0331's power share, asserted below as a
+-- number). That is the trade 0351 makes to give the owner one true circle, and it is the opposite of
+-- defect 7, in which the longer gun bought standoff and cost damage.
+--
+-- ── THE OLD NON-VACUITY PIN IS STRUCTURALLY UNSATISFIABLE, AND IT IS NOT PRESERVED ───────────────
+-- It required "a tick on which ONLY the LONGER gun could reach" — a logged Mk-II salvo with no
+-- autocannon salvo on the same tick. Under one circle both guns are gated on the SAME radius, so
+-- that tick cannot exist on a correct 0351 body: any attempt to keep it would be asking for the
+-- defect back. It is replaced by the assertion that says the same thing about the new engine and is
+-- RED on the old one:
+--     across every tick whose PRE-MOVE fleet gap lay in (fleet reach, Mk-II range] — the band in
+--     which the old per-hull gate WOULD have fired the Mk-II alone — the fleet fired NOTHING;
+--     and there was at least one such tick, so the fixture really did pass through it.
+-- The old engine fires the Mk-II on every one of those ticks. The band is DERIVED from the frozen
+-- rows, and the fleet's step is asserted strictly narrower than it, so landing in it is structural
+-- rather than arithmetic luck.
+--
+-- ── THE FIXTURE, AND THE ONE KNOB 0351 FORCES IT TO OWN ──────────────────────────────────────────
+--   • sS — the designated command ship, hence the 0315-elected LEAD, hence the FLEET'S POINT. Three
+--          slots, two fitted: one autocannon_battery (5) and one autocannon_battery_mk2 (6).
+--   • sE — an escort with NO fitted weapon, standing on ring slot 0 so the MEASURED formation extent
+--          is the 8 this block owns (0336 does not read the ring knob to place a wave; it measures
+--          the extent, and a lone hull's extent is 0 — see the paragraph below).
+-- Since 0262 that unfitted escort carries the synthesized fallback weapon, and its range is SEEDED
+-- at 5 — exactly the autocannon's. Under 0351 that would make the fleet's reach ambiguous: 5 could
+-- be coming from the LEAD's short gun (this block's subject) or from the ESCORT's fallback (which is
+-- CFALLBACK's subject). So this block OWNS combat_player_fallback_weapon_range ABOVE the Mk-II's 6
+-- and asserts both halves — the fallback is NOT the binding constraint, and the fleet's reach IS the
+-- lead's shortest gun. The two directions of the same rule are proven in two places on purpose:
+-- here the cap comes from a FITTED hull's short gun, and in combat-fallback-weapon-proof's
+-- CFALLBACK_PASS_DAMAGE it comes from the ARMED escort's catalog gun while an unarmed hull carries a
+-- far longer fallback. Whichever is shorter is the circle; neither anecdote is the rule.
+--
+-- ── 0336: THE RING ONLY PUSHES ANYTHING OUT IF THERE IS A SECOND HULL ON IT ──────────────────────
+-- THE BUG THIS PARAGRAPH REPLACES (CI): `the hull already stands 2.91999999999962 from the wave
+-- after one tick, inside its LONGER 6 range`. This block set the ring to 8 to stand the wave beyond
+-- both guns — the right intent, the wrong lever. 0336 does not read the ring when it places a wave;
+-- it measures `max(distance from the anchor to each LIVING player unit)`. This fixture commissioned
+-- exactly ONE hull, a lone hull IS its own lead so it stands ON the anchor, the MEASURED extent was
+-- 0, THE RING WAS INERT, and the wave landed at 0 + 0.1 + 1 = 1.1 — inside both guns, with nothing
+-- to close. The fix is not to predict differently but to MAKE THE EXTENT REAL: a second hull, which
+-- is what a ring means. The wave then stands at 8 + 0.1 + 1 = 9.1, beyond the Mk-II with real
+-- margin, asserted below.
+--
+-- ── ONE VOLLEY PER TRANSACTION, AND WHY THAT IS THE HARNESS AND NOT THE ENGINE ───────────────────
+-- now() is frozen for the whole txn and since 0314 a fired weapon re-arms at now() + cooldown, so
+-- every weapon fires exactly ONCE inside a proof — true at 0314's 2.5s and unchanged by 0351's 5s.
+-- The counts below are therefore about the ONE volley the fleet gets, which is exactly what makes
+-- "both guns on the same tick" a statement rather than an accumulation.
 do $$
 declare
   r jsonb; n int; i int;
@@ -7416,16 +8058,27 @@ declare
   o_x double precision; o_y double precision;
   v_hunt uuid := (select v from dzc where k='v_hunt');
   v_mv uuid; v_enc uuid; mv record; pi record;
-  v_short double precision; v_long double precision; v_speed double precision;
+  v_short double precision; v_long double precision;
   v_u_pl uuid; v_u_en uuid; v_dist double precision; n_units int;
-  n_short int; n_long int; n_bandtick int;
-  sE uuid;                                          -- the escort that MAKES the ring an extent
+  n_short int; n_long int;
+  sE uuid; v_u_esc uuid;                            -- the escort that MAKES the ring an extent
   v_ax double precision; v_ay double precision;
   v_extent double precision; v_players int;
   v_ren double precision; v_open double precision;  -- the wave's own reach, and the opening gap
-  v_band double precision;                          -- v_long - v_short: the band the head parks in
+  v_band double precision;                          -- v_long - v_fleet reach: the OLD parking band
   k_ring double precision; k_ehp double precision; k_erb double precision; k_erp double precision;
-  k_esb double precision; k_esp double precision; k_pss double precision;
+  k_esb double precision; k_esp double precision; k_pss double precision; k_fbr double precision;
+  -- ── 0351: the fleet as ONE actor, and the band/volley bookkeeping the new pin needs ────────────
+  v_fl_x double precision; v_fl_y double precision;
+  v_fl_reach double precision; v_fl_speed double precision;
+  v_fl_reach_exp double precision; v_fl_speed_exp double precision;
+  v_r_esc double precision;                         -- the escort's synthesized fallback range
+  v_p_short double precision; v_p_long double precision; v_p_esc double precision;  -- frozen powers
+  v_gap_pre double precision; v_tick int;
+  n_hulls int; n_firers int; n_band_ticks int := 0; n_band_salvos int := 0;
+  v_hit_tick int := null; v_gap_hit double precision := null;
+  v_hp0 double precision; v_hp1 double precision; v_shield double precision;
+  v_exp_ticks int; v_drop double precision;
 begin
   select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
   select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
@@ -7434,39 +8087,31 @@ begin
   select coalesce(public.cfg_num('enemy_synthetic_speed_base'), 0.6)            into k_esb;
   select coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.04) into k_esp;
   select coalesce(public.cfg_num('combat_player_speed_scale'), 0.2)             into k_pss;
+  select coalesce(public.cfg_num('combat_player_fallback_weapon_range'), 5)     into k_fbr;
   -- The wave is a fixed marker post: no reach, no speed, and hull enough to outlast the approach.
-  -- The ring is pushed OUT so the hull provably starts beyond BOTH of its guns, and the player's
-  -- combat speed is set so the approach is a handful of ticks rather than dozens.
-  --
-  -- ── 0336: THE RING ONLY PUSHES ANYTHING OUT IF THERE IS A SECOND HULL ON IT ─────────────────────
-  -- THE BUG THIS PARAGRAPH REPLACES (CI): `the hull already stands 2.91999999999962 from the wave
-  -- after one tick, inside its LONGER 6 range`. This block set the ring to 8 to stand the wave beyond
-  -- both guns — which is the right intent and the wrong lever. 0336 does not read the ring when it
-  -- places a wave; it measures `max(distance from the anchor to each LIVING player unit)`. This
-  -- fixture commissioned exactly ONE hull, and a lone hull IS its own lead, so it stands ON the
-  -- anchor, the MEASURED extent is 0, THE RING IS INERT, and the wave landed at 0 + 0.1 + 1 = 1.1 —
-  -- inside both guns, with nothing to close. (The 2.92 in the log is that 1.1 after one tick of the
-  -- hull KITING outward, which is what a ship does when it out-ranges its target by 4.9.)
-  -- This is the THIRD block staged as if the ring set the wave radius — CLOSURE predicted from it and
-  -- LEAD asserted against it, both fixed the same way: the wave radius has ONE authority and it is
-  -- the measured extent. Here the fix is not to predict differently but to MAKE THE EXTENT REAL: a
-  -- second hull, which is what a ring means. sS is the designated command ship, so it is the lead and
-  -- keeps the anchor; the escort takes ring slot 0 and the extent becomes the 8 the author asked for,
-  -- putting the wave at 8 + 0.1 + 1 = 9.1 — beyond the Mk-II's 6 with real margin, asserted below.
+  -- The ring is pushed OUT so the fleet provably starts beyond BOTH of the lead's guns, and the
+  -- player's combat speed is set so the approach is a handful of ticks rather than dozens.
   perform public.set_game_config('spatial_formation_ring_radius',        '8'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_base',           '0.1'::jsonb);
   perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_base',           '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
   perform public.set_game_config('enemy_hp_base',                        '100000'::jsonb);
+  -- ── 0351 OWNS THE FALLBACK RANGE, ABOVE THE MK-II ───────────────────────────────────────────────
+  -- Seeded at 5, it TIES the autocannon, and the fleet's min() fold would then be satisfiable from
+  -- either hull — this block's whole claim ("the LEAD's short gun caps the fleet") would be
+  -- unfalsifiable. Owned at 9, strictly above the Mk-II's 6, so the only thing that can produce a
+  -- reach of 5 is the autocannon on the fitted hull. The proofs-never-assert-ambient-defaults law:
+  -- state the precondition you own instead of inheriting the seed.
+  perform public.set_game_config('combat_player_fallback_weapon_range',  '9'::jsonb);
   -- ── AND THE STEP MUST BE SMALLER THAN THE BAND, OR THE BAND CAN BE STEPPED OVER ─────────────────
-  -- The non-vacuity guard below requires a tick on which ONLY the longer gun reaches — the band
-  -- (v_short, v_long], one unit wide at the catalog ranges. At the old scale of 2 the hull moved ~1.82
-  -- per tick, WIDER than that band, so whether it ever landed inside was an accident of
-  -- (opening gap - v_short) mod step: it happened to at 9.1, and would have skipped it entirely from
-  -- 10.0. A guard whose success depends on arithmetic luck is the same disease as a zero-margin float
-  -- comparison. At 0.5 the step is ~0.46 and strictly under the band, so at least one pre-move
-  -- distance MUST land in it — structural, and asserted from the frozen row below rather than assumed.
+  -- The non-vacuity guard below requires ticks whose pre-move fleet gap lies in
+  -- (fleet reach, Mk-II range] — one unit wide at the catalog ranges. At the old scale of 2 the hull
+  -- moved ~1.82 per tick, WIDER than that band, so whether the approach ever landed inside was an
+  -- accident of (opening gap - reach) mod step. A guard whose success depends on arithmetic luck is
+  -- the same disease as a zero-margin float comparison. At 0.5 the step is ~0.46, strictly under the
+  -- band, so at least one pre-move gap MUST land in it — structural, and asserted from the frozen
+  -- fleet speed below rather than assumed.
   perform public.set_game_config('combat_player_speed_scale',            '0.5'::jsonb);
 
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -7504,10 +8149,11 @@ begin
   r := pg_temp.call_as(uS, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sS, gS));
   if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: assign: %', r; end if;
   -- THE ESCORT THAT MAKES THE RING AN EXTENT (0336). It carries no fitted weapon — the 0262
-  -- synthesized fallback is a THIRD module_type_id, so it can appear in neither gun's salvo count and
-  -- cannot contaminate a single assert below; its only job is to stand on ring slot 0 so that the
-  -- measured formation extent is the 8 this block owns. sS is designated command ship immediately
-  -- after, so the lead election keeps the FITTED hull on the anchor and this hull on the ring.
+  -- synthesized fallback is a THIRD module_type_id, so it can appear in neither gun's salvo count.
+  -- Under 0351 it is no longer inert to the fight's arithmetic, though: its fallback range enters the
+  -- fleet's min() fold, which is exactly why this block owns that range above the Mk-II. sS is
+  -- designated command ship immediately after, so the election keeps the FITTED hull on the anchor —
+  -- and therefore makes it the fleet's POINT — and this hull on the ring.
   r := pg_temp.call_as(uS, 'public.commission_additional_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'SHORTGUN FAIL: commission escort: %', r; end if;
   select main_ship_id into sE from public.main_ship_instances
@@ -7541,19 +8187,14 @@ begin
 
   -- SCOPED TO THE FITTED HULL. This read carried no ship filter and no LIMIT, which was harmless
   -- while the fleet was one ship and is a silent wrong-row pick now that it is two: plpgsql SELECT
-  -- INTO takes the FIRST row without complaint, so every range and speed below could have come from
+  -- INTO takes the FIRST row without complaint, so every range and power below could have come from
   -- the escort. The fixture is the MIXED-RANGE hull, by name.
-  select id, move_speed into v_u_pl, v_speed from public.combat_units
-   where encounter_id = v_enc and side = 'player' and main_ship_id = sS;
-  if v_u_pl is null then
-    raise exception 'SHORTGUN FAIL: the fitted hull seeded no combat unit — the whole measurement is about that one ship';
+  select id into v_u_pl  from public.combat_units where encounter_id = v_enc and side = 'player' and main_ship_id = sS;
+  select id into v_u_esc from public.combat_units where encounter_id = v_enc and side = 'player' and main_ship_id = sE;
+  if v_u_pl is null or v_u_esc is null then
+    raise exception 'SHORTGUN FAIL: the fitted hull (%) or the escort (%) seeded no combat unit — the whole measurement is about those two ships', v_u_pl, v_u_esc;
   end if;
   -- ── THE EXTENT IS REAL, AND THE WAVE IS WHERE THE MEASURED EXTENT PUTS IT (0336) ────────────────
-  -- The one authority for a wave radius is the MEASURED formation extent, never the ring knob. Both
-  -- are pinned here: the extent must BE the ring this block owns (so the escort really is on it), and
-  -- the opening hull-to-wave gap must be exactly (extent + the wave's own frozen reach + 1). If a
-  -- future change makes the ring inert again — a hull removed, a lead re-elected — this fails with
-  -- the numbers instead of quietly staging a fight that starts on top of the fixture.
   select engagement_x, engagement_y into v_ax, v_ay from public.combat_encounters where id = v_enc;
   select count(*), coalesce(max(public.osn_distance(v_ax, v_ay, u.pos_x, u.pos_y)), 0)
     into v_players, v_extent
@@ -7564,9 +8205,12 @@ begin
     raise exception 'SHORTGUN FAIL: anchor (%,%) / % positioned living player row(s) — the fixture is a LEAD on the anchor plus ONE escort on the ring, and without both the measured extent is not the ring this block owns',
       v_ax, v_ay, v_players;
   end if;
+  n_hulls := v_players;
   if abs(v_extent - 8) > 1e-6 then
     raise exception 'SHORTGUN FAIL: the measured formation extent is % (want the 8 ring this block owns) — the ring is inert again, so the wave will spawn on top of the fixture instead of beyond both of its guns', v_extent;
   end if;
+  -- the LEAD's two frozen guns, and the ESCORT's frozen fallback — ranges AND 0331 power shares, all
+  -- read off the rows the tick will actually use, never off the catalog.
   select min((w->>'range')::double precision), max((w->>'range')::double precision)
     into v_short, v_long
     from public.combat_units cu9, jsonb_array_elements(cu9.weapons_json) w
@@ -7578,16 +8222,71 @@ begin
   if v_short is null or v_long is null or v_short >= v_long then
     raise exception 'SHORTGUN FAIL: the two fitted guns reach % and % — they must differ, with one strictly SHORTER, or there is no gun for a longer one to disable', v_short, v_long;
   end if;
-  if v_speed is null or v_speed <= 0 then
-    raise exception 'SHORTGUN FAIL: the hull frozen move_speed is % — a ship that cannot move can never settle anywhere and the whole measurement is vacuous', v_speed;
+  select max((w->>'power')::double precision) filter (where w->>'module_type_id' = 'autocannon_battery'),
+         max((w->>'power')::double precision) filter (where w->>'module_type_id' = 'autocannon_battery_mk2')
+    into v_p_short, v_p_long
+    from public.combat_units cu9, jsonb_array_elements(cu9.weapons_json) w
+   where cu9.id = v_u_pl;
+  select max((w->>'range')::double precision), max((w->>'power')::double precision)
+    into v_r_esc, v_p_esc
+    from public.combat_units cu9, jsonb_array_elements(cu9.weapons_json) w
+   where cu9.id = v_u_esc;
+  if v_p_short is null or v_p_long is null or v_r_esc is null or v_p_esc is null then
+    raise exception 'SHORTGUN FAIL: a frozen weapon attribute is missing (autocannon power %, Mk-II power %, escort fallback range %, escort fallback power %) — the damage identity below would be vacuous',
+      v_p_short, v_p_long, v_r_esc, v_p_esc;
   end if;
-  -- THE STEP MUST BE STRICTLY UNDER THE BAND, so the band-tick guard below cannot be stepped over.
-  -- Read off the hull's OWN frozen move_speed against its OWN two catalog ranges — derived, printed,
-  -- and the difference between a guard that holds by construction and one that holds by luck.
-  v_band := v_long - v_short;
-  if v_speed >= v_band then
-    raise exception 'SHORTGUN FAIL: the hull moves % per tick against a %-wide band between its two guns (% to %) — a step at or wider than the band can jump the approach straight past the only ticks that expose the defect, so whether the guard below fires would be an accident of arithmetic',
-      v_speed, v_band, v_short, v_long;
+  -- 0331: module_types.power is a SHARE WEIGHT, so the Mk-II's entry must carry the LARGER share of
+  -- the hull's folded combat_power. Without this the "the better gun still buys damage" half of the
+  -- header would be an assertion about nothing.
+  if v_p_long <= v_p_short then
+    raise exception 'SHORTGUN FAIL: the Mk-II''s frozen power share is % against the autocannon''s % — 0331 weights the fold by module_types.power, so the better gun must carry the larger share or there is no damage for it to buy in exchange for the standoff 0351 takes away',
+      v_p_long, v_p_short;
+  end if;
+
+  -- ── ██ 0351: THE FLEET'S ONE CIRCLE, AND WHERE IT COMES FROM ██ ────────────────────────────────
+  select a.x, a.y, a.reach, a.speed into v_fl_x, v_fl_y, v_fl_reach, v_fl_speed
+    from public.combat_fleet_actor(v_enc) a;
+  if v_fl_x is null or v_fl_y is null or v_fl_reach is null or v_fl_speed is null then
+    raise exception 'SHORTGUN FAIL: combat_fleet_actor answers point (%,%), reach %, speed % — a NULL in any of the four makes every assert below vacuous', v_fl_x, v_fl_y, v_fl_reach, v_fl_speed;
+  end if;
+  if abs(v_fl_x - v_ax) > 1e-9 or abs(v_fl_y - v_ay) > 1e-9 then
+    raise exception 'SHORTGUN FAIL: the fleet stands at (%,%), not on the engagement anchor (%,%) where the designated command ship was placed — this block measures the mixed-range hull''s own gap, and it is only the fleet''s gap while that hull is the fleet''s point', v_fl_x, v_fl_y, v_ax, v_ay;
+  end if;
+  select min(g.r) into v_fl_reach_exp
+    from public.combat_units cu
+    cross join lateral (select (w->>'range')::double precision as r
+                          from jsonb_array_elements(cu.weapons_json) w) g
+   where cu.encounter_id = v_enc and cu.side = 'player' and cu.alive_count > 0 and g.r > 0;
+  select min(cu.move_speed) into v_fl_speed_exp
+    from public.combat_units cu
+   where cu.encounter_id = v_enc and cu.side = 'player' and cu.alive_count > 0;
+  if v_fl_reach_exp is null or abs(v_fl_reach - v_fl_reach_exp) > 1e-9 then
+    raise exception 'SHORTGUN FAIL: the fleet''s reach is % but the shortest gun over its living hulls is % — the circle the gate uses is not the fold 0351 defines', v_fl_reach, v_fl_reach_exp;
+  end if;
+  if v_fl_speed_exp is null or abs(v_fl_speed - v_fl_speed_exp) > 1e-9 or v_fl_speed <= 0 then
+    raise exception 'SHORTGUN FAIL: the fleet''s speed is % but the slowest of its living hulls is % — a ship that cannot move can never settle anywhere and the whole measurement is vacuous', v_fl_speed, v_fl_speed_exp;
+  end if;
+  -- ★ THE CLAIM OF THIS BLOCK, IN ONE LINE: the circle is the LEAD's SHORT gun.
+  if abs(v_fl_reach - v_short) > 1e-9 then
+    raise exception 'SHORTGUN FAIL: the fleet''s reach is % but the lead''s SHORTEST gun is % (its longest is %, the escort''s fallback %) — 0351 folds the reach with min() over living hulls, so a reach that is not the shortest gun on the field is the per-hull gate this slice deleted',
+      v_fl_reach, v_short, v_long, v_r_esc;
+  end if;
+  -- ★ AND THE CAP IS NOT COMING FROM THE UNARMED HULL. That is the OTHER direction of the same rule
+  --   and it is proven elsewhere (combat-fallback-weapon-proof); here it must be excluded, or "the
+  --   lead's short gun caps the fleet" would be unfalsifiable on a tie.
+  if v_r_esc <= v_long then
+    raise exception 'SHORTGUN FAIL: the escort''s synthesized fallback reaches % , not strictly beyond the Mk-II''s % — the fleet''s min() fold could then be satisfied by the ESCORT rather than by the lead''s short gun, and this block''s claim would be unfalsifiable. This block OWNS combat_player_fallback_weapon_range at 9 for exactly that reason (seeded %)',
+      v_r_esc, v_long, k_fbr;
+  end if;
+  -- THE BAND is now (fleet reach, Mk-II range] — the interval in which the OLD per-hull gate fired
+  -- the Mk-II alone and the new one fires nothing. Its width is what the fleet's step must undercut.
+  v_band := v_long - v_fl_reach;
+  if v_band <= 0 then
+    raise exception 'SHORTGUN FAIL: the band between the fleet''s reach % and the Mk-II''s % is % wide — with no band there is no interval in which the old engine would have fired the long gun alone, and the non-vacuity guard below would be asserting nothing', v_fl_reach, v_long, v_band;
+  end if;
+  if v_fl_speed >= v_band then
+    raise exception 'SHORTGUN FAIL: the fleet moves % per tick against a %-wide band between its circle (%) and the Mk-II (%) — a step at or wider than the band can jump the approach straight past the only ticks that expose the defect, so whether the guard below fires would be an accident of arithmetic',
+      v_fl_speed, v_band, v_fl_reach, v_long;
   end if;
 
   perform pg_temp.ae_tick(v_enc);
@@ -7596,10 +8295,10 @@ begin
     raise exception 'SHORTGUN FAIL: % pirate unit(s) spawned (this block needs exactly 1, so the settled distance is a single unambiguous number)', n_units;
   end if;
   select id into v_u_en from public.combat_units where encounter_id = v_enc and side = 'enemy';
-  select public.osn_distance(a9.pos_x, a9.pos_y, b9.pos_x, b9.pos_y) into v_dist
-    from public.combat_units a9, public.combat_units b9 where a9.id = v_u_pl and b9.id = v_u_en;
+  select public.osn_distance(a.x, a.y, b9.pos_x, b9.pos_y) into v_dist
+    from public.combat_fleet_actor(v_enc) a, public.combat_units b9 where b9.id = v_u_en;
   if v_dist is null then
-    raise exception 'SHORTGUN FAIL: the hull-to-wave distance is NULL after the opening tick — an unpositioned fight cannot prove where anything settled';
+    raise exception 'SHORTGUN FAIL: the fleet-to-wave distance is NULL after the opening tick — an unpositioned fight cannot prove where anything settled';
   end if;
   -- THE WAVE IS WHERE THE MEASURED EXTENT PUTS IT — derived through the spawn arm's own expression,
   -- from the wave's OWN frozen reach, not from the knob this block wrote.
@@ -7608,70 +8307,131 @@ begin
   if v_ren is null then
     raise exception 'SHORTGUN FAIL: the spawned wave carries no weapon range — the spawn radius is DERIVED from that reach and cannot be checked';
   end if;
-  v_open := v_dist + v_speed;   -- the gap at SPAWN: one tick of closing has already been applied
+  v_open := v_dist + v_fl_speed;   -- the gap at SPAWN: one tick of closing has already been applied
   if abs(v_open - (v_extent + v_ren + 1)) > 1e-6 then
-    raise exception 'SHORTGUN FAIL: the wave opened % from the hull but the measured extent % plus its own reach % plus 1 is % — the wave is no longer arriving where 0336 puts it, so re-derive against the extent rather than loosening anything below',
+    raise exception 'SHORTGUN FAIL: the wave opened % from the fleet but the measured extent % plus its own reach % plus 1 is % — the wave is no longer arriving where 0336 puts it, so re-derive against the extent rather than loosening anything below',
       v_open, v_extent, v_ren, v_extent + v_ren + 1;
   end if;
-  -- THE FIRST THRESHOLD, WITH ITS MARGIN PRINTED: after one tick the hull must still be beyond its
-  -- LONGER gun, so the approach that exposes the short one is genuinely ahead of it.
+  -- THE FIRST THRESHOLD, WITH ITS MARGIN PRINTED: after one tick the fleet must still be beyond the
+  -- LONGER gun, so the whole band the old engine parked in is genuinely ahead of it.
   if v_dist <= v_long then
-    raise exception 'SHORTGUN FAIL: the hull already stands % from the wave after one tick, inside its LONGER % range (margin % — it needed to be positive) — it never had to close, so the approach that exposes the short gun was never exercised',
+    raise exception 'SHORTGUN FAIL: the fleet already stands % from the wave after one tick, inside the lead''s LONGER % range (margin % — it needed to be positive) — it never had to close, so the band that exposes the defect was never exercised',
       v_dist, v_long, v_dist - v_long;
   end if;
+  -- nothing fired on the opening tick either: the fleet is outside its own circle by construction.
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'player';
+  if n <> 0 then
+    raise exception 'SHORTGUN FAIL: % player salvo(s) on the opening tick at a fleet gap of % against a reach of % — something fired from outside the one circle', n, v_open, v_fl_reach;
+  end if;
 
-  -- ── DRIVE THE APPROACH TO ITS RESTING POINT. The hull is the only thing that moves. ─────────────
-  for i in 1..20 loop
+  -- ── DRIVE THE APPROACH, RECORDING THE PRE-MOVE FLEET GAP BEFORE EACH TICK ───────────────────────
+  -- The gate reads the PRE-MOVE distance, so that is the number every classification below uses. The
+  -- window is DERIVED from the same recurrence the mover runs (the wave is parked, so the gap falls
+  -- by exactly the fleet's speed) plus a margin, never typed.
+  v_exp_ticks := ceil((v_dist - v_fl_reach) / v_fl_speed)::int;
+  if v_exp_ticks < 1 then
+    raise exception 'SHORTGUN FAIL: the derived approach is % tick(s) from a gap of % to a reach of % at % per tick — the fleet is already in range and would pass through no band at all', v_exp_ticks, v_dist, v_fl_reach, v_fl_speed;
+  end if;
+  for i in 1 .. v_exp_ticks + 6 loop
+    select public.osn_distance(a.x, a.y, b9.pos_x, b9.pos_y) into v_gap_pre
+      from public.combat_fleet_actor(v_enc) a, public.combat_units b9 where b9.id = v_u_en;
+    if v_gap_pre is null then
+      raise exception 'SHORTGUN FAIL: the pre-move fleet gap is NULL on approach tick % — an unpositioned unit makes every band classification below vacuous', i;
+    end if;
+    if v_hit_tick is null and v_gap_pre <= v_fl_reach then
+      v_gap_hit := v_gap_pre;
+      select hp_current, shield_current into v_hp0, v_shield from public.combat_units where id = v_u_en;
+    end if;
+    perform pg_temp.ae_tick(v_enc);
+    select tick_number into v_tick from public.combat_encounters where id = v_enc;
+    select count(*) into n from public.combat_events
+     where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo' and source = 'player';
+    -- ★ THE BAND: (fleet reach, Mk-II range]. The old engine fires the Mk-II on every one of these
+    --   ticks; the new one fires nothing, because both guns are gated on the same circle.
+    if v_gap_pre > v_fl_reach and v_gap_pre <= v_long then
+      n_band_ticks  := n_band_ticks + 1;
+      n_band_salvos := n_band_salvos + n;
+    end if;
+    if v_hit_tick is null and v_gap_pre <= v_fl_reach then
+      v_hit_tick := v_tick;
+      select hp_current into v_hp1 from public.combat_units where id = v_u_en;
+    end if;
+    exit when v_hit_tick is not null and i >= v_exp_ticks;
+  end loop;
+
+  -- ── ★ THE REPLACEMENT NON-VACUITY PIN, IN TWO HALVES ────────────────────────────────────────────
+  if n_band_ticks = 0 then
+    raise exception 'SHORTGUN FAIL: the approach never passed through the band (%, %] between the fleet''s circle and the Mk-II''s own range — that is the interval in which the OLD per-hull gate fired the long gun alone, so with no tick in it a green result here would say nothing about the defect (fleet step %, band width %, opening gap %)',
+      v_fl_reach, v_long, v_fl_speed, v_band, v_open;
+  end if;
+  if n_band_salvos <> 0 then
+    raise exception 'SHORTGUN FAIL: % player salvo(s) landed across the % tick(s) whose PRE-MOVE fleet gap lay in (%, %] — inside the Mk-II''s own % range but OUTSIDE the fleet''s % circle. Under 0351 both guns are gated on the same radius, so the long gun firing there is the per-hull gate this slice deleted, and it is the exact shape of 0336''s defect 7',
+      n_band_salvos, n_band_ticks, v_fl_reach, v_long, v_long, v_fl_reach;
+  end if;
+
+  -- ── ★ AND WHEN THE CIRCLE IS ENTERED, EVERYTHING FIRES AT ONCE ─────────────────────────────────
+  if v_hit_tick is null then
+    raise exception 'SHORTGUN FAIL: the fleet never came inside its own % circle within % tick(s) — the derived approach was % tick(s) from a gap of % at % per tick, so the fleet is not closing at the speed the mover says it must',
+      v_fl_reach, v_exp_ticks + 6, v_exp_ticks, v_open, v_fl_speed;
+  end if;
+  select count(*) filter (where projectile_type = 'autocannon_battery'),
+         count(*) filter (where projectile_type = 'autocannon_battery_mk2'),
+         count(distinct payload_json->>'unit_id')
+    into n_short, n_long, n_firers
+    from public.combat_events
+   where encounter_id = v_enc and tick_number = v_hit_tick
+     and event_type = 'missile_salvo' and source = 'player';
+  if n_short <> 1 or n_long <> 1 then
+    raise exception 'SHORTGUN FAIL: on the tick the fleet entered its own circle (tick %, pre-move gap % against reach %) the autocannon fired % time(s) and the Mk-II % (want exactly 1 each) — a hull''s guns are gated on ONE radius now, so they reach together or not at all',
+      v_hit_tick, v_gap_hit, v_fl_reach, n_short, n_long;
+  end if;
+  if n_firers <> n_hulls then
+    raise exception 'SHORTGUN FAIL: the entering volley (tick %) came from % of the fleet''s % living hull(s) — the circle is one circle about one point, so every hull fires together or none does', v_hit_tick, n_firers, n_hulls;
+  end if;
+  -- ── ★ THE LARGER SHARE ACTUALLY LANDED, AS A NUMBER ────────────────────────────────────────────
+  -- Both variance knobs are zeroed for this suite and player fire on an enemy is never
+  -- defense-mitigated (0299:897), so a landed shot removes EXACTLY its frozen power share. The
+  -- wave's hp therefore falls by the sum of the three shares that fired. Asserting the sum rather
+  -- than "hp fell" is what makes "the Mk-II still buys damage" evidence instead of a claim: the
+  -- identity is unsatisfiable if the long gun logged an event and dealt nothing.
+  if v_shield is not null and v_shield <> 0 then
+    raise exception 'SHORTGUN FAIL: the wave carries shield_current % — the absorb step would eat part of the volley and the exact damage identity below would be measuring the shield, not the guns', v_shield;
+  end if;
+  if v_hp0 is null or v_hp1 is null then
+    raise exception 'SHORTGUN FAIL: the wave''s hp around the entering tick is % -> % — a NULL makes the damage identity vacuous', v_hp0, v_hp1;
+  end if;
+  v_drop := v_hp0 - v_hp1;
+  if abs(v_drop - (v_p_short + v_p_long + v_p_esc)) > 1e-6 then
+    raise exception 'SHORTGUN FAIL: the wave lost % hp on the entering tick but the three frozen power shares that fired sum to % (autocannon %, Mk-II %, escort fallback %) — either a gun logged a salvo it did not deal, or something other than these three hit the wave',
+      v_drop, v_p_short + v_p_long + v_p_esc, v_p_short, v_p_long, v_p_esc;
+  end if;
+
+  -- ── ★ AND THE FORMATION COMES TO REST EXACTLY ON THE CIRCLE ────────────────────────────────────
+  -- A fleet that out-ranges its target takes combat_unit_decide_move's KITE arm, which retreats to
+  -- the edge of its own engagement range and therefore lands on that radius EXACTLY, by
+  -- construction. Comparing a computed sqrt against that exact expected value is the same shape as
+  -- CLOSURE's step pin, not a knife edge — and because gate and mover now read the SAME v_fleet_reach
+  -- (the whole point of this repoint), the resting place IS the firing edge.
+  for i in 1..6 loop
     perform pg_temp.ae_tick(v_enc);
   end loop;
-  select public.osn_distance(a9.pos_x, a9.pos_y, b9.pos_x, b9.pos_y) into v_dist
-    from public.combat_units a9, public.combat_units b9 where a9.id = v_u_pl and b9.id = v_u_en;
+  select public.osn_distance(a.x, a.y, b9.pos_x, b9.pos_y) into v_dist
+    from public.combat_fleet_actor(v_enc) a, public.combat_units b9 where b9.id = v_u_en;
   if v_dist is null then
-    raise exception 'SHORTGUN FAIL: the settled hull-to-wave distance is NULL — the settle assert would be vacuous';
+    raise exception 'SHORTGUN FAIL: the settled fleet-to-wave distance is NULL — the settle assert would be vacuous';
   end if;
-
-  select count(*) into n_short from public.combat_events
-   where encounter_id = v_enc and event_type = 'missile_salvo' and source = 'player'
-     and projectile_type = 'autocannon_battery';
-  select count(*) into n_long from public.combat_events
-   where encounter_id = v_enc and event_type = 'missile_salvo' and source = 'player'
-     and projectile_type = 'autocannon_battery_mk2';
-  -- NON-VACUITY, and it is the one that matters: the ship must have PASSED THROUGH the band where
-  -- only the long gun reaches. That band is the head's permanent resting place, so a run that never
-  -- entered it would be green on both bodies and prove nothing.
-  select count(*) into n_bandtick from (
-    select ev.tick_number
-      from public.combat_events ev
-     where ev.encounter_id = v_enc and ev.event_type = 'missile_salvo' and ev.source = 'player'
-     group by ev.tick_number
-    having count(*) filter (where ev.projectile_type = 'autocannon_battery_mk2') > 0
-       and count(*) filter (where ev.projectile_type = 'autocannon_battery') = 0
-  ) z;
-  if n_bandtick = 0 then
-    raise exception 'SHORTGUN FAIL: there was never a tick on which only the LONGER gun could reach — the fixture never entered the band the head parks in, so a green result here would say nothing about the defect';
+  if abs(v_dist - v_fl_reach) > 1e-6 then
+    raise exception 'SHORTGUN FAIL: the formation settled % from its target but the fleet''s own circle is % — the mover and the gate are reading different radii again, which is 0336''s defect 7 in its general form (the head parked at the LONGEST gun, %, and disabled the shortest, %)',
+      v_dist, v_fl_reach, v_long, v_short;
   end if;
-  if n_long = 0 then
-    raise exception 'SHORTGUN FAIL: the longer gun never fired at all — the fixture never engaged and neither half of this block means anything';
-  end if;
-  if n_short = 0 then
-    raise exception 'SHORTGUN FAIL: the SHORTER gun (% range) never fired in 21 ticks while the longer one (% range) fired % time(s), and the hull came to rest % away — the mover was handed the ship LONGEST reach for both the close decision and the kite cap, so it parks at the long gun edge and the short gun is silently disabled: a better module buying less damage',
-      v_short, v_long, n_long, v_dist;
-  end if;
-  if v_dist > v_short + 1e-6 then
-    raise exception 'SHORTGUN FAIL: the hull settled % from its target, beyond its own SHORTEST gun (% range) — the kite cap is still the longest gun, so the ship holds where half its guns cannot reach',
-      v_dist, v_short;
-  end if;
-  -- ── THE SECOND THRESHOLD, WITH ITS MARGIN PRINTED — AND IT IS THE DEFECT'S OWN SIGNATURE ────────
-  -- The tolerance above is not a boundary being papered over: a ship that out-ranges its target takes
-  -- combat_unit_decide_move's KITE arm, which retreats to the edge of its own engagement range and
-  -- therefore lands on `my_min_range` EXACTLY, by construction. Comparing a computed sqrt against
-  -- that exact expected value is the same shape as CLOSURE's step pin, not a knife edge.
-  -- What IS a real margin is the distance from the LONG gun's edge, because that edge is where the
-  -- head parks: my_range = MAX(range) for both the close decision and the kite cap put the ship at 6
-  -- with the autocannon silently disabled. So the fixed engine must settle a FULL BAND WIDTH inside
-  -- the long gun, and that number is asserted and printed rather than left implicit in "<= short".
+  -- ── THE SECOND THRESHOLD, WITH ITS MARGIN PRINTED — AND IT IS THE OLD DEFECT'S OWN SIGNATURE ────
+  -- The head parks AT the long gun's edge, so a resting place that is not a whole band inside it is
+  -- the defect surviving rather than the fix landing. Kept verbatim from the 0336 form, because
+  -- 0351 does not weaken it: the fleet rests on the shortest gun, which is a full band inside the
+  -- longest, exactly as a single hull used to.
   if v_long - v_dist < v_band - 1e-6 then
-    raise exception 'SHORTGUN FAIL: the hull settled % from its target — only % inside its LONGER % gun, against the % band between its two guns. The head parks AT the long edge, so a resting place that is not a whole band inside it is the defect surviving, not the fix landing',
+    raise exception 'SHORTGUN FAIL: the formation settled % from its target — only % inside the Mk-II''s % range, against the % band between that gun and the fleet''s circle. The head parks AT the long edge, so a resting place that is not a whole band inside it is the defect surviving, not the fix landing',
       v_dist, v_long - v_dist, v_long, v_band;
   end if;
 
@@ -7682,10 +8442,13 @@ begin
   perform public.set_game_config('enemy_synthetic_speed_base',           to_jsonb(k_esb));
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', to_jsonb(k_esp));
   perform public.set_game_config('combat_player_speed_scale',            to_jsonb(k_pss));
+  perform public.set_game_config('combat_player_fallback_weapon_range',  to_jsonb(k_fbr));
 
-  raise notice 'DZCOMBAT_PASS_SHORTGUN ok: a hull carrying a % range autocannon beside a % range Mk-II opened % from its target — the MEASURED formation extent % (a real escort on the owned ring, never the knob) plus the wave own reach % plus 1 — and closed at % per tick, strictly under the % band so the approach could not step over it; it passed through % tick(s) where only the Mk-II could reach (the head resting place) and came to rest % from its target: exactly its SHORTEST gun edge and a full % inside its LONGEST, with BOTH module types on the record (% short salvo(s), % long)',
-    v_short, v_long, round(v_open::numeric, 4), v_extent, v_ren, round(v_speed::numeric, 4), v_band,
-    n_bandtick, round(v_dist::numeric, 4), round((v_long - v_dist)::numeric, 4), n_short, n_long;
+  raise notice 'DZCOMBAT_PASS_SHORTGUN ok: a fleet whose lead carries a % range autocannon beside a % range Mk-II, with an unarmed escort whose fallback is OWNED at % (strictly beyond the Mk-II, so the cap can only be the lead''s short gun), got a circle of % — exactly that short gun, min()-folded over its living hulls. It opened % from the wave (the MEASURED formation extent % — a real escort on the owned ring, never the knob — plus the wave''s own reach % plus 1), closed at % per tick, strictly under the %-wide band, and passed through % tick(s) whose PRE-MOVE gap lay in (%, %] — the interval in which the OLD per-hull gate fired the Mk-II alone — firing EXACTLY % salvo(s) there. On the tick it entered the circle (tick %, pre-move gap %) BOTH module types fired exactly once, from all % living hull(s) at once, and the wave lost exactly % hp = the three frozen 0331 power shares (autocannon %, Mk-II % — the larger share, so the better gun still buys damage — escort fallback %). It then came to rest at % : exactly its circle, and a full % inside the Mk-II. A longer gun no longer buys STANDOFF; it buys DAMAGE, and gate and mover read one aggregate so 0336''s defect 7 cannot recur through this change',
+    v_short, v_long, v_r_esc, v_fl_reach, round(v_open::numeric, 4), v_extent, v_ren,
+    round(v_fl_speed::numeric, 4), v_band, n_band_ticks, v_fl_reach, v_long, n_band_salvos,
+    v_hit_tick, round(v_gap_hit::numeric, 4), n_hulls, round(v_drop::numeric, 4),
+    v_p_short, v_p_long, v_p_esc, round(v_dist::numeric, 4), round((v_long - v_dist)::numeric, 4);
 end $$;
 
 -- ════════ DZCOMBAT_PASS_RETREATCLEAR (0336): EVERY TERMINAL ARM CONSUMES THE RETREAT TARGET ═════════

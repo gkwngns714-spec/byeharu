@@ -203,7 +203,7 @@ $$;
 create or replace function pg_temp.cs_fleet_arm(p_enc uuid, p_foe uuid)
 returns table(arm_kind text, arm_gap double precision, arm_my double precision,
               arm_foe double precision, arm_speed double precision)
-language sql stable as $
+language sql stable as $$
   select case when d.gap is null or d.reach is null or d.foe_max is null then 'unknown'
               when d.gap > d.reach   then 'close'
               when d.gap > d.foe_max then 'kite'
@@ -216,7 +216,7 @@ language sql stable as $
       from public.combat_fleet_actor(p_enc) a, public.combat_units f
      where f.id = p_foe
   ) d;
-$;
+$$;
 
 -- ── THE ONE AUTHORITY IN THIS HARNESS FOR "ADVANCE ONE TICK" ─────────────────────────────────────
 -- The clock rewind and the cron leaf belong together: a rewind without the call advances nothing, a
@@ -824,7 +824,7 @@ end $$;
 --    kept here because the aggro screen is a property 0351 explicitly preserves; the KITE witness
 --    MOVED to danger-combat-proof.sql (DZCOMBAT_PASS_FLEETKITE), whose kite-band fixtures already
 --    have the player out-ranging the wave. It was repointed, not dropped.
-do $
+do $$
 declare
   v_enc  uuid := (select v from cspatial where k='v_enc');
   u_cmd  uuid := (select v from cspatial where k='u_cmd');
@@ -951,7 +951,7 @@ begin
       to_char(v_pred_x, 'FM999999990.999999999999999999'), to_char(v_pred_y, 'FM999999990.999999999999999999');
   end if;
   raise notice 'COMBATSPATIAL_PASS_HOLD ok: the FLEET closed over % guarded CLOSE tick(s) — exactly the ceil((gap - reach) / speed) the mover''s own rule predicts — arrived at gap % inside both reaches, and ALL THREE hulls are byte-identical across the next tick (a HOLD never touches pos_x/pos_y, and under 0351 that is true of the whole formation or of none of it)', v_steps, v_gap;
-end $;
+end $$;
 
 -- ════════ SCREEN: the wave can now reach a player — the aggro-tier screen must hold ════════════════
 do $$

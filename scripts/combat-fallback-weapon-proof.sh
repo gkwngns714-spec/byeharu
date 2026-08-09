@@ -65,9 +65,18 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "public.send_ship_group_hunt(" "$SQL"            || fail "harness does not send the hunt via the real RPC"
   grep -q "public.movement_settle_arrival(" "$SQL"         || fail "harness does not settle arrival via the real leaf"
 
-  # exactly ONE process_combat_ticks() invocation (tick 1: spawn + first fire pass).
+  # ── ONE AUTHORITY FOR "ADVANCE ONE TICK" ────────────────────────────────────────────────────────
+  # Until 0351 this file drove exactly ONE tick, inline, and this gate counted that. 0351 folds the
+  # fleet's circle to least(fallback, catalog gun), so the DAMAGE block is now an APPROACH of a
+  # DERIVED number of ticks — but the gate does NOT weaken to "one or more". The rewind and the cron
+  # call are folded into pg_temp.cfb_tick (the cs_tick / ae_tick idiom), so there is still exactly
+  # ONE textual process_combat_ticks() call site in the file and a second, hand-rolled drive still
+  # fails here.
   n="$(grep -c 'perform public\.process_combat_ticks();' "$SQL" || true)"
-  [ "$n" = "1" ] || fail "expected exactly 1 process_combat_ticks() call, found $n"
+  [ "$n" = "1" ] || fail "expected exactly 1 process_combat_ticks() call site, found $n (drive every tick through pg_temp.cfb_tick — a hand-rolled rewind-then-tick is a second authority)"
+  grep -q "create or replace function pg_temp.cfb_tick" "$SQL" || fail "harness lost pg_temp.cfb_tick, the one authority for advancing a tick (a rewind without the call advances nothing; a call without the rewind is a no-op because the encounter is not due yet)"
+  n="$(grep -c 'perform pg_temp\.cfb_tick(' "$SQL" || true)"
+  [ "$n" -ge "2" ] || fail "harness drives fewer than 2 ticks through pg_temp.cfb_tick — 0351 makes the DAMAGE block an approach (spawn tick, then the derived closing ticks), so a single drive means the arrival witness was dropped"
 
   # the fallback ship's ATTACK source is a captain, and it fits NO weapon (an empty fitted-weapon join).
   grep -q "'gunnery_veteran'" "$SQL" || fail "harness does not give the fallback ship a captain for attack"
@@ -87,6 +96,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "enemy_synthetic_speed_per_difficulty', '0'" "$SQL" || fail "harness lost the per-difficulty speed pin (the wave would move again at any positive difficulty)"
   grep -q "combat_damage_variance_pct', '0'" "$SQL"      || fail "harness lost the determinism knob (0 variance)"
   grep -q "combat_hit_variance_pct', '0'" "$SQL"         || fail "harness lost the 0314 per-hit roll pin (0320 seeds that key, so the inheritance from the damage-variance pin stops the moment it exists)"
+  grep -q "combat_player_speed_scale', '1'" "$SQL"        || fail "harness lost the OWNED player combat speed. 0351 folds the fleet's reach to least(fallback 30, catalog 5) = 5 against a spawn radius of 23, so the DAMAGE block is now an APPROACH and this knob decides its length; at the seeded 0.2 it would be dozens of ticks. It is read ONCE at encounter creation to freeze move_speed, so it must be set in SETUP, before the send/settle"
   grep -q "set value='false'::jsonb where key='combat_telegraph_enabled'" "$SQL" \
     || fail "harness does not keep combat_telegraph_enabled dark (0300 lit it; a lit telegraph queues the encounter instead of opening it inline at the settle)"
   grep -q "'autocannon_battery'" "$SQL"                  || fail "harness does not use the real S0 weapon catalog entry for the armed witness"
@@ -97,22 +107,37 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "SYNTH FAIL: fallback module_type_id" "$SQL" || fail "harness lacks the basic_player_weapon label assert"
   grep -q "ARMED FAIL: s_arm weapon is" "$SQL" || fail "harness lacks the armed-ship-unchanged assert"
   grep -q "DAMAGE FAIL: pirate hp_current" "$SQL" || fail "harness lacks the pirate-hp-fell (nonzero damage) assert"
-  grep -q "DAMAGE FAIL: no player missile_salvo on tick 1" "$SQL" || fail "harness lacks the the-fallback-weapon-fired assert"
+  grep -q "DAMAGE FAIL: no % salvo on the derived arrival tick" "$SQL" || fail "harness lacks the the-fallback-weapon-fired assert. 0351 MOVED IT: at a spawn radius of 23 against a folded circle of 5 the fleet cannot fire on tick 1 at all, so the witness lives on the arrival tick the engine's own recurrence predicts — and it is matched on the projectile_type, so an autocannon salvo cannot stand in for the subject of this proof"
   grep -q "DAMAGE FAIL: a player ship took damage on tick 1" "$SQL" || fail "harness lacks the clean-tick assert"
   # 0336: the wave's spawn point is PINNED against a point predicted from the knobs before the tick,
   # through combat_formation_point — the very leaf the tick composes.
   grep -q "DAMAGE FAIL: the wave stands at" "$SQL" || fail "harness lacks the 0336 wave-spawn-point pin (radius = ring + the wave's own range + 1, slot 0, the 0338 arrival phase) — without it every pre-move distance below is measured against a guess"
   grep -q "DAMAGE FAIL: the wave carries range" "$SQL" || fail "harness lacks the cross-check that the wave's frozen weapons_json range IS the one the spawn radius was predicted from"
 
-  # ── NON-VACUITY: the attribution is DERIVED from the measured geometry and then NAMED — a retune
-  #    that puts the wrong hull in reach must fail loudly rather than re-attribute the damage. ──────
-  grep -q "DAMAGE FAIL attribution: s_fb is" "$SQL" || fail "harness lacks the guard that s_fb can actually reach the wave (otherwise the DAMAGE assert tests an engine that never fired)"
-  grep -q "DAMAGE FAIL attribution: s_arm is" "$SQL" || fail "harness lacks the guard that s_arm is out of its own reach (a firing escort would muddy the attribution)"
-  grep -q "DAMAGE FAIL attribution: the nearest player hull is" "$SQL" || fail "harness lacks the derived form of 0336's spawn invariant (every hull outside the wave's reach), without which 'the pirate fired nothing' is unexplained"
+  # ── ██ 0351: THE ATTRIBUTION INVERTED, AND THE RULE REPLACES BOTH ANECDOTES ██ ─────────────────
+  # The old guards named PER-HULL quantities — "s_fb is in reach", "s_arm is not", "the derivation
+  # expects exactly 1 in-reach hull" — and every one of them describes a model that no longer exists.
+  # 0351 folds the fleet's circle with min() over living hulls, so this fleet reaches
+  # least(fallback 30, catalog 5) = 5 against a gap of 23: it fires NOTHING on tick 1.
+  # NOTE WHICH WAY ROUND IT IS HERE, because it is the reverse of the usual framing: the cap comes
+  # from the ARMED escort's CATALOG GUN, not from the unarmed hull's long fallback. The other
+  # direction — a fitted hull's short gun capping a fleet whose unarmed escort reaches further — is
+  # DZCOMBAT_PASS_SHORTGUN in danger-combat-proof. Both are the same rule, so this file asserts the
+  # RULE and not either anecdote. THIS BLOCK MATTERS BEYOND ITS OWN SUITE: 47 production hulls carry
+  # no weapon at all, so every one of them hands its fleet a synthesized fallback as a candidate for
+  # the fleet's reach, and this is the guard that screams if the aggregate changes without them in
+  # mind.
+  grep -q "DAMAGE FAIL attribution: the fleet''s reach is" "$SQL" || fail "harness lacks THE RULE: combat_fleet_actor(enc).reach = least(the unarmed lead's synthesized fallback, the armed escort's catalog gun). The fallback takes part in the fold on exactly equal terms with a catalog gun and whichever is SHORTER is the fleet's one circle"
+  grep -q "this fixture needs the fallback to be strictly the LONGER one" "$SQL" || fail "harness lacks the fold's non-vacuity premise (with the two reaches equal, least(), max() and 'the lead's own' all coincide and the rule assert could not tell any of them apart)"
+  grep -q "the fleet point is % from the wave and its nearest hull" "$SQL" || fail "harness lacks the derived form of 0336's spawn invariant. 0351 REPOINTED IT: the distance the ENEMY's gate reads is the one to the FLEET POINT, so both that and the all-pairs minimum are asserted"
   grep -q "DAMAGE FAIL attribution: pirate fired" "$SQL" || fail "harness lacks the pirate-silence assert"
-  grep -q "DAMAGE FAIL attribution: the derivation expects" "$SQL" || fail "harness lacks the derived in-reach count (exactly one hull may fire)"
-  grep -q "DAMAGE FAIL attribution: % player missile_salvo event(s)" "$SQL" || fail "harness no longer compares the observed tick-1 salvo count against that derived count"
-  grep -q "DAMAGE FAIL attribution: the tick-1 player salvo came from unit" "$SQL" || fail "harness lacks the NAMED attribution (the salvo event's own payload unit_id must BE s_fb's combat unit)"
+  grep -q "and the derivation expects 0" "$SQL" || fail "harness lacks the INVERTED tick-1 count (the old engine fired the fallback here because 23 <= its own 30; under one circle the fleet is out of reach and must fire nothing)"
+  grep -q "DAMAGE FAIL attribution: % player missile_salvo event(s) on tick 1" "$SQL" || fail "harness no longer compares the observed tick-1 salvo count against the derived one"
+  grep -q "and the derivation expects ALL of them" "$SQL" || fail "harness lacks the all-or-none arrival volley (0351 gates every gun on ONE circle about ONE point, so the distinct-firer count on the arrival tick is the whole roster — the per-hull gate scores a subset)"
+  grep -q "salvo does not carry s_fb''s own unit id" "$SQL" || fail "harness lacks the NAMED attribution (the arrival tick's fallback salvo must carry s_fb's own combat unit id)"
+  grep -q "the two frozen 0331 power shares that fired sum to" "$SQL" || fail "harness lacks the EXACT damage identity. It is what keeps the attribution sharp now that the escort fires in the same volley: the pirate's hp must fall by exactly (fallback share + catalog share), and pre-0262 — empty weapons_json — the drop is short by the fallback's whole share, which is the original defect, still caught, still by a number"
+  grep -q "the mover''s own recurrence ceil((gap - reach) / speed) predicts" "$SQL" || fail "harness lacks the DERIVED arrival tick (a literal tick index is the fixture assumption that has cost this repo real CI rounds; the count must come from the engine's own recurrence over the frozen rows)"
+  grep -q "nothing may fire before the fleet is inside its own reach" "$SQL" || fail "harness lacks the silent-approach assert (every tick before arrival must be silent, or 'the fleet fired on the arrival tick' says nothing about the gate)"
   # 0313 repoint: the expected weapon values must stay DERIVED (knobs/catalog), never re-hard-coded seeds.
   grep -q "derived at assert time" "$SQL" || fail "harness's expected weapon values are no longer derived at assert time (a hard-coded seed would break on every future retune)"
 

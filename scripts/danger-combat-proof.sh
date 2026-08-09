@@ -69,7 +69,7 @@ SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 # every line above, for the ninth hand-resolved union of this one string: a resolution that takes
 # either side WHOLE drops the other's markers, the local run then never checks for those notices, and
 # the suite prints OVERALL_PASS with entire runtime blocks unverified. Union, always.
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOHOLD DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR DZCOMBAT_PASS_NODIRECTION DZCOMBAT_PASS_ONEANCHOR DZCOMBAT_PASS_SITEORIGIN DZCOMBAT_PASS_PRESSURE DZCOMBAT_PASS_FIELDGROWS"
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOHOLD DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_FLEETKITE DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR DZCOMBAT_PASS_NODIRECTION DZCOMBAT_PASS_ONEANCHOR DZCOMBAT_PASS_SITEORIGIN DZCOMBAT_PASS_PRESSURE DZCOMBAT_PASS_FIELDGROWS"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -543,15 +543,15 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "derived its spawn point for"                           "$SQL" || fail "harness lacks the CLOSURE derived-vs-actual wave pin (the spawn point is derived from a PREDICTED range/speed before the wave exists, so the spawned row must agree with the prediction)"
   grep -q "some other hull is now the outermost one"              "$SQL" || fail "harness lacks the CLOSURE extent-is-the-escort pin (a further-out hull would make the wave stand clear of THAT one, and the chord this block models would be the wrong one)"
   grep -q "the measured extent below would not be this formation" "$SQL" || fail "harness lacks the CLOSURE positioned-living-player non-vacuity guard (a defaulted extent of 0 looks exactly like a lone hull standing on the anchor)"
-  grep -q "the escort-to-wave spawn gap measures"                 "$SQL" || fail "harness lacks the CLOSURE measured-gap NULL/positive pin"
+  grep -q "the fleet-to-wave spawn gap measures"                  "$SQL" || fail "harness lacks the CLOSURE measured-gap NULL/positive pin (0351: the gap that matters is the FLEET POINT to the wave — the spawn RADIUS — not an escort's chord)"
   grep -q "an id-ordered pick over a larger wave would not find"  "$SQL" || fail "harness lacks the CLOSURE one-unit-wave pin (combat_units.id is a random uuid, so slot 0 is only identifiable while the wave is a single unit)"
-  grep -q "it either closed on a different hull than the lowest-aggro escort" "$SQL" \
-    || fail "harness lacks the CLOSURE exact-landing-point pin (step LENGTH alone would pass for a step in any direction; the end point pins the target choice, the direction and the cap together)"
+  grep -q "it either closed on something other than the fleet"    "$SQL" \
+    || fail "harness lacks the CLOSURE exact-landing-point pin (step LENGTH alone would pass for a step in any direction; the end point pins the target choice, the direction and the cap together). 0351 REPOINTED IT AND THAT IS THE DISCRIMINATOR: the old enemy closed on the lowest-aggro HULL, the new one closes on the FLEET POINT, and those are a formation extent apart"
   grep -q "the CLOSE arm never ran"                               "$SQL" || fail "harness lacks the escort-moved-on-tick-1 assert (the first observed movement)"
   grep -q "the enemy CLOSE arm never ran"                         "$SQL" || fail "harness lacks the pirate-moved-off-anchor assert"
   grep -q "they are not closing"                                  "$SQL" || fail "harness lacks the gap-shrinks assert"
   grep -q "something fired across a gap larger than its own range" "$SQL" || fail "harness lacks the no-fire-beyond-range tick-1 assert"
-  grep -q "the escort NEVER fired within the derived observation window" "$SQL" || fail "harness lacks the closure-completes assert (approach must reach firing range; 0338 derives the window from the worst bearing the geometry admits, so a legitimate long approach is not reported as a stall)"
+  grep -q "the FLEET NEVER fired within the derived observation window" "$SQL" || fail "harness lacks the closure-completes assert (approach must reach firing range; the window is derived from the recurrence, so a legitimate long approach is not reported as a stall)"
   grep -q "the fire gate is not honouring the cut range"          "$SQL" || fail "harness lacks the first-shot-within-own-range assert"
   grep -q "no silent closing tick before it"                      "$SQL" || fail "harness lacks the closure non-vacuity guard (at least one silent approach tick)"
   grep -q "the out-range order inverted"                          "$SQL" || fail "harness lacks the longer-range-fires-first assert"
@@ -569,6 +569,16 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "the closure comparison would be vacuous"               "$SQL" || fail "harness lacks the tick-1 gap NULL pin"
   grep -q "makes every range check in the approach vacuous"       "$SQL" || fail "harness lacks the approach-loop pre-move-distance NULL pin"
   grep -q "the spawn-ring pin would prove nothing"                "$SQL" || fail "harness lacks the spawn-ring distance NULL pin"
+  # ── 0351: CLOSURE IS ABOUT ONE ACTOR NOW. These four are the properties that replaced the
+  # per-hull ones, and each is RED on the pre-0351 body for a stated reason.
+  grep -q "combat_fleet_actor is not standing the fleet on its lead" "$SQL" \
+    || fail "harness lacks the CLOSURE fleet-point-IS-the-lead pin (every distance in the block is measured from it; if the engine stood the fleet elsewhere the block would quietly measure a circle the gate does not use)"
+  grep -q "a max() or a lead-only reach would draw a circle claiming reach the fleet does not have" "$SQL" \
+    || fail "harness lacks the CLOSURE fleet-reach-is-the-shortest-gun pin (0351 folds min() over living hulls; a max() or a lead-only reach is the drift this catches)"
+  grep -q "the hulls moved by DIFFERENT deltas on tick 1"         "$SQL" \
+    || fail "harness lacks the CLOSURE rigid-translation assert (one order, one body — the pre-0351 mover stepped lead and escort along different unit vectors, which cannot be equal at any tuning)"
+  grep -q "the OLD per-hull engine would have had it firing or kiting rather than closing" "$SQL" \
+    || fail "harness lacks the CLOSURE old-engine-would-have-closed premise (without it the identical-delta assert discriminates the two bodies on a weaker case than it claims)"
   # 0316 — THE CLOSURE TICK COUNT is now a pinned property of the seeded world, not whatever the run
   # happened to produce. The block runs the engine's own recurrence over THIS encounter's real ring,
   # real weapon range and real frozen move_speeds, requires the answer to be 2 or 3 ticks, requires
@@ -586,7 +596,7 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks the CLOSURE no-teleport assert (a pirate crossing the whole ring in one tick buries the mechanic again)"
   grep -q "the closure recurrence would have no speeds in it" "$SQL" \
     || fail "harness lacks the frozen-move_speed NULL pin (move_speed is nullable, and a NULL would make the tick-count assert vacuous)"
-  grep -q "the closure recurrence assumes the escort out-ranges the pirate" "$SQL" \
+  grep -q "the closure recurrence assumes the FLEET out-ranges the pirate" "$SQL" \
     || fail "harness lacks the recurrence's own range-ordering premise (it applies both CLOSE steps every tick, which is only the real fight while the pirate is the shorter-ranged one)"
   # 0315 — the LEAD properties, in assert-form. The first two are the pre-0315 REDS: on the head a
   # flagless fleet puts NOBODY on the anchor and NOBODY at priority 100. The rest are what stops the
@@ -615,9 +625,17 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "a flagless fleet still opens a fight its lead cannot join" "$SQL" \
     || fail "harness lacks the LEAD is-CLOSING-off-the-anchor assert (the direct 'it can join' evidence, and strictly more than the old form, which only proved the lead fired BECAUSE it stood at distance 0)"
   grep -q "the fleet never fired within 12 ticks of the spawn"    "$SQL" || fail "harness lacks the LEAD bounded joining loop (a fleet that cannot join must fail loudly, not hang)"
-  grep -q "at the WORST bearing the seeded world needs"           "$SQL" || fail "harness lacks the CLOSURE worst-bearing anti-sprawl bound (0338: the approach depends on the bearing to the city as well as the knobs, so the teeth must be a knob-only worst case, not one arbitrary chord)"
-  grep -q "at the WORST bearing the fleet needs"                  "$SQL" || fail "harness lacks the LEAD worst-bearing anti-sprawl bound (0338, same reason)"
-  grep -q "did not come from the hull this block measured as nearest" "$SQL" || fail "harness lacks the LEAD measured-opener assert (0338: which hull is nearest depends on where the city lies, so naming 'an escort' would assert one arrangement of the world)"
+  # ── 0338'S WORST-BEARING PAIR IS RETIRED BY 0351, AND THESE ARE WHAT REPLACE IT ───────────────
+  # 0338 forced both blocks to compute their anti-sprawl bound at the WORST bearing, because the
+  # ESCORT-to-wave chord depended on where the settlement lay. Under 0351 the gap that decides the
+  # fight is the FLEET POINT to the wave, and the fleet's point is the elected lead ON the anchor —
+  # so that gap is the spawn RADIUS at every bearing without exception. The worst case IS the actual
+  # case, and the two-step comparison collapses into ONE bound on the ONE derived tick count. That
+  # is a TIGHTENING (the old pair allowed any fixture chord at or under the worst bearing's count),
+  # so the greps move to the bound that now carries the teeth.
+  grep -q "ticks for the FLEET to reach firing range"            "$SQL" || fail "harness lacks the CLOSURE anti-sprawl bound (a range cut without the matching ring/speed cut must fail here, not in a playtest — and under 0351 it is bounded on the tick count the fight actually runs, because the fleet's gap is the spawn radius at every bearing)"
+  grep -q "the fleet needs % ticks to join its own fight"         "$SQL" || fail "harness lacks the LEAD anti-sprawl bound (same property, same reason)"
+  grep -q "every hull fires together or none does"                "$SQL" || fail "harness lacks the ALL-OR-NONE volley assert (0351 gates every gun on ONE circle about ONE point, so the distinct-firer count on a firing tick is the whole formation; the pre-0351 per-hull gate scores 1 where this requires the full roster, and that is what replaced 0338's measured-opener assert)"
   grep -q "either the election stopped anchoring exactly one hull" "$SQL" || fail "harness lacks the LEAD lead-stands-at-the-spawn-radius pin (the bearing-independent property that replaced the lead-is-furthest ordering)"
   grep -q "the fleet joined its fight on tick % but the engine"   "$SQL" || fail "harness lacks the LEAD predicted-equals-observed joining tick (growing silence must fail here, not pass as 'fires eventually')"
   grep -q "the fleet needs % ticks to join its own fight"         "$SQL" || fail "harness lacks the LEAD joining-tick upper bound (the sprawl must fail here, not in a playtest)"
@@ -627,7 +645,10 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks the LEAD attribution, repointed AGAIN by 0338: the lead-is-strictly-furthest ordering held only while the wave stood at a fixed bearing. It is replaced by the bearing-INDEPENDENT property — the lead stands EXACTLY the spawn radius from the wave — which pins the anchor election and 0336's radius in one line, while the screen itself is proven where it lives, in aggro"
   grep -q "a hull could open the fight from its spawn slot"       "$SQL" || fail "harness lacks the LEAD silent-spawn-tick premise (measured on the escort-to-wave gap, which is the gap that decides who can fire — never the ring)"
   grep -q "salvo(s) on the spawn tick"                            "$SQL" || fail "harness lacks the LEAD silent-opening-tick assert (the property only 0336 makes statable)"
-  grep -q "an opener that is not the near hull"                   "$SQL" || fail "harness lacks the LEAD opener-is-the-nearest-hull assert (0338: the near hull is MEASURED, because the bearing to the city decides whether it is an escort or the lead)"
+  grep -q "combat_fleet_actor is not standing the fleet on the hull 0315 elected" "$SQL" \
+    || fail "harness lacks the LEAD fleet-point-IS-the-elected-lead pin (0351 makes 0315's election load-bearing for the guns, not just for the anchor slot and the aggro screen: the circle the gate uses is centred on that hull)"
+  grep -q "the three hulls moved by DIFFERENT deltas on the spawn tick" "$SQL" \
+    || fail "harness lacks the LEAD rigid-translation assert (0351 decides ONE step at the fleet point; the pre-0351 mover stepped the lead along (wave - anchor) and each escort along (wave - its own ring slot), so three different unit vectors — this is the line the old engine cannot pass at any tuning or bearing)"
   grep -q "the measured extent would not be this formation"       "$SQL" || fail "harness lacks the LEAD positioned-living-player non-vacuity guard"
   grep -q "the derivation overrode a real command ship"           "$SQL" || fail "harness lacks the flagged-fleet control assert (the fallback is never an override)"
   grep -qF "flagged ship(s) were provisioned into the flagless fleet" "$SQL" || fail "harness lacks the no-command-ship precondition assert (owned, never inherited)"
@@ -774,6 +795,22 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "inside the wave own reach of"                          "$SQL" || fail "harness lacks the RANGEINVARIANT measured-on-a-real-wave assert (a knob inequality that stopped describing the geometry would pass the arithmetic and fail here)"
   grep -q "there is no wave to measure"                           "$SQL" || fail "harness lacks the RANGEINVARIANT empty-wave vacuity guard"
   grep -q "it stops in the kite band at"                          "$SQL" || fail "harness lacks the RANGEINVARIANT kite-band assert (spawning outside its own reach is not enough if the closing enemy STOPS beyond the player shortest gun)"
+  # ── FLEETKITE (0351) — MOVED HERE FROM combat-spatial-proof.sql's COMBATSPATIAL_PASS_KITE ─────
+  # It could not stay there: under one actor the kite arm needs wave_reach < gap <= fleet_reach while
+  # a LANDED pirate hit (COMBATSPATIAL_PASS_SCREEN, which 0351 explicitly preserves) needs
+  # gap <= wave_reach. Disjoint. The old fixture got both only because two hulls with different guns
+  # were in two different arms at the same instant — exactly what 0351 deleted. combat-spatial-proof
+  # names DZCOMBAT_PASS_FLEETKITE in three places (its file header, its HOLD block header and beside
+  # its own MARKERS); deleting this block would make all three pointers lies.
+  grep -q "DZCOMBAT_PASS_FLEETKITE ok"                            "$SQL" || fail "harness lacks the FLEETKITE block itself (moved here from combat-spatial-proof, which points at it by name in three places)"
+  grep -q "the KITE arm needs wave_reach < gap <= fleet_reach"    "$SQL" || fail "harness lacks the FLEETKITE band premise (outside it the mover is CLOSING or HOLDING and nothing below is a retreat)"
+  grep -q "there is none"                                         "$SQL" || fail "harness lacks the FLEETKITE ask-the-engine arm assert (the arm is taken from combat_unit_decide_move ITSELF at the fleet's arguments, never from a copy of its case ladder in this harness)"
+  grep -q "a formation that backs off along two separate bearings" "$SQL" || fail "harness lacks the FLEETKITE rigid-retreat assert (checked on EVERY retreating tick; the pre-0351 mover retreated each hull along its OWN bearing capped by its OWN edge, so two different directions AND two different caps)"
+  grep -q "the retreat is not being decided at the fleet point"   "$SQL" || fail "harness lacks the FLEETKITE step-is-least(speed, reach - gap) assert (the mover's own kite expression evaluated at fleet arguments)"
+  grep -q "a fleet that backs out of its own reach can never fire again" "$SQL" || fail "harness lacks the FLEETKITE never-cross-your-own-edge assert (checked after every tick, not just at the end)"
+  grep -q "the pre-0351 mover would have backed the lead out to THAT edge" "$SQL" || fail "harness lacks the FLEETKITE resting-place discriminator (the fixture gives the fleet's POINT a strictly LONGER gun than the fleet's reach, so 'it stopped on the fleet's edge' and 'the lead stopped on its own' are different numbers)"
+  grep -q "is indistinguishable from"                             "$SQL" || fail "harness lacks the FLEETKITE asymmetry premise (without a strictly longer gun on the point hull the resting-place assert would be satisfied by the pre-0351 mover)"
+  grep -q "with one hull there is no rigid translation to observe" "$SQL" || fail "harness lacks the FLEETKITE two-hull fixture pin (a lone hull cannot witness a rigid translation, which is half of what this block proves)"
   # VOLLEY — a kill does not disarm the rest of the volley.
   grep -q "the target was resolved ONCE above the per-weapon loop" "$SQL" || fail "harness lacks the VOLLEY distinct-targets assert (the pre-0336 red: three guns, one target)"
   grep -q "landed hit(s) from a three-gun volley"                 "$SQL" || fail "harness lacks the VOLLEY three-landed-hits assert"
@@ -822,10 +859,36 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "they must be CONSECUTIVE"                              "$SQL" || fail "harness lacks the ORDERSTABLE consecutive-ticks premise"
   grep -q "an ordering over NULLs is vacuous"                     "$SQL" || fail "harness lacks the ORDERSTABLE NULL-unit_id pin"
   grep -q "name a unit that is not in this encounter"             "$SQL" || fail "harness lacks the ORDERSTABLE ids-are-really-combat_units-ids pin"
-  # SHORTGUN — a longer gun no longer disables a shorter one.
-  grep -q "so it parks at the long gun edge and the short gun is silently disabled" "$SQL" || fail "harness lacks the SHORTGUN both-guns-fire assert (the pre-0336 red: my_range was max(range) for BOTH the close decision and the kite cap)"
-  grep -q "the kite cap is still the longest gun"                 "$SQL" || fail "harness lacks the SHORTGUN settled-distance assert (the hull must come to rest inside its SHORTEST gun)"
-  grep -q "there was never a tick on which only the LONGER gun could reach" "$SQL" || fail "harness lacks the SHORTGUN band vacuity guard (the fixture must pass through the band the head parks in, or a green run says nothing)"
+  # ── SHORTGUN — 0351 TURNED A HULL PROPERTY INTO A FLEET PROPERTY, AND ONE PIN IS GONE FOR GOOD ─
+  # WHAT IT PROVED: "a hull settles inside its own SHORTEST gun" (0336's defect 7 — the mover took
+  # max(range) for both the close decision and the kite cap while the gate was per weapon, so an
+  # Mk-II beside an autocannon parked the ship at 6 and the autocannon never fired).
+  # UNDER 0351 A HULL HAS NO ENGAGEMENT RANGE OF ITS OWN, so that property does not exist. It is now
+  # a FLEET property — the circle is the shortest gun ANY living hull carries, the formation rests on
+  # it, every gun fires there — and the same collapse that caused defect 7 is now DELIBERATE and
+  # SYMMETRIC: gate and mover read the one v_fleet_reach, so there are no longer two aggregates to
+  # keep in step.
+  # ⛔ THE OLD NON-VACUITY PIN IS NOT PRESERVED, AND MUST NOT BE RE-ADDED. It required a tick on
+  # which ONLY the longer gun could reach — a logged Mk-II salvo with no autocannon salvo on the same
+  # tick. Both guns are now gated on the SAME radius, so that tick cannot exist on a correct body:
+  # asking for it back is asking for defect 7 back. It is replaced by the two greps below, which say
+  # the same thing about the new engine and are RED on the old one.
+  grep -q "the long gun firing there is the per-hull gate this slice deleted" "$SQL" \
+    || fail "harness lacks the SHORTGUN band-is-SILENT assert (across every tick whose PRE-MOVE fleet gap lay in (fleet reach, Mk-II range] — the band in which the old per-hull gate fired the Mk-II ALONE — the fleet must fire NOTHING; this is what replaced the old 'a tick on which only the LONGER gun could reach' pin, which is structurally unsatisfiable under one circle)"
+  grep -q "the approach never passed through the band"            "$SQL" \
+    || fail "harness lacks the SHORTGUN band non-vacuity guard (the fixture must actually enter that band, or 'the fleet fired nothing in it' is a statement about the empty set)"
+  grep -q "a reach that is not the shortest gun on the field"     "$SQL" \
+    || fail "harness lacks the SHORTGUN fleet-reach-IS-the-lead's-short-gun assert (the whole claim of the block, restated for one actor)"
+  grep -q "the fleet''s min() fold could then be satisfied by the ESCORT" "$SQL" \
+    || fail "harness lacks the SHORTGUN cap-is-not-the-unarmed-hull pin (combat_player_fallback_weapon_range is SEEDED at 5, tying the autocannon, so the block OWNS it above the Mk-II — otherwise 'the lead's short gun caps the fleet' is unfalsifiable on a tie, and the other direction of the rule lives in combat-fallback-weapon-proof)"
+  grep -q "combat_player_fallback_weapon_range',  '9'"            "$SQL" \
+    || fail "harness lost SHORTGUN's OWNED fallback range (seeded at 5 it ties the autocannon and the min() fold becomes ambiguous between the two hulls — the proofs-never-assert-ambient-defaults law)"
+  grep -q "the mover and the gate are reading different radii again" "$SQL" \
+    || fail "harness lacks the SHORTGUN settle-on-the-circle assert (the formation must come to rest EXACTLY on the fleet's reach, which is the general form of 0336's defect 7)"
+  grep -q "the three frozen power shares that fired sum to"       "$SQL" \
+    || fail "harness lacks the SHORTGUN exact-damage identity (a longer gun no longer buys STANDOFF, so it must be shown still buying DAMAGE: the wave's hp drop equals the sum of the frozen 0331 shares, which is unsatisfiable if the Mk-II logged a salvo and dealt nothing)"
+  grep -q "the better gun must carry the larger share"            "$SQL" \
+    || fail "harness lacks the SHORTGUN larger-share premise (without it the damage identity says nothing about the Mk-II being the better gun)"
   grep -q "it never had to close"                                 "$SQL" || fail "harness lacks the SHORTGUN starts-outside-both-ranges premise"
   grep -q "they must differ, with one strictly SHORTER"           "$SQL" || fail "harness lacks the SHORTGUN mixed-range fixture pin"
   grep -q "a ship that cannot move can never settle anywhere"     "$SQL" || fail "harness lacks the SHORTGUN move_speed vacuity guard"
@@ -845,7 +908,7 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks SHORTGUN's step-under-the-band premise (a band guard that holds only for some starting gaps holds by arithmetic luck, which is the zero-margin disease in another form)"
   grep -q "is the defect surviving, not the fix landing"          "$SQL" \
     || fail "harness lacks SHORTGUN's settle MARGIN against the LONG gun (the head parks AT that edge, so a full band width inside it is the defect's own signature and the number must be printed)"
-  grep -q "the fitted hull seeded no combat unit"                 "$SQL" \
+  grep -q "seeded no combat unit — the whole measurement is about those two ships" "$SQL" \
     || fail "harness lacks SHORTGUN's fitted-hull scoping guard (the unscoped SELECT INTO would silently take the ESCORT's ranges once the fleet is two ships)"
   # RETREATCLEAR — every terminal arm consumes fleets.retreat_target_*.
   grep -q "the DEATH arm left the retreat destination behind"     "$SQL" || fail "harness lacks the RETREATCLEAR death-arm assert (the pre-0336 red: three of the four arms leaked the recording into the next sortie)"
