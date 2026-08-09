@@ -303,10 +303,24 @@ update public.game_config set value='true'::jsonb where key='mainship_send_enabl
 -- asserts the fire-every-tick world, so it OWNS that precondition in-txn, zeroed BEFORE anything
 -- snapshots a cooldown into weapons_json. The cooldown property itself is proven where it is
 -- owned: danger-combat-proof's RSFEEL block.
+-- ── 0346: THIS SUITE OWNS THE INGRESS DURATION, IT DOES NOT INHERIT IT ──────────────────────────
+-- 0346 makes an enemy body spawn AT its zone's CITY and travel in over combat_enemy_ingress_ticks
+-- ticks, arriving on the same engagement boundary it used to be PLACED on. 0 means "no ingress":
+-- the spawn takes its degenerate arm and places the body on the boundary directly, byte-identical
+-- to the pre-0346 engine.
+--
+-- WHY HERE AND NOT ONLY IN pg_temp.pressure_site. The shared staging leaf owns this knob, and every
+-- body this file STAGES comes through it — but STOP-LIVESCOPE drives a top-level
+-- process_combat_ticks() before any staging call, so that tick would run with the ingress live.
+-- Nothing it asserts can move under ingress (it reads 'escaped', a return leg and a reward payload —
+-- none of which is a geometry or a damage property), so this file was safe BY LUCK rather than by
+-- construction. Owning the knob in the preamble turns that into a guarantee, and stops a block added
+-- near that tick later from silently inheriting a world nobody chose.
 do $$
 begin
   perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
   perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_enemy_ingress_ticks', '0'::jsonb);
 end $$;
 
 -- Fund the fixture wallets BEFORE any additional commission. commission_first_main_ship is free, but

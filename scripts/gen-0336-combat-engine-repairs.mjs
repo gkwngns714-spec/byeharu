@@ -85,9 +85,18 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // file takes from the 0299 head can overlap it. 0339 folds the two spawn loops — which THIS file
   // wrote twice — into one leaf, moving no radius, no phase and no value; the slices below are
   // unaffected and this file's --check still passes byte-for-byte against the migration on disk.
+  // 0346 IS EXEMPTED BY NAME, on the same structural footing as 0339: all three of its tick hunks
+  // land in THIS MIGRATION'S OWN EMITTED TEXT — the v_ring_radius / v_spawn_slot declarations of
+  // hunk 1, the v_ring_radius one-read line, and the per-unit combat_unit_decide_move call whose
+  // `my_min_range` argument this file introduced. None of that is 0299 text, so no slice this file
+  // takes from the 0299 head can overlap it. 0346 moves an enemy body's ORIGIN to the zone's own
+  // city and gives it a bounded closing speed while it is still outside the fight; it moves no
+  // radius that this file set — 0336's (measured extent + range + 1) survives verbatim as 0346's
+  // clearance FLOOR — and no phase, no knob of this file's, no guard and no branch. The slices below
+  // are unaffected and this file's --check still passes byte-for-byte against the migration on disk.
   guard('process_combat_ticks', '20260618000299',
     new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000337', '20260618000338',
-             '20260618000339']));
+             '20260618000339', '20260618000346']));
   guard('combat_create_group_encounter', '20260618000301',
     new Set(['20260618000308', '20260618000315', '20260618000316', '20260618000331']));
 }

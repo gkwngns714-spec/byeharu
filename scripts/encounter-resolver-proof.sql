@@ -193,6 +193,16 @@ begin
   -- damage equality below becomes a +/-50% roll. A proof must state the precondition it owns
   -- rather than rely on a row's ABSENCE.
   perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);      -- exact numbers (0314 per-hit roll)
+  -- ── 0346: THIS BLOCK OWNS THE INGRESS DURATION, IT DOES NOT INHERIT IT ────────────────────────
+  -- 0346 makes an enemy body spawn AT its zone's city and travel in over combat_enemy_ingress_ticks
+  -- ticks, arriving on the same engagement boundary it used to be PLACED on. Every geometry,
+  -- closing-tick and first-salvo property in this file is about a body that is already at that
+  -- boundary, so this suite states the precondition it depends on instead of inheriting whatever
+  -- the seed happens to carry (the proofs-never-assert-ambient-defaults law). 0 means "no ingress":
+  -- the spawn takes its degenerate arm and places the body on the boundary directly, which is
+  -- byte-identical to the pre-0346 engine. A block that wants to test the INGRESS itself must set
+  -- this to a positive value for itself and say so.
+  perform public.set_game_config('combat_enemy_ingress_ticks', '0'::jsonb);
   -- 0314: the tick arms REAL weapon cooldowns and now() is txn-frozen — a positive cooldown means
   -- fire-once-per-proof, which would stall every wave-clear re-tick below (FLAGOFF, RESOLVED,
   -- MULTIWAVE). This harness asserts the fire-every-tick world, so it OWNS that precondition

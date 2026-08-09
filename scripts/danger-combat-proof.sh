@@ -198,6 +198,42 @@ if [ "$MODE" = "selftest" ]; then
       node "$REPO_ROOT/scripts/$gen.mjs" --check \
         || fail "$gen --check FAILED (its own message is above): the migration no longer matches the slices it takes from the deployed heads. Do NOT re-generate blindly — read the diff first; a slice that no longer matches may mean the head moved under you."
     done
+
+    # ── REPLACE-REWRITER SHAPE GATE (0346) ────────────────────────────────────────────────────────
+    # A generator proves a migration matches the slices it TAKES. Nothing proved that a migration's
+    # surgery block produces a body Postgres will accept at every point it CREATES one. 0346 shipped
+    # green through every check above and went red on all 22 disposable legs at the apply stage:
+    #
+    #     ERROR: "v_extent" is not a known variable (SQLSTATE 42601)
+    #
+    # Its FINAL text was correct. It executed once per HUNK, and the hunk that deleted the v_extent
+    # declaration ran before the hunk that deleted its uses, so an intermediate CREATE was invalid.
+    # An audit that inspects the end state cannot see that; this one checks the shape that makes it
+    # possible. Structural mode needs no database and no credentials, which is why it can live here.
+    #
+    # SCOPED FORWARD, DELIBERATELY. 0338/0343/0344 also execute per hunk and are already deployed and
+    # correct — none of them ever splits a declaration from its uses. Gating them retroactively would
+    # make this permanently red, and a permanently red check stops being read, which is worse than no
+    # check. It applies from 0346 on, where the class first became reachable.
+    for mig in "$REPO_ROOT"/supabase/migrations/*.sql; do
+      [ -f "$mig" ] || continue
+      v="$(basename "$mig" | cut -c1-14)"
+      case "$v" in (*[!0-9]*|'') continue ;; esac
+      [ "$v" -ge 20260618000346 ] || continue
+      grep -q 'do \$rewrite\$' "$mig" || continue
+      node "$REPO_ROOT/scripts/check-surgery-identifiers.mjs" "$mig" \
+        || fail "check-surgery-identifiers FAILED on $(basename "$mig") (its own message is above): its surgery block would emit a plpgsql body Postgres rejects, or it executes per hunk in a way that creates an invalid INTERMEDIATE body. That is an APPLY-TIME failure — it takes the whole migration chain down, not just this migration."
+    done
+
+    # ── INGRESS PRECONDITION GATE (0346) ──────────────────────────────────────────────────────────
+    # 0346 gives an enemy body an INGRESS phase, so every suite owns combat_enemy_ingress_ticks = 0
+    # in-txn and the engine stays byte-identical for its pins. That repoint was made once and STILL
+    # missed a suite: team-command's knob write landed inside pg_temp.wipe_tick, a helper TEAMHUNT
+    # never calls, and CI found it as "player_damage is distinct from sum(attack_snapshot)".
+    # A precondition a block never executes is not a precondition — and that is a STRUCTURAL fact, so
+    # it is checkable here rather than one CI round at a time.
+    node "$REPO_ROOT/scripts/check-ingress-preconditions.mjs" --dir "$REPO_ROOT/scripts" \
+      || fail "check-ingress-preconditions FAILED (its own message is above): a suite that puts enemy bodies on a field does not own the ingress duration before its first spawn, so its bodies arrive at the zone's city and every pin reading damage or geometry on the tick a body appears is measuring a fleet that could not reach it."
   else
     fail "node not found — the generated-migration parity gate cannot run, and a hand-edited migration would reach production unchecked"
   fi

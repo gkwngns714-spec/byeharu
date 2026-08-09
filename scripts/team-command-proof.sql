@@ -1153,6 +1153,24 @@ begin
   -- damage equality below becomes a +/-50% roll. A proof must state the precondition it owns
   -- rather than rely on a row's ABSENCE.
   perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);
+  -- ── 0346: THIS SUITE OWNS THE INGRESS DURATION, IT DOES NOT INHERIT IT ────────────────────────
+  -- 0346 makes an enemy body spawn AT its zone's CITY and travel in over combat_enemy_ingress_ticks
+  -- ticks, arriving on the same engagement boundary it used to be PLACED on. Every exact-damage,
+  -- first-salvo and aggregation pin in this file is about a body that is ALREADY at that boundary,
+  -- so this suite states the precondition it depends on rather than inheriting whatever the seed
+  -- carries (the proofs-never-assert-ambient-defaults law). 0 means "no ingress": the spawn takes
+  -- its degenerate arm and places the body on the boundary directly, byte-identical to the pre-0346
+  -- engine. A block that wants to test the INGRESS must set this positive for itself and say so.
+  --
+  -- IT LIVES HERE, IN THE PREAMBLE, AND THAT PLACEMENT IS THE WHOLE FIX. 0346's first attempt put
+  -- this line inside pg_temp.wipe_tick — a HELPER, which runs only when it is CALLED, and which
+  -- TEAMHUNT never calls. So TEAMHUNT drove process_combat_ticks() with the ingress live, its body
+  -- spawned at the city instead of on the boundary, no member could reach it, player_damage was 0,
+  -- and the tick-1 aggregation pin failed with "player_damage is distinct from
+  -- sum(attack_snapshot)". Nine sibling suites took this same line in their determinism preamble
+  -- and were unaffected; this file was the one where the anchor landed in a function body.
+  -- A precondition a block never executes is not a precondition.
+  perform public.set_game_config('combat_enemy_ingress_ticks', '0'::jsonb);
   -- UNION at the 0313/0314 merge. BOTH preconditions below are load-bearing and neither replaces the
   -- other: 0314 zeroes the weapon cooldowns (a TIME precondition — without it every multi-tick fire
   -- sequence stalls) and 0313 borrows the formation ring (a GEOMETRY precondition — without it the

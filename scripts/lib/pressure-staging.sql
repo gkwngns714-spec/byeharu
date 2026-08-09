@@ -44,6 +44,16 @@ begin
   if v_loc is null then
     raise exception 'pressure_site: encounter % resolves no site — an unauthored fight hosts no reinforcements at all, so every arrival a block asked for would be SILENTLY suppressed and the block would pass over an empty field', p_enc;
   end if;
+  -- ── 0346: THE INGRESS DURATION IS OWNED HERE TOO, FOR THE SAME REASON THE CAP IS ───────────────
+  -- 0346 makes a body spawn AT its zone's city and travel in over combat_enemy_ingress_ticks ticks,
+  -- arriving on the same engagement boundary it used to be PLACED on. A block that asks for a FIELD
+  -- wants bodies STANDING, not bodies in transit — every geometry, volley and ordering property
+  -- downstream is about a field that stands together, which is exactly why this helper exists. So
+  -- the duration is owned here beside the cadence and the cap rather than inherited from the seed.
+  -- 0 means "no ingress": the spawn takes its degenerate arm and places the body on the boundary
+  -- directly, byte-identical to the pre-0346 engine. A block that wants to test the INGRESS itself
+  -- must set this to a positive value AFTER staging its field, and say so.
+  perform public.set_game_config('combat_enemy_ingress_ticks', '0'::jsonb);
   insert into public.location_pressure (location_id, reinforcement_seconds, concurrent_cap, note)
   values (v_loc, p_cadence, p_cap, 'proof fixture: cadence + cap OWNED by the block under test')
   on conflict (location_id) do update
