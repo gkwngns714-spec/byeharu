@@ -8105,10 +8105,21 @@ end $$;
 -- both guns — the right intent, the wrong lever. 0336 does not read the ring when it places a wave;
 -- it measures `max(distance from the anchor to each LIVING player unit)`. This fixture commissioned
 -- exactly ONE hull, a lone hull IS its own lead so it stands ON the anchor, the MEASURED extent was
--- 0, THE RING WAS INERT, and the wave landed at 0 + 0.1 + 1 = 1.1 — inside both guns, with nothing
--- to close. The fix is not to predict differently but to MAKE THE EXTENT REAL: a second hull, which
--- is what a ring means. The wave then stands at 8 + 0.1 + 1 = 9.1, beyond the Mk-II with real
--- margin, asserted below.
+-- 0, THE RING WAS INERT, and the wave landed just past its own reach — inside both guns, with
+-- nothing to close. The fix is not to predict differently but to MAKE THE EXTENT REAL: a second
+-- hull, which is what a ring means. The wave then stands at (8 + its own reach + 1), beyond the
+-- Mk-II with real margin, DERIVED and asserted below.
+--
+-- ── AND THE WAVE'S REACH IS DERIVED, NOT ASSUMED — an earlier draft of this header got it wrong ──
+-- This block owns enemy_synthetic_range_base at 0.1 and used to state the spawn radius as the flat
+-- arithmetic "8 + 0.1 + 1 = 9.1". CI's settle failure disproved that: the observed resting place is
+-- only reachable with a wave whose reach is at or above 4.5, so 0.1 is NOT what this wave ends up
+-- carrying — a site's authored enemy content, not that knob alone, decides it. Every number this
+-- block stakes anything on is therefore read from the wave's OWN FROZEN weapons_json (v_ren) and
+-- cross-checked against the opening gap, which is what the spawn-radius pin below already does. The
+-- knob write is kept because it is harmless where no authored value overrides it, but nothing here
+-- may treat it as the answer, and the reach is printed in the closing notice so the next reader sees
+-- the real number instead of inheriting a stale one.
 --
 -- ── FIRING CADENCE INSIDE A PROOF, STATED PRECISELY ──────────────────────────────────────────────
 -- CORRECTED, same as CLOSURE's: "every weapon fires exactly ONCE inside a proof" is FALSE as a
@@ -8152,6 +8163,7 @@ declare
   v_hit_tick int := null; v_gap_hit double precision := null;
   v_hp0 double precision; v_hp1 double precision; v_shield double precision;
   v_exp_ticks int; v_drop double precision;
+  v_rest_arm text;   -- 0351: the arm the ENGINE reports for the settled fleet
 begin
   select coalesce(public.cfg_num('spatial_formation_ring_radius'), 30)          into k_ring;
   select coalesce(public.cfg_num('enemy_hp_base'), 14)                          into k_ehp;
@@ -8480,12 +8492,35 @@ begin
       v_drop, v_p_short + v_p_long + v_p_esc, v_p_short, v_p_long, v_p_esc;
   end if;
 
-  -- ── ★ AND THE FORMATION COMES TO REST EXACTLY ON THE CIRCLE ────────────────────────────────────
-  -- A fleet that out-ranges its target takes combat_unit_decide_move's KITE arm, which retreats to
-  -- the edge of its own engagement range and therefore lands on that radius EXACTLY, by
-  -- construction. Comparing a computed sqrt against that exact expected value is the same shape as
-  -- CLOSURE's step pin, not a knife edge — and because gate and mover now read the SAME v_fleet_reach
-  -- (the whole point of this repoint), the resting place IS the firing edge.
+  -- ── ★ AND THE FORMATION COMES TO REST INSIDE ITS OWN CIRCLE, WITHIN ONE STEP OF THE EDGE ───────
+  -- ██ CORRECTED AT 0351. THE EARLIER FORM DEMANDED AN EXACTNESS THE ENGINE NEVER PROMISED. ██
+  -- It asserted `settle = fleet reach` on the reasoning that a fleet out-ranging its target takes the
+  -- KITE arm, which steps least(speed, my_range - dist) outward and therefore lands on the radius
+  -- EXACTLY. That is true — WHEN the fleet kites. CI reported:
+  --     SHORTGUN FAIL: the formation settled 4.50850000000011 from its target but the fleet's own
+  --     circle is 5 — the mover and the gate are reading different radii again
+  -- and the engine was behaving perfectly. Reproduced offline against combat_unit_decide_move sliced
+  -- verbatim from 0234, driven with FLEET arguments:
+  --   · with a wave reach BELOW the fleet's, the formation kites and settles at exactly 5.0000000000
+  --     — the old assert's world;
+  --   · 4.5085 is reproducible ONLY with the fleet in HOLD at rest, which needs the wave's reach to
+  --     be at or above the settle distance. The shortfall, 0.4915, is 81% of ONE fleet step.
+  -- WHICH ARM THE FLEET ENDS IN IS NOT DECIDED BY THE RADII ALONE. It depends on where the LAST
+  -- DISCRETE CLOSE STEP happens to land relative to the wave's reach: land outside it and the fleet
+  -- kites out to its own edge; land inside it and the fleet HOLDS right there, up to one step short.
+  -- Asserting equality made this block's green depend on that coincidence — which is the same
+  -- "arithmetic luck" its own step-under-the-band premise, thirty lines above, exists to forbid.
+  --
+  -- SO THE PROPERTY IS STATED AS THE INVARIANT IT ALWAYS WAS, AND IT IS STILL EXACT — a bound
+  -- derived from this fixture's own measured step, never a tolerance chosen to make a number fit:
+  --   (a) the formation rests INSIDE its own circle          settle <= fleet reach
+  --   (b) and within ONE STEP of that circle's edge          settle >  fleet reach - fleet speed
+  --   (c) and the arm it rests in explains the distance      kite => exactly the edge;
+  --                                                          hold => the wave's reach covers it
+  -- (b) is what keeps this sharp: a mover reading the Mk-II's 6 would rest in (6 - step, 6] and fail
+  -- (a); a mover reading some shorter radius r would rest in (r - step, r] and fail (b). Only a mover
+  -- reading the same 5 the gate reads can satisfy both. 0336's defect 7 in its general form is still
+  -- exactly what this catches.
   for i in 1..6 loop
     perform pg_temp.ae_tick(v_enc);
   end loop;
@@ -8494,9 +8529,41 @@ begin
   if v_dist is null then
     raise exception 'SHORTGUN FAIL: the settled fleet-to-wave distance is NULL — the settle assert would be vacuous';
   end if;
-  if abs(v_dist - v_fl_reach) > 1e-6 then
-    raise exception 'SHORTGUN FAIL: the formation settled % from its target but the fleet''s own circle is % — the mover and the gate are reading different radii again, which is 0336''s defect 7 in its general form (the head parked at the LONGEST gun, %, and disabled the shortest, %)',
-      v_dist, v_fl_reach, v_long, v_short;
+  -- ASK THE ENGINE which arm it is resting in, at the fleet's own arguments — never a copy of the
+  -- case ladder. This is what makes (c) a statement rather than an assumption.
+  select m.action into v_rest_arm
+    from public.combat_fleet_actor(v_enc) a, public.combat_units f,
+         lateral public.combat_unit_decide_move(a.x, a.y, coalesce(a.reach, 0), coalesce(a.speed, 0),
+                                                f.pos_x, f.pos_y,
+                                                coalesce((select max((w->>'range')::double precision)
+                                                            from jsonb_array_elements(f.weapons_json) w), 0)) m
+   where f.id = v_u_en;
+  if v_rest_arm is null then
+    raise exception 'SHORTGUN FAIL: the engine mover returned no arm for the settled fleet — a NULL arm would make the settle asserts below vacuous';
+  end if;
+  -- (a) INSIDE ITS OWN CIRCLE. A formation resting outside the radius its gate fires on can never
+  --     shoot, which is 0336's defect 7 arriving from the other side.
+  if v_dist > v_fl_reach + 1e-6 then
+    raise exception 'SHORTGUN FAIL: the formation settled % from its target, OUTSIDE the fleet''s own % circle (its guns reach % and %) — the mover and the gate are reading different radii, which is 0336''s defect 7 in its general form: the head parked at the LONGEST gun and disabled the shortest',
+      v_dist, v_fl_reach, v_short, v_long;
+  end if;
+  -- (b) AND WITHIN ONE STEP OF THE EDGE. This is the half that keeps (a) from being satisfiable by a
+  --     fleet that simply closed to contact, and it is derived from the fixture's own frozen speed.
+  if v_dist <= v_fl_reach - v_fl_speed - 1e-6 then
+    raise exception 'SHORTGUN FAIL: the formation settled % from its target — more than one fleet step (%) inside its own % circle. A mover reading a SHORTER radius than the gate rests in (r - step, r], so this is that disagreement: the fleet has walked past its own firing edge and is closer than any radius the gate would have stopped it at',
+      v_dist, v_fl_speed, v_fl_reach;
+  end if;
+  -- (c) AND THE ARM EXPLAINS THE DISTANCE.
+  if v_rest_arm = 'kite' and abs(v_dist - v_fl_reach) > 1e-6 then
+    raise exception 'SHORTGUN FAIL: the fleet rests in the KITE arm but settled % rather than exactly its own % circle — the kite step is least(speed, my_range - dist), so a kiting fleet lands ON its radius by construction; a different resting place means the mover was handed a radius other than the one combat_fleet_actor reports',
+      v_dist, v_fl_reach;
+  end if;
+  if v_rest_arm = 'hold' and v_dist > v_ren + 1e-6 then
+    raise exception 'SHORTGUN FAIL: the fleet rests in the HOLD arm at % but the wave only reaches % — HOLD means BOTH can reach, so at this distance the mover should have kited out to the fleet''s own % edge instead of stopping here',
+      v_dist, v_ren, v_fl_reach;
+  end if;
+  if v_rest_arm not in ('kite', 'hold') then
+    raise exception 'SHORTGUN FAIL: the fleet is still in the ''%'' arm after the settle window (% from its target, circle %, step %) — it has not come to rest at all, so nothing below is a settled position', v_rest_arm, v_dist, v_fl_reach, v_fl_speed;
   end if;
   -- ── THE SECOND THRESHOLD, WITH ITS MARGIN PRINTED — AND IT IS THE OLD DEFECT'S OWN SIGNATURE ────
   -- The head parks AT the long gun's edge, so a resting place that is not a whole band inside it is

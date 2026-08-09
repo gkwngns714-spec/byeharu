@@ -920,8 +920,22 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks the SHORTGUN cap-is-not-the-unarmed-hull pin (combat_player_fallback_weapon_range is SEEDED at 5, tying the autocannon, so the block OWNS it above the Mk-II — otherwise 'the lead's short gun caps the fleet' is unfalsifiable on a tie, and the other direction of the rule lives in combat-fallback-weapon-proof)"
   grep -q "combat_player_fallback_weapon_range',  '9'"            "$SQL" \
     || fail "harness lost SHORTGUN's OWNED fallback range (seeded at 5 it ties the autocannon and the min() fold becomes ambiguous between the two hulls — the proofs-never-assert-ambient-defaults law)"
-  grep -q "the mover and the gate are reading different radii again" "$SQL" \
-    || fail "harness lacks the SHORTGUN settle-on-the-circle assert (the formation must come to rest EXACTLY on the fleet's reach, which is the general form of 0336's defect 7)"
+  # ── SHORTGUN'S SETTLE, RESTATED AS AN INVARIANT AT 0351 — AND THIS GUARD HAD GONE VACUOUS ──────
+  # It used to grep "…reading different radii again", the text of the old EQUALITY assert. That
+  # assert was wrong (a fleet whose last discrete close step lands inside the wave's reach HOLDS
+  # there, up to one step short of its own edge — reproduced offline; CI saw 4.5085 against a circle
+  # of 5, which is 81% of one step). When the assert was corrected, THE GREP KEPT PASSING — because
+  # the old sentence survives above as a quoted CI error inside a COMMENT. That is the 0222 vacuity
+  # class exactly: a probe whose target string exists only in prose. So these greps now name the
+  # three assertions themselves, and each is worded so it cannot be satisfied by a comment quoting a
+  # failure. The property is unchanged and still exact: rest INSIDE the circle, WITHIN ONE STEP of
+  # its edge, and in an arm that explains the distance.
+  grep -q "OUTSIDE the fleet''s own % circle"                     "$SQL" \
+    || fail "harness lacks the SHORTGUN rests-inside-its-own-circle assert (a formation resting outside the radius its gate fires on can never shoot — 0336's defect 7 from the other side)"
+  grep -q "more than one fleet step"                              "$SQL" \
+    || fail "harness lacks the SHORTGUN within-one-step-of-the-edge assert — the half that keeps the bound sharp: a mover reading a SHORTER radius than the gate rests in (r - step, r] and must fail here, so without it 'inside the circle' would be satisfiable by a fleet that simply closed to contact"
+  grep -q "the kite step is least(speed, my_range - dist)"         "$SQL" \
+    || fail "harness lacks the SHORTGUN arm-explains-the-distance assert (a KITING fleet lands ON its radius by construction, so only a HOLD may rest short of it — and then only because the wave's own reach covers that distance)"
   grep -q "the three frozen power shares that fired sum to"       "$SQL" \
     || fail "harness lacks the SHORTGUN exact-damage identity (a longer gun no longer buys STANDOFF, so it must be shown still buying DAMAGE: the wave's hp drop equals the sum of the frozen 0331 shares, which is unsatisfiable if the Mk-II logged a salvo and dealt nothing)"
   grep -q "the better gun must carry the larger share"            "$SQL" \
