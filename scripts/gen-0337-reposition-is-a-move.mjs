@@ -94,7 +94,19 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // outside the fight; it touches no reposition arm, no retreat arm and no anchor write.
   guard('process_combat_ticks', '20260618000299',
     new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000336',
-             '20260618000338', '20260618000339', '20260618000346']));
+  // 0351 JOINS THE EXEMPTION — by name, never by widening the window. It makes THE FLEET FIRE AS ONE:
+  // the player side acquires, measures and fires from ONE fleet point (its 0315-elected lead) against
+  // ONE fleet reach (its shortest gun), so the one circle drawn on the map IS the set the gate allows.
+  // Four of its six hunks land in text 0336 CREATED — both combat_acquire_target call sites and the
+  // my_min_range mover argument, none of which exists in the 0299 head — so those are structurally
+  // disjoint. THE OTHER TWO ARE NOT, AND THAT IS STATED RATHER THAN GLOSSED: hunk [1] extends the
+  // declare block beside v_target_dist/v_move_action, and hunk [6] rewrites the fire-gate line
+  // `if v_w_range is not null and v_target_dist <= v_w_range` — 0299 text that this file also slices
+  // against. 0351 applies AFTER every migration named above, so no text emitted here changes and every
+  // committed slice still matches its 0299 source; but any future re-point of this slice must account
+  // for the deployed gate now carrying a side-dependent radius. Naming it keeps this gate live for
+  // 0352 and after.
+             '20260618000338', '20260618000339', '20260618000346', '20260618000351']));
   guard('command_ship_group_go', '20260618000330', new Set(['20260618000339']));
 }
 

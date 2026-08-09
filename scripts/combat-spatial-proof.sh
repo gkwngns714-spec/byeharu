@@ -35,7 +35,11 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/combat-spatial-proof.sql"
 
 # the property PASS markers and the final PASS line this proof must exercise.
-MARKERS="COMBATSPATIAL_PASS_SPAWN COMBATSPATIAL_PASS_ENEMY COMBATSPATIAL_PASS_HOLD COMBATSPATIAL_PASS_KITE COMBATSPATIAL_PASS_CLOSE COMBATSPATIAL_PASS_FIRE COMBATSPATIAL_PASS_DAMAGE COMBATSPATIAL_PASS_SCREEN"
+# 0351: COMBATSPATIAL_PASS_KITE was REMOVED, not lost. A fleet has one reach, so the kite arm and a
+# landed pirate hit became disjoint (see the .sql header); the witness moved to danger-combat-proof
+# as DZCOMBAT_PASS_FLEETKITE. Removing it from this list without that block existing there would be
+# a silent deletion, so danger-combat-proof.sh greps for it by name.
+MARKERS="COMBATSPATIAL_PASS_SPAWN COMBATSPATIAL_PASS_ENEMY COMBATSPATIAL_PASS_HOLD COMBATSPATIAL_PASS_CLOSE COMBATSPATIAL_PASS_FIRE COMBATSPATIAL_PASS_DAMAGE COMBATSPATIAL_PASS_SCREEN"
 PASS_LINE="COMBAT-SPATIAL PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -117,19 +121,22 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "unit_type_id = 'pirate_synthetic'" "$SQL"               || fail "harness lacks the synthetic-pirate-identity assert"
   grep -q "TICK1 FAIL ENEMY: the wave stands at" "$SQL"            || fail "harness lacks the 0336 wave-spawn-point pin (radius = ring + the wave's own range + 1, slot 0, the 0338 arrival phase — the assert the old 'at the location centre' one was repointed into)"
   grep -q "TICK1 FAIL ENEMY: the wave carries range" "$SQL"        || fail "harness lacks the cross-check that the wave's frozen weapons_json range IS the one the spawn radius was predicted from"
-  grep -q "TICK1 FAIL KITE: armed escort distance did not increase" "$SQL" || fail "harness lacks the KITE (armed escort retreat) assert"
-  grep -q "TICK1 FAIL KITE: armed escort retreated past its own frozen" "$SQL" || fail "harness lacks the KITE cap assert (0234 never retreats past its own range edge)"
-  grep -q "TICK1 FAIL CLOSE: fallback escort distance did not decrease" "$SQL" || fail "harness lacks the CLOSE (fallback escort advances) assert"
-  grep -q "TICK1 FAIL CLOSE: lead distance did not decrease" "$SQL" || fail "harness lacks the CLOSE (lead advances) assert — after 0336 the lead is the FURTHEST hull and must close"
+  # 0351: the two KITE asserts moved to danger-combat-proof (DZCOMBAT_PASS_FLEETKITE) with the arm
+  # itself — see the MARKERS note above. What replaces them HERE is the guard that this file's own
+  # kite premise stayed impossible, so nobody re-adds a witness that cannot coexist with SCREEN.
+  grep -q "the fleet''s shortest gun % exceeds the wave''s reach" "$SQL" || fail "harness lost the premise that the FLEET's reach stays at or under the wave's (a fleet that out-ranges the wave rests at its own kite edge, never reaches HOLD, and can never be hit — which would silently kill both the HOLD and the SCREEN witness)"
+  grep -q "TICK1 FAIL CLOSE: the lead''s distance did not decrease" "$SQL" || fail "harness lacks the CLOSE (the fleet advances) assert — the fleet's point IS its lead, so the lead must have moved in"
+  grep -q "TICK1 FAIL CLOSE: the formation moved" "$SQL" || fail "harness no longer pins the step to the FLEET's own speed capped by the gap (combat_unit_decide_move's close arm, asked with fleet arguments)"
+  grep -q "TICK1 FAIL CLOSE: the fleet''s delta is" "$SQL" || fail "harness lacks the zero-delta guard (a formation that never moved would satisfy the equal-deltas assert for free)"
   grep -q "TICK1 FAIL FIRE: pirate fired" "$SQL"                    || fail "harness lacks the tick-1 wave-silence assert"
   grep -q "TICK1 FAIL DAMAGE" "$SQL"                                || fail "harness lacks the pirate-hp-fell assert"
-  grep -q "HOLD FAIL: the holding hull moved" "$SQL"                || fail "harness lacks the HOLD (byte-identical position) assert"
+  grep -q "player hull(s) moved across a HOLD tick" "$SQL"          || fail "harness lacks the HOLD (byte-identical position) assert — and under 0351 it must cover EVERY hull, not just one witness"
   # 0336: the arm must come from the ENGINE's own leaf, never from the harness's mirror of it. A
   # mirror that drifts is what turned a vanishing KITE step into a "the hull moved" failure printing
   # a byte-identical before/after — the server renders only 15 significant digits.
   grep -q "HOLD FAIL: the ENGINE says" "$SQL"                       || fail "harness no longer takes the HOLD arm from combat_unit_decide_move itself — a hand-written mirror can drift from the mover it copies"
   grep -q "lateral public.combat_unit_decide_move(" "$SQL"          || fail "harness lacks the direct composition of the engine mover for the HOLD arm"
-  grep -q "HOLD FAIL: the tick wrote" "$SQL"                        || fail "harness lacks the pin that the tick wrote exactly what the mover predicted"
+  grep -q "HOLD FAIL: the tick left the lead at" "$SQL"             || fail "harness lacks the pin that the tick wrote exactly what the mover predicted FOR THE FLEET (the old form predicted per hull, which is the composition 0351 replaced)"
   grep -q "HOLD FAIL: the engine mover returned no arm" "$SQL"      || fail "harness lacks the NULL-arm vacuity guard on the engine mover"
   grep -q "SCREEN FAIL: lead hp changed" "$SQL"                     || fail "harness lacks the aggro-tier screening assert"
   grep -q "aggro screening breached" "$SQL"                        || fail "harness lacks the lead-never-hit assert wording"
@@ -138,21 +145,23 @@ if [ "$MODE" = "selftest" ]; then
   #    asserted, and every silence/stillness proves there was something to be silent or still about.
   #    A retune that slides a witness into another arm must fail LOUDLY, not pass. ──────────────────
   grep -q "TICK1 FAIL premise: the escort chord % is not outside" "$SQL"    || fail "harness lacks the premise that the escort chord is outside the wave's reach (0336's range+1 invariant)"
-  grep -q "TICK1 FAIL premise: the escort chord % is not inside" "$SQL"     || fail "harness lacks the premise that the escort chord is inside the armed escort's own reach (it would CLOSE, not KITE)"
-  grep -q "TICK1 FAIL FIRE: the nearest player hull is" "$SQL"              || fail "harness lacks the derived form of 0336's spawn invariant (the nearest hull is outside the wave's reach), without which 'the pirate did not fire' is unexplained"
+  grep -q "TICK1 FAIL premise: the escort chord % is not inside" "$SQL"     || fail "harness lacks the premise that the escort chord is inside the armed escort's own reach — under the OLD per-hull gate it fired on tick 1, and without that COMBATSPATIAL_PASS_FIRE's 0-vs-1 cannot discriminate the two engines"
+  grep -q "TICK1 FAIL FIRE: the fleet point is" "$SQL"                      || fail "harness lacks the derived form of 0336's spawn invariant — under 0351 the wave measures to the FLEET POINT, so it is the fleet's gap that must be outside the wave's reach; without it 'the pirate did not fire' is unexplained"
   grep -q "TICK1 FAIL premise: the fallback escort''s chord" "$SQL"          || fail "harness lacks the premise that the fallback escort starts out of its own reach (else the approach never starts)"
-  grep -q "TICK1 FAIL premise: the fallback range" "$SQL"                   || fail "harness lacks the premise that the fallback range is at or under the wave's — a hull that out-ranges the enemy rests at its own kite edge and NEVER reaches HOLD"
   grep -q "TICK1 FAIL premise: the lead''s distance" "$SQL"                  || fail "harness lacks the premise that the lead opens out of its own reach (its CLOSE witness would be in another arm)"
-  grep -q "TICK1 FAIL KITE: the armed escort''s derived arm" "$SQL"          || fail "harness lacks the KITE vacuity guard (the derived arm must BE 'kite')"
-  grep -q "TICK1 FAIL CLOSE: the fallback escort''s derived arm" "$SQL"      || fail "harness lacks the fallback-escort CLOSE vacuity guard (the derived arm must BE 'close')"
-  grep -q "TICK1 FAIL CLOSE: the lead''s derived arm" "$SQL"                 || fail "harness lacks the lead CLOSE vacuity guard (the derived arm must BE 'close')"
-  grep -q "TICK1 FAIL FIRE: the derivation expects ZERO player salvos" "$SQL" || fail "harness lacks the fire vacuity guard (a scenario in which nothing can fire would make PASS_DAMAGE vacuous)"
+  grep -q "TICK1 FAIL CLOSE: the hulls moved by DIFFERENT deltas" "$SQL"     || fail "harness lacks the 0351 RIGIDITY assert (one order, one body: every hull must receive the identical delta, which is what fails on the per-hull mover)"
+  grep -q "TICK1 FAIL CLOSE: the fleet''s derived arm" "$SQL"                || fail "harness lacks the FLEET CLOSE vacuity guard (the derived arm must BE 'close')"
+  grep -q "TICK1 FAIL FIRE: the fleet opens INSIDE its own reach" "$SQL"     || fail "harness lacks the fire vacuity guard (a fleet born in range would prove nothing about the gate)"
+  grep -q "TICK1 FAIL FLEET: the fleet''s reach is" "$SQL"                    || fail "harness no longer pins the fleet's reach to the SHORTEST gun on the field (a max() would draw a circle claiming reach the fleet does not have)"
+  grep -q "TICK1 FAIL FLEET: the fleet''s gap to the wave is" "$SQL"          || fail "harness no longer pins the fleet POINT to its elected lead (every distance in this file is measured from it)"
   grep -q "derivation expects %" "$SQL"                                     || fail "harness no longer compares the tick-1 salvo count against a DERIVED in-reach count (a hard-coded count would not follow a retune)"
-  grep -q "HOLD FAIL: the fallback escort''s derived arm is" "$SQL"          || fail "harness lacks the mid-approach guard (every closing tick must be genuinely in CLOSE)"
-  grep -q "HOLD FAIL: a closing tick did not shorten the gap" "$SQL"        || fail "harness lacks the guard that a closing tick actually closes (the approach loop could otherwise become a no-op)"
-  grep -q "HOLD FAIL: the fallback escort was already in HOLD" "$SQL"       || fail "harness lacks the guard that the HOLD witness ARRIVED (a hull born in range would prove nothing about the arm)"
-  grep -q "HOLD FAIL: the fallback escort is still" "$SQL"                  || fail "harness lacks the bounded-approach guard (a non-converging tuning must fail, not spin)"
-  grep -q "HOLD FAIL: the holding hull is not alive" "$SQL"                 || fail "harness lacks the corpse guard (0317 skips a dead actor entirely, so a destroyed hull sits byte-identically still and would pass the HOLD assert)"
+  grep -q "HOLD FAIL: the fleet''s arm is" "$SQL"                            || fail "harness lacks the mid-approach guard (every closing tick must be genuinely in CLOSE)"
+  grep -q "HOLD FAIL: a closing tick did not shorten the fleet''s gap" "$SQL" || fail "harness lacks the guard that a closing tick actually closes (the approach loop could otherwise become a no-op)"
+  grep -q "the mover''s own recurrence ceil((gap - reach) / speed) predicts" "$SQL" || fail "harness no longer DERIVES the arrival tick from the engine's own recurrence (a literal tick index is the fixture assumption that has cost this repo CI rounds)"
+  grep -q "player hull(s) moved across a HOLD tick" "$SQL"                  || fail "harness no longer requires EVERY hull to hold still (under 0351 a HOLD is true of the whole formation or of none of it)"
+  grep -q "HOLD FAIL: the derived approach is" "$SQL"                       || fail "harness lacks the guard that the HOLD witness ARRIVED (a fleet born in range would prove nothing about the arm)"
+  grep -q "HOLD FAIL: the fleet is still" "$SQL"                            || fail "harness lacks the bounded-approach guard (a non-converging tuning must fail, not spin)"
+  grep -q "HOLD FAIL: the fleet''s lead is not alive" "$SQL"                 || fail "harness lacks the corpse guard (0317 skips a dead actor entirely, so a destroyed hull sits byte-identically still and would pass the HOLD assert)"
   grep -q "HOLD FAIL: the encounter is no longer active" "$SQL"             || fail "harness lacks the live-fight guard (a concluded encounter is not ticked at all, so every position is untouched and the stillness is vacuous)"
   grep -q "SCREEN FAIL: no pirate-sourced missile_salvo" "$SQL"             || fail "harness lacks the screen vacuity guard (with no pirate fire at all, 'the lead was not hit' proves nothing)"
 
@@ -163,7 +172,7 @@ if [ "$MODE" = "selftest" ]; then
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "COMBAT-SPATIAL SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. craft/fit/group/send/settle; ONE authority each for advance-a-tick (pg_temp.cs_tick, the single textual process_combat_ticks call) and for which-arm-is-this (pg_temp.cs_arm, NULL-safe); the 0336 geometry knobs present (wave range 2 / ring 4 -> escort chord 3.642 inside the catalog gun 5 and lead radius 7 outside it / owned fallback range 1 / PARKED wave / owned player step 1 / owned wave attack / both variance knobs 0) with the fitted range still derived from the catalog; every property — spawn positions, the wave standing exactly on combat_formation_point(anchor, ring + its own range + 1, slot 0, the 0338 arrival phase), KITE, CLOSE, the DERIVED tick-1 fire count, pirate hp fell, the arrived HOLD and the aggro-tier screen — asserted in assert-form, each behind a non-vacuity guard on the DERIVED arm; no random())"
+  echo "COMBAT-SPATIAL SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. craft/fit/group/send/settle; ONE authority each for advance-a-tick (pg_temp.cs_tick, the single textual process_combat_ticks call) and for which-arm-is-this (pg_temp.cs_arm for an enemy body, pg_temp.cs_fleet_arm for the 0351 one-actor fleet, both NULL-safe); the 0336 geometry knobs present (wave range 2 / ring 4 -> escort chord 3.642 inside the catalog gun 5 and lead radius 7 outside it / owned fallback range 1 / PARKED wave / owned player step 1 / owned wave attack / both variance knobs 0) with the fitted range still derived from the catalog; every property — spawn positions, the wave standing exactly on combat_formation_point(anchor, ring + its own range + 1, slot 0, the 0338 arrival phase), the 0351 ONE-ACTOR fleet arm (all three hulls moving by the IDENTICAL delta at the fleet's own speed), the DERIVED all-or-none tick-1 fire count (ZERO — the old per-hull gate fired once on the armed escort's chord), the wave taking NO damage on the spawn tick and real damage on the DERIVED arrival tick (ceil((gap - fleet reach) / fleet speed), never a literal), the arrived HOLD with EVERY hull byte-identical, and the aggro-tier screen — asserted in assert-form, each behind a non-vacuity guard on the DERIVED arm; no random())"
   exit 0
 fi
 

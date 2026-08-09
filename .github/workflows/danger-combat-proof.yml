@@ -53,6 +53,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # ── NODE + node_modules, because the selftest now runs check-plpgsql-parse ─────────────────
+      # This job used to be checkout-and-run, and that was correct: every gate the selftest called
+      # was a grep or a Node script using only builtins, so it never needed an install.
+      # check-plpgsql-parse (0351) needs a REAL PostgreSQL to parse and compile with, and that is
+      # @electric-sql/pglite — a devDependency since a484204 (WASM: no Docker, no server, no service
+      # container). The package was in package.json and package-lock.json all along; what was missing
+      # was any step that installed it HERE.
+      # THE GATE REFUSED TO PRETEND, WHICH IS HOW THIS WAS FOUND. Its non-vacuity floors turned
+      # "I verified nothing" into a RED instead of a silent pass. Do not resolve that by letting the
+      # gate skip when the package is absent — install the package, which is what this step does.
+      # --ignore-scripts: pglite is prebuilt WASM and needs no postinstall, and skipping lifecycle
+      # scripts keeps this job from downloading Playwright browsers it will never use.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
       - run: bash scripts/danger-combat-proof.sh selftest
 
   disposable-matrix:
