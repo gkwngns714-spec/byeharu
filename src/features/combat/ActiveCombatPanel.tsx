@@ -5,7 +5,8 @@ import { RoundLog } from './RoundLog'
 import { RetreatControl } from './RetreatControl'
 import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './combatTypes'
 import { combatUnitLabel } from './combatLabels'
-import { selectCombatPhase, nextWaveSeconds, nextWaveText } from './combatPhase'
+import { selectCombatPhase } from './combatPhase'
+import { REINFORCEMENT_LABEL, REINFORCEMENT_RULE, resolveReinforcement } from './reinforcementClock'
 import { resolveAutoExitLine, type AutoExitSetting } from './autoExitLine'
 import { resolveRetreatCountdown } from './retreatCountdown'
 import { resolveRepositionCourse } from './repositionCourse'
@@ -87,6 +88,10 @@ export function ActiveCombatPanel({
   const exit = resolveAutoExitLine(encounter, autoExit)
   // 0337: the fleet's standing course, read through the ONE resolver. Null = no course to state.
   const course = resolveRepositionCourse(encounter)
+  // THE WAVE CLOCK — the SAME ONE leaf the map's fight tab reads (combat/reinforcementClock). It
+  // replaces this panel's `next_wave_at` countdown, which 0344 turned into a countdown to a moment
+  // at which nothing is scheduled to happen. Null on a pre-0344/0347 server → nothing is said.
+  const wave = resolveReinforcement(encounter, units, encounter.id, now)
 
   return (
     // UI R4: the existing bh-fade-in entrance when a battle takes the screen (one-shot, no loop);
@@ -95,11 +100,23 @@ export function ActiveCombatPanel({
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-danger">⚔️ Combat — {locationName}</h2>
+          {/* TWO DEAD NUMBERS DELETED HERE. `danger_level` has been the constant 1 on both arms
+              since 0344 (its own deletion list, item 10 — the column is dropped by 0349), and
+              `wave_number` only moves when the whole field is EMPTIED, which under a reinforcement
+              clock is rare enough that it sat on 1 for entire fights. What moves instead is how many
+              bodies are standing against the cap the ENGINE stamped, so that is what is printed. */}
           <p className="text-sm text-ink-muted">
-            Wave <span className="font-mono tabular-nums text-ink">{encounter.wave_number}</span> · Danger{' '}
-            <span className="font-mono tabular-nums text-ink">{encounter.danger_level}</span> ·{' '}
-            <span className="font-mono tabular-nums text-ink">{encounter.waves_cleared}</span> waves cleared ·{' '}
             <span className="text-ink">{phase.label}</span>
+            {wave && wave.population !== null && wave.cap !== null && (
+              <>
+                {' · field '}
+                <span className="font-mono tabular-nums text-ink">
+                  {wave.population}/{wave.cap}
+                </span>
+              </>
+            )}
+            {' · '}
+            <span className="font-mono tabular-nums text-ink">{encounter.waves_cleared}</span> cleared
           </p>
         </div>
         {/* THE ONE retreat control (combat/RetreatControl) — the same component the map card
@@ -145,17 +162,35 @@ export function ActiveCombatPanel({
         )}
         {phase.betweenWaves ? (
           <div>
-            <div className="mb-1 text-xs text-ink-muted">Pirate wave</div>
-            <p className="text-xs text-warning/90">
-              {nextWaveText(nextWaveSeconds(encounter, now))}
-            </p>
+            <div className="mb-1 text-xs text-ink-muted">Pirates</div>
+            <p className="text-xs text-warning/90">The field is clear.</p>
           </div>
         ) : (
-          <Bar label={`Pirate wave ${encounter.wave_number}`} pct={enemyPct}
+          <Bar label="Pirates" pct={enemyPct}
             text={`${enemyPct.toFixed(0)}% · ${Math.round(encounter.enemy_integrity_current).toLocaleString()} / ${Math.round(encounter.enemy_integrity_max).toLocaleString()}`}
             tone="danger" />
         )}
       </div>
+
+      {/* ██ THE NEXT WAVE ██ — the SAME leaf, the SAME sentence and the SAME refusal to predict as
+          the map's fight tab: the countdown, the scheduled ordinal, the field against the cap the
+          engine stamped, and the RULE relating them. What is never said is whether a ship is coming,
+          because a slot that finds the field at its cap is spent rather than banked and no column
+          answers for a moment that has not happened. See combat/reinforcementClock's header. */}
+      {wave && (
+        <div className="mb-4 rounded-lg border border-edge bg-surface-2/60 p-3" data-testid="combat-panel-wave">
+          <SectionLabel className="mb-1">
+            {REINFORCEMENT_LABEL}
+            {wave.slot !== null && (
+              <span className="ml-2 font-mono normal-case tabular-nums text-ink-faint">
+                {wave.slot} so far
+              </span>
+            )}
+          </SectionLabel>
+          <p className="text-sm text-warning/90" data-testid="combat-panel-wave-clock">{wave.text}</p>
+          <p className="mt-1 text-xs text-ink-faint">{REINFORCEMENT_RULE}</p>
+        </div>
+      )}
 
       {/* Per-unit-type integrity */}
       <div className="mb-4">

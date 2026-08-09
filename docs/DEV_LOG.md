@@ -5,6 +5,119 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-09 — THE FIGHT YOU CAN READ (`slice-the-fight-you-can-read`, migration 0348 + client)
+
+**The owner:** *"i want a separate tab on map for exploration, which is foldable, at the top, a
+square shaped one. also for combat, when opened it will show next wave incoming (wave info), and
+fleets info"*, then *"the fleets info tab should have info like range, speed, reload time, etc"* and
+*"on the wave tab, it should have loot info as well, with total cargo space"*.
+
+### THE TABS — and why they are a structural fix, not a re-skin
+
+The map's top-left rail STACKED the exploration panel, the combat card and the fleet readout. That
+stack is what "i can't press hunt" was made of: 583px of panels against a 505px map box at the
+owner's own 1440x675. The reach law (2026-08-08) made the overflow *survivable* by squeezing each
+panel's information. **One tab open at a time makes it impossible**: the rail can hold the tab bar,
+the pinned fight row, and exactly ONE body. Three square 44px tabs — Explore · Fight · Fleets — at
+the top of the rail, foldable, and the choice is remembered.
+
+- `src/features/map/mapOverlayTabModel.ts` — the pure rule (which tab, the fold, the memory, the
+  fail-closed read of a corrupt byte). `MapOverlayTabs.tsx` is the shell and knows nothing about the
+  game: the three readouts arrive as elements, still constructed at MapScreen's own call site.
+- **THE WAY OUT OF A FIGHT LEFT THE TABS.** A tab can be closed; a fight cannot be paused. So the ONE
+  `RetreatControl` is pinned by the shell OUTSIDE the tabs, per live encounter, above the body — and
+  `CombatMapCard` now carries no control at all. The same row states the fight's phase, so a fight
+  behind a folded tab is never silent, and the Fight tab carries a live dot.
+- The exploration panel now distinguishes *"the read has not come back"* from *"the server says this
+  is off"*. Collapsing the two into one blank was right for a panel that merely rode a rail and wrong
+  for a tab body the player deliberately opened.
+
+### TWO DEAD CLOCKS DELETED
+
+- **`combat_encounters.next_wave_at`.** 0344 deleted the wave PAUSE from both arms of the tick (its
+  own deletion list, item 7) and left the tail UPDATE that STAMPS the column (0299:999) standing. The
+  column is written and read by nobody, and the client was counting down to a moment at which nothing
+  is scheduled to happen — a plausible countdown that lies, which is worse than a frozen number.
+  `combatPhase.nextWaveSeconds` / `nextWaveText` are **deleted**; both surfaces now read
+  `combat/reinforcementClock.ts`, and every property those tests held is re-proved there.
+- **`Wave {wave_number}`** in both headers. Since 0344 it only moves when the whole field is EMPTIED,
+  which under a reinforcement clock is rare — it sat on 1 for entire fights. Replaced by the number
+  that does move: bodies standing against the cap the ENGINE stamped. `danger_level` went with it
+  (the constant 1 on both arms since 0344; the column is dropped by 0349).
+
+### ██ THE ONE THING THE READOUT REFUSES TO SAY ██
+
+The engine spawns on a due slot only while `population < effective_cap` (0347,
+`combat_pressure_field`), and a suppressed slot is SPENT, NOT BANKED. Both operands are on the wire,
+so the UI *could* compute the verdict. **It does not, and that was the deliberate call.**
+
+1. It would be a second copy of the engine's decision. The server's own `arriving` is not a forecast
+   either — it requires `slots_due > 0`, so it is true only in the seconds between a slot falling due
+   and the 3s cron firing. There is no column that answers for the NEXT slot.
+2. It would be a promise nobody can keep: a full field can lose a hull two seconds before the slot.
+
+So the readout shows the countdown, the scheduled ordinal, the population and the stamped cap — and
+states the RULE once, as a rule, which is true at every instant and can never go stale. Pinned by
+`tests/reinforcementClock.spec.ts` (the shape carries no verdict field) and by
+`tests/combatMapCard.spec.ts` (no client-side comparison of the two operands, in either direction).
+
+### THE HAUL, AND WHY IT IS THE POINT OF THE PANEL
+
+The fight cannot be won — 0347's cap grows without bound, deliberately — and a DEFEAT zeroes
+`total_rewards_json`. So the only question a fight asks is *stay for one more kill, or leave with
+this*. `combat/fightHaul.ts` composes the ONE reward reader and adds exactly one piece of arithmetic:
+`item_types.volume_m3 × quantity`. A code with no catalog volume (`metal`) is reported as UNKNOWN,
+never folded in at zero. Total cargo space is the SERVER's (`get_my_hold`, 0333) through the existing
+`holdMeter` — never a client-side sum of per-ship capacities, which is the fold `fleetStatusModel`
+already refuses by name.
+
+### MIGRATION 0348 — `get_site_loot(uuid)`, the only server work in this slice
+
+`location_loot` (0344) carries RLS with **zero policies** — deny-all whatever the grants say — and
+its only reader, `site_loot_for_kill`, is VOLATILE (it ROLLS) and revoked from every client role. So
+one narrow read was minted: `{ok, location_id, items:[{item_id, quantity, drop_chance}]}` for ONE
+site, PER ENEMY DESTROYED, granted to `authenticated` **and nobody else**.
+
+**What it opens, exactly:** a logged-in player can learn which items a site drops, in what quantity,
+at what chance. That is CONTENT, the same class as `item_types` (already public read). **What it does
+NOT open, each self-asserted:** no policy on `location_loot` (the table stays deny-all; the function
+is its one reader, so the row shape never becomes a public contract), no write of any kind, nothing
+for `anon`, and `site_loot_for_kill` stays revoked. Rows with `drop_chance <= 0` are withheld — a
+drop the engine can never pay must not reach a screen. Rollback boundary is one statement,
+`drop function public.get_site_loot(uuid);`, and it touches no data.
+
+### FLEET STATS: RANGE, SPEED — AND WHY "RELOAD" IS NOT `cooldown_seconds`
+
+`map/fightingFleetStats.ts`, composing the EXISTING range authority (`unitWeaponRange`). No fourth
+label vocabulary, and nothing added to the stat registry — STAT_ARCHITECTURE_CONTRACT §11.3 forbids
+modelling range/cooldown as registry stats, and 0340:512-515 names the shipped defect that earned it.
+
+- REACH = max weapon range over the living hulls (a DISPLAY fact; it gates nothing).
+- COMBAT SPEED = min `move_speed` over the living hulls, which is the speed 0337's tick walks the
+  fleet at. This is the client's FIRST reader of `combat_units.move_speed`, and it is deliberately
+  not the map-travel `speed` stat.
+- **RELOAD IS THE ROUND.** Measured in the deployed tick: the fire gate is `now() >= next_ready_at`
+  and firing stamps `next_ready_at := now()` — **not** `now() + cooldown_seconds` (0299:870-873,
+  :947, unchanged in every re-create back to 0234). The column is carried in `weapons_json` and read
+  by NOTHING. Printing "Reload 2s" would put a number on screen that changes nothing in the game, so
+  the line states *"every round · 3s"* from `game_config.combat_tick_seconds`, and `CombatWeapon`
+  deliberately still does not declare the field. If a later slice makes the engine honour a cooldown,
+  the line's VALUE changes and its meaning does not.
+
+### VERIFIED
+
+`npx tsc -b` clean · `npm run build` clean · **2073 `tests/*.spec.ts` passed, 0 failed**
+(`galaxy.spec.ts` excluded — it needs prod credentials and cannot run locally) · **212 rendered-UI
+`*.uispec.ts` passed, 0 failed**, including the whole `actionsAreReachable` set at 390x664, 320x640,
+375x667 and 1440x675, now swept across all four tab states · `eslint` 26 problems, byte-identical to
+the pre-slice baseline (same files, same counts — this slice adds none).
+
+**NOT verified: migration 0348 has not been applied anywhere.** No Docker and no psql on this
+machine, so `supabase start` cannot run; CI's disposable-Postgres matrix is the gate and it has not
+run yet. Nothing about 0348 should be described as proven until it does.
+
+---
+
 ## 2026-08-08 — THE ACTION IS ALWAYS REACHABLE (`slice-the-action-is-always-reachable`, client-only)
 
 **The owner, playing the live game:** *"right now i can't press hunt."* And, as the actual spec:

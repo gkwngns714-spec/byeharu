@@ -12,6 +12,7 @@ import type { MapLocation } from './mapTypes'
 import type { DangerZoneLite } from './pirateApi'
 import { resolveFleetPresence, fleetWhereText, type FleetPresenceState, type PositionRow } from './fleetPresence'
 import { resolveFleetStandingHunts } from './fleetStandingHunt'
+import { fireRateText, resolveFightingFleetStats, trim } from './fightingFleetStats'
 
 // ██ MY FLEETS, ON THE MAP — where each one is, what it is doing, and why it cannot fight. ██
 //
@@ -58,6 +59,23 @@ import { resolveFleetStandingHunts } from './fleetStandingHunt'
 //     here is folded, and every number below is either a COUNT of rows the server sent or a value
 //     the server itself computed.
 // What remains has a real consumer, and each is named where it is built.
+//
+// ── ██ THE FIGHT STATS ARE THE EXCEPTION, AND HERE IS WHY THEY ARE NOT A TENTH DEFINITION ██ ──────
+// Owner: *"the fleets info tab should have info like range, speed, reload time, etc"*. Those three
+// exist ONLY while the fleet is in a fight, they are frozen onto `combat_units` by the server at
+// spawn, and they are read here through ONE leaf — map/fightingFleetStats — which composes the
+// EXISTING range authority (spatialCombatLayer.unitWeaponRange) and states the engine's own
+// aggregation rules rather than inventing any:
+//   · REACH is `max(range)` over the living hulls, which is exactly what combatActors already calls
+//     "the FURTHEST this actor can shoot" for the map glyph. A DISPLAY fact; it gates nothing.
+//   · SPEED is `min(move_speed)` over the living hulls, because that is the speed 0337's tick walks
+//     the fleet at. It is a COMBAT speed in world-units-per-tick and is deliberately NOT the
+//     map-travel `speed` stat — a different quantity, a different unit, and it says so on screen.
+//   · RELOAD is the ROUND, not `cooldown_seconds`: the engine stamps `next_ready_at := now()` and
+//     never adds a cooldown, so every weapon in range fires every tick whatever the column says.
+//     Printing the column would be printing a number that changes nothing, which is the very thing
+//     the dormant fold stats are refused for above.
+// None of the three is a registry stat and none may become one — STAT_ARCHITECTURE_CONTRACT §11.3.
 //
 // ── WHAT IT IS DOING: COMPOSED, NEVER A SECOND VOCABULARY ──────────────────────────────────────────
 //   · the state + the place  → map/fleetPresence (the ONE "where is my fleet" answer, whose `place`
@@ -143,6 +161,10 @@ export interface FleetStatusModelInput {
   units: readonly CombatUnit[]
   /** The RUNTIME fleet_control_enabled flag. Dark → a fleet is never inactive (0204's own posture). */
   fleetControlEnabled: boolean
+  /** `game_config.combat_tick_seconds` — how long one combat round lasts. Absent/null is a legal and
+   *  honest state: the fire-rate line then states the cadence with no number rather than a plausible
+   *  one. Only ever read for a fleet that is actually fighting. */
+  combatTickSeconds?: number | null
   nowMs: number
 }
 
@@ -233,6 +255,22 @@ export function buildFleetStatusModel(input: FleetStatusModelInput): FleetStatus
     // belong on the map. When it is ZERO the blocked line below carries it instead of a bare "0".
     if (input.fleetControlEnabled && commandCount > 0) {
       stats.push({ label: 'Command ship', value: `${commandCount}` })
+    }
+    // ── WHAT IT CAN DO IN THIS FIGHT — reach, rate of fire, speed. See the header for why these
+    // three are read off combat_units and not out of the stat registry, and why "reload" is stated
+    // as the ROUND. Only while a fight is actually running: off the field these rows do not exist,
+    // and a stale copy of them would be a number with no source.
+    if (encounter) {
+      const fight = resolveFightingFleetStats(input.units, encounter.id, input.combatTickSeconds ?? null)
+      if (fight) {
+        if (fight.reach !== null) {
+          stats.push({ label: 'Reach', value: `${trim(fight.reach)} units` })
+        }
+        stats.push({ label: 'Fires', value: fireRateText(fight.roundSeconds) })
+        if (fight.speed !== null) {
+          stats.push({ label: 'Combat speed', value: `${trim(fight.speed)} units/round` })
+        }
+      }
     }
 
     // ── WHY IT CANNOT ACT ─────────────────────────────────────────────────────────────────────────

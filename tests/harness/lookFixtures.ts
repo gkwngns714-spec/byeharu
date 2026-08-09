@@ -224,6 +224,8 @@ export function buildShellState(state: LookState): ShellState {
     units: [],
     reports: active ? REPORTS : [],
     autoExit: {},
+    holds: {},
+    siteLoot: {},
     refresh: noopAsync,
   }
 
@@ -251,6 +253,8 @@ export function buildShellState(state: LookState): ShellState {
     timedDockingEnabled: false,
     miningFields: MINING_FIELDS,
     miningExtractRadius: MINING_EXTRACT_RADIUS,
+    combatTickSeconds: 3,
+    itemVolumes: new Map<string, number>(),
     pirateInterceptEnabled: false,
     dangerZones: [],
     refresh: noopAsync,

@@ -40,13 +40,16 @@ import { test, expect, type Page } from '@playwright/test'
 // Every viewport below is asserted STRICTLY: no control outside the viewport, no control clipped by
 // any scroll ancestor. They are real devices, not round numbers.
 //
-// THE LIMIT, MEASURED (not reasoned) on 2026-08-08. The rail's tallest possible control stack is a
-// live fight: exploration panel 134px + combat card 210px + fleet readout 224px + two 8px gaps =
-// **583px**, plus the rail's 12px top inset ⇒ it needs a viewport at least **595px tall**. Every
-// phone in current use clears that (the shortest common one is 640). A 568px-tall screen — iPhone SE
-// 1st gen, 2016 — does not, and there the last control is painted 19px below the fold. That is
-// stated here rather than tuned away, because a number nudged until a test goes green is a number
-// nobody can defend later. If the stack grows, THIS is the assertion that goes red.
+// THE LIMIT, MEASURED (not reasoned) on 2026-08-08, AND WHAT REMOVED IT. The rail's tallest possible
+// control stack was a live fight: exploration panel 134px + combat card 210px + fleet readout 224px
+// + two 8px gaps = **583px**, plus the rail's 12px top inset ⇒ it needed a viewport at least **595px
+// tall**, and a 568px screen (iPhone SE 1st gen) painted the last control 19px below the fold.
+//
+// THE MAP'S TABS DELETED THAT ARITHMETIC. At most one readout is mounted, so the rail is the tab bar
+// (52px) + the pinned fight row + ONE body — the three can no longer be added together. The
+// assertion did not get easier, it got WIDER: the tallest state is now a CHOICE, so every tab is
+// swept at every viewport, including the state where none is open. If any single tab grows past the
+// rail, THIS is what goes red.
 
 /** The owner's phone. Short on purpose — a tall phone hides this whole class of defect. */
 const PHONE = { width: 390, height: 664 }
@@ -67,8 +70,14 @@ const VIEWPORTS = [
 /** The touch-target floor the design system commits to. */
 const TOUCH_FLOOR = 44
 
-/** Every scenario that puts an action in a rail. `zone` is the owner's live shape. */
-const TOP_SCENARIOS = ['zone', 'crowded', 'fight', 'fleets']
+/** Every scenario that puts an action in a rail, CROSSED WITH EVERY TAB.
+ *
+ *  `?t=` forces the open tab, so the sweep covers what the player can actually choose rather than
+ *  whichever tab the default resolver happens to open. `t=none` is the fully-folded map — the state
+ *  in which the pinned fight row is the ONLY thing standing between the player and a fight they
+ *  cannot leave, which is precisely why it is swept. */
+const TABS = ['explore', 'fight', 'fleets', 'none']
+const TOP_SCENARIOS = ['zone', 'crowded', 'fight', 'fleets'].flatMap((s) => TABS.map((t) => `${s}&t=${t}`))
 const HUB_SCENARIOS = ['hub', 'zoneinfo']
 
 test.beforeEach(async ({ page }) => {
@@ -160,7 +169,7 @@ async function reachOf(page: Page): Promise<Reach[]> {
 test('THE OWNER’S BUG: "Hunt at Snare" is fully pressable at 1440x675 with the close-call notice up', async ({
   page,
 }) => {
-  await open(page, 'zone', MEASURED)
+  await open(page, 'zone&t=fleets', MEASURED)
   const hunt = page.getByTestId('fleet-status-hunt-g-fleet-1')
   await expect(hunt).toBeVisible()
   await expect(hunt).toBeEnabled()
@@ -231,7 +240,7 @@ for (const vp of VIEWPORTS) {
 test('THE MEASURED LIMIT: past two fleets the readout SCROLLS ITS LIST — inside a box that is fully on screen', async ({
   page,
 }) => {
-  await open(page, 'fleets3', FLOOR)
+  await open(page, 'fleets3&t=fleets', FLOOR)
   const box = await page.evaluate(() => {
     const list = document.querySelector('[data-testid="fleet-status-fold-content"] > div') as HTMLElement | null
     if (list === null) return null
@@ -246,6 +255,56 @@ test('THE MEASURED LIMIT: past two fleets the readout SCROLLS ITS LIST — insid
   expect(box!.bottom, 'the list box must END on screen — a scroll area you cannot see is the bug').toBeLessThanOrEqual(
     box!.vh,
   )
+})
+
+// ── 2d · THE TABS, RENDERED: ONE BODY, AND THE EXIT IS NEVER BEHIND A FOLD ───────────────────────
+// The static half of this lives in tests/actionsAreReachable.spec.ts. This is the same invariant
+// measured in a real browser, because the reason it matters is a layout reason.
+
+test('AT MOST ONE TAB BODY IS RENDERED, in every tab state', async ({ page }) => {
+  for (const t of TABS) {
+    await open(page, `fight&t=${t}`, PHONE)
+    const bodies = await page.locator('[data-testid^="map-tab-body-"]').count()
+    expect(bodies, `tab "${t}" rendered ${bodies} bodies`).toBeLessThanOrEqual(1)
+    // …and the three square tabs are always there to switch with.
+    for (const id of ['explore', 'fight', 'fleets']) {
+      await expect(page.getByTestId(`map-tab-${id}`)).toBeVisible()
+    }
+  }
+})
+
+test('THE WAY OUT OF A FIGHT IS ON SCREEN EVEN WITH EVERY TAB FOLDED SHUT', async ({ page }) => {
+  // The whole reason a fold is safe. A tab can be closed; a fight cannot be paused.
+  await open(page, 'fight&t=none', PHONE)
+  await expect(page.getByTestId('map-tab-body-null')).toHaveCount(0)
+  const retreat = page.getByTestId('combat-map-retreat-enc-1')
+  await expect(retreat).toBeVisible()
+  await expect(retreat).toBeEnabled()
+  const [r] = (await reachOf(page)).filter((c) => c.id === 'combat-map-retreat-enc-1')
+  expect(r, 'the retreat control must be in the DOM with every tab closed').toBeTruthy()
+  expect(r.outsideViewport, `Retreat hangs ${r.outsideViewport}px outside the viewport`).toBe(0)
+  expect(r.clippedBy, `Retreat is clipped ${r.clippedBy}px by ${r.clipper}`).toBe(0)
+  expect(r.height, 'and it still clears the touch floor').toBeGreaterThanOrEqual(TOUCH_FLOOR)
+  // …and a fight behind a closed tab is not silent.
+  await expect(page.getByTestId('map-fight-row-enc-1')).toContainText('In combat')
+  await expect(page.getByTestId('map-tab-fight-live')).toBeVisible()
+})
+
+test('THE FIGHT TAB CARRIES THE WAVE CLOCK AND THE HAUL — the two the owner asked for', async ({ page }) => {
+  await open(page, 'fight&t=fight', MEASURED)
+  // The wave section: the countdown against a FIXED clock, and the field against the STAMPED cap.
+  await expect(page.getByTestId('combat-map-wave-clock-enc-1')).toHaveText('Next wave in 12s')
+  await expect(page.getByTestId('combat-map-field-enc-1')).toContainText('4/4')
+  // …and NOT a verdict. The field is exactly at its cap here, which is where a client-side
+  // computation would be most tempted to promise (or deny) an arrival.
+  const wave = await page.getByTestId('combat-map-wave-enc-1').innerText()
+  expect(wave).not.toMatch(/arriv|nothing comes|no ship|1 ship/i)
+  expect(wave, 'the rule is stated as a rule').toMatch(/under its limit/i)
+  // The haul: what is carried, what it takes up, and how full the hold is.
+  await expect(page.getByTestId('combat-map-haul-enc-1')).toContainText('Haul')
+  await expect(page.getByTestId('combat-map-haul-m3-enc-1')).toContainText('7.5')
+  await expect(page.getByTestId('combat-map-hold-enc-1')).toContainText('250')
+  await expect(page.getByTestId('combat-map-drops-enc-1')).toContainText('Each kill here drops')
 })
 
 // ── 3 · THE TOUCH FLOOR SURVIVES THE FIX ─────────────────────────────────────────────────────────

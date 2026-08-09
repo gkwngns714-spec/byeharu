@@ -96,6 +96,27 @@ async function insideMap(page: Page, testId: string): Promise<boolean> {
 const cameraTransform = (page: Page) =>
   page.evaluate((sel) => document.querySelector(sel)?.getAttribute('transform') ?? '', CAMERA_G)
 
+/**
+ * Drag the map itself, from a point DERIVED to be on the map surface and clear of the top-left rail.
+ *
+ * It used to start at a hard-coded (200, 300). That point sat on bare map while the fight readout was
+ * ~210px tall; the readout then grew a wave clock and a haul section, the rail reached past y=300,
+ * and the drag began on a PANEL instead. The map never saw a pointer, so "the player panned away"
+ * silently stopped being true and the test failed on a camera that was behaving correctly.
+ *
+ * A coordinate tuned to the size of a panel is a coordinate that expires. This one is measured.
+ */
+async function panAway(page: Page): Promise<void> {
+  const host = await page.locator(MAP_HOST).boundingBox()
+  const rail = await page.locator('[data-testid="map-overlay-tabs"]').boundingBox()
+  const startX = rail ? Math.min(rail.x + rail.width + 40, host!.x + host!.width - 20) : host!.x + 200
+  const startY = host!.y + host!.height * 0.4
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(host!.x + 20, host!.y + host!.height - 20)
+  await page.mouse.up()
+}
+
 test('the battle WALKS AWAY and the frame follows it — the fight is never left off-screen', async ({ page }) => {
   expect(await insideMap(page, FLEET), 'the opening frame holds the fight').toBe(true)
   // The whole engagement moves ~150 world units — about 4.5 opening frames away (fightFixtures).
@@ -114,10 +135,7 @@ test('the battle WALKS AWAY and the frame follows it — the fight is never left
 test('a player who panned away is LEFT there — the follow never yanks the camera back', async ({ page }) => {
   // Deliberate camera control: pan off the fight. A fight starting outranks the player's camera; a
   // fight MOVING does not, and the ⌖ control is the way back.
-  await page.mouse.move(200, 300)
-  await page.mouse.down()
-  await page.mouse.move(20, 640)
-  await page.mouse.up()
+  await panAway(page)
   const held = await cameraTransform(page)
   await page.getByTestId('reposition-fight').click()
   await page.waitForTimeout(3400)
@@ -132,10 +150,7 @@ test('a player who panned away is LEFT there — the follow never yanks the came
 test('the focus control is offered while a battle has ships on the map', async ({ page }) => {
   await expect(page.getByTestId('map-focus-fight')).toBeVisible()
   // and it still frames the fight after the player has panned somewhere else entirely
-  await page.mouse.move(200, 300)
-  await page.mouse.down()
-  await page.mouse.move(20, 640)
-  await page.mouse.up()
+  await panAway(page)
   await page.getByTestId('map-focus-fight').click()
   const gap = apart(await centre(page, FLEET), await centre(page, 'spatial-combat-unit-unit-e1'))
   expect(gap).toBeGreaterThan(40)
