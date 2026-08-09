@@ -95,7 +95,15 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   guard('process_combat_ticks', '20260618000299',
     new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000336',
              '20260618000338', '20260618000339', '20260618000346']));
-  guard('command_ship_group_go', '20260618000330', new Set(['20260618000339']));
+  // 0352 IS EXEMPTED BY NAME, on the same terms as every line above: it rewrites ONE hunk in
+  // command_ship_group_go and that hunk is the FLEET MINT, not the reposition arm. Its old_t is the
+  // `select b.id into v_base … insert into public.fleets (player_id, origin_base_id, …)` block; it
+  // inserts a `no_origin` guard between the select and the insert so a group fleet can never be
+  // minted without an anchor. Disjointness is checked mechanically, not argued: grepping this file
+  // for `select b.id into v_base` and for that insert's column list returns ZERO, and grepping 0352
+  // for `reposition` returns ZERO. 0352 moves no destination, no anchor write and no branch inside
+  // the arms this file slices. Naming it here keeps the gate live for the next surgeon.
+  guard('command_ship_group_go', '20260618000330', new Set(['20260618000339', '20260618000352']));
 }
 
 const F330 = load('20260618000330_the_mover_is_in_the_repo.sql');
