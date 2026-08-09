@@ -234,6 +234,31 @@ if [ "$MODE" = "selftest" ]; then
     # it is checkable here rather than one CI round at a time.
     node "$REPO_ROOT/scripts/check-ingress-preconditions.mjs" --dir "$REPO_ROOT/scripts" \
       || fail "check-ingress-preconditions FAILED (its own message is above): a suite that puts enemy bodies on a field does not own the ingress duration before its first spawn, so its bodies arrive at the zone's city and every pin reading damage or geometry on the tick a body appears is measuring a fleet that could not reach it."
+
+    # ── OFFLINE PARSE GATE (0351) ─────────────────────────────────────────────────────────────────
+    # THE TWO FAILURES THIS EXISTS FOR, both of which were GREEN through every other check here:
+    #   · combat-spatial-proof.sql shipped a LONE `$` as a dollar-quote delimiter (6d7cb2d). The
+    #     suite could not be PARSED, so not one assert ran — and every check in this file is a grep,
+    #     so they all passed on a file PostgreSQL refuses to read.
+    #   · Migration 0351 shipped a surgery hunk whose replacement dropped one `end if;`. The file
+    #     lexes perfectly; the defect only becomes plpgsql when `do $rewrite$` EXECUTEs the assembled
+    #     body, and CI reported it as `syntax error at end of input (SQLSTATE 42601)` on 13 legs.
+    # check-surgery-identifiers above audits the surgery's SHAPE (per-hunk execution, split
+    # declarations). This audits the TEXT: a real PostgreSQL parses every file and compiles every
+    # plpgsql block, and every (old_t, new_t) hunk pair must leave the enclosing block depth exactly
+    # where it found it. Complementary; neither subsumes the other.
+    # THE FLOORS ARE THE POINT. --require-* makes the gate RED when it finds less than it expects, so
+    # a glob that stops matching or a splitter that stops recognising blocks cannot report success by
+    # scanning nothing. Measured when this was wired: 332 migrations carrying 1059 compilable blocks
+    # and 125 surgery hunks. The floors sit under those so ordinary growth does not trip them, and a
+    # COLLAPSE does.
+    node "$REPO_ROOT/scripts/check-plpgsql-parse.mjs" \
+      "$REPO_ROOT/supabase/migrations/*.sql" \
+      "$REPO_ROOT/scripts/danger-combat-proof.sql" \
+      "$REPO_ROOT/scripts/combat-spatial-proof.sql" \
+      "$REPO_ROOT/scripts/combat-fallback-weapon-proof.sql" \
+      --quiet --require-files 300 --require-blocks 900 --require-hunks 100 \
+      || fail "check-plpgsql-parse FAILED (its own message is above): a file in the chain either cannot be PARSED by PostgreSQL, or holds a plpgsql block that does not COMPILE, or carries a surgery hunk whose replacement does not leave the enclosing block depth where its pre-image left it. All three are APPLY-TIME failures that take the whole migration chain down — and all three are invisible to every grep in this harness."
   else
     fail "node not found — the generated-migration parity gate cannot run, and a hand-edited migration would reach production unchecked"
   fi

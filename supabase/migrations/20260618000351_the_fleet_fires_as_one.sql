@@ -632,7 +632,8 @@ begin
               end if;
               if v_target_id is null then
                 exit;
-              end if;$h5n$),
+              end if;
+            end if;$h5n$),
 
     (6, 'process_combat_ticks',
      $h6o$            if v_w_range is not null and v_target_dist <= v_w_range
