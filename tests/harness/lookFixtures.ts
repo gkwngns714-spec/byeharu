@@ -254,6 +254,10 @@ export function buildShellState(state: LookState): ShellState {
     miningFields: MINING_FIELDS,
     miningExtractRadius: MINING_EXTRACT_RADIUS,
     combatTickSeconds: 3,
+    // The shield stack is DARK on production — every pool NULL and shield_regen_combat_pct 0 — so
+    // the fixture states the world as it actually is rather than lighting a mechanic the game does
+    // not run. A proof that wants shields must set BOTH this and a pool on its own combat rows.
+    shieldRegenCombatPct: null,
     itemVolumes: new Map<string, number>(),
     pirateInterceptEnabled: false,
     dangerZones: [],

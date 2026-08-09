@@ -12,7 +12,13 @@ import type { MapLocation } from './mapTypes'
 import type { DangerZoneLite } from './pirateApi'
 import { resolveFleetPresence, fleetWhereText, type FleetPresenceState, type PositionRow } from './fleetPresence'
 import { resolveFleetStandingHunts } from './fleetStandingHunt'
-import { fireRateText, resolveFightingFleetStats, trim } from './fightingFleetStats'
+import {
+  FLEET_STAT_LABEL,
+  fireRateText,
+  resolveFightingFleetStats,
+  trim,
+  weaponSystemsText,
+} from './fightingFleetStats'
 
 // ██ MY FLEETS, ON THE MAP — where each one is, what it is doing, and why it cannot fight. ██
 //
@@ -61,21 +67,45 @@ import { fireRateText, resolveFightingFleetStats, trim } from './fightingFleetSt
 // What remains has a real consumer, and each is named where it is built.
 //
 // ── ██ THE FIGHT STATS ARE THE EXCEPTION, AND HERE IS WHY THEY ARE NOT A TENTH DEFINITION ██ ──────
-// Owner: *"the fleets info tab should have info like range, speed, reload time, etc"*. Those three
-// exist ONLY while the fleet is in a fight, they are frozen onto `combat_units` by the server at
-// spawn, and they are read here through ONE leaf — map/fightingFleetStats — which composes the
-// EXISTING range authority (spatialCombatLayer.unitWeaponRange) and states the engine's own
-// aggregation rules rather than inventing any:
-//   · REACH is `max(range)` over the living hulls, which is exactly what combatActors already calls
+// Owner: *"the fleets info tab should have info like range, speed, reload time, etc"*, then, playing
+// on 2026-08-09: *"the fleets tab on map does not show range, its moving speed, hull, shield, shield
+// generation"* and *"the fleets tab should also show attacking power, what weapon system it is
+// using"*. Every one of those exists ONLY while the fleet is in a fight; they are frozen onto
+// `combat_units` by the server at spawn, and they are read here through ONE leaf —
+// map/fightingFleetStats — which composes the EXISTING range authority
+// (spatialCombatLayer.unitWeaponRange) and states the engine's own aggregation rules rather than
+// inventing any. That leaf's header carries the derivation and the production evidence for each; in
+// short:
+//   · RANGE is `max(range)` over the living hulls, which is exactly what combatActors already calls
 //     "the FURTHEST this actor can shoot" for the map glyph. A DISPLAY fact; it gates nothing.
 //   · SPEED is `min(move_speed)` over the living hulls, because that is the speed 0337's tick walks
 //     the fleet at. It is a COMBAT speed in world-units-per-tick and is deliberately NOT the
 //     map-travel `speed` stat — a different quantity, a different unit, and it says so on screen.
+//   · ATTACK and WEAPONS come off `weapons_json`, which migration 0331 made the ONE authority for
+//     what a ship shoots. A ship's weapon powers sum to its own folded combat_power, so the fleet's
+//     sum is the engine's own per-round volley and not a client re-fold of the stat registry.
+//   · HULL and SHIELD are the fleet's living hulls summed. Hull is the same quantity and the same
+//     summation the engine calls integrity; shield has no server-side aggregate at all, so this is
+//     the only place it can be stated — and it is stated only when a pool actually exists.
 //   · RELOAD is the ROUND, not `cooldown_seconds`: the engine stamps `next_ready_at := now()` and
 //     never adds a cooldown, so every weapon in range fires every tick whatever the column says.
 //     Printing the column would be printing a number that changes nothing, which is the very thing
 //     the dormant fold stats are refused for above.
-// None of the three is a registry stat and none may become one — STAT_ARCHITECTURE_CONTRACT §11.3.
+// None of them is a registry stat and none may become one — STAT_ARCHITECTURE_CONTRACT §11.3.
+//
+// ⚠ THE LABELS ARE THE OWNER'S WORDS AND THEY LIVE IN THE LEAF (fightingFleetStats.FLEET_STAT_LABEL).
+// He reported "range" and "moving speed" as MISSING from a readout that was printing "Reach" and
+// "Combat speed" at that exact moment. A stat the player does not recognise is a stat that is not
+// there — the map-UX law against insider jargon, failing. Nothing in this file spells a stat name.
+//
+// ⚠ WHAT IS STILL REFUSED, AND WHY IT IS NOT AN OMISSION. Shield and shield generation are REAL
+// mechanics with real writers (0191 the columns, 0195 the regen + absorb) and are, measured on
+// production 2026-08-09, zero everywhere: 0 of 327 combat_units rows carry a pool, 0 of 77 ships
+// have max_shield > 0, 0 of 3 hulls have base_shield > 0, and game_config.shield_regen_combat_pct
+// is 0. The leaf returns null for both and NO line is pushed. "Shield 0/0" would be a bar that can
+// never move; "Shield regen 0" would name a mechanic that does not run — the same refusal the
+// dormant fold stats get above. Both lines appear on their own the day scripts/activate-shield.sql
+// is run, with the server's numbers, and nothing here has to change.
 //
 // ── WHAT IT IS DOING: COMPOSED, NEVER A SECOND VOCABULARY ──────────────────────────────────────────
 //   · the state + the place  → map/fleetPresence (the ONE "where is my fleet" answer, whose `place`
@@ -165,6 +195,11 @@ export interface FleetStatusModelInput {
    *  honest state: the fire-rate line then states the cadence with no number rather than a plausible
    *  one. Only ever read for a fleet that is actually fighting. */
   combatTickSeconds?: number | null
+  /** `game_config.shield_regen_combat_pct` — the fraction of a shield pool the tick restores each
+   *  combat round (0195 reads exactly this knob). Absent/null/0 means the mechanic does not run, and
+   *  the readout then says NOTHING about shield generation rather than printing a zero. Live value
+   *  on production is 0. Only ever read for a fleet that is actually fighting. */
+  shieldRegenCombatPct?: number | null
   nowMs: number
 }
 
@@ -256,19 +291,53 @@ export function buildFleetStatusModel(input: FleetStatusModelInput): FleetStatus
     if (input.fleetControlEnabled && commandCount > 0) {
       stats.push({ label: 'Command ship', value: `${commandCount}` })
     }
-    // ── WHAT IT CAN DO IN THIS FIGHT — reach, rate of fire, speed. See the header for why these
-    // three are read off combat_units and not out of the stat registry, and why "reload" is stated
-    // as the ROUND. Only while a fight is actually running: off the field these rows do not exist,
-    // and a stale copy of them would be a number with no source.
+    // ── WHAT IT CAN DO IN THIS FIGHT, AND WHAT IS LEFT OF IT ──────────────────────────────────────
+    // See the header for why every one of these is read off combat_units rather than out of the stat
+    // registry, why "reload" is stated as the ROUND, and why shield/shield-regen are silent today.
+    // Only while a fight is actually running: off the field these rows do not exist, and a stale
+    // copy of them would be a number with no source.
+    //
+    // THE ORDER IS THE ORDER THE QUESTION IS ASKED: what is left of me (hull, shield), then what I
+    // hit with (attack, weapons, range, fires), then how I move. Every arm is guarded on the leaf
+    // returning a value — a null is "the rows do not say" and it prints NOTHING, never a zero.
     if (encounter) {
-      const fight = resolveFightingFleetStats(input.units, encounter.id, input.combatTickSeconds ?? null)
+      const fight = resolveFightingFleetStats(
+        input.units,
+        encounter.id,
+        input.combatTickSeconds ?? null,
+        input.shieldRegenCombatPct ?? null,
+      )
       if (fight) {
-        if (fight.reach !== null) {
-          stats.push({ label: 'Reach', value: `${trim(fight.reach)} units` })
+        if (fight.hull) {
+          stats.push({
+            label: FLEET_STAT_LABEL.hull,
+            value: `${Math.round(fight.hull.current)} / ${Math.round(fight.hull.max)}`,
+          })
         }
-        stats.push({ label: 'Fires', value: fireRateText(fight.roundSeconds) })
+        if (fight.shield) {
+          stats.push({
+            label: FLEET_STAT_LABEL.shield,
+            value: `${Math.round(fight.shield.current)} / ${Math.round(fight.shield.max)}`,
+          })
+        }
+        if (fight.shieldRegenPerRound !== null) {
+          stats.push({
+            label: FLEET_STAT_LABEL.shieldRegen,
+            value: `${trim(fight.shieldRegenPerRound)} / round`,
+          })
+        }
+        if (fight.attack !== null) {
+          stats.push({ label: FLEET_STAT_LABEL.attack, value: `${trim(fight.attack)} / round` })
+        }
+        if (fight.weapons.length > 0) {
+          stats.push({ label: FLEET_STAT_LABEL.weapons, value: weaponSystemsText(fight.weapons) })
+        }
+        if (fight.reach !== null) {
+          stats.push({ label: FLEET_STAT_LABEL.range, value: `${trim(fight.reach)} units` })
+        }
+        stats.push({ label: FLEET_STAT_LABEL.fires, value: fireRateText(fight.roundSeconds) })
         if (fight.speed !== null) {
-          stats.push({ label: 'Combat speed', value: `${trim(fight.speed)} units/round` })
+          stats.push({ label: FLEET_STAT_LABEL.speed, value: `${trim(fight.speed)} units/round` })
         }
       }
     }

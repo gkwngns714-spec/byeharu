@@ -123,6 +123,15 @@ export interface GalaxyMapData {
   // row is missing or unreadable, and every surface then states the cadence without a number rather
   // than inventing one (the retreatCountdown law).
   combatTickSeconds: number | null
+  // HOW FAST A SHIELD COMES BACK — `game_config.shield_regen_combat_pct`, the fraction of a pool the
+  // combat tick restores each round. It is the SAME knob the engine reads (0195:
+  // `v_shield_regen := coalesce(cfg_num('shield_regen_combat_pct'), 0)`, hoisted once per
+  // invocation), rides the SAME once-per-session fetchGameConfig() batch as the two above, and costs
+  // no extra request. NULL when the row is missing, unreadable, or NOT POSITIVE — 0 is the committed
+  // dark seed (0191) and is the live production value, and a mechanic that restores nothing must not
+  // be described on the map. The shield stack is data-gated with no flag; this goes positive the day
+  // scripts/activate-shield.sql is run, and the readout's shield lines appear by themselves.
+  shieldRegenCombatPct: number | null
   // ITEM VOLUMES — `item_types.item_id -> volume_m3`, from the ONE catalog read
   // (modules/modulesApi.fetchItemCatalog). Static reference data, fetched once with the world. Empty
   // map on a failed read, which reads downstream as "no volume known" and prints nothing — never 0.
@@ -185,6 +194,7 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   miningFields: [],
   miningExtractRadius: DEFAULT_MINING_EXTRACT_RADIUS,
   combatTickSeconds: null,
+  shieldRegenCombatPct: null,
   itemVolumes: new Map<string, number>(),
   pirateInterceptEnabled: false,
   dangerZones: [],
@@ -203,6 +213,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     miningFields: MiningField[]
     miningExtractRadius: number
     combatTickSeconds: number | null
+    shieldRegenCombatPct: number | null
     itemVolumes: ReadonlyMap<string, number>
     pirateInterceptEnabled: boolean
   } | null>(null)
@@ -247,6 +258,12 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         const rawTick = gameConfig.combat_tick_seconds
         const combatTickSeconds =
           typeof rawTick === 'number' && Number.isFinite(rawTick) && rawTick > 0 ? rawTick : null
+        // NO FALLBACK here either, and 0 is DELIBERATELY folded to null rather than carried: the
+        // dark seed and the live value are both 0, and a "Shield regen 0" line would name a mechanic
+        // the engine does not run. Absent -> the readout says nothing about shield generation.
+        const rawRegen = gameConfig.shield_regen_combat_pct
+        const shieldRegenCombatPct =
+          typeof rawRegen === 'number' && Number.isFinite(rawRegen) && rawRegen > 0 ? rawRegen : null
         const itemVolumes = new Map<string, number>()
         for (const row of itemCatalog ?? []) {
           if (Number.isFinite(row.volume_m3) && row.volume_m3 > 0) itemVolumes.set(row.item_id, row.volume_m3)
@@ -254,7 +271,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         staticRef.current = {
           locations, meta, mainshipSendEnabled, fleetMovementUnifiedEnabled,
           launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
-          miningFields, miningExtractRadius, combatTickSeconds, itemVolumes, pirateInterceptEnabled,
+          miningFields, miningExtractRadius, combatTickSeconds, shieldRegenCombatPct, itemVolumes,
+          pirateInterceptEnabled,
         }
       }
 
@@ -343,6 +361,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         miningFields: staticRef.current.miningFields,
         miningExtractRadius: staticRef.current.miningExtractRadius,
         combatTickSeconds: staticRef.current.combatTickSeconds,
+        shieldRegenCombatPct: staticRef.current.shieldRegenCombatPct,
         itemVolumes: staticRef.current.itemVolumes,
         pirateInterceptEnabled: staticRef.current.pirateInterceptEnabled,
         dangerZones,

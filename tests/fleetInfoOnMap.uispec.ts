@@ -132,12 +132,94 @@ test('ALREADY FIGHTING: the same slot offers the way OUT, and the way IN is not 
   await expect(page.getByTestId(`fleet-status-hunt-${FLEET}`)).toHaveCount(0)
 })
 
-test('the fight’s NUMBERS stay on the combat card — the readout is not a second fight display', async ({ page }) => {
+test('the fight’s RUNNING COMMENTARY stays on the combat card — the readout is not a second fight display', async ({ page }) => {
   await open(page, 'fighting')
   const text = (await page.getByTestId('fleet-status-panel').textContent()) ?? ''
-  for (const banned of ['Hull', 'Last exchange', 'Auto-retreat', 'units to go']) {
+  // 'Hull' USED TO BE ON THIS LIST and has been deliberately removed from it. The owner, playing
+  // 2026-08-09: *"the fleets tab on map does not show range, its moving speed, hull, shield, shield
+  // generation"*. He is asking for the fleet's STANDING — what it is made of and what is left of it —
+  // on the readout that describes his fleet, and that outranks the earlier tidiness rule. What is
+  // still refused is the fight's blow-by-blow: the last exchange and the retreat threshold are
+  // events, they change every tick, and CombatMapCard owns them three inches away.
+  for (const banned of ['Last exchange', 'Auto-retreat', 'units to go']) {
     expect(text, `${banned} belongs to CombatMapCard, which is on this same screen`).not.toContain(banned)
   }
+})
+
+// ── 3b · ██ WHAT THE FLEET IS MADE OF, AND WHAT IT SHOOTS WITH ██ ────────────────────────────────
+// Owner, playing 2026-08-09: *"the fleets tab on map does not show range, its moving speed, hull,
+// shield, shield generation"* and *"the fleets tab should also show attacking power, what weapon
+// system it is using"*.
+//
+// ⚠ THE REASON THESE ARE HERE AND NOT ONLY IN tests/fightingFleetStats.spec.ts: this harness used to
+// pass `units={[]}` into the 'fighting' scenario, so the model returned null and NOT ONE fight stat
+// was ever rendered in a proof. "Reach 5 units · Fires every round · 3s · Combat speed 0.2
+// units/round" was live on the owner's map with a fully green rendered suite. The fixture now
+// carries his actual production rows.
+
+test('EVERY STAT HE ASKED FOR IS ON THE SCREEN, with the numbers the server sent', async ({ page }) => {
+  await open(page, 'fighting')
+  const stats = page.getByTestId(`fleet-status-stats-${FLEET}`)
+  // Five living hulls at 473+500+500+33+92 of 500 each — the DEAD sixth hull and the enemy rows
+  // contribute nothing, which is the whole reason both are in the fixture.
+  await expect(stats).toContainText('Hull')
+  await expect(stats).toContainText('1598 / 2500')
+  // 5 guns × power 15. 0331 makes weapons_json[i].power the ship's own combat_power share, so this
+  // is the engine's per-round volley and not a client re-fold of anything.
+  await expect(stats).toContainText('Attack')
+  await expect(stats).toContainText('75 / round')
+  // "what weapon system it is using" — off the frozen array, named by the ONE id→label authority.
+  await expect(stats).toContainText('Weapons')
+  await expect(stats).toContainText('Basic Player Weapon ×5')
+  await expect(stats).toContainText('Range')
+  await expect(stats).toContainText('5 units')
+  await expect(stats).toContainText('0.2 units/round')
+})
+
+test('THE WORDS ARE HIS: "Range" and "Speed", never "Reach" and never "Combat speed"', async ({ page }) => {
+  // He listed range and moving speed as MISSING while the panel was printing "Reach" and "Combat
+  // speed" at that exact moment. A stat the player does not recognise is a stat that is not there.
+  await open(page, 'fighting')
+  const text = (await page.getByTestId('fleet-status-panel').textContent()) ?? ''
+  expect(text).toContain('Range')
+  expect(text, 'Reach is a word this codebase invented; range is the word on the weapon').not.toContain('Reach')
+  // The two speeds must never be readable as one number — combat move_speed and map-travel speed are
+  // different quantities in different units.
+  expect(text).toContain('Speed in battle')
+  expect(text).not.toContain('Combat speed')
+})
+
+test('THE FIRE CADENCE STAYS HONEST — the ROUND, never the cooldown the engine does not read', async ({ page }) => {
+  // The fixture's weapon carries cooldown_seconds 2 (production's real value). The engine stamps
+  // next_ready_at := now() and never adds it, so every weapon in range fires every tick. Printing
+  // "Reload 2s" would be a number that changes nothing in the game.
+  await open(page, 'fighting')
+  const text = (await page.getByTestId('fleet-status-panel').textContent()) ?? ''
+  expect(text).toContain('every round · 3s')
+  expect(text, 'the unread cooldown must never reach the screen').not.toMatch(/reload/i)
+  expect(text).not.toContain('2s')
+})
+
+test('SHIELDS ARE SILENT WHILE THE GAME HAS NONE — no 0/0 bar, no zero regen', async ({ page }) => {
+  // Measured on production 2026-08-09: 0 of 327 combat_units rows carry a pool, 0 of 77 ships have
+  // max_shield > 0, 0 of 3 hulls have base_shield > 0, and shield_regen_combat_pct is 0. A "Shield
+  // 0/0" line would be a bar that can never move and "Shield regen 0" would name a mechanic that
+  // does not run — the same refusal the dormant fold stats get.
+  await open(page, 'fighting')
+  const text = (await page.getByTestId('fleet-status-panel').textContent()) ?? ''
+  expect(text, 'a shieldless fight must say nothing about shields').not.toMatch(/shield/i)
+})
+
+test('…AND THEY APPEAR BY THEMSELVES ONCE A POOL EXISTS — the silence is the DATA, not a missing feature', async ({ page }) => {
+  // The same fight after scripts/activate-shield.sql: five hulls at 60/100 with the combat regen knob
+  // at 0.02. This is the anti-proof for the test above — without it, "shields are silent" and
+  // "shields were never built" are indistinguishable.
+  await open(page, 'shielded')
+  const stats = page.getByTestId(`fleet-status-stats-${FLEET}`)
+  await expect(stats).toContainText('Shield')
+  await expect(stats).toContainText('300 / 500')
+  await expect(stats).toContainText('Shield regen')
+  await expect(stats).toContainText('10 / round')
 })
 
 // ── 4 · IN FLIGHT ────────────────────────────────────────────────────────────────────────────────
@@ -165,7 +247,7 @@ test('CANNOT FIGHT: THE REASON IS ON THE SCREEN, and it names the fix', async ({
 
 for (const width of [MARGIN_FLOOR, PHONE_FLOOR]) {
   test(`NOTHING IS CLIPPED AND THE PAGE NEVER SCROLLS SIDEWAYS at ${width}px`, async ({ page }) => {
-    for (const scenario of ['parked', 'zone', 'fighting', 'flight', 'blocked']) {
+    for (const scenario of ['parked', 'zone', 'fighting', 'shielded', 'flight', 'blocked']) {
       await open(page, scenario, width)
       expect(await scrollsSideways(page), `${scenario} at ${width}px pushes the page sideways`).toBe(false)
       for (const o of await panelOverflow(page)) {

@@ -88,6 +88,20 @@ export interface CombatUnit {
   alive_count: number
   hp_max: number
   hp_current: number
+  // THE SHIELD POOL (0191 the columns, 0195 the engine). PAIRED BY A TABLE CHECK: shield_max is NULL
+  // exactly when shield_current is, and a hull with NO shield machinery carries NULL/NULL — never
+  // 0/0, deliberately, so "shieldless" is distinguishable from "shield down" (0191:105, and 0195's
+  // snapshot decision states the reasoning). Only a member row (main_ship_id) can carry a pool at
+  // all; every legacy catalog row is NULL by the same CHECK.
+  //
+  // MEASURED ON PRODUCTION 2026-08-09: 0 of 327 combat_units rows carry a pool, 0 of 77 ships have
+  // max_shield > 0, 0 of 3 hulls have base_shield > 0, and game_config.shield_regen_combat_pct is 0.
+  // The stack is DATA-gated, not flag-gated — scripts/activate-shield.sql is the human flip. So a
+  // reader must treat null as "this fight has no shields" and show NOTHING, never a 0/0 bar that can
+  // never move. map/fightingFleetStats is the ONE reader and states that rule where it applies it.
+  // Optional for combatApi's `select('*')`, the same law as the spatial columns above.
+  shield_max?: number | null
+  shield_current?: number | null
   // COMBAT-S3/S4 (0234) spatial columns — NULL/'player'/[] on every pre-existing and non-spatial
   // row (a select('*') read returns them once 0234 is applied). pos_x/pos_y are in the SAME world
   // domain as locations.x/y (a spatial unit is seeded from the location centre and displaced in world
