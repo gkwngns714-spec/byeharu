@@ -444,7 +444,32 @@ declare
   v_new text;
   v_n integer;
   v_done integer := 0;
+  v_exec integer := 0;
+  v_fn   text;
+  -- THE WORKING SET. Every function this block edits, read ONCE into v_orig, patched in v_texts, and
+  -- written back to the catalog once at the end. A function that a hunk names but this array does not
+  -- carry is refused rather than silently skipped.
+  v_fns  text[] := array['combat_spawn_wave_units', 'process_combat_ticks'];
+  v_orig jsonb  := '{}'::jsonb;
+  v_texts jsonb := '{}'::jsonb;
 begin
+  -- ── READ EVERY BODY FIRST, FROM THE CATALOG, EXACTLY ONCE ───────────────────────────────────────
+  foreach v_fn in array v_fns loop
+    select p.oid into v_oid
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = v_fn;
+    if v_oid is null then
+      raise exception '0346 REWRITE FAIL: function public.% not found', v_fn;
+    end if;
+    if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+         where n.nspname = 'public' and p.proname = v_fn) <> 1 then
+      raise exception '0346 REWRITE FAIL: public.% is overloaded — refusing to guess', v_fn;
+    end if;
+    v_src   := pg_get_functiondef(v_oid);
+    v_orig  := jsonb_set(v_orig,  array[v_fn], to_jsonb(v_src));
+    v_texts := jsonb_set(v_texts, array[v_fn], to_jsonb(v_src));
+  end loop;
+
   for r in
     select * from (values
 
@@ -711,18 +736,25 @@ begin$s1n$),
     ) as t(idx, fname, old_t, new_t)
     order by 1
   loop
-    select p.oid into v_oid
-      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-     where n.nspname = 'public' and p.proname = r.fname;
-    if v_oid is null then
-      raise exception '0346 REWRITE FAIL [%]: function public.% not found', r.idx, r.fname;
+    -- ██ EVERY HUNK IS APPLIED TO AN IN-MEMORY TEXT, NEVER TO THE CATALOG ██
+    -- THE DEFECT THIS SHAPE EXISTS TO MAKE IMPOSSIBLE (found by CI on PR #403, all 22 legs red at
+    -- the apply stage): the first draft of this block ran `execute v_new` INSIDE this loop, once per
+    -- hunk. Hunk [S1] deletes the `v_extent` DECLARATION and hunk [S2] deletes its two USES, so
+    -- between them the function existed with the declaration gone and the uses live. Postgres
+    -- validates a plpgsql body at CREATE time and rejected it outright —
+    --     ERROR: "v_extent" is not a known variable (SQLSTATE 42601)
+    -- — so nothing applied at all. The FINAL text was correct the whole time; it was the INTERMEDIATE
+    -- state that could not exist.
+    -- THE RULE, now structural rather than remembered: a declaration and every one of its uses move
+    -- together, or neither does. Accumulating the whole edit and executing ONCE per function is what
+    -- makes that true by construction — there is no intermediate state to be invalid, so hunk ORDER
+    -- stops being load-bearing and no future hunk added to this list can reintroduce the class.
+    -- (Every earlier surgery in this chain — 0338, 0343, 0344 — executed per hunk and was safe only
+    -- because none of them ever split a declaration from its uses. This one does, so it cannot.)
+    if not v_texts ? r.fname then
+      raise exception '0346 REWRITE FAIL [%]: public.% was not read into the working set — every function this block edits must be listed in v_fns', r.idx, r.fname;
     end if;
-    if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-         where n.nspname = 'public' and p.proname = r.fname) <> 1 then
-      raise exception '0346 REWRITE FAIL [%]: public.% is overloaded — refusing to guess', r.idx, r.fname;
-    end if;
-
-    v_src := pg_get_functiondef(v_oid);
+    v_src := v_texts ->> r.fname;
     v_n := (length(v_src) - length(replace(v_src, r.old_t, ''))) / length(r.old_t);
     if v_n <> 1 then
       raise exception '0346 REWRITE FAIL [%]: hunk text occurs % time(s) in public.%, expected exactly 1 — the deployed body is not what this migration was sliced against',
@@ -736,12 +768,32 @@ begin$s1n$),
     if v_new = v_src then
       raise exception '0346 REWRITE FAIL [%]: the rewrite of public.% produced a byte-identical body — the hunk did not land', r.idx, r.fname;
     end if;
-    execute v_new;
+    v_texts := jsonb_set(v_texts, array[r.fname], to_jsonb(v_new));
     v_done := v_done + 1;
   end loop;
 
+  -- v_done is the number of HUNKS in the VALUES list above — six text edits over two functions. It
+  -- is a count of this migration's own rewrite sites and has nothing to do with any world content:
+  -- no location, no zone, no site and no row is counted anywhere in this block, so adding a
+  -- pirate_hunt location cannot move it. It changes only if a hunk is added to or removed from the
+  -- list immediately above, which is exactly when a human should have to change it too.
   if v_done <> 6 then
-    raise exception '0346 REWRITE FAIL: rewrote % site(s), expected 6', v_done;
+    raise exception '0346 REWRITE FAIL: applied % hunk(s), expected 6 (the number of rows in this block''s own VALUES list — not a count of anything in the world)', v_done;
+  end if;
+
+  -- ── NOW, AND ONLY NOW, THE CATALOG ─────────────────────────────────────────────────────────────
+  -- One CREATE OR REPLACE per function, each carrying every hunk that belongs to it. Both run inside
+  -- this migration's single transaction, so the tick and the placement authority change together or
+  -- not at all.
+  foreach v_fn in array v_fns loop
+    if (v_texts ->> v_fn) = (v_orig ->> v_fn) then
+      raise exception '0346 REWRITE FAIL: public.% is byte-identical to the body that was read — no hunk landed on it, so its edits are missing rather than applied', v_fn;
+    end if;
+    execute v_texts ->> v_fn;
+    v_exec := v_exec + 1;
+  end loop;
+  if v_exec <> 2 then
+    raise exception '0346 REWRITE FAIL: re-created % function(s), expected 2 (combat_spawn_wave_units and process_combat_ticks)', v_exec;
   end if;
 end $rewrite$;
 
