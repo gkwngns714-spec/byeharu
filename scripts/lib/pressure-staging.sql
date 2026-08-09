@@ -54,12 +54,30 @@ begin
   -- directly, byte-identical to the pre-0346 engine. A block that wants to test the INGRESS itself
   -- must set this to a positive value AFTER staging its field, and say so.
   perform public.set_game_config('combat_enemy_ingress_ticks', '0'::jsonb);
-  insert into public.location_pressure (location_id, reinforcement_seconds, concurrent_cap, note)
-  values (v_loc, p_cadence, p_cap, 'proof fixture: cadence + cap OWNED by the block under test')
+  -- ── 0347: THE CAP GROWTH IS OWNED HERE TOO, AND IT IS OWNED *OFF* ──────────────────────────────
+  -- 0347 makes a site's cap GROW: effective_cap = concurrent_cap + floor(the fight's scheduled slot
+  -- ordinal / location_pressure.cap_growth_every), and every real site is authored at 3 ("every 3
+  -- wave, i want wave to add one fleet"). A NULL period means the cap does not grow, which is 0344's
+  -- behaviour value for value.
+  -- A block that asks for a field of n wants a cap of n and wants it to STAY n: every arrival,
+  -- suppression and cap property in this harness is stated against a fixed number, and a cap that
+  -- silently widened on the third slot would move those numbers under blocks that are not about the
+  -- growth at all. So the period is owned here beside the cadence and the cap rather than inherited
+  -- from the seed — the same law that put the cap here in the first place, and the same law that put
+  -- the ingress duration above it.
+  -- THE ONE BLOCK THAT IS ABOUT THE GROWTH — DZCOMBAT_PASS_FIELDGROWS — authors the period ITSELF,
+  -- immediately after calling this, and says so. That is deliberate: exactly one place in the harness
+  -- turns the owner's rule on, so there is exactly one place to look when it changes.
+  insert into public.location_pressure (location_id, reinforcement_seconds, concurrent_cap, note,
+                                        cap_growth_every, cap_ceiling)
+  values (v_loc, p_cadence, p_cap, 'proof fixture: cadence + cap OWNED by the block under test',
+          null, null)
   on conflict (location_id) do update
     set reinforcement_seconds = excluded.reinforcement_seconds,
         concurrent_cap        = excluded.concurrent_cap,
         note                  = excluded.note,
+        cap_growth_every      = excluded.cap_growth_every,
+        cap_ceiling           = excluded.cap_ceiling,
         updated_at            = now();
 end $$;
 

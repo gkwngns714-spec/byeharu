@@ -8182,6 +8182,14 @@ end $$;
 --       A4 at the concurrent cap NOTHING arrives — and the due slot is still SPENT, not stored, so
 --          nothing is owed the moment a body dies;
 --       A5 the cap holds on the next due slot too (a cap that leaked would show up only here).
+--   (C) DZCOMBAT_PASS_FIELDGROWS (0347) — AND THE CAP ITSELF GROWS, ON THE CLOCK'S OWN SCHEDULE:
+--       the owner's "every 3 wave, i want wave to add one fleet" is driven six slots deep on the FULL
+--       field arm (A) leaves standing, reproducing his worked example 3,3,4,4,4,5 — and, crucially,
+--       showing the ORDINAL reach 6 while only TWO bodies arrived. That divergence is the whole
+--       property: an ARRIVAL-driven counter cannot advance at the cap, so it would resume only when
+--       an enemy DIED, which is the arrow from a death back into pressure wearing its third costume.
+--       The block also pins the two client-visible projections of the cap — the stamp a readout
+--       shows, and the enemy bar's denominator — to the EFFECTIVE cap rather than the base one.
 --   (B) AND THE DIRECTIVE ITSELF: a fight whose whole field is DESTROYED gets nothing back. The kill
 --       does not summon a body, does not make the clock due, and does not re-bank the reward — an
 --       empty field satisfies "enemy hp <= 0" on every tick, and without the v_e_before > 0 conjunct
@@ -8190,7 +8198,9 @@ end $$;
 -- least(enemy_synthetic_max_units, greatest(1, danger)) bodies rather than one.
 do $$
 declare
-  r jsonb; n int; n_live int; n_rows int;
+  r jsonb; n int; n_live int; n_rows int; i int;
+  v_grow int; v_gcap int; v_idx int; v_ecap int; v_expcap int; v_arr int;
+  v_nom double precision; v_emax double precision;
   uP3 uuid; sP3 uuid; gP3 uuid; uQ uuid; sQ uuid; gQ uuid;
   o_x double precision; o_y double precision; v_verts jsonb;
   v_hunt uuid := (select v from dzc where k='v_hunt');
@@ -8377,6 +8387,99 @@ begin
   if (select status from public.combat_encounters where id = v_enc) <> 'active' then
     raise exception 'PRESSURE FAIL: A''s encounter left ''active'' during the clock arithmetic — a non-active fight is refused reinforcement by design, so every count above would have been measuring the status gate instead of the clock';
   end if;
+
+  -- ══ (C) 0347 — THE FIELD GROWS: EVERY THIRD SCHEDULED SLOT ADMITS ONE MORE BODY ═════════════════
+  -- The owner: "every 3 wave, i want wave to add one fleet", and on the consequence for the cap,
+  -- "yes, cap should grow. go ahead". This arm reuses arm (A)'s field, which is left standing at its
+  -- cap with three bodies that cannot die, cannot move and cannot shoot — because a FULL field is
+  -- the only state in which the property is visible at all. While a field is UNDER its cap every due
+  -- slot delivers a body and the cap never binds, so a growing cap and a fixed one look identical.
+  --
+  -- ⛔ THE TRAP THIS ARM EXISTS TO CATCH, AND IT IS THE FIRST THING ANYONE WOULD BUILD. If the number
+  -- that grows the cap were "how many bodies have ARRIVED", it could not advance while the field sits
+  -- at its cap — so the cap would resume growing only once an enemy DIED and freed a slot. That is an
+  -- indirect arrow from a death back into pressure, which is the exact thing 0344 deleted and the
+  -- owner has now rejected three times. The assert that tells the two apart is NOT the body count: it
+  -- is that after six slots the ORDINAL reads 6 while exactly TWO bodies have arrived. An
+  -- arrival-driven counter reads 2 there and the field never leaves 3.
+  --
+  -- THIS BLOCK OWNS THE GROWTH. pg_temp.pressure_site authors cap_growth_every NULL — a FIXED cap,
+  -- 0344's behaviour value for value — precisely so every other block stays about the cap. This is
+  -- the one block that is about the growth, so it authors the period itself, here, in the open.
+  update public.location_pressure lp
+     set cap_growth_every = 3, cap_ceiling = null, updated_at = now()
+    from public.combat_encounters ce
+   where ce.id = v_enc and lp.location_id = ce.location_id;
+  select lp.cap_growth_every, lp.concurrent_cap into v_grow, v_gcap
+    from public.location_pressure lp
+    join public.combat_encounters ce on ce.location_id = lp.location_id
+   where ce.id = v_enc;
+  if v_grow is null or v_grow < 2 or v_gcap is null or v_gcap < 2 then
+    raise exception 'FIELDGROWS FAIL: the site carries growth period % / base cap % — with a NULL period there is no growth to observe at all, and with a period or a cap under 2 the suppressed slots and the grown slots cannot be told apart', v_grow, v_gcap;
+  end if;
+  -- THE ORDINAL IS OWNED TOO. Arm (A) spent ten scheduled slots getting this field to its cap, so
+  -- counting the owner's worked example from here needs a STATED starting point rather than an
+  -- inherited one — the proofs-never-assert-ambient-defaults law, applied to a counter. This is the
+  -- same class of write as the clock rewinds above: the block time-travels the schedule it is about
+  -- to count and touches nothing else.
+  update public.combat_encounters set pressure_wave_index = 0 where id = v_enc;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+  if n <> v_gcap then
+    raise exception 'FIELDGROWS FAIL: % living bod(ies) stand against a base cap of % — this arm needs a FULL field. Under the cap every slot delivers a body, the cap never binds, and a growing cap would be indistinguishable from a fixed one', n, v_gcap;
+  end if;
+  -- one body's nominal hp, from the same two inputs the engine uses, so the enemy-bar denominator
+  -- below is compared against a DERIVED number rather than one written into this file.
+  select l.base_difficulty * coalesce(public.cfg_num('enemy_hp_base'), 14) into v_nom
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
+  if v_nom is null or v_nom <= 0 then
+    raise exception 'FIELDGROWS FAIL: one body''s nominal hp resolves to % — the enemy-bar denominator assert below is measured against it and a NULL or zero would make every comparison vacuous (the 0313 law)', v_nom;
+  end if;
+
+  -- ── THE OWNER'S WORKED EXAMPLE, SLOT BY SLOT: 3,3,4,4,4,5 on a base cap of 3.
+  -- Every slot is forced the same way the cap asserts above force one — the clock is rewound by a
+  -- second and the REAL tick is driven — so nothing here is a direct call into the authority.
+  for i in 1 .. 6 loop
+    v_expcap := v_gcap + (i / v_grow);   -- integer division IS the owner's floor(ordinal / period)
+    update public.combat_encounters set next_reinforcement_at = now() - interval '1 second' where id = v_enc;
+    perform pg_temp.ae_tick(v_enc);
+    select count(*) into n from public.combat_units
+     where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+    select pressure_wave_index, pressure_effective_cap, enemy_integrity_max
+      into v_idx, v_ecap, v_emax from public.combat_encounters where id = v_enc;
+    if v_idx <> i then
+      raise exception 'FIELDGROWS FAIL slot %: the scheduled ordinal reads % (want %). It must advance on EVERY due slot, whether or not a body arrived — a counter that only moves on an arrival stalls at the cap and can be restarted ONLY by an enemy dying, which is the arrow from a death back into pressure', i, v_idx, i;
+    end if;
+    if v_ecap is distinct from v_expcap then
+      raise exception 'FIELDGROWS FAIL slot %: the effective cap stamped on the fight reads % but base % + floor(% / %) is % — that arithmetic IS the owner''s "every 3 wave, add one fleet", and the stamp is the number a client surface shows', i, v_ecap, v_gcap, i, v_grow, v_expcap;
+    end if;
+    if n <> v_expcap then
+      raise exception 'FIELDGROWS FAIL slot %: % living bod(ies) stand against an effective cap of % — a full field must track its own cap exactly: it takes one body on the slot the cap grows and NOTHING on the slots between, or the growth is not what admitted it', i, n, v_expcap;
+    end if;
+    -- THE ENEMY BAR'S DENOMINATOR MOVES WITH THE CAP. combat_encounters.enemy_integrity_max is the
+    -- site's ceiling (0344), and a ceiling still computed from the BASE cap would drive the client's
+    -- enemy bar past 100% the moment a fourth body stood on a three-body field. Compared with a
+    -- relative margin, never for float equality — the zero-margin disease this suite has been bitten
+    -- by twice.
+    if v_emax is null or abs(v_emax - v_nom * v_expcap) > 1e-6 * greatest(v_nom * v_expcap, 1) then
+      raise exception 'FIELDGROWS FAIL slot %: the enemy bar''s denominator reads % but one body''s nominal hp (%) times the EFFECTIVE cap (%) is % — a denominator left on the base cap is the "3 max while four ships stand" defect, rendered', i, v_emax, v_nom, v_expcap, v_nom * v_expcap;
+    end if;
+  end loop;
+
+  -- ── ██ THE ASSERT THAT SEPARATES A CLOCK FROM A KILL LADDER ██
+  v_arr := n - v_gcap;
+  if v_idx <> 6 or v_arr <> 2 then
+    raise exception 'FIELDGROWS FAIL: after six scheduled slots the ordinal reads % and % bod(ies) arrived (want 6 and 2)', v_idx, v_arr;
+  end if;
+  if v_arr >= v_idx then
+    raise exception 'FIELDGROWS FAIL: the ordinal (%) is not strictly greater than the number of bodies that arrived (%) — on a FULL field the two must diverge, and while they agree this block cannot tell a clock-driven counter from an arrival-driven one and proves nothing about the trap it exists to catch', v_idx, v_arr;
+  end if;
+  if (select status from public.combat_encounters where id = v_enc) <> 'active' then
+    raise exception 'FIELDGROWS FAIL: A''s encounter left ''active'' during the growth arithmetic — a non-active fight is refused reinforcement by design, so every count above would have been measuring the status gate instead of the cap';
+  end if;
+  raise notice 'DZCOMBAT_PASS_FIELDGROWS ok: on a FULL field at a base cap of % with the site authoring one more body every % scheduled slots, six due slots produced the owner''s own sequence — cap 3,3,4,4,4,5 and a field of 3,3,4,4,4,5 — the ordinal reaching % while only % bodies arrived (a counter that could not advance at the cap would read % and the field would never leave 3, which is a death unlocking the growth), the effective cap STAMPED on the encounter for a client to read matching the number the spawn decision used on every one of the six, and the enemy bar''s denominator moving with the effective cap rather than the base one',
+    v_gcap, v_grow, v_idx, v_arr, v_arr;
 
   -- ══ (B) THE DIRECTIVE: DESTROYING THE FIELD BRINGS NOTHING BACK ═════════════════════════════════
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)

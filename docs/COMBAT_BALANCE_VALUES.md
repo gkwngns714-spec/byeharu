@@ -113,6 +113,45 @@ a large fraction of encounters pinned at it.
 
 ---
 
+## §4b The cap GROWS — +1 body every 3 scheduled slots (0347)
+
+> *"every 3 wave, i want wave to add one fleet"* — the owner
+> *"yes, cap should grow. go ahead"* — the owner, on the consequence for §4's cap
+
+§4's number is the cap a fight **starts** with, not the cap it keeps. From 0347:
+
+    effective_cap = concurrent_cap + floor(pressure_wave_index / cap_growth_every)
+
+| site | base cap | growth period | cap after 3 / 6 / 12 slots | ceiling |
+|---|---|---|---|---|
+| Snare | 3 | every 3 slots (135 s) | 4 / 5 / 7 | **none** |
+| Reaver | 4 | every 3 slots (108 s) | 5 / 6 / 8 | **none** |
+| Blackden | 6 | every 3 slots (90 s) | 7 / 8 / 10 | **none** |
+
+Both numbers are **columns on the site's own content row** — `location_pressure.cap_growth_every` and
+`.cap_ceiling` — for §4's reason, restated: a growth period computed from `base_difficulty` would make
+that column an overloaded authority all over again. Retuning a site is an `UPDATE` and no deploy.
+
+**`pressure_wave_index` is the SCHEDULED slot ordinal, never a count of arrivals**, and that distinction
+is the whole design. An arrival-driven counter cannot advance while the field sits at its cap, so the cap
+would resume growing only once an enemy **died** — an indirect arrow from a death back into pressure,
+which is exactly what §3/0344 removed and what the owner has rejected three times. The ordinal advances
+on every slot that comes due, spawn or no spawn, by the same count the clock skips.
+
+**THE CEILING IS UNBOUNDED TODAY AND THAT IS AN OPEN DECISION, NOT AN OVERSIGHT.** `cap_ceiling` is NULL
+at every site: the fight is endless by design and the owner has not ruled on a limit. It is a row so the
+ruling costs one `UPDATE`. There is no step-size column, deliberately — a step of *k* is the same axis as
+a period of *every/k*.
+
+**What falsifies "every 3"**: seconds-to-defeat and incoming damage/30 s as a function of *slots elapsed*
+rather than of population. If the curve is smooth up to some slot count and then vertical, either the
+period is too short or a ceiling is needed at that point — and the ceiling is where that answer goes.
+Measure it per site: Blackden reaches slot 3 in 90 s where Snare needs 135 s, so one period is a much
+steeper ramp at the hardest site. That asymmetry is intended (its cadence is the fastest) but it is the
+first thing to check if Blackden becomes unsurvivable before a player can extract.
+
+---
+
 ## §5 Cooldown becomes a real stat — 2 s → **6 s** (2 ticks), BOTH sides
 
 Leaving cooldown inert would make the lock the only gate, and the behaviour would degrade to
