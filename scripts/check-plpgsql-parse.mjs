@@ -15,8 +15,25 @@
 //    when `do $rewrite$` EXECUTEs the assembled function body, and it surfaced as
 //    `ERROR: syntax error at end of input (SQLSTATE 42601)` on the apply, in CI, on every leg.
 //
-// Those are two different layers, so this gate has two checks and BOTH are needed. Check A is a
-// real PostgreSQL parse; check B is the one that reaches inside a surgery.
+// 3. The SAME migration, after (2) was fixed, was STILL red with the SAME error. Hunk [6] put a
+//    BARE `case when … then … end` inside an IF condition. plpgsql does not parse an IF condition
+//    as SQL and then look for THEN — it scans for the first THEN at parenthesis depth 0. The CASE
+//    supplies one, so the condition is truncated, every statement after it shifts, and the function
+//    ends with the parser still open. Checks (A) and (B) are both GREEN on it: the file parses, and
+//    the hunk is perfectly `if`/`end if` balanced. Only check (C) sees it.
+//
+// Three layers, three checks, and none of them subsumes another.
+//
+// ══ ⚠ WHAT A GREEN FROM THIS TOOL DOES AND DOES NOT MEAN ════════════════════════════════════════
+// It means: every file PARSES, every plpgsql block COMPILES, every hunk is block-balanced, and the
+// surgery chain reconstructed from THIS REPO produces bodies that compile.
+// It does NOT mean the migration will apply. This gate has no schema, so it resolves no table,
+// column, function, constraint or permission; it does not run a single self-assert; and it models
+// the DISPOSABLE chain (built from these files, in this order), never PRODUCTION, whose deployed
+// body may legitimately differ. Defect (3) above shipped past a green from checks (A) and (B) —
+// the coverage boundary is exactly where bugs live. Only CI's disposable matrix is the apply proof.
+// Every target this gate could not decide is COUNTED and LISTED, so the boundary is visible in the
+// output rather than implied by silence.
 //
 // ── (A) PARSE + COMPILE, against a real PostgreSQL ──────────────────────────────────────────────
 // A WASM PostgreSQL (@electric-sql/pglite) lexes the whole file with the real scanner — catching
@@ -46,6 +63,17 @@
 // (0351 hunk [3] adds two case EXPRESSIONS inside a function call). `end if` and `end loop` are
 // unambiguous two-word closers with no expression form, and they are what surgeries get wrong.
 //
+// ── (C) ASSEMBLE THE SURGERY CHAIN AND COMPILE THE RESULT — the check that catches (3) ──────────
+// The chain's own law (0350 assert (f)) makes this possible offline: after the last FULL textual
+// re-create of a function, every later migration only does SURGERY over the deployed text. So walk
+// the migrations in version order, reset the body on a top-level `create or replace`, apply every
+// later hunk, and compile the result. Self-validating: every needle must match EXACTLY ONCE, which
+// is what the migrations assert at apply time — a drifted reconstruction reports a missed needle
+// rather than quietly compiling a body nobody will run.
+// BLAME IS SCOPED: the pre-hunk BASE is compiled FIRST. If the base does not compile in this
+// schema-less harness, the reconstruction is what is suspect and the target is recorded as a
+// coverage gap — never a red. A false red is the thing that teaches people to stop reading a gate.
+//
 // ── NON-VACUITY, because an empty scan reporting success is the whole failure mode ──────────────
 // `--require-files N` / `--require-blocks N` / `--require-hunks N` make the gate FAIL when it
 // found less than it was told to expect. A glob that stops matching, a splitter that silently
@@ -55,7 +83,8 @@
 //
 // usage:
 //   node scripts/check-plpgsql-parse.mjs <file.sql|glob> [...] [--require-files N]
-//                                        [--require-blocks N] [--require-hunks N] [--quiet]
+//        [--require-blocks N] [--require-hunks N] [--assemble <migrations-dir>]
+//        [--require-assembled N] [--quiet]
 // exit 0 = every file parses, every plpgsql block compiles, every hunk is balanced, and the
 //          non-vacuity floors were met.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -65,13 +94,15 @@ import path from 'node:path';
 
 // ── the argument surface ─────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
-const opts = { requireFiles: 0, requireBlocks: 0, requireHunks: 0, quiet: false };
+const opts = { requireFiles: 0, requireBlocks: 0, requireHunks: 0, requireAssembled: 0, assembleDir: null, quiet: false };
 const patterns = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--require-files') opts.requireFiles = Number(argv[++i]);
   else if (a === '--require-blocks') opts.requireBlocks = Number(argv[++i]);
   else if (a === '--require-hunks') opts.requireHunks = Number(argv[++i]);
+  else if (a === '--require-assembled') opts.requireAssembled = Number(argv[++i]);
+  else if (a === '--assemble') opts.assembleDir = argv[++i];
   else if (a === '--quiet') opts.quiet = true;
   else patterns.push(a);
 }
@@ -274,6 +305,67 @@ function extractHunks(src) {
   return hunks;
 }
 
+// ── (C) ASSEMBLE THE SURGERY CHAIN AND COMPILE THE RESULT ────────────────────────────────────────
+// THIS IS THE CHECK THAT ACTUALLY CATCHES THIS CLASS, and (A) and (B) both missed the defect it was
+// written for. 0351 hunk [6] put a BARE `case when … then … end` inside an IF condition. plpgsql
+// does not parse an IF condition as SQL and then look for THEN — it scans forward for the first
+// THEN token at parenthesis depth 0. The CASE supplies one, the condition is cut off early, every
+// statement after it shifts, and the function ends with the parser still inside a construct:
+// `syntax error at end of input`, 90k characters from the cause, at APPLY time. The file parses.
+// The hunk is perfectly if/end-if balanced. Only the ASSEMBLED body shows it.
+//
+// The chain's own law (0350 assert (f)) makes assembly possible offline: after the last FULL textual
+// re-create of a function, every later migration only does SURGERY over the deployed text. So this
+// walks the migrations in version order, resets the body on a top-level `create or replace`, applies
+// every later hunk, and compiles the result.
+//
+// SELF-VALIDATING: every needle must match EXACTLY ONCE, which is what the migrations themselves
+// assert at apply time. If the reconstruction had drifted from what the chain really produces, a
+// needle would miss and this reports that instead of quietly compiling a body nobody will ever run.
+//
+// WHAT IT MODELS, PRECISELY: the DISPOSABLE-CHAIN apply, which builds from these same files in this
+// same order — so a green here predicts CI's apply. It does NOT model PRODUCTION, whose deployed
+// body can legitimately differ from the repo-derived one (0351's own header says a difference there
+// is a review signal, not a failure). It is not a substitute for the disposable matrix.
+function assembleTargets(migDir) {
+  const files = readdirSync(migDir).filter((f) => f.endsWith('.sql')).sort();
+  const parsed = files.map((f) => ({ f, src: readFileSync(path.join(migDir, f), 'utf8') }));
+  // every function the chain performs surgery on
+  const targets = new Set();
+  for (const { src } of parsed) for (const h of extractHunks(src)) targets.add(h.fname);
+
+  const out = [];
+  for (const target of [...targets].sort()) {
+    let body = null, base = null, origin = null, applied = 0;
+    let broken = null;
+    for (const { f, src } of parsed) {
+      for (const st of split(src)) {
+        // NOTE: split() yields {text, line} objects, not strings.
+        const s = st.text.replace(/^(\s*--[^\n]*\n)+/, '').trim();
+        // BOTH the schema-qualified and the bare form. Matching only `public.<name>(` made the
+        // reconstruction of reward_grant start from a body 300 migrations stale, and the resulting
+        // "does not compile" was the tool's fault rather than the repo's.
+        if (!new RegExp(`^create\\s+or\\s+replace\\s+function\\s+(?:public\\.)?${target}\\s*\\(`, 'i').test(s)) continue;
+        const dm = /\bas\s+(\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$)/i.exec(s);
+        if (!dm) continue;
+        const bOpen = dm.index + dm[0].length;
+        const bClose = s.indexOf(dm[1], bOpen);
+        if (bClose === -1) continue;
+        body = s.slice(bOpen, bClose); base = body; origin = f; applied = 0;
+      }
+      if (body === null) continue;
+      for (const h of extractHunks(src).filter((h) => h.fname === target).sort((a, b) => a.idx - b.idx)) {
+        const n = body.split(h.old_t).length - 1;
+        if (n !== 1) { broken = `${f} hunk [${h.idx}] needle matches ${n} time(s) (want exactly 1)`; break; }
+        body = body.replace(h.old_t, h.new_t); applied++;
+      }
+      if (broken) break;
+    }
+    out.push({ target, body, base, origin, applied, broken });
+  }
+  return out;
+}
+
 // ═══ RUN ═════════════════════════════════════════════════════════════════════════════════════════
 // Check (B) is pure text and always runs. Check (A) needs a real PostgreSQL, which is
 // @electric-sql/pglite (a devDependency — WASM, no Docker, no server). If it cannot be resolved the
@@ -374,6 +466,63 @@ for (const file of files) {
   say(`  ${fileFail === 0 ? 'ok  ' : 'FAIL'} ${base}: ${k} plpgsql block(s), ${extractHunks(src).length} surgery hunk(s)`);
 }
 
+// ── (C) ASSEMBLE + COMPILE ───────────────────────────────────────────────────────────────────────
+let nAssembled = 0;
+if (opts.assembleDir) {
+  const dir = toNativePath(opts.assembleDir);
+  if (!existsSync(dir)) {
+    console.log(`  FAIL --assemble directory "${opts.assembleDir}" does not exist (resolved "${dir}")`);
+    failures++;
+  } else if (!db) {
+    console.log('  FAIL --assemble was asked for but the WASM PostgreSQL could not start, so the assembled bodies were never compiled.');
+    failures++;
+  } else {
+    for (const a of assembleTargets(dir)) {
+      if (a.broken) { console.log(`  FAIL assemble public.${a.target}: ${a.broken} — a hunk that will not apply is an apply-time failure in its own right`); failures++; continue; }
+      if (a.body === null || a.applied === 0) continue;   // surgery on a body no repo file re-creates
+      // ── BLAME THE HUNKS ONLY IF THE BASE WAS SOUND ──────────────────────────────────────────────
+      // The BASE (the newest full re-create, before any hunk) is compiled first. If IT does not
+      // compile in this schema-less harness, the reconstruction is what is suspect, not the repo:
+      // reward_grant's newest re-create is from 20260617000040 and uses constructs this gate cannot
+      // resolve, and reporting that as "the chain will not apply" would be a FALSE RED — the thing
+      // that trains people to stop reading a gate. Such targets are counted as a coverage gap.
+      // This costs nothing on the case that matters: 0351's base compiled clean and the hunk broke
+      // it, which is exactly the shape this check is here to catch.
+      const neutralise = (b) => b
+        .replace(/^(\s*[a-z_][a-z0-9_]*\s+)[a-z_][a-z0-9_."]*%rowtype\s*;/gim, '$1record;')
+        .replace(/^(\s*[a-z_][a-z0-9_]*\s+)[a-z_][a-z0-9_."]*%type\s*;/gim, '$1text;');
+      let baseOk = true;
+      try {
+        await db.exec(`create or replace function pg_temp.__base${nAssembled}() returns integer language plpgsql as $ASMBASE$${neutralise(a.base)}$ASMBASE$;`);
+      } catch (e) {
+        baseOk = false;
+        nSchemaSkipped++;
+        schemaSkips.push(`assembled public.${a.target}: BASE (${a.origin}, pre-hunk) does not compile here — ${String(e.message).split('\n')[0]} — so this target's assembly is a coverage gap, not a verdict`);
+      }
+      if (!baseOk) continue;
+      // Neutralise SCHEMA-DEPENDENT DECLARATIONS, and only those. plpgsql resolves declared TYPES at
+      // compile time, so `e combat_encounters%rowtype` would fail here and mask the syntax error we
+      // are hunting. Rewriting DECLARATIONS to record/text keeps every executable statement exactly
+      // as written — the parse stays honest, only the schema dependency goes.
+      nAssembled++;
+      try {
+        await db.exec(`create or replace function pg_temp.__asm${nAssembled}() returns integer language plpgsql as $ASMBODY$${neutralise(a.body)}$ASMBODY$;`);
+        say(`  ok   assembled public.${a.target}: ${a.applied} hunk(s) over ${a.origin}, ${a.body.length} chars, COMPILES`);
+      } catch (e) {
+        const msg = String(e.message).split('\n')[0];
+        // the SAME schema boundary check (A) honours: a declared type/relation this gate has no
+        // schema for. Counted and listed, never silently swallowed.
+        if (/(?:type|relation) "[^"]+" does not exist/.test(msg)) {
+          nSchemaSkipped++; schemaSkips.push(`assembled public.${a.target}: ${msg}`); nAssembled--; continue;
+        }
+        failures++;
+        console.log(`  FAIL assembled public.${a.target} does not COMPILE: ${msg}`);
+        console.log(`       (${a.applied} hunk(s) applied over ${a.origin}, ${a.body.length} chars.) This is the body the disposable chain will build, so this is an APPLY-TIME failure. Neither the per-file parse nor the hunk-balance check can see it: a bare \`case when … then … end\` inside an IF condition, for instance, is perfectly balanced and still truncates the condition at its own THEN.`);
+      }
+    }
+  }
+}
+
 // ── NON-VACUITY FLOORS ───────────────────────────────────────────────────────────────────────────
 const floor = (got, want, what) => {
   if (want > 0 && got < want) {
@@ -384,6 +533,7 @@ const floor = (got, want, what) => {
 };
 failures += floor(nFiles, opts.requireFiles, 'files');
 failures += floor(nHunks, opts.requireHunks, 'hunks');
+failures += floor(nAssembled, opts.requireAssembled, 'assembled functions');
 if (compileSkipped && opts.requireBlocks > 0) {
   console.log(`  FAIL check (A) was SKIPPED but --require-blocks ${opts.requireBlocks} was asked for. The parse/compile half of this gate did not run, so its silence means nothing: ${compileSkipped}`);
   failures++;
@@ -408,6 +558,6 @@ if (failures > 0) {
   console.log(`check-plpgsql-parse FAIL: ${failures} problem(s) across ${nFiles} file(s).`);
   process.exitCode = 1;
 } else {
-  console.log(`check-plpgsql-parse OK: ${nFiles} file(s), ${compileSkipped ? '0 (check A SKIPPED)' : nBlocks} plpgsql block(s) compiled against a real PostgreSQL, ${nHunks} surgery hunk(s) balance-checked.`);
+  console.log(`check-plpgsql-parse OK: ${nFiles} file(s), ${compileSkipped ? '0 (check A SKIPPED)' : nBlocks} plpgsql block(s) compiled against a real PostgreSQL, ${nHunks} surgery hunk(s) balance-checked, ${nAssembled} surgery-assembled function body(ies) compiled.`);
   process.exitCode = 0;
 }

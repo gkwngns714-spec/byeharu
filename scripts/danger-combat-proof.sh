@@ -257,8 +257,9 @@ if [ "$MODE" = "selftest" ]; then
       "$REPO_ROOT/scripts/danger-combat-proof.sql" \
       "$REPO_ROOT/scripts/combat-spatial-proof.sql" \
       "$REPO_ROOT/scripts/combat-fallback-weapon-proof.sql" \
-      --quiet --require-files 300 --require-blocks 900 --require-hunks 100 \
-      || fail "check-plpgsql-parse FAILED (its own message is above): a file in the chain either cannot be PARSED by PostgreSQL, or holds a plpgsql block that does not COMPILE, or carries a surgery hunk whose replacement does not leave the enclosing block depth where its pre-image left it. All three are APPLY-TIME failures that take the whole migration chain down — and all three are invisible to every grep in this harness."
+      --assemble "$REPO_ROOT/supabase/migrations" \
+      --quiet --require-files 300 --require-blocks 900 --require-hunks 100 --require-assembled 15 \
+      || fail "check-plpgsql-parse FAILED (its own message is above): a file in the chain either cannot be PARSED by PostgreSQL, or holds a plpgsql block that does not COMPILE, or carries a surgery hunk whose replacement does not leave the enclosing block depth where its pre-image left it, or — the one that took PR #410 red a SECOND time — the body the surgery chain ASSEMBLES does not compile even though every file and every hunk looks fine in isolation (a bare 'case when … then … end' inside an IF condition does exactly that: plpgsql ends the condition at the CASE's own THEN). All are APPLY-TIME failures that take the whole migration chain down, and all are invisible to every grep in this harness. NOTE THE BOUNDARY: a green from that gate does NOT mean the chain will apply — it has no schema, runs no self-assert, and models the DISPOSABLE chain rather than production. The disposable matrix remains the only apply proof."
   else
     fail "node not found — the generated-migration parity gate cannot run, and a hand-edited migration would reach production unchecked"
   fi

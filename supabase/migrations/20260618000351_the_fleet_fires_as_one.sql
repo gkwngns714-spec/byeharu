@@ -646,10 +646,21 @@ begin
             -- longer gun silently disabling a shorter one — cannot recur through this change.
             -- v_w_range is still required to be non-null, so an entry that is not a gun still cannot
             -- fire; the coalesce is unreachable while any living hull carries a positive range.
+            -- ██ THE PARENTHESES AROUND THE CASE ARE LOAD-BEARING. DO NOT "TIDY" THEM AWAY. ██
+            -- plpgsql does not parse an IF condition as SQL and then look for THEN: it scans forward
+            -- for the first THEN token at parenthesis depth 0 and treats everything before it as the
+            -- condition. A BARE `case when … then … end` inside the condition supplies exactly such
+            -- a THEN, so the condition is cut off at `case when v_ur.side = 'player'`, every
+            -- statement after it shifts by one, and the function ends while the parser is still
+            -- inside a construct — which Postgres reports, 90k characters later, as the maximally
+            -- unhelpful `syntax error at end of input` (SQLSTATE 42601) at APPLY time. That is what
+            -- took PR #410 red on every leg. Wrapping the CASE in parentheses hides its THEN from
+            -- that scan; the expression and its value are otherwise identical. Hunk [3] gets away
+            -- with a bare CASE only because it sits inside a function call's own parentheses.
             if v_w_range is not null
-               and v_target_dist <= case when v_ur.side = 'player'
-                                         then coalesce(v_fleet_reach, v_w_range)
-                                         else v_w_range end
+               and v_target_dist <= (case when v_ur.side = 'player'
+                                          then coalesce(v_fleet_reach, v_w_range)
+                                          else v_w_range end)
                and (v_w_next_ready is null or now() >= v_w_next_ready) then$h6n$)
 
     ) as t(idx, fname, old_t, new_t)
