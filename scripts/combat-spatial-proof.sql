@@ -200,6 +200,17 @@ $$;
 -- cs_arm ABOVE SURVIVES AND IS STILL CORRECT FOR AN ENEMY BODY, which 0351 deliberately did not fold
 -- (an enemy is one hull and keeps its own circle). Two functions because there are now two kinds of
 -- actor, not because one is a spare copy of the other.
+--
+-- ██ IT TAKES AN ENEMY UNIT ROW, SO IT CAN ONLY BE READ AFTER THAT ROW EXISTS. THAT IS A TRAP. ██
+-- On the SPAWN tick the wave does not exist until the tick has run, so any read of this leaf is
+-- necessarily a POST-move read — while the per-hull distances a block measures beforehand are
+-- PRE-move. Comparing the two is comparing across a tick boundary, and on a fleet in CLOSE they
+-- differ by exactly one step. PR #410 hit this: `the fleet's gap to the wave is 6.03000000000005
+-- but the LEAD's own distance is 7`, on an engine that was behaving perfectly (7 - 0.97 = 6.03).
+-- USE THIS LEAF ONLY WHERE BOTH OPERANDS ARE READ AT THE SAME INSTANT — which is what the approach
+-- loop below does, reading it before and after each tick and comparing like with like. For a
+-- PRE-move question on the spawn tick, read combat_fleet_actor directly before calling the tick and
+-- compose combat_unit_decide_move against the PREDICTED wave point, as the TICK1 block now does.
 create or replace function pg_temp.cs_fleet_arm(p_enc uuid, p_foe uuid)
 returns table(arm_kind text, arm_gap double precision, arm_my double precision,
               arm_foe double precision, arm_speed double precision)
@@ -577,6 +588,10 @@ declare
   v_enemy_hpmax double precision; v_enemy_hpcur double precision;
   v_exp_fire int;
   -- 0351: the FLEET's one arm, and the per-hull deltas that must all be equal to it.
+  -- v_fl_x/v_fl_y are the fleet's POINT, read from combat_fleet_actor BEFORE the tick so that every
+  -- comparison against a per-hull position below is like-for-like (see the read site for what
+  -- happened when it was not).
+  v_fl_x double precision; v_fl_y double precision;
   v_fl_arm text; v_fl_gap double precision; v_fl_reach double precision;
   v_fl_foe double precision; v_fl_speed double precision;
   v_dx_cmd double precision; v_dy_cmd double precision;
@@ -663,6 +678,36 @@ begin
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
   if n <> 0 then raise exception 'TICK1 FAIL precondition: % enemy rows exist before the first tick (want 0)', n; end if;
 
+  -- ── ██ THE FLEET ACTOR IS READ HERE, BEFORE THE TICK. THIS ORDERING IS THE ASSERT. ██ ──────────
+  -- CI (PR #410) caught the earlier version of this block reading combat_fleet_actor AFTER the tick
+  -- and comparing it against the PRE-move per-hull distances measured above:
+  --     TICK1 FAIL FLEET: the fleet's gap to the wave is 6.03000000000005 but the LEAD's own
+  --     distance is 7
+  -- Nothing was wrong with the engine. The fleet is in CLOSE on tick 1, so it had moved one step of
+  -- its own speed (0.97) between the two reads, and 7 - 0.97 = 6.03. Reproduced exactly, offline,
+  -- against the real combat_fleet_actor body: the actor returns the elected lead's position bit for
+  -- bit at BOTH instants. The defect was the comparison straddling a tick, which is the same class
+  -- that combat-fallback-weapon-proof's DAMAGE block had.
+  -- EVERYTHING BELOW WANTS THE PRE-MOVE QUANTITIES ANYWAY, which is why this is a correction and not
+  -- a convenience: the fire gate reads the PRE-move distance, and the mover's step is
+  -- least(speed, PRE-move distance). Reading the actor afterwards was quietly wrong for the arm, the
+  -- step and the salvo count as well — it only happened to survive them because at this range every
+  -- one of those comparisons lands the same side of its threshold either way.
+  select a.x, a.y, a.reach, a.speed into v_fl_x, v_fl_y, v_fl_reach, v_fl_speed
+    from public.combat_fleet_actor(v_enc) a;
+  if v_fl_x is null or v_fl_y is null or v_fl_reach is null or v_fl_speed is null then
+    raise exception 'TICK1 FAIL FLEET: combat_fleet_actor answers point (%,%), reach %, speed % before the first tick — a NULL in any of the four would make every fleet assert below vacuous', v_fl_x, v_fl_y, v_fl_reach, v_fl_speed;
+  end if;
+  -- The gap is measured to the PREDICTED wave point, which is the pre-move distance the engine's own
+  -- gate and mover use on this tick — and the block PINS that prediction against the row the tick
+  -- actually writes, a few lines below (TICK1 FAIL ENEMY). So this is not a guess that goes
+  -- unchecked: if the wave lands anywhere else, that pin fails first and says so.
+  v_fl_gap := public.osn_distance(v_fl_x, v_fl_y, v_px, v_py);
+  v_fl_foe := v_er_pred;
+  if v_fl_gap is null or v_fl_foe is null then
+    raise exception 'TICK1 FAIL FLEET: the pre-move fleet gap is % against a predicted wave reach of % — a NULL here makes the arm, the step cap and the salvo count below all vacuous (cs_fleet_arm''s ''unknown'' sentinel used to cover this, and it is replaced by these explicit pins)', v_fl_gap, v_fl_foe;
+  end if;
+
   perform pg_temp.cs_tick(v_enc);
 
   -- ── ENEMY: exactly 1 synthetic pirate, standing on the point 0336 puts it on. ──────────────────
@@ -701,16 +746,27 @@ begin
   -- WHY THIS FAILS THE OLD ENGINE: it asserts three identical deltas on a tick where the old engine
   -- moved the armed escort AWAY from the wave while moving the other two TOWARD it. Opposite
   -- directions cannot be equal, so no tuning makes the old engine pass this.
-  select arm_kind, arm_gap, arm_my, arm_foe, arm_speed
-    into v_fl_arm, v_fl_gap, v_fl_reach, v_fl_foe, v_fl_speed
-    from pg_temp.cs_fleet_arm(v_enc, u_en);
-  if v_fl_arm = 'unknown' then
-    raise exception 'TICK1 FAIL FLEET: the fleet arm is ''unknown'' (gap %, fleet reach %, wave reach %) — a NULL in combat_fleet_actor would make every assert below vacuous', v_fl_gap, v_fl_reach, v_fl_foe;
+  -- ── THE ARM COMES FROM THE ENGINE'S OWN MOVER, AT THE PRE-MOVE INSTANT ────────────────────────
+  -- pg_temp.cs_fleet_arm is deliberately NOT used here. It takes an enemy UNIT ROW, and that row
+  -- does not exist until the tick has run — which is precisely how the post-tick read that CI caught
+  -- got in. Composing combat_unit_decide_move directly lets the arm be derived from the SAME
+  -- pre-move values every other assert in this block uses (the actor read before the tick, and the
+  -- PREDICTED wave point/range, both pinned against the real row above). It is also the stronger
+  -- form — the engine's own leaf rather than this harness's copy of its case ladder.
+  select m.action into v_fl_arm
+    from public.combat_unit_decide_move(v_fl_x, v_fl_y, coalesce(v_fl_reach, 0), coalesce(v_fl_speed, 0),
+                                        v_px, v_py, coalesce(v_fl_foe, 0)) m;
+  if v_fl_arm is null then
+    raise exception 'TICK1 FAIL FLEET: the engine mover returned no arm for the fleet (gap %, fleet reach %, wave reach %) — a NULL arm would make every assert below vacuous', v_fl_gap, v_fl_reach, v_fl_foe;
   end if;
 
   -- THE FLEET POINT IS THE LEAD, AND THAT IS ASSERTED, NOT ASSUMED. Every distance below is measured
   -- from it, so if the engine ever stood the fleet somewhere else this block must fail rather than
   -- quietly measure from a point the gate does not use.
+  -- BOTH SIDES OF THIS COMPARISON ARE PRE-MOVE. It is kept EXACT (1e-9, not a tolerance that would
+  -- swallow a step) deliberately: a tolerance wide enough to absorb the 0.97 that CI reported is a
+  -- tolerance wide enough to accept a circle drawn on a hull that is not the lead — which is the
+  -- lie this whole slice exists to end.
   if abs(v_fl_gap - v_d_cmd0) > 1e-9 then
     raise exception 'TICK1 FAIL FLEET: the fleet''s gap to the wave is % but the LEAD''s own distance is % — combat_fleet_actor is not standing the fleet on its elected lead, so the circle the player sees is not the one the gate uses', v_fl_gap, v_d_cmd0;
   end if;
