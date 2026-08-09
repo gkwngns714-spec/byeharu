@@ -52,6 +52,39 @@ pre-image): one cron pass over a 5-ship fleet parked idle with two 17-day corpse
 **4 to Haven and 1 to Slagworks** on the head, and leaves all five with their fleet on 0349. New pins
 `IDLEPARK` and `STALEPORT` in BLOCK NOHOME make that permanent — `IDLEPARK` fails on the pre-0349 bodies.
 
+### CI round 1 (PR #406, 44 pass / 1 fail) — the pin caught the FIXTURE, not the fix
+
+`STALEPORT` went red on the real chain: *"a sortie concluded 7200 seconds ago (2x the TTL) still named
+a return port and the member was docked at it"*. The fix was working. **The pin did not own its own
+precondition.** Step (3) of BLOCK NOHOME leaves the FIRST sortie fleet `completed` with
+`updated_at = now()` and its return port still recorded, and its manifest row for the member is retained
+*precisely because it is fresh* — so the member had **two** records naming a port and the resolver read
+the fresh one, which is exactly what it is supposed to do. The pin aged only the second.
+
+Reproduced on a real Postgres before changing anything: age one record → `docked=1`; age both →
+`docked=0` and the manifest fully released.
+
+**The class, stated so it does not recur: a proof that asserts ABSENCE must own every source of
+PRESENCE.** This is `proofs-never-assert-ambient-defaults` in the one shape it had not taken here — not
+a stale flag or a seeded value, but *a second row that legitimately answers the same question*. The pin
+now ages every record of its own user that could name a port and asserts, in **raw status/age arithmetic
+deliberately not routed through the predicate under test** (which would be circular), both that none of
+them can still speak and that at least one of them exists. It also probes that the deployed body carries
+the TTL guard at all, so "0349 did not apply here" and "0349 applied and evaluated wrongly" can never
+again read as the same failure.
+
+The pin was **strengthened, not adjusted to pass**: on the pre-0349 bodies it now raises on four
+independent grounds (no guard in the body; the dock happened; the named sortie's manifest survived;
+every stale sortie's manifest survived) where before it raised on two.
+
+Two things ruled out with evidence rather than assumption: there is **exactly one reader** of
+`return_location_id` in the whole deployed schema (`nohome_dock_returning_ship` — every other hit is
+`send_ship_group_hunt` writing it), so there is no second resolution path; and both sides of the TTL
+comparison use `now()`, frozen and identical inside the transaction, so it was never a clock-basis
+mismatch. 0349 is a full `create or replace`, not a text rewriter, and its own apply-time assert (b)
+requires the guard token twice in the deployed body — the chain reached the proof, so the body was
+patched.
+
 **Deliberately out of scope:** the location fold, and any repair of the owner's already-scattered ships.
 This stops NEW scatterings only. Named follow-up: retire the 0198 dark re-home head and the
 `launch_from_dock_enabled` read with it.

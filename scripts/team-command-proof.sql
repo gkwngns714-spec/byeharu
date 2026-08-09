@@ -4830,28 +4830,89 @@ begin
   -- ★ The age is DERIVED from sortie_manifest_ttl_seconds, never typed, so tuning the knob cannot
   -- ★ silently invert this test. Ageing a fleet row is the same quarantined clock-rewind kind this
   -- ★ file already uses on fleet_movements; the manifest itself is never touched (sole-writer law).
+  -- ★
+  -- ★ ── WHY THIS PIN AGES **EVERY** RECORD AND ASSERTS THAT IT DID (CI round 1, PR #406) ──────────
+  -- ★ First written, this pin aged ONLY the second sortie and went RED on the real chain: "a sortie
+  -- ★ concluded 7200 seconds ago still named a return port and the member was docked at it". The fix
+  -- ★ was not broken. THE FIXTURE WAS. Step (3) above leaves the FIRST sortie fleet 'completed' with
+  -- ★ updated_at = now() and its return port still recorded, and its manifest row for this member is
+  -- ★ retained precisely because it is FRESH — so the member had TWO records naming a port, and the
+  -- ★ resolver read the fresh one, which is exactly what it is supposed to do. Reproduced on a real
+  -- ★ Postgres: age one record -> docked=1; age both -> docked=0 and the manifest fully released.
+  -- ★ A pin that asserts "no port was resolved" while some OTHER record can still resolve one is
+  -- ★ asserting the ambient world, not the property — the proofs-never-assert-ambient-defaults law,
+  -- ★ in the one shape it had not taken here yet. So the pin now OWNS the whole set: it ages every
+  -- ★ record of its own user that could name a port, and it asserts — in RAW status/age arithmetic,
+  -- ★ deliberately NOT through the predicate under test, which would be circular — both that none of
+  -- ★ them can still speak AND that at least one of them exists.
   select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
   if n <> 0 then raise exception 'NOHOME FAIL 0349 STALEPORT: precondition — the member still owns a present fleet, so it would not be reconciled at all'; end if;
   select coalesce(public.cfg_num('sortie_manifest_ttl_seconds'), 3600) into v_ttl;
   if v_ttl is null or v_ttl <= 0 then raise exception 'NOHOME FAIL 0349 STALEPORT: sortie_manifest_ttl_seconds is absent or non-positive (%) — 0349 did not seed its knob', v_ttl; end if;
   select count(*) into n from public.group_sortie_members where fleet_id=v_fleet2;
   if n <> 1 then raise exception 'NOHOME FAIL 0349 STALEPORT: precondition — the second sortie has % manifest row(s) (want 1)', n; end if;
+  -- IS THE GUARD EVEN HERE? Separates "0349 did not apply to this database" from "0349 applied and
+  -- the TTL was evaluated wrongly" — two different failures that would otherwise read identically.
+  -- (0349 is a full create-or-replace, not a text rewriter, and its own apply-time assert (b) already
+  --  requires this token twice in the deployed body; this is the belt to that migration's braces.)
+  if position('fleet_sortie_still_speaks' in coalesce(
+       (select p.prosrc from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+         where ns.nspname='public' and p.proname='nohome_dock_returning_ship'), '')) = 0 then
+    raise exception 'NOHOME FAIL 0349 STALEPORT: the deployed nohome_dock_returning_ship carries NO TTL guard — 0349 did not reach this database, so everything below would be testing the pre-0349 body';
+  end if;
+  -- end the second sortie, then age EVERY concluded record this member could resolve a port from.
   update public.fleets
-     set status='completed', location_mode='base', active_movement_id=null,
-         updated_at = now() - make_interval(secs => 2 * v_ttl)
+     set status='completed', location_mode='base', active_movement_id=null, updated_at=now()
    where id = v_fleet2;
+  update public.fleets
+     set updated_at = now() - make_interval(secs => 2 * v_ttl)
+   where player_id = uNT and status in ('completed','destroyed');
+  -- PRECONDITION A (non-vacuity): the member HAS at least one record naming a port. Without this,
+  -- "was not docked" would be trivially true on a fixture that simply had nothing to resolve.
+  select count(*) into n from public.fleets f
+   where f.return_location_id is not null
+     and (f.main_ship_id = sNT
+          or exists (select 1 from public.group_sortie_members g where g.fleet_id = f.id and g.main_ship_id = sNT));
+  if n < 1 then
+    raise exception 'NOHOME FAIL 0349 STALEPORT: precondition — the member has NO record naming a return port at all, so "did not dock" would prove nothing';
+  end if;
+  -- PRECONDITION B: and NOT ONE of them can still legitimately speak. Written in raw status + age
+  -- arithmetic on purpose: expressing it with fleet_sortie_still_speaks would make the fixture agree
+  -- with the predicate by construction and the pin could never fail.
+  select count(*) into n from public.fleets f
+   where f.return_location_id is not null
+     and (f.main_ship_id = sNT
+          or exists (select 1 from public.group_sortie_members g where g.fleet_id = f.id and g.main_ship_id = sNT))
+     and (f.status not in ('completed','destroyed')
+          or f.updated_at >= now() - make_interval(secs => v_ttl));
+  if n <> 0 then
+    raise exception 'NOHOME FAIL 0349 STALEPORT: precondition — % record(s) naming a return port for this member are still live or still inside the TTL, so docking would be CORRECT and this pin would be measuring the wrong thing (this is exactly how it went red on CI round 1)', n;
+  end if;
   update public.main_ship_instances set status='returning', updated_at=now() where main_ship_id=sNT;
   perform public.process_mainship_expeditions();
   -- the stale corpse named NO port: the member re-homes rather than docking somewhere it never was.
   select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
   if n <> 0 then
-    raise exception 'NOHOME FAIL 0349 STALEPORT: a sortie concluded % seconds ago (%x the TTL) still named a return port and the member was docked at it — that is the seventeen-day corpse, in miniature',
-      2 * v_ttl, 2;
+    raise exception 'NOHOME FAIL 0349 STALEPORT: every record naming a port for this member concluded more than % seconds ago (the TTL), and one of them still docked it — that is the seventeen-day corpse, in miniature. Docked at: %',
+      v_ttl,
+      coalesce((select f.current_location_id::text from public.fleets f
+                 where f.main_ship_id=sNT and f.status='present' limit 1), '<unknown>');
   end if;
-  -- …and its manifest is RELEASED, through the sole deleter, on exactly the same predicate.
+  -- …and its manifest is RELEASED, through the sole deleter, on exactly the same predicate — stated
+  -- over the whole CLASS (every stale sortie of this user), not just the one this pin named.
   select count(*) into n from public.group_sortie_members where fleet_id=v_fleet2;
   if n <> 0 then
     raise exception 'NOHOME FAIL 0349 STALEPORT: % manifest row(s) survive a sortie that ended long past the TTL — the roster still has no end', n;
+  end if;
+  select count(*) into n
+    from public.group_sortie_members g join public.fleets f on f.id = g.fleet_id
+   where g.player_id = uNT
+     and f.status in ('completed','destroyed')
+     and f.updated_at < now() - make_interval(secs => v_ttl);
+  if n <> 0 then
+    raise exception 'NOHOME FAIL 0349 STALEPORT: % manifest row(s) across % stale sortie(s) survived the reap — the end must apply to every concluded sortie, not just the one this pin aged by name',
+      n, (select count(distinct g.fleet_id) from public.group_sortie_members g join public.fleets f on f.id = g.fleet_id
+           where g.player_id = uNT and f.status in ('completed','destroyed') and f.updated_at < now() - make_interval(secs => v_ttl));
   end if;
 
   -- restore the CAPTURED committed value in-txn (ROLLBACK reverts regardless — the .sh honesty check
