@@ -39,3 +39,9 @@ supabase/.secrets.env
 # agent worktrees (isolation:worktree) — never part of the repo
 .claude/worktrees/
 scratchpad/
+
+# 0352 rehearsal inputs — a READ-ONLY capture of production catalog + function bodies.
+# Never committed: the live engine is the authority, and a checked-in copy is a second one that
+# drifts the first time a migration re-emits any of those bodies. Regenerate with
+# `node scripts/capture-0352-rehearsal-inputs.mjs`.
+scripts/.0352-inputs/

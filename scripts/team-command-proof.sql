@@ -4661,6 +4661,9 @@ declare
   -- 0349: the second sortie the STALEPORT pin ages out, and the TTL knob it ages against. The age is
   -- DERIVED from the knob, never typed, so this block stays correct at any value the knob is tuned to.
   v_fleet2 uuid; v_ttl double precision;
+  -- 0352: the fleet's ANCHOR port (origin_base_id -> bases.location_id) and the third sortie the
+  -- AMBUSHHOME pin gives NO recorded return port at all — the production shape that lost the fleet.
+  v_anchor_port uuid; v_fleet3 uuid;
 begin
   -- ── (0) structural: the 0199 surface is deployed and this block OWNS its dark precondition ───────
   -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults) — same shape as FLEETCTRL above.
@@ -4890,13 +4893,41 @@ begin
   end if;
   update public.main_ship_instances set status='returning', updated_at=now() where main_ship_id=sNT;
   perform public.process_mainship_expeditions();
-  -- the stale corpse named NO port: the member re-homes rather than docking somewhere it never was.
+  -- ★ REPOINTED BY 0352 — FOLLOWING THE GAME, NOT WEAKENED. ★
+  -- ★ 0349's version asserted "no present fleet at all": the member RE-HOMED, which under 0349 meant
+  -- ★ main_ship_instances.status='home' with no fleet anywhere. Production then showed twice in one
+  -- ★ day what that state actually is — mainship_resolve_fleet returns NULL, the client renders
+  -- ★ "Location unknown · Ships 0 of 5", and no verb can act on the ship. 0352 makes it unreachable:
+  -- ★ public.fleet_return_port falls back to the fleet's own ANCHOR (origin_base_id -> bases
+  -- ★ .location_id), which is the port every return_home leg in the schema physically flies to.
+  -- ★ THE 0349 PROPERTY IS KEPT AND IS NOW SHARPER, not looser. The old pin could only say "nowhere".
+  -- ★ This one says WHERE, and the where is what proves the stale choice was ignored:
+  -- ★   * the member IS docked (it is never stranded), and
+  -- ★   * it is NOT docked at Slagworks — the port the seventeen-day corpse chose, and the port it
+  -- ★     literally sailed from — but at its ANCHOR. So it distinguishes three outcomes the old pin
+  -- ★     collapsed into one: believed-the-corpse (Slagworks), used-the-departure-port (Slagworks),
+  -- ★     and used-the-anchor (Haven). Only the third passes.
+  select l.id into v_anchor_port
+    from public.bases b join public.locations l on l.id = b.location_id
+   where b.player_id = uNT and b.status = 'active' and l.status = 'active'
+   order by b.created_at, b.id limit 1;
+  if v_anchor_port is null then
+    raise exception 'NOHOME FAIL 0352 STALEPORT: the fixture user has no active base with a port, so "docked at the anchor" could not be distinguished from "docked anywhere"';
+  end if;
+  if v_anchor_port = slag then
+    raise exception 'NOHOME FAIL 0352 STALEPORT: the fixture''s anchor port IS Slagworks, so this pin could not tell the anchor apart from the stale choice — the fixture, not the fix, is wrong';
+  end if;
   select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
-  if n <> 0 then
-    raise exception 'NOHOME FAIL 0349 STALEPORT: every record naming a port for this member concluded more than % seconds ago (the TTL), and one of them still docked it — that is the seventeen-day corpse, in miniature. Docked at: %',
-      v_ttl,
+  if n <> 1 then
+    raise exception 'NOHOME FAIL 0352 STALEPORT: the member has % present fleet(s) (want exactly 1). Zero means it was STRANDED — status=''home'' with no fleet, which is the "Location unknown" state the owner hit twice on 2026-08-09; the anchor fallback exists so that can never happen.', n;
+  end if;
+  select count(*) into n from public.fleets
+   where main_ship_id=sNT and status='present' and current_location_id=v_anchor_port;
+  if n <> 1 then
+    raise exception 'NOHOME FAIL 0352 STALEPORT: every record naming a port for this member concluded more than % seconds ago (the TTL) and it did NOT come home to its anchor (%). Docked at: % — if that is Slagworks, either the seventeen-day corpse was believed (0349''s bug) or the departure port was used instead of the anchor (candidate B, rejected: it disagrees with the anchor on 49 of 63 production fleets).',
+      v_ttl, v_anchor_port,
       coalesce((select f.current_location_id::text from public.fleets f
-                 where f.main_ship_id=sNT and f.status='present' limit 1), '<unknown>');
+                 where f.main_ship_id=sNT and f.status='present' limit 1), '<none — the member was stranded>');
   end if;
   -- …and its manifest is RELEASED, through the sole deleter, on exactly the same predicate — stated
   -- over the whole CLASS (every stale sortie of this user), not just the one this pin named.
@@ -4915,12 +4946,87 @@ begin
            where g.player_id = uNT and f.status in ('completed','destroyed') and f.updated_at < now() - make_interval(secs => v_ttl));
   end if;
 
+  -- ── ★ 0352 PIN [AMBUSHHOME]: A SORTIE THAT NEVER CHOSE A PORT STILL HAS ONE ★ ─────────────────
+  -- ★ THE PRODUCTION SHAPE, TWICE IN NINETY MINUTES ON 2026-08-09. command_ship_group_go mints a
+  -- ★ group fleet and records NO return port — it does not mention the column. The ambush
+  -- ★ (pirate_intercept_resolve_due_for_movement) then freezes a sortie MANIFEST onto that same
+  -- ★ fleet, byte-identically to the hunt's own freeze, and it does not record one either. So a
+  -- ★ manifest-carrying sortie with return_location_id NULL exists BY CONSTRUCTION. When the fight
+  -- ★ ended, process_combat_ticks flew the fleet home to origin_base_id, the settle completed it,
+  -- ★ and the reconciler found no recorded port anywhere and wrote status='home' with no fleet at
+  -- ★ all: measured, all five of the owner's ships, mainship_resolve_fleet NULL for every one.
+  -- ★ THIS PIN FAILS ON THE PRE-0352 BODIES. Under 0349 the resolver's two reads both require
+  -- ★ `return_location_id is not null`, so this fleet is invisible to it and the member strands.
+  -- ★ It is reproduced from the LIVE verbs, not hand-built: a real hunt mints a real sortie with a
+  -- ★ real manifest, and the ONE thing done by hand is clearing the recorded port — which is
+  -- ★ precisely what the two verbs above never write.
+  -- ★ The departure port is SLAGWORKS and the anchor is NOT Slagworks (asserted above), so docking
+  -- ★ at the anchor also proves the fallback is the ANCHOR and not the port it sailed from.
+  update public.fleets
+     set current_location_id=slag, location_mode='location', current_base_id=null,
+         active_movement_id=null, updated_at=now()
+   where player_id=uNT and status='present';
+  update public.location_presence set location_id=slag, status='active', updated_at=now()
+   where fleet_id in (select id from public.fleets where player_id=uNT and status='present');
+  r := pg_temp.call_as(uNT, format('public.send_ship_group_hunt(%L::uuid, %L::uuid, %L::uuid)', gNT, v_hunt, slag));
+  if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL 0352 AMBUSHHOME: the third hunt was rejected: %', r; end if;
+  v_fleet3 := (r->>'fleet_id')::uuid;
+  -- make it the ambush's fleet: a manifest, and NO recorded return port.
+  update public.fleets set return_location_id=null where id=v_fleet3;
+  -- PRECONDITIONS, both directions, so the pin cannot pass on a fixture that never had the shape:
+  select count(*) into n from public.group_sortie_members where fleet_id=v_fleet3;
+  if n < 1 then
+    raise exception 'NOHOME FAIL 0352 AMBUSHHOME: precondition — the third sortie carries NO manifest, so it is not the shape the ambush produces';
+  end if;
+  select count(*) into n from public.fleets where id=v_fleet3 and return_location_id is null and origin_base_id is not null;
+  if n <> 1 then
+    raise exception 'NOHOME FAIL 0352 AMBUSHHOME: precondition — the third sortie is not "no recorded port, anchored" (the production shape); it reads return_location_id=% origin_base_id=%',
+      (select return_location_id::text from public.fleets where id=v_fleet3),
+      (select origin_base_id::text from public.fleets where id=v_fleet3);
+  end if;
+  -- and NOT ONE record of this member can still SPEAK a port either — otherwise the resolver could
+  -- legitimately read that one and the pin would be measuring the wrong thing. This is 0349 CI round
+  -- 1's exact failure, in this pin's own shape: the two earlier sorties still CARRY return_location_id
+  -- =Slagworks; what makes them silent is that STALEPORT aged them past the TTL. Written in raw
+  -- status + age arithmetic, deliberately NOT through fleet_sortie_still_speaks or the leaf — using
+  -- either would make the fixture agree with the code under test by construction.
+  select count(*) into n from public.fleets f
+   where f.return_location_id is not null
+     and (f.main_ship_id = sNT
+          or exists (select 1 from public.group_sortie_members g where g.fleet_id = f.id and g.main_ship_id = sNT))
+     and (f.status not in ('completed','destroyed')
+          or f.updated_at >= now() - make_interval(secs => v_ttl));
+  if n <> 0 then
+    raise exception 'NOHOME FAIL 0352 AMBUSHHOME: precondition — % record(s) can still speak a return port for this member, so docking at the anchor would not prove the ANCHOR was used', n;
+  end if;
+  -- conclude the sortie exactly as the settle does, and run the real reconciler.
+  update public.fleets set status='completed', location_mode='base', active_movement_id=null, updated_at=now() where id=v_fleet3;
+  update public.main_ship_instances set status='returning', updated_at=now() where main_ship_id=sNT;
+  perform public.process_mainship_expeditions();
+  select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
+  if n <> 1 then
+    raise exception 'NOHOME FAIL 0352 AMBUSHHOME: a sortie that recorded NO return port left the member with % present fleet(s) (want 1). Zero is the defect: status=% with no fleet, mainship_resolve_fleet NULL, "Location unknown" — the owner''s 2026-08-09 incident, reproduced.',
+      n, (select status from public.main_ship_instances where main_ship_id=sNT);
+  end if;
+  select count(*) into n from public.fleets
+   where main_ship_id=sNT and status='present' and current_location_id=v_anchor_port;
+  if n <> 1 then
+    raise exception 'NOHOME FAIL 0352 AMBUSHHOME: the member came home to % instead of its anchor % — a sortie with no recorded port must fall back to the port its fleet physically flies to (origin_base_id -> bases.location_id), not to the port it happened to depart from',
+      coalesce((select f.current_location_id::text from public.fleets f where f.main_ship_id=sNT and f.status='present' limit 1), '<nowhere>'),
+      v_anchor_port;
+  end if;
+  -- and the leaf says the same thing the reconciler did — one authority, asked directly.
+  if public.fleet_return_port(v_fleet3) is distinct from v_anchor_port then
+    raise exception 'NOHOME FAIL 0352 AMBUSHHOME: public.fleet_return_port answers % for the sortie while the reconciler docked the member at % — the resolver is not composing the leaf',
+      coalesce(public.fleet_return_port(v_fleet3)::text, '<null>'), v_anchor_port;
+  end if;
+
   -- restore the CAPTURED committed value in-txn (ROLLBACK reverts regardless — the .sh honesty check
   -- re-confirms it is UNCHANGED, in either direction).
   update public.game_config set value=v_seed_lfd where key='launch_from_dock_enabled';
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
 
-  raise notice 'TEAMCMD_PASS_NOHOME ok: the SINGLE-ship launch-from-dock arm is retired with the legacy single-ship send (retired 0232) (0232); the surviving TEAM path holds — a docked team hunt launches ONE fleet FROM the port (origin_type=location=Slagworks, member hunting, docked present fleet dissolved, return port recorded), the reconciler DOCKS the returning member at the recorded return port (never re-homed) splitting the shared fleet back into the member''s OWN present fleet (H1), and the returned team LAUNCHES AGAIN with a fresh sortie; 0349 IDLEPARK — a fleet PARKED IDLE IN OPEN SPACE (the retreat/ambush/stop park) is a LIVE fleet, so its member is left alone and no docked fleet is minted for it (the owner''s 4-and-1 scatter, which this pin fails on the pre-0349 bodies); 0349 STALEPORT — the strict complement of the dock above: the SAME sortie aged past sortie_manifest_ttl_seconds names no port at all (the member re-homes, fail-closed) and its manifest is released through the sole deleter, so the roster finally has an end; flags restored in-txn';
+  raise notice 'TEAMCMD_PASS_NOHOME ok: the SINGLE-ship launch-from-dock arm is retired with the legacy single-ship send (retired 0232) (0232); the surviving TEAM path holds — a docked team hunt launches ONE fleet FROM the port (origin_type=location=Slagworks, member hunting, docked present fleet dissolved, return port recorded), the reconciler DOCKS the returning member at the recorded return port (never re-homed) splitting the shared fleet back into the member''s OWN present fleet (H1), and the returned team LAUNCHES AGAIN with a fresh sortie; 0349 IDLEPARK — a fleet PARKED IDLE IN OPEN SPACE (the retreat/ambush/stop park) is a LIVE fleet, so its member is left alone and no docked fleet is minted for it (the owner''s 4-and-1 scatter, which this pin fails on the pre-0349 bodies); 0349 STALEPORT, REPOINTED BY 0352 — the strict complement of the dock above: the SAME sortie aged past sortie_manifest_ttl_seconds no longer names Slagworks, and the member comes home to its ANCHOR rather than to the stale choice OR to nowhere, while its manifest is released through the sole deleter so the roster still has an end; 0352 AMBUSHHOME — a manifest-carrying sortie that recorded NO return port at all (the shape command_ship_group_go mints and the ambush freezes onto, which stranded all five of the owner''s ships twice on 2026-08-09) still brings its member home, to the anchor and not to the port it sailed from, and public.fleet_return_port agrees with the reconciler; flags restored in-txn';
 end $$;
 
 -- ════════ BLOCK CMDBUFF (COMMAND-BUFFS, 0205): fleet-wide command-buff fold, DARK then in-txn LIT ══
