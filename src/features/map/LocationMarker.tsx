@@ -1,5 +1,10 @@
 import type { MapLocation } from './mapTypes'
-import { markerStyle } from './markerStyle'
+import {
+  MARKER_HOVER_RING_RADIUS,
+  MARKER_HUB_RING_RADIUS,
+  markerHitRadius,
+  markerStyle,
+} from './markerStyle'
 
 // Read-only SVG marker for one location. Positions are in normalized 0..1000 space; radius/label are
 // counter-scaled by the zoom factor `k` so they stay a constant on-screen size. Selecting only
@@ -37,11 +42,12 @@ export function LocationMarker({
   const ringR = r * 2.2
   const tick = r * 0.8
 
-  // Hit target is ONE invisible constant-radius disc (~19px, matching pre-R1 parity); every visible
-  // element below is pointer-transparent so the glyph size/halo/reticle are presentation only and never
-  // change what's clickable (no shrunk tap targets, no halo occluding a neighbor, no reticle eating
-  // the deselect/empty-space tap). Selection stays a pure highlight.
-  const hitR = 19 / k
+  // Hit target is ONE invisible disc, sized by the ONE policy (markerStyle.markerHitRadius): the 19px
+  // pre-R1 parity constant, or the glyph's own radius when the glyph is bigger — which it now is at
+  // MARKER_SCALE 3, where a bare 19 would leave two thirds of a visible marker refusing to be tapped.
+  // Every visible element below stays pointer-transparent so the halo/reticle remain presentation only
+  // (no halo occluding a neighbour, no reticle eating the deselect/empty-space tap).
+  const hitR = markerHitRadius(s) / k
 
   // Core glyph by shape (all wear the app-colored knockout stroke so they pop off the halo).
   const glyphStroke = { stroke: 'var(--color-app)', strokeWidth: 1.5, vectorEffect: 'non-scaling-stroke' as const, style: { pointerEvents: 'none' as const } }
@@ -75,7 +81,7 @@ export function LocationMarker({
       <circle
         cx={x}
         cy={y}
-        r={r * 2.6}
+        r={r * MARKER_HOVER_RING_RADIUS}
         fill="none"
         stroke="var(--color-map-halo)"
         strokeWidth={1.5}
@@ -96,7 +102,7 @@ export function LocationMarker({
       )}
       {/* dockable-port "hub" ring — ports read differently from waypoints at any zoom */}
       {s.hubRing && (
-        <circle cx={x} cy={y} r={r * 1.45} fill="none" stroke={s.color} strokeWidth={1.25} vectorEffect="non-scaling-stroke" opacity={0.8} style={{ pointerEvents: 'none' }} />
+        <circle cx={x} cy={y} r={r * MARKER_HUB_RING_RADIUS} fill="none" stroke={s.color} strokeWidth={1.25} vectorEffect="non-scaling-stroke" opacity={0.8} style={{ pointerEvents: 'none' }} />
       )}
       {/* core glyph */}
       {glyph}

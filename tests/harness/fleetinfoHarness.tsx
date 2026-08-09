@@ -25,14 +25,16 @@ import type { DangerZoneLite } from '../../src/features/map/pirateApi'
 import type { GroupRow, ShipGroupMapEntry } from '../../src/features/command/teamRoster'
 import type { UnifiedGroupFleetLite } from '../../src/features/command/teamApi'
 import type { FleetMovement } from '../../src/features/fleets/fleetTypes'
-import type { CombatEncounter } from '../../src/features/combat/combatTypes'
+import type { CombatEncounter, CombatUnit } from '../../src/features/combat/combatTypes'
 
 /** A FIXED clock — the ETA below is asserted verbatim, so it must not depend on when the proof runs. */
 const NOW = Date.parse('2026-08-04T12:00:00.000Z')
 
 const params = new URLSearchParams(window.location.search)
-/** parked | zone | fighting | flight | blocked | none */
+/** parked | zone | fighting | shielded | flight | blocked | none */
 const scenario = params.get('s') ?? 'parked'
+/** Is this fleet in a fight? Two scenarios are, and they differ only in whether shields exist. */
+const inFight = scenario === 'fighting' || scenario === 'shielded'
 
 const loc = (over: Partial<MapLocation> & Pick<MapLocation, 'id' | 'name' | 'x' | 'y'>): MapLocation =>
   ({
@@ -159,10 +161,10 @@ const ZONE: DangerZoneLite = {
 }
 // Every parked scenario stands INSIDE the zone; only 'zone' (and 'fighting', where the fight wins)
 // is given the zone list, so 'parked' proves the offer is absent when there is nothing to offer.
-const ZONES: DangerZoneLite[] = scenario === 'zone' || scenario === 'fighting' ? [ZONE] : []
+const ZONES: DangerZoneLite[] = scenario === 'zone' || inFight ? [ZONE] : []
 
 const ENCOUNTERS: CombatEncounter[] =
-  scenario === 'fighting'
+  inFight
     ? [
         {
           id: 'enc-1',
@@ -193,6 +195,78 @@ const ENCOUNTERS: CombatEncounter[] =
       ]
     : []
 
+// ██ THE FIGHT'S OWN ROWS — READ OFF PRODUCTION, NOT INVENTED ██
+//
+// This harness used to pass `units={[]}` into the 'fighting' scenario, so every fight stat the
+// readout renders was UNPROVEN on screen: the model returned null and the proof measured a card with
+// no stats on it at all. That is how "Reach 5 units · Fires every round · 3s · Combat speed 0.2
+// units/round" could be live on the owner's map while the rendered suite was green.
+//
+// So the rows are the owner's ACTUAL production fight, measured 2026-08-09 (encounter 9855381f):
+// five player hulls, hp_max 500 each, move_speed 0.2, one `basic_player_weapon` apiece at power 15 /
+// range 5 / projectile_speed 60 — and shield_current / shield_max NULL on every one, because 0 of
+// 327 live combat_units rows carry a pool. Hull totals 1598 of 2500; attack totals 75 per round.
+const hull = (id: string, hpCurrent: number, shield: { cur: number; max: number } | null): CombatUnit =>
+  ({
+    id,
+    encounter_id: 'enc-1',
+    unit_type_id: null,
+    main_ship_id: `msi-${id}`,
+    side: 'player',
+    ship_hp: 500,
+    initial_count: 1,
+    alive_count: 1,
+    hp_max: 500,
+    hp_current: hpCurrent,
+    move_speed: 0.2,
+    pos_x: 500,
+    pos_y: 500,
+    shield_current: shield?.cur ?? null,
+    shield_max: shield?.max ?? null,
+    weapons_json: [
+      { module_type_id: 'basic_player_weapon', power: 15, range: 5, projectile_speed: 60 },
+    ],
+  }) as CombatUnit
+
+// 'shielded' is the SAME fight with the shield stack lit — i.e. the world after
+// scripts/activate-shield.sql. It exists so "no shield line" is proved to be a reading of the DATA
+// and not a feature that was quietly left out: change the rows, the lines appear.
+const SHIELD = scenario === 'shielded' ? { cur: 60, max: 100 } : null
+
+const UNITS: CombatUnit[] = inFight
+  ? [
+      hull('u1', 473, SHIELD),
+      hull('u2', 500, SHIELD),
+      hull('u3', 500, SHIELD),
+      hull('u4', 33, SHIELD),
+      hull('u5', 92, SHIELD),
+      // The enemy side is present so the fold is proved to be MY fleet's and not the field's.
+      ({
+        id: 'e1',
+        encounter_id: 'enc-1',
+        unit_type_id: 'pirate_raider',
+        side: 'enemy',
+        ship_hp: 60,
+        initial_count: 3,
+        alive_count: 3,
+        hp_max: 180,
+        hp_current: 180,
+        move_speed: 4,
+        pos_x: 520,
+        pos_y: 520,
+        weapons_json: [{ module_type_id: 'pirate_gun', power: 9, range: 6 }],
+      } as CombatUnit),
+      // A DEAD hull of my own: it must contribute nothing to any total.
+      ({ ...hull('u6', 0, SHIELD), alive_count: 0, hp_current: 0 } as CombatUnit),
+    ]
+  : []
+
+// The live production knobs: a 3-second round, and shield regen 0 — which is why the regen line is
+// absent even in the 'shielded' scenario's pools. 'shielded' lights BOTH, because a pool that never
+// regenerates and a regen with no pool are two different silences and the readout must not conflate
+// them.
+const SHIELD_REGEN = scenario === 'shielded' ? 0.02 : null
+
 const w = window as unknown as { __huntSiteCalls: string[] }
 w.__huntSiteCalls = []
 
@@ -220,8 +294,10 @@ createRoot(document.getElementById('root') as HTMLElement).render(
           unifiedFleets={FLEETS}
           dangerZones={ZONES}
           encounters={ENCOUNTERS}
-          units={[]}
+          units={UNITS}
           fleetControlEnabled
+          combatTickSeconds={3}
+          shieldRegenCombatPct={SHIELD_REGEN}
           nowMs={NOW}
           onSelectHuntSite={(locationId) => {
             w.__huntSiteCalls.push(locationId)

@@ -172,22 +172,52 @@ test('the RULE is stated once, as a rule — true at every instant, so it can ne
 const here = dirname(fileURLToPath(import.meta.url))
 const src = (rel: string) => readFileSync(join(here, '..', 'src', rel), 'utf8')
 
-test('both combat surfaces read the clock through this leaf and neither re-derives it', () => {
-  const panel = src('features/combat/ActiveCombatPanel.tsx')
-  const card = src('features/map/CombatMapCard.tsx')
-  // Probed on the CODE, not the prose: both files explain in comments WHY the column is not read
-  // here, and a naive substring check would fail the build on that explanation.
-  const codeOnly = (t: string) =>
-    t
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .split(/\r?\n/)
-      .filter((l) => !l.trim().startsWith('//'))
-      .join('\n')
-  for (const [name, surface] of [['ActiveCombatPanel', panel], ['CombatMapCard', card]] as const) {
-    expect(surface, `${name} must compose the leaf`).toContain('resolveReinforcement(')
-    expect(codeOnly(surface), `${name} must not re-derive the countdown`).not.toContain('next_reinforcement_at')
-    expect(surface, `${name} must not print its own rule`).toContain('REINFORCEMENT_RULE')
+// Probed on the CODE, not the prose: every one of these files explains in comments WHY the column is
+// not read there, and a naive substring check would fail the build on that explanation.
+const codeOnly = (t: string) =>
+  t
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split(/\r?\n/)
+    .filter((l) => !l.trim().startsWith('//'))
+    .join('\n')
+
+/** EVERY surface that says anything about the next wave. Adding one to the client means adding it
+ *  here — that is what keeps "one authority" from decaying into "one authority plus a shortcut". */
+const WAVE_SURFACES = [
+  'features/combat/ActiveCombatPanel.tsx',
+  'features/map/CombatMapCard.tsx',
+  // ██ THE THIRD MOUNT, AND THE DEFECT IT FIXES ██ — owner, playing 2026-08-09: *"when a wave
+  // starts, i see no timer that indicates next wave"*. The clock was never broken; it was rendered
+  // only inside the two surfaces above, and the map's tab shell mounts AT MOST ONE BODY, so a player
+  // on the FLEETS tab (where he was) saw `selectCombatPhase`'s timeless "Next wave incoming" and no
+  // number. The pinned fight row is on screen in EVERY tab state, so the countdown joined it —
+  // through this same leaf, never a fourth derivation.
+  'features/map/MapOverlayTabs.tsx',
+] as const
+
+test('every surface that speaks about the next wave reads it through this leaf and re-derives nothing', () => {
+  for (const rel of WAVE_SURFACES) {
+    const surface = src(rel)
+    expect(surface, `${rel} must compose the leaf`).toContain('resolveReinforcement(')
+    expect(codeOnly(surface), `${rel} must not re-derive the countdown`).not.toContain('next_reinforcement_at')
+    // …and none of them may assemble a schedule from the cadence instead of reading the stamp.
+    expect(codeOnly(surface), `${rel} must not invent a schedule`).not.toMatch(/reinforcement_interval|wave_interval/)
   }
+})
+
+test('the RULE is printed by the two surfaces that show the field, and the pinned row stays a signal', () => {
+  // The rule explains the FIELD against the CAP, so it belongs wherever those two numbers are. The
+  // pinned fight row deliberately carries neither — it is the one fact that decays with time, plus
+  // the way out — so restating the rule there would be noise on a surface that is always on screen.
+  for (const rel of ['features/combat/ActiveCombatPanel.tsx', 'features/map/CombatMapCard.tsx']) {
+    expect(src(rel), `${rel} must print the rule beside the field it explains`).toContain('REINFORCEMENT_RULE')
+  }
+  const row = codeOnly(src('features/map/MapOverlayTabs.tsx'))
+  expect(row, 'the pinned row shows no field count').not.toContain('wave.population')
+  expect(row, 'the pinned row shows no cap').not.toContain('wave.cap')
+  expect(row, 'the pinned row does not restate the rule').not.toContain('REINFORCEMENT_RULE')
+  // It prints the leaf's OWN sentence and composes nothing of its own around it.
+  expect(row).toContain('wave.text')
 })
 
 test('the leaf stays pure — no React, no clock of its own, no fetch', () => {

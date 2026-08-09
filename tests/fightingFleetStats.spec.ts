@@ -2,7 +2,13 @@ import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { fireRateText, resolveFightingFleetStats, trim } from '../src/features/map/fightingFleetStats'
+import {
+  FLEET_STAT_LABEL,
+  fireRateText,
+  resolveFightingFleetStats,
+  trim,
+  weaponSystemsText,
+} from '../src/features/map/fightingFleetStats'
 import type { CombatUnit } from '../src/features/combat/combatTypes'
 
 // ██ WHAT MY FLEET CAN DO IN THIS FIGHT — pure unit proof of reach, rate of fire and combat speed. ██
@@ -169,4 +175,176 @@ test('the fleet readout composes the leaf rather than folding its own numbers', 
   const code = model.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
   expect(code, 'no local max over weapon ranges').not.toContain('weapons_json')
   expect(code, 'no local min over move speeds').not.toContain('move_speed')
+  // …and no local hull/shield/attack fold either — the four the owner asked for on 2026-08-09 must
+  // arrive from the leaf, or they become a second aggregation of the same rows.
+  for (const col of ['hp_current', 'hp_max', 'shield_current', 'shield_max', 'module_type_id']) {
+    expect(code, `the readout must not read ${col} itself`).not.toContain(col)
+  }
+})
+
+// ══ ATTACK — the engine's own per-round volley (owner: "attacking power") ═════════════════════════
+// 0331 (`one_authority_for_attack`) rewrote weapons_json[i].power to be the ship's folded
+// combat_power split across its guns in proportion to module_types.power. So a ship's weapons sum
+// EXACTLY to its combat_power, and the fleet's sum is what it puts out in one round. Nothing is
+// scaled, curved or modified here — the defence curve is the server's, applied on arrival.
+
+test('attack is every gun on every LIVING hull, summed', () => {
+  const units = [
+    hull({ weapons_json: [{ power: 15 }, { power: 9 }] }),
+    hull({ weapons_json: [{ power: 15 }] }),
+  ]
+  expect(resolveFightingFleetStats(units, ENC, 3)!.attack).toBe(39)
+})
+
+test('a dead hull, an enemy hull and another fight’s hull all contribute NO attack', () => {
+  const units = [
+    hull({ alive_count: 0, weapons_json: [{ power: 999 }] }),
+    hull({ side: 'enemy', weapons_json: [{ power: 999 }] }),
+    hull({ encounter_id: 'enc-other', weapons_json: [{ power: 999 }] }),
+    hull({ weapons_json: [{ power: 15 }] }),
+  ]
+  expect(resolveFightingFleetStats(units, ENC, 3)!.attack).toBe(15)
+})
+
+test('an unarmed fleet has NO attack — null, never a 0 that reads as "it does no damage"', () => {
+  // The distinction is the whole honesty rule: 0 is a claim about the fleet; null is "the rows do
+  // not say", and the readout then prints nothing at all.
+  for (const w of [[], [{ power: null }], [{ power: 0 }], [{ power: Number.NaN }]]) {
+    expect(resolveFightingFleetStats([hull({ weapons_json: w as never })], ENC, 3)!.attack).toBeNull()
+  }
+})
+
+// ══ WEAPONS — "what weapon system it is using" ════════════════════════════════════════════════════
+
+test('the weapon systems are the DISTINCT modules across the living hulls, counted', () => {
+  const units = [
+    hull({ weapons_json: [{ module_type_id: 'basic_player_weapon', power: 15 }] }),
+    hull({ weapons_json: [{ module_type_id: 'basic_player_weapon', power: 15 }] }),
+    hull({ weapons_json: [{ module_type_id: 'mod_shield_booster', power: 4 }] }),
+  ]
+  const v = resolveFightingFleetStats(units, ENC, 3)!
+  // Most-fitted first, so the fleet's main armament reads first and the order is stable across polls.
+  expect(v.weapons.map((w) => [w.id, w.count])).toEqual([
+    ['basic_player_weapon', 2],
+    ['mod_shield_booster', 1],
+  ])
+  // Humanised through the ONE client id→name authority, so a module is called the same thing here
+  // as on the fitting screen and in a loot chip.
+  expect(v.weapons[0].name).toBe('Basic Player Weapon')
+})
+
+test('a gun with no stated POWER is still a fitted SYSTEM — the two reads are independent', () => {
+  // "What am I shooting with" and "how hard" are different questions. A weapon whose power the row
+  // does not state must not vanish from the first one.
+  const v = resolveFightingFleetStats(
+    [hull({ weapons_json: [{ module_type_id: 'basic_player_weapon', power: null }] })],
+    ENC,
+    3,
+  )!
+  expect(v.attack).toBeNull()
+  expect(v.weapons.map((w) => w.id)).toEqual(['basic_player_weapon'])
+})
+
+test('a weapon that names no module is counted for damage but not listed as a system', () => {
+  const v = resolveFightingFleetStats([hull({ weapons_json: [{ power: 15 }] })], ENC, 3)!
+  expect(v.attack).toBe(15)
+  expect(v.weapons).toEqual([])
+})
+
+test('the systems line reads as words, and a single gun is not padded with "×1"', () => {
+  expect(weaponSystemsText([{ id: 'a', name: 'Basic Player Weapon', count: 5 }])).toBe('Basic Player Weapon ×5')
+  expect(weaponSystemsText([{ id: 'a', name: 'Rail Cannon', count: 1 }])).toBe('Rail Cannon')
+  expect(
+    weaponSystemsText([
+      { id: 'a', name: 'Rail Cannon', count: 2 },
+      { id: 'b', name: 'Pulse Laser', count: 1 },
+    ]),
+  ).toBe('Rail Cannon ×2, Pulse Laser')
+  expect(weaponSystemsText([])).toBe('')
+})
+
+// ══ HULL ═════════════════════════════════════════════════════════════════════════════════════════
+
+test('hull is Σ current / Σ max over the LIVING hulls — the engine’s own integrity summation', () => {
+  const units = [
+    hull({ hp_current: 473, hp_max: 500 }),
+    hull({ hp_current: 33, hp_max: 500 }),
+    hull({ alive_count: 0, hp_current: 0, hp_max: 500 }),
+    hull({ side: 'enemy', hp_current: 180, hp_max: 180 }),
+  ]
+  expect(resolveFightingFleetStats(units, ENC, 3)!.hull).toEqual({ current: 506, max: 1000 })
+})
+
+test('a row with no usable max contributes NEITHER side — never a wrong denominator', () => {
+  const units = [hull({ hp_current: 50, hp_max: 0 }), hull({ hp_current: 100, hp_max: 200 })]
+  expect(resolveFightingFleetStats(units, ENC, 3)!.hull).toEqual({ current: 100, max: 200 })
+  expect(resolveFightingFleetStats([hull({ hp_current: 5, hp_max: 0 })], ENC, 3)!.hull).toBeNull()
+})
+
+test('current is CLAMPED into its own bar — a row can never read as 120% or as negative hull', () => {
+  const units = [hull({ hp_current: 900, hp_max: 500 }), hull({ hp_current: -40, hp_max: 500 })]
+  expect(resolveFightingFleetStats(units, ENC, 3)!.hull).toEqual({ current: 500, max: 1000 })
+})
+
+// ══ ██ SHIELD AND SHIELD GENERATION — REAL MECHANICS, ZERO EVERYWHERE ON PRODUCTION ██ ════════════
+// combat_units.shield_current/shield_max exist (0191) and the tick genuinely regenerates and absorbs
+// with them (0195). MEASURED ON PRODUCTION 2026-08-09: 0 of 327 combat_units rows carry a pool, 0 of
+// 77 ships have max_shield > 0, 0 of 3 hulls have base_shield > 0, and shield_regen_combat_pct is 0.
+// The stack is DATA-gated with no flag — scripts/activate-shield.sql is the human flip.
+//
+// So the rule is the readout's standing one: a number that changes nothing in the game must not
+// appear. These pin BOTH halves — the silence today, and the lines lighting up on their own.
+
+test('no living hull carries a pool → NO shield and NO regen. Never 0/0, never "regen 0"', () => {
+  // 0191 pairs the columns by CHECK and a shieldless hull carries NULL/NULL rather than 0/0
+  // precisely so "no shield machinery" stays distinguishable from "shield down".
+  const v = resolveFightingFleetStats([hull({}), hull({})], ENC, 3, 0.02)!
+  expect(v.shield).toBeNull()
+  expect(v.shieldRegenPerRound).toBeNull()
+})
+
+test('a pool that exists IS shown, summed over the living hulls', () => {
+  const units = [
+    hull({ shield_current: 60, shield_max: 100 }),
+    hull({ shield_current: 100, shield_max: 100 }),
+    hull({ alive_count: 0, shield_current: 100, shield_max: 100 }),
+    hull({ side: 'enemy', shield_current: 500, shield_max: 500 }),
+    hull({}), // a shieldless hull in the same fleet contributes nothing to either side
+  ]
+  expect(resolveFightingFleetStats(units, ENC, 3, null)!.shield).toEqual({ current: 160, max: 200 })
+})
+
+test('regen is Σ max × the knob the ENGINE reads — and it is silent unless BOTH are real', () => {
+  const pooled = [hull({ shield_current: 60, shield_max: 100 }), hull({ shield_current: 60, shield_max: 100 })]
+  // 0195: `shield := least(shield_max, shield_current + shield_max × shield_regen_combat_pct)`.
+  expect(resolveFightingFleetStats(pooled, ENC, 3, 0.02)!.shieldRegenPerRound).toBeCloseTo(4)
+  // A pool with no regen and a regen with no pool are two DIFFERENT silences, and neither prints.
+  for (const knob of [null, undefined, 0, -1, Number.NaN]) {
+    expect(
+      resolveFightingFleetStats(pooled, ENC, 3, knob as number | null)!.shieldRegenPerRound,
+      `knob ${String(knob)} must not produce a regen line`,
+    ).toBeNull()
+  }
+  expect(resolveFightingFleetStats([hull({})], ENC, 3, 0.02)!.shieldRegenPerRound).toBeNull()
+})
+
+test('the knob defaults to ABSENT — a caller that has not read it can never light the mechanic', () => {
+  const pooled = [hull({ shield_current: 60, shield_max: 100 })]
+  expect(resolveFightingFleetStats(pooled, ENC, 3)!.shieldRegenPerRound).toBeNull()
+})
+
+// ══ THE WORDS ════════════════════════════════════════════════════════════════════════════════════
+
+test('the labels are the OWNER’S words — no jargon, and the two speeds can never be confused', () => {
+  // He reported "range" and "moving speed" as MISSING from a readout that was printing "Reach" and
+  // "Combat speed" at that exact moment. A stat the player does not recognise is not there.
+  expect(FLEET_STAT_LABEL.range).toBe('Range')
+  expect(FLEET_STAT_LABEL.speed).toBe('Speed in battle')
+  expect(FLEET_STAT_LABEL.attack).toBe('Attack')
+  expect(FLEET_STAT_LABEL.weapons).toBe('Weapons')
+  expect(FLEET_STAT_LABEL.hull).toBe('Hull')
+  // The combat speed is world-units-per-round; the map-travel speed is a different quantity in a
+  // different unit. The label must carry that distinction on its own, without a footnote.
+  expect(FLEET_STAT_LABEL.speed).not.toBe('Speed')
+  expect(Object.values(FLEET_STAT_LABEL)).not.toContain('Reach')
 })

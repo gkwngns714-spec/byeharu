@@ -97,6 +97,22 @@ test('the stake is one sentence, unconditional, and it names BOTH outcomes', () 
   expect(HAUL_AT_STAKE).toMatch(/destroyed/i)
 })
 
+test('██ IT NAMES WHERE THE HAUL GOES, AND THE PLACE IT NAMES IS THE PORT ██', () => {
+  // Owner, playing 2026-08-09: *"fleet hold is not updated when fight is done"*. He was reading the
+  // card correctly and the card was wrong. TRACED THROUGH THE DEPLOYED SERVER:
+  //   a kill folds into combat_encounters.total_rewards_json (0344's payout arm)
+  //   → leaving copies it onto the RETURN LEG as fleet_movements.reward_payload_json
+  //     (movement_attach_cargo, 0030:30)
+  //   → the leg's arrival calls reward_grant(…, base, payload) (0307:172), which deposits into a
+  //     BASE — that PORT's storage. 0333 states it outright: "reward_grant (loot) → the base it is
+  //     already handed; and where that is NULL … the player's OLDEST ACTIVE base".
+  // `fleet_items` — the HOLD — is written by NO arm of that chain. The old sentence ("banked when the
+  // fleet leaves and arrives"), printed directly above a Fleet hold meter, promised a relationship
+  // the database does not have. That was the whole defect, and it was CLIENT SIDE.
+  expect(HAUL_AT_STAKE).toMatch(/port/i)
+  expect(HAUL_AT_STAKE, 'the haul does not ride in the hold and must not say it does').not.toMatch(/hold/i)
+})
+
 // ── ONE READER, AND NO CAPACITY MATH ─────────────────────────────────────────────────────────────
 
 const here = dirname(fileURLToPath(import.meta.url))

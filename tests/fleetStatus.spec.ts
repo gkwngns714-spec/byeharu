@@ -10,7 +10,7 @@ import { huntSiteActionLabel } from '../src/features/command/howAFightStarts'
 import type { GroupRow, ShipGroupMapEntry } from '../src/features/command/teamRoster'
 import type { MapLocation } from '../src/features/map/mapTypes'
 import type { FleetMovement } from '../src/features/fleets/fleetTypes'
-import type { CombatEncounter } from '../src/features/combat/combatTypes'
+import type { CombatEncounter, CombatUnit } from '../src/features/combat/combatTypes'
 // type-only imports — erased at compile, so this spec never loads teamApi's supabase client.
 import type { UnifiedGroupFleetLite } from '../src/features/command/teamApi'
 import type { FleetPosition } from '../src/features/map/mainshipApi'
@@ -485,6 +485,106 @@ test('the stats that DO render are counts of server rows, and each has a real co
   const none = only(base({ membership: { s1: member(false) } }))
   expect(none.stats.map((s) => s.label)).toEqual(['Ships'])
   expect(none.blockedReason).toBe('fleet_inactive_no_command')
+})
+
+// ── 6b · ██ WHAT THE FLEET IS MADE OF AND WHAT IT SHOOTS WITH — ONLY WHILE IT IS FIGHTING ██ ──────
+// Owner, playing 2026-08-09: *"the fleets tab on map does not show range, its moving speed, hull,
+// shield, shield generation"* and *"the fleets tab should also show attacking power, what weapon
+// system it is using"*. Every one of these is frozen onto combat_units at spawn and read through the
+// ONE leaf; the leaf's own spec owns the arithmetic, these own what the READOUT does with it.
+
+/** The owner's real production fight, in miniature: two hulls, one `basic_player_weapon` each. */
+const fightingUnits = (over: Partial<CombatUnit> = {}): CombatUnit[] =>
+  [1, 2].map(
+    (i) =>
+      ({
+        id: `cu-${i}`,
+        encounter_id: 'e1',
+        unit_type_id: null,
+        main_ship_id: `msi-${i}`,
+        side: 'player',
+        ship_hp: 500,
+        initial_count: 1,
+        alive_count: 1,
+        hp_max: 500,
+        hp_current: i === 1 ? 473 : 33,
+        move_speed: 0.2,
+        pos_x: 500,
+        pos_y: 500,
+        weapons_json: [{ module_type_id: 'basic_player_weapon', power: 15, range: 5 }],
+        ...over,
+      }) as CombatUnit,
+  )
+
+const fightingWorld = (over: Partial<FleetStatusModelInput> = {}): FleetStatusModelInput =>
+  base({ ...worldFor('in-combat'), units: fightingUnits(), combatTickSeconds: 3, ...over })
+
+test('A FIGHTING FLEET STATES ITS STANDING AND ITS ARMAMENT, in the order the question is asked', () => {
+  const row = only(fightingWorld())
+  expect(row.stats).toEqual([
+    { label: 'Ships', value: '1' },
+    { label: 'Command ship', value: '1' },
+    // what is left of me…
+    { label: 'Hull', value: '506 / 1000' },
+    // …then what I hit with…
+    { label: 'Attack', value: '30 / round' },
+    { label: 'Weapons', value: 'Basic Player Weapon ×2' },
+    { label: 'Range', value: '5 units' },
+    { label: 'Fires', value: 'every round · 3s' },
+    // …then how I move.
+    { label: 'Speed in battle', value: '0.2 units/round' },
+  ])
+})
+
+test('OFF THE FIELD THERE ARE NO FIGHT STATS AT ALL — a stale copy would be a number with no source', () => {
+  // The rows only exist while a fight is running; nothing here caches them.
+  for (const state of FLEET_PRESENCE_STATES) {
+    if (state === 'in-combat') continue
+    const labels = only(
+      base({ ...worldFor(state), units: fightingUnits(), combatTickSeconds: 3 }),
+    ).stats.map((s) => s.label)
+    for (const banned of ['Hull', 'Attack', 'Weapons', 'Range', 'Fires', 'Speed in battle']) {
+      expect(labels, `${state} must not carry ${banned}`).not.toContain(banned)
+    }
+  }
+})
+
+test('██ SHIELDS ARE SILENT WHILE THE GAME HAS NONE — no 0/0 line, no zero regen ██', () => {
+  // MEASURED ON PRODUCTION 2026-08-09: 0 of 327 combat_units rows carry a pool, 0 of 77 ships have
+  // max_shield > 0, 0 of 3 hulls have base_shield > 0, and game_config.shield_regen_combat_pct is 0.
+  // 0191 pairs the columns by CHECK and a shieldless hull carries NULL/NULL — never 0/0 — precisely
+  // so "no shield machinery" stays distinguishable from "shield down". A bar that can never move and
+  // a mechanic that does not run must not appear, exactly like the dormant fold stats above.
+  const labels = only(fightingWorld({ shieldRegenCombatPct: 0.02 })).stats.map((s) => s.label)
+  expect(labels).not.toContain('Shield')
+  expect(labels).not.toContain('Shield regen')
+})
+
+test('…AND THEY APPEAR BY THEMSELVES ONCE A POOL EXISTS — the silence is the DATA, never a missing feature', () => {
+  // The same fight after scripts/activate-shield.sql: pools on the hulls and the combat regen knob
+  // positive. Without this, "shields are silent" and "shields were never built" look identical.
+  const lit = only(
+    fightingWorld({
+      units: fightingUnits({ shield_current: 60, shield_max: 100 }),
+      shieldRegenCombatPct: 0.02,
+    }),
+  )
+  const byLabel = Object.fromEntries(lit.stats.map((s) => [s.label, s.value]))
+  expect(byLabel['Shield']).toBe('120 / 200')
+  expect(byLabel['Shield regen']).toBe('4 / round')
+  // …and a pool with the knob still dark states the pool and stays silent about generation: two
+  // different facts, two independent silences.
+  const poolOnly = only(fightingWorld({ units: fightingUnits({ shield_current: 60, shield_max: 100 }) }))
+  expect(poolOnly.stats.map((s) => s.label)).toContain('Shield')
+  expect(poolOnly.stats.map((s) => s.label)).not.toContain('Shield regen')
+})
+
+test('THE WORDS ARE THE OWNER’S — never "Reach", never a bare "Speed" that could mean travel', () => {
+  const labels = only(fightingWorld()).stats.map((s) => s.label)
+  expect(labels).toContain('Range')
+  expect(labels).not.toContain('Reach')
+  expect(labels).toContain('Speed in battle')
+  expect(labels, 'a bare "Speed" would read as the map-travel speed, a different quantity').not.toContain('Speed')
 })
 
 // ── the shape of the whole thing ─────────────────────────────────────────────────────────────────

@@ -79,6 +79,27 @@ export function resolveFightHaul(
   return { entries, m3: total, unmeasured, empty: entries.length === 0 }
 }
 
-/** The one phrasing of what a defeat costs, so both surfaces say it identically. Present tense and
- *  unconditional: it is true of every live fight, not a warning that appears at some threshold. */
-export const HAUL_AT_STAKE = 'Banked when the fleet leaves and arrives. Lost entirely if it is destroyed.'
+// ── ██ WHERE THE HAUL ACTUALLY GOES — AND WHY THE OLD SENTENCE WAS THE BUG ██ ──────────────────────
+// Owner, playing 2026-08-09: *"fleet hold is not updated when fight is done"*.
+//
+// He is reading the card correctly; the card was telling him the wrong thing. TRACED THROUGH THE
+// DEPLOYED SERVER, end to end:
+//   1. a kill folds `reward_delta` into `combat_encounters.total_rewards_json` (0344's payout arm);
+//   2. leaving the fight calls `movement_attach_cargo(v_mv, e.id, e.total_rewards_json)`, which
+//      copies the payload onto the RETURN LEG as `fleet_movements.reward_payload_json` (0030:30);
+//   3. the leg's arrival calls `reward_grant(source_type, source, player, base, payload)` (0307:172),
+//      and reward_grant deposits into a BASE — `base_items` / the base's resources, i.e. that PORT's
+//      storage. 0333 states the destination outright: *"reward_grant (loot) → the base it is already
+//      handed; and where that is NULL (loot secured in open space) the player's OLDEST ACTIVE base"*.
+//
+// `fleet_items` — THE FLEET HOLD — is never written by any arm of that chain. Items live at PORTS
+// and the hold is purely what a fleet carries between them (0333's settled model). So the hold does
+// not change when a fight ends, cannot change while one is running, and the old sentence — "Banked
+// when the fleet leaves and arrives", printed directly above a "Fleet hold 0.0/240 m³" meter —
+// promised a relationship the database does not have. That is the whole defect, and it is CLIENT
+// SIDE: nothing on the server is missing or late.
+//
+// The sentence therefore names the destination. Present tense and unconditional: it is true of every
+// live fight, not a warning that appears at some threshold.
+export const HAUL_AT_STAKE =
+  'Banked into the port’s storage when the fleet arrives. Lost entirely if it is destroyed.'

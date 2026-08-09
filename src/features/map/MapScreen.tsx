@@ -63,7 +63,7 @@ export function MapScreen() {
       teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups, fleetPositions,
       fleetMovementUnifiedEnabled, unifiedGroupFleets, combatSortieFleets,
       launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
-      miningFields, miningExtractRadius, combatTickSeconds, itemVolumes,
+      miningFields, miningExtractRadius, combatTickSeconds, shieldRegenCombatPct, itemVolumes,
       pirateInterceptEnabled, dangerZones, refresh,
     },
     // COMBAT-S4: the shell's already-mounted combat poll (useCombat, ~1.5s — the tick cadence). Its
@@ -376,6 +376,7 @@ export function MapScreen() {
                    fight that lives behind a fold is a way out the player does not have. */
                 <MapOverlayTabs
                   encounters={combat.encounters}
+                  units={combat.units}
                   onCombatChanged={() => void combat.refresh()}
                   explore={
                     /* EXPLORATION-P11 — the Scan action; legal only settled in space (server-lit).
@@ -425,6 +426,7 @@ export function MapScreen() {
                       units={combat.units}
                       fleetControlEnabled={fleetControlEnabled}
                       combatTickSeconds={combatTickSeconds}
+                      shieldRegenCombatPct={shieldRegenCombatPct}
                       onSelectHuntSite={(locationId) => handleSelect(locationId)}
                       onCombatChanged={() => void combat.refresh()}
                     />
