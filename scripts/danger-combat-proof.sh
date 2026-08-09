@@ -411,7 +411,18 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "the fitted and unfitted paths are not the same rule"    "$SQL" || fail "harness lacks the ONEPOWER one-rule assert"
   grep -q "a knob only the unfitted path obeys IS a second rule"   "$SQL" || fail "harness lacks the ONEPOWER deleted-knob pin"
   grep -q "produced LESS OR EQUAL damage"                         "$SQL" || fail "harness lacks the ONEPOWER stronger-weapon-never-reduces-dps assert"
-  grep -q "so a volley comparison is not a dps comparison"        "$SQL" || fail "harness lacks the ONEPOWER cadence premise (the volley ordering is only a dps ordering while every cooldown is at or under the tick)"
+  # ── ONEPOWER (5) WAS RE-DERIVED AT 0351, AND THIS GUARD MOVED WITH IT ────────────────────────
+  # The old premise was `cooldown <= combat_tick_seconds`, guarded by the string "so a volley
+  # comparison is not a dps comparison". It fired correctly the moment 0351 set every weapon cooldown
+  # to 5s against a 3s tick — but `cooldown <= tick` was only ever a PROXY for the condition that
+  # licenses comparing volleys: THE TWO WEAPONS SHARING A CADENCE. 0351 broke the proxy, not the
+  # condition (both guns are 5s, both fire every second tick). The assertion now derives DAMAGE PER
+  # SECOND from each hull's OWN FROZEN cooldown, so it needs no cadence assumption at all and holds
+  # under the 2.5s and 5s regimes alike. These two greps pin the rate claim and its non-vacuity
+  # companion; a regression to counting volleys without a cadence fails the first.
+  grep -q "produced LESS OR EQUAL damage per second"              "$SQL" || fail "harness lacks the ONEPOWER dps claim (a stronger gun must never buy less damage PER SECOND — derived from each hull's own frozen cooldown, not from an assumption that every weapon fires once per tick)"
+  grep -q "the dps claim reduces to the volley claim"             "$SQL" || fail "harness lacks the ONEPOWER equal-cadence non-vacuity pin (when both guns share a cadence the rate test reduces to the volley test, and the volley ordering must then be required outright rather than hiding behind a cadence difference this fixture does not have)"
+  grep -q "the cadence below cannot be derived"                   "$SQL" || fail "harness lacks the ONEPOWER frozen-cooldown pin (the cadence must come from the row the engine will read, never from the catalog or from a hard-coded tick count)"
   grep -q "every comparison below would be vacuous"               "$SQL" || fail "harness lacks the ONEPOWER NULL attack_snapshot pin (a comparison against NULL proves nothing)"
   grep -q "B is not a controlled variant of A"                    "$SQL" || fail "harness lacks the ONEPOWER controlled-trait precondition (commissioning ROLLS random traits; the block must own this, not inherit it)"
   grep -q "want exactly the one this block gave it"               "$SQL" || fail "harness lacks the ONEPOWER exactly-one-trait-on-B pin"

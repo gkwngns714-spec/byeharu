@@ -3264,12 +3264,21 @@ end $$;
 -- is already 1000 from setup so the wave survives) and restored after — the geometry knobs are NOT
 -- touched, that is the point.
 --
--- ── ONE VOLLEY, AND WHY THAT IS THE HARNESS AND NOT THE ENGINE ───────────────────────────────────
--- now() is frozen for the whole transaction (the harness rewinds last_resolved_at, never the clock),
--- and since 0314 a fired weapon is re-armed at `now() + cooldown_seconds`. So inside a proof txn
--- EVERY weapon fires exactly ONCE, whatever the cooldown is — this was already true at 0314's 2.5s
--- and 0351's 5s does not change it. The first-salvo asserts below are therefore about the ONE volley
--- each side gets, which is precisely what makes "every hull fired on the same tick" observable.
+-- ── FIRING CADENCE INSIDE A PROOF, STATED PRECISELY ──────────────────────────────────────────────
+-- CORRECTED: an earlier draft of this paragraph claimed "EVERY weapon fires exactly ONCE inside a
+-- proof txn, whatever the cooldown is". That is FALSE, and it would have misled the next reader of
+-- this block in particular. The true rule has two arms:
+--   · now() is frozen for the whole transaction (the harness rewinds last_resolved_at, never the
+--     clock) and since 0314 a fired weapon re-arms at `now() + cooldown_seconds`. So a weapon with a
+--     POSITIVE cooldown fires exactly ONCE per proof, whatever number that cooldown is.
+--   · A weapon with a ZERO cooldown re-arms at now() + 0 and is ready again immediately, so it fires
+--     EVERY tick. This suite's setup owns exactly that for the synthesized weapons —
+--     enemy_synthetic_cooldown_seconds and combat_player_fallback_weapon_cooldown_seconds are both
+--     set to 0 at the top of this file — so 0351's 5s retune does not reach them at all.
+-- THIS BLOCK'S HULLS ARE UNFITTED, so they carry the 0262 fallback at that owned 0 and fire on every
+-- tick once they are in reach. Nothing below depends on them firing only once: every fire assert
+-- here is about the FIRST volley — the tick it lands on, and that EVERY hull is in it — which is
+-- what makes "the fleet fires as one" observable and is unaffected by what happens afterwards.
 do $$
 declare
   r jsonb; n int; i int;
@@ -5341,6 +5350,9 @@ declare
   wA double precision; wB double precision; wC double precision; wD double precision; wE double precision;
   d0 jsonb; d1 jsonb;
   v_tick_secs double precision;
+  -- 0351: each compared hull's OWN frozen cooldown, and the cadence in seconds derived from it.
+  v_cd_A double precision; v_cd_E double precision;
+  v_cad_A double precision; v_cad_E double precision;
   v_share_sum double precision;
 begin
   -- ── THE PRECONDITION THIS BLOCK OWNS (never an ambient seed): traits must be foldable, or hull B
@@ -5548,18 +5560,70 @@ begin
     raise exception 'ONEPOWER FAIL (4): combat_player_fallback_weapon_power_from_attack still exists — a knob only the unfitted path obeys IS a second rule, however it is currently set'; end if;
 
   -- ── (5) FITTING A STRICTLY STRONGER WEAPON CAN NEVER REDUCE DAMAGE. E out-guns A. ───────────────
-  --    Volley is damage per VOLLEY; the dps claim needs the cadences too, so they are derived and
-  --    compared against each other (never against a hard-coded tick length): while every weapon's
-  --    cooldown is at or under the tick, each fires once per tick and the volley ordering IS the dps
-  --    ordering. A future long-cooldown weapon fails here loudly rather than making this claim false.
+  -- ██ RE-DERIVED AT 0351, BECAUSE ITS OWN GUARD CORRECTLY REFUSED TO REPORT A RESULT ██
+  -- The guard was `cooldown <= combat_tick_seconds`, and it fired the moment 0351 set every weapon
+  -- cooldown to 5s against a 3s tick:
+  --     ONEPOWER FAIL (5): a compared weapon's cooldown (5 / 5) exceeds the combat tick (3)
+  -- It was RIGHT to fire, and nothing here weakens it. But note what it was written to stand for:
+  -- its own comment says "while every weapon's cooldown is at or under the tick, each fires once per
+  -- tick and the volley ordering IS the dps ordering". `cooldown <= tick` was only a PROXY for the
+  -- condition that actually licenses comparing volleys — THE TWO WEAPONS SHARING A CADENCE. 0351 did
+  -- not break that condition; it broke the proxy. Both weapons are 5s, so both fire every second
+  -- tick and the ordering still carries. So the proxy is replaced by the real quantity: DAMAGE PER
+  -- SECOND, derived per weapon from ITS OWN FROZEN cooldown. The claim then does not need the
+  -- cadences to be equal at all — it states the owner's law directly ("a better module is simply a
+  -- bigger number") and is true under the 2.5s regime and the 5s regime alike.
+  --
+  -- WHY DPS AND NOT "MEASURE OVER A WINDOW LONG ENOUGH FOR A FULL COOLDOWN CYCLE": a window cannot
+  -- work here, and not merely because it would be awkward.
+  --   · This block drives NO TICKS on purpose — "creation state IS the assertion", because the tick
+  --     rewrites next_ready_at and the frozen-at-creation shape every other assertion in it reads
+  --     can only be read pre-tick. A window would destroy the subject of assertions (1)-(4).
+  --   · Decisively: now() is FROZEN for the whole proof transaction, and since 0314 a fired weapon
+  --     re-arms at now() + cooldown_seconds. So a weapon with a POSITIVE cooldown fires exactly ONCE
+  --     per proof no matter how many ticks are driven — and both guns compared here are CATALOG guns
+  --     at 0351's 5s, this block running after the earlier block restored the synthesized-weapon
+  --     cooldowns this suite owns at 0. A "window long enough to contain a cooldown cycle" therefore
+  --     does not exist here at ANY length: it would measure one shot and call it a rate.
+  -- Deriving the cadence arithmetically is the only honest option, so that is what this does.
+  --
+  -- WHAT IT DISCRIMINATES, STATED HONESTLY: not the pre-0317 builder. This block's header already
+  -- says "ON THE PRE-0317 BUILDER EVERY ASSERTION BELOW EXCEPT (5) FAILS AT ITS FIRST LINE" —
+  -- assertions (1)-(4) carry that discrimination, and (5) never did. (5) is a STANDING DESIGN LAW: a
+  -- retune that makes a better module buy less damage per second fails here. It is regime-independent
+  -- by construction now, which is exactly what a standing law should be.
   v_tick_secs := coalesce(public.cfg_num('combat_tick_seconds'), 3);
-  if t_bat.cooldown_seconds > v_tick_secs or t_mk2.cooldown_seconds > v_tick_secs then
-    raise exception 'ONEPOWER FAIL (5): a compared weapon''s cooldown (% / %) exceeds the combat tick (%) — it no longer fires once per tick, so a volley comparison is not a dps comparison and this assertion must be re-derived rather than trusted',
-      t_bat.cooldown_seconds, t_mk2.cooldown_seconds, v_tick_secs; end if;
+  if v_tick_secs is null or v_tick_secs <= 0 then
+    raise exception 'ONEPOWER FAIL (5): combat_tick_seconds is % — with no tick length there is no cadence and no dps', v_tick_secs; end if;
+  -- The cadence comes from each hull's OWN FROZEN weapons_json, never the catalog: that is the row
+  -- the engine will actually read, which is what makes this a statement about this fight.
+  select coalesce(max((e->>'cooldown_seconds')::double precision), 0) into v_cd_A
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) e
+   where cu.encounter_id = v_enc and cu.main_ship_id = sA;
+  select coalesce(max((e->>'cooldown_seconds')::double precision), 0) into v_cd_E
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) e
+   where cu.encounter_id = v_enc and cu.main_ship_id = sE;
+  if v_cd_A is null or v_cd_E is null or v_cd_A < 0 or v_cd_E < 0 then
+    raise exception 'ONEPOWER FAIL (5): a compared hull carries no usable frozen cooldown (A %, E %) — the cadence below cannot be derived and a dps claim would be invented', v_cd_A, v_cd_E; end if;
+  -- A weapon armed at now()+cooldown becomes ready on the first tick boundary at or after it, so it
+  -- fires once every greatest(1, ceil(cooldown / tick)) ticks. At 0314's 2.5s that is 1 tick; at
+  -- 0351's 5s against a 3s tick it is 2 ticks — the 6-second cadence 0351's own header states.
+  v_cad_A := greatest(1, ceil(v_cd_A / v_tick_secs)) * v_tick_secs;
+  v_cad_E := greatest(1, ceil(v_cd_E / v_tick_secs)) * v_tick_secs;
+  if v_cad_A <= 0 or v_cad_E <= 0 then
+    raise exception 'ONEPOWER FAIL (5): a derived cadence is non-positive (A % s, E % s) — dividing by it would invent a rate', v_cad_A, v_cad_E; end if;
   if pE <= pA then
     raise exception 'ONEPOWER FAIL (5): the mk2 hull folds to % against the battery hull''s % — the stronger gun did not produce a stronger card and the ordering test has no direction', pE, pA; end if;
-  if wE <= wA then
-    raise exception 'ONEPOWER FAIL (5): fitting the STRONGER gun produced LESS OR EQUAL damage (% vs %) — the owner''s "a better module is simply a bigger number" does not hold', wE, wA; end if;
+  -- THE CLAIM, stated as the rate it always meant.
+  if (wE / v_cad_E) <= (wA / v_cad_A) then
+    raise exception 'ONEPOWER FAIL (5): fitting the STRONGER gun produced LESS OR EQUAL damage per second — E fires % every % s (%/s) against A''s % every % s (%/s) — the owner''s "a better module is simply a bigger number" does not hold',
+      wE, v_cad_E, wE / v_cad_E, wA, v_cad_A, wA / v_cad_A; end if;
+  -- NON-VACUITY: when the cadences are equal — which is the case this fixture actually stages — the
+  -- dps test reduces to the volley test, so the volley ordering is ALSO required outright. Without
+  -- this, a future cadence divergence could carry the claim while the per-volley property silently
+  -- inverted, and the block would still be green.
+  if abs(v_cad_A - v_cad_E) < 1e-9 and wE <= wA then
+    raise exception 'ONEPOWER FAIL (5): both guns fire on the same % s cadence, so the dps claim reduces to the volley claim — and the STRONGER gun fired % against the weaker gun''s %', v_cad_A, wE, wA; end if;
 
   raise notice 'DZCOMBAT_PASS_ONEPOWER ok: every hull fires exactly the number on its card — A % = %, B (+trait) % = % (the trait is worth % and it moved the damage by %), C (no weapon, synthesized) % = %, D (two guns, equal shares summing to 1) % = %, E (mk2) % = % and strictly above A. module_types.power decided only WHICH gun carried WHICH slice.',
     wA, pA, wB, pB, v_trait_atk, wB - wA, wC, pC, wD, pD, wE, pE;
@@ -8046,11 +8110,20 @@ end $$;
 -- is what a ring means. The wave then stands at 8 + 0.1 + 1 = 9.1, beyond the Mk-II with real
 -- margin, asserted below.
 --
--- ── ONE VOLLEY PER TRANSACTION, AND WHY THAT IS THE HARNESS AND NOT THE ENGINE ───────────────────
--- now() is frozen for the whole txn and since 0314 a fired weapon re-arms at now() + cooldown, so
--- every weapon fires exactly ONCE inside a proof — true at 0314's 2.5s and unchanged by 0351's 5s.
--- The counts below are therefore about the ONE volley the fleet gets, which is exactly what makes
--- "both guns on the same tick" a statement rather than an accumulation.
+-- ── FIRING CADENCE INSIDE A PROOF, STATED PRECISELY ──────────────────────────────────────────────
+-- CORRECTED, same as CLOSURE's: "every weapon fires exactly ONCE inside a proof" is FALSE as a
+-- general claim. now() is frozen and a fired weapon re-arms at now() + cooldown_seconds, so a
+-- POSITIVE cooldown means exactly one shot per proof — but a ZERO cooldown re-arms immediately and
+-- fires every tick, and this suite owns 0 for both synthesized weapons at the top of the file.
+-- THIS FIXTURE HAS ONE OF EACH, which is why the counts below are split the way they are:
+--   · the LEAD's two CATALOG guns carry module_types.cooldown_seconds, which 0351 set to 5 — so each
+--     fires exactly ONCE, and "exactly 1 autocannon and exactly 1 Mk-II on the entering tick" is a
+--     statement about the whole run;
+--   · the ESCORT's synthesized fallback sits at the owned 0 and fires on EVERY tick it is in reach
+--     for — which is why it appears in the entering tick's damage identity below, and why nothing
+--     here counts salvos after that tick.
+-- The band assert is unaffected either way: across the band the FLEET gate is shut, so no weapon of
+-- any cadence may fire there.
 do $$
 declare
   r jsonb; n int; i int;
