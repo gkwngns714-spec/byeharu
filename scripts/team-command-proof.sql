@@ -4641,6 +4641,16 @@ end $$;
 -- (send_ship_group_hunt launch-from-dock + the dock-at-return reconciler) is proven here. The docked
 -- fixture is now placed by fixture surgery (the dropped single send previously produced the
 -- docked-at-port state via send→settle).
+--
+-- ★ 0349 JOINS THIS BLOCK, because this is the only place in the suite where the reconciler runs LIT
+-- ★ against a real recorded return port — which is exactly the machinery that scattered the owner's
+-- ★ fleet. Two pins are added inline rather than as a new block, so they run over THIS fixture and
+-- ★ this fleet instead of a second one built to resemble it:
+-- ★   [IDLEPARK]  a fleet parked idle in open space is LIVE — its members are not orphans. Fails on
+-- ★               the pre-0349 bodies; this is the owner's "4 went to haven and 1 to slagwork".
+-- ★   [STALEPORT] a sortie aged past sortie_manifest_ttl_seconds names no return port (the member
+-- ★               re-homes, fail-closed) and its manifest is released. The strict complement of the
+-- ★               step (3) dock below, which is the fresh arm — so neither can pass vacuously.
 do $$
 declare
   r jsonb; n int;
@@ -4648,6 +4658,9 @@ declare
   slag  uuid := (select v from tcmd where k='slag');
   v_hunt uuid;
   v_seed_lfd jsonb;
+  -- 0349: the second sortie the STALEPORT pin ages out, and the TTL knob it ages against. The age is
+  -- DERIVED from the knob, never typed, so this block stays correct at any value the knob is tuned to.
+  v_fleet2 uuid; v_ttl double precision;
 begin
   -- ── (0) structural: the 0199 surface is deployed and this block OWNS its dark precondition ───────
   -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults) — same shape as FLEETCTRL above.
@@ -4757,6 +4770,34 @@ begin
   select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
   if n <> 0 then raise exception 'NOHOME FAIL: the member''s docked present fleet was not dissolved'; end if;
 
+  -- ── ★ 0349 PIN [IDLEPARK]: A FLEET PARKED IN OPEN SPACE IS A LIVE FLEET ★ ──────────────────────
+  -- ★ The owner, on the live game: "when i retreated after my hp was set during combat, 5 ships,
+  -- ★ 4 of them went to haven and 1 to slagwork. WTF?"
+  -- ★ A retreat, an ambush park or a stop leaves the group fleet status='idle' in open space —
+  -- ★ fleet_set_in_space writes exactly that, and its own comment says why ('present' means docked
+  -- ★ and carries a presence row; open space has none). The reconciler's orphan probes listed only
+  -- ★ ('moving','present','returning'), so a PARKED fleet read as NO FLEET AT ALL: every member was
+  -- ★ declared an orphan and docked, mid-fight, at whatever port an old manifest corpse happened to
+  -- ★ name — four at one port and one at another, because two dead sorties disagreed.
+  -- ★ THIS PIN FAILS ON THE PRE-0349 BODIES AND PASSES ON 0349's. It is the whole bug, in two reads:
+  -- ★ the member must still be RETURNING (untouched), and it must have NO docked fleet minted for it.
+  -- ★ The fixture is this block's own live sortie, parked with the real leaf — nothing hand-written.
+  perform public.fleet_set_in_space(v_team_fleet, -5000, -5000);
+  update public.main_ship_instances set status='returning', updated_at=now() where main_ship_id=sNT;
+  perform public.process_mainship_expeditions();
+  select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='returning';
+  if n <> 1 then
+    raise exception 'NOHOME FAIL 0349 IDLEPARK: the reconciler settled a member whose fleet is PARKED IDLE IN OPEN SPACE — the parked fleet read as no fleet at all, which is the owner''s 4-and-1 scatter (member status is now %)',
+      (select status from public.main_ship_instances where main_ship_id=sNT);
+  end if;
+  select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
+  if n <> 0 then
+    raise exception 'NOHOME FAIL 0349 IDLEPARK: the reconciler minted % docked fleet(s) for a member whose fleet is still out in open space', n;
+  end if;
+  -- and the park did not cost the sortie its recorded return port — step (3) below depends on it.
+  select count(*) into n from public.fleets where id=v_team_fleet and status='idle' and return_location_id=slag;
+  if n <> 1 then raise exception 'NOHOME FAIL 0349 IDLEPARK: the parked sortie fleet is not idle-with-its-return-port (the pin''s own precondition)'; end if;
+
   -- ── (3) reconciler dock-at-return: the team fleet completes + the member goes 'returning', then the
   --         LIT reconciler DOCKS the member at the recorded return port (Slagworks), never home,
   --         SPLITTING the shared team fleet back into the member's OWN present fleet (review H1). ──────
@@ -4775,13 +4816,111 @@ begin
   r := pg_temp.call_as(uNT, format('public.send_ship_group_hunt(%L::uuid, %L::uuid, %L::uuid)', gNT, v_hunt, slag));
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: a returned docked team could not launch again (H1 second-launch wedge): %', r; end if;
   if (r->>'fleet_id')::uuid = v_team_fleet then raise exception 'NOHOME FAIL: the second hunt reused the OLD team fleet (want a fresh sortie)'; end if;
+  v_fleet2 := (r->>'fleet_id')::uuid;
+
+  -- ── ★ 0349 PIN [STALEPORT]: A CONCLUDED SORTIE STOPS SPEAKING, AND ITS MANIFEST ENDS ★ ─────────
+  -- ★ The other half of the owner's bug. group_sortie_members had a beginning and no end — measured
+  -- ★ on production 2026-08-09: 77 rows over 23 fleets, ZERO of them pointing at a live fleet — and
+  -- ★ the return-port resolver read the newest of them with no recency filter at all. Two fleets
+  -- ★ destroyed on 2026-07-22, one recording Haven and one Slagworks, were still on the roster
+  -- ★ SEVENTEEN DAYS later, and they are what split the owner's five ships four-and-one.
+  -- ★ Same fixture, same reconciler, ONE variable changed: the age of the concluded sortie. The step
+  -- ★ (3) dock above already proved the FRESH arm (a sortie that just ended still names its port), so
+  -- ★ this is the strict complement and neither arm can pass vacuously.
+  -- ★ The age is DERIVED from sortie_manifest_ttl_seconds, never typed, so tuning the knob cannot
+  -- ★ silently invert this test. Ageing a fleet row is the same quarantined clock-rewind kind this
+  -- ★ file already uses on fleet_movements; the manifest itself is never touched (sole-writer law).
+  -- ★
+  -- ★ ── WHY THIS PIN AGES **EVERY** RECORD AND ASSERTS THAT IT DID (CI round 1, PR #406) ──────────
+  -- ★ First written, this pin aged ONLY the second sortie and went RED on the real chain: "a sortie
+  -- ★ concluded 7200 seconds ago still named a return port and the member was docked at it". The fix
+  -- ★ was not broken. THE FIXTURE WAS. Step (3) above leaves the FIRST sortie fleet 'completed' with
+  -- ★ updated_at = now() and its return port still recorded, and its manifest row for this member is
+  -- ★ retained precisely because it is FRESH — so the member had TWO records naming a port, and the
+  -- ★ resolver read the fresh one, which is exactly what it is supposed to do. Reproduced on a real
+  -- ★ Postgres: age one record -> docked=1; age both -> docked=0 and the manifest fully released.
+  -- ★ A pin that asserts "no port was resolved" while some OTHER record can still resolve one is
+  -- ★ asserting the ambient world, not the property — the proofs-never-assert-ambient-defaults law,
+  -- ★ in the one shape it had not taken here yet. So the pin now OWNS the whole set: it ages every
+  -- ★ record of its own user that could name a port, and it asserts — in RAW status/age arithmetic,
+  -- ★ deliberately NOT through the predicate under test, which would be circular — both that none of
+  -- ★ them can still speak AND that at least one of them exists.
+  select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
+  if n <> 0 then raise exception 'NOHOME FAIL 0349 STALEPORT: precondition — the member still owns a present fleet, so it would not be reconciled at all'; end if;
+  select coalesce(public.cfg_num('sortie_manifest_ttl_seconds'), 3600) into v_ttl;
+  if v_ttl is null or v_ttl <= 0 then raise exception 'NOHOME FAIL 0349 STALEPORT: sortie_manifest_ttl_seconds is absent or non-positive (%) — 0349 did not seed its knob', v_ttl; end if;
+  select count(*) into n from public.group_sortie_members where fleet_id=v_fleet2;
+  if n <> 1 then raise exception 'NOHOME FAIL 0349 STALEPORT: precondition — the second sortie has % manifest row(s) (want 1)', n; end if;
+  -- IS THE GUARD EVEN HERE? Separates "0349 did not apply to this database" from "0349 applied and
+  -- the TTL was evaluated wrongly" — two different failures that would otherwise read identically.
+  -- (0349 is a full create-or-replace, not a text rewriter, and its own apply-time assert (b) already
+  --  requires this token twice in the deployed body; this is the belt to that migration's braces.)
+  if position('fleet_sortie_still_speaks' in coalesce(
+       (select p.prosrc from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+         where ns.nspname='public' and p.proname='nohome_dock_returning_ship'), '')) = 0 then
+    raise exception 'NOHOME FAIL 0349 STALEPORT: the deployed nohome_dock_returning_ship carries NO TTL guard — 0349 did not reach this database, so everything below would be testing the pre-0349 body';
+  end if;
+  -- end the second sortie, then age EVERY concluded record this member could resolve a port from.
+  update public.fleets
+     set status='completed', location_mode='base', active_movement_id=null, updated_at=now()
+   where id = v_fleet2;
+  update public.fleets
+     set updated_at = now() - make_interval(secs => 2 * v_ttl)
+   where player_id = uNT and status in ('completed','destroyed');
+  -- PRECONDITION A (non-vacuity): the member HAS at least one record naming a port. Without this,
+  -- "was not docked" would be trivially true on a fixture that simply had nothing to resolve.
+  select count(*) into n from public.fleets f
+   where f.return_location_id is not null
+     and (f.main_ship_id = sNT
+          or exists (select 1 from public.group_sortie_members g where g.fleet_id = f.id and g.main_ship_id = sNT));
+  if n < 1 then
+    raise exception 'NOHOME FAIL 0349 STALEPORT: precondition — the member has NO record naming a return port at all, so "did not dock" would prove nothing';
+  end if;
+  -- PRECONDITION B: and NOT ONE of them can still legitimately speak. Written in raw status + age
+  -- arithmetic on purpose: expressing it with fleet_sortie_still_speaks would make the fixture agree
+  -- with the predicate by construction and the pin could never fail.
+  select count(*) into n from public.fleets f
+   where f.return_location_id is not null
+     and (f.main_ship_id = sNT
+          or exists (select 1 from public.group_sortie_members g where g.fleet_id = f.id and g.main_ship_id = sNT))
+     and (f.status not in ('completed','destroyed')
+          or f.updated_at >= now() - make_interval(secs => v_ttl));
+  if n <> 0 then
+    raise exception 'NOHOME FAIL 0349 STALEPORT: precondition — % record(s) naming a return port for this member are still live or still inside the TTL, so docking would be CORRECT and this pin would be measuring the wrong thing (this is exactly how it went red on CI round 1)', n;
+  end if;
+  update public.main_ship_instances set status='returning', updated_at=now() where main_ship_id=sNT;
+  perform public.process_mainship_expeditions();
+  -- the stale corpse named NO port: the member re-homes rather than docking somewhere it never was.
+  select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
+  if n <> 0 then
+    raise exception 'NOHOME FAIL 0349 STALEPORT: every record naming a port for this member concluded more than % seconds ago (the TTL), and one of them still docked it — that is the seventeen-day corpse, in miniature. Docked at: %',
+      v_ttl,
+      coalesce((select f.current_location_id::text from public.fleets f
+                 where f.main_ship_id=sNT and f.status='present' limit 1), '<unknown>');
+  end if;
+  -- …and its manifest is RELEASED, through the sole deleter, on exactly the same predicate — stated
+  -- over the whole CLASS (every stale sortie of this user), not just the one this pin named.
+  select count(*) into n from public.group_sortie_members where fleet_id=v_fleet2;
+  if n <> 0 then
+    raise exception 'NOHOME FAIL 0349 STALEPORT: % manifest row(s) survive a sortie that ended long past the TTL — the roster still has no end', n;
+  end if;
+  select count(*) into n
+    from public.group_sortie_members g join public.fleets f on f.id = g.fleet_id
+   where g.player_id = uNT
+     and f.status in ('completed','destroyed')
+     and f.updated_at < now() - make_interval(secs => v_ttl);
+  if n <> 0 then
+    raise exception 'NOHOME FAIL 0349 STALEPORT: % manifest row(s) across % stale sortie(s) survived the reap — the end must apply to every concluded sortie, not just the one this pin aged by name',
+      n, (select count(distinct g.fleet_id) from public.group_sortie_members g join public.fleets f on f.id = g.fleet_id
+           where g.player_id = uNT and f.status in ('completed','destroyed') and f.updated_at < now() - make_interval(secs => v_ttl));
+  end if;
 
   -- restore the CAPTURED committed value in-txn (ROLLBACK reverts regardless — the .sh honesty check
   -- re-confirms it is UNCHANGED, in either direction).
   update public.game_config set value=v_seed_lfd where key='launch_from_dock_enabled';
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
 
-  raise notice 'TEAMCMD_PASS_NOHOME ok: the SINGLE-ship launch-from-dock arm is retired with the legacy single-ship send (retired 0232) (0232); the surviving TEAM path holds — a docked team hunt launches ONE fleet FROM the port (origin_type=location=Slagworks, member hunting, docked present fleet dissolved, return port recorded), the reconciler DOCKS the returning member at the recorded return port (never re-homed) splitting the shared fleet back into the member''s OWN present fleet (H1), and the returned team LAUNCHES AGAIN with a fresh sortie; flags restored in-txn';
+  raise notice 'TEAMCMD_PASS_NOHOME ok: the SINGLE-ship launch-from-dock arm is retired with the legacy single-ship send (retired 0232) (0232); the surviving TEAM path holds — a docked team hunt launches ONE fleet FROM the port (origin_type=location=Slagworks, member hunting, docked present fleet dissolved, return port recorded), the reconciler DOCKS the returning member at the recorded return port (never re-homed) splitting the shared fleet back into the member''s OWN present fleet (H1), and the returned team LAUNCHES AGAIN with a fresh sortie; 0349 IDLEPARK — a fleet PARKED IDLE IN OPEN SPACE (the retreat/ambush/stop park) is a LIVE fleet, so its member is left alone and no docked fleet is minted for it (the owner''s 4-and-1 scatter, which this pin fails on the pre-0349 bodies); 0349 STALEPORT — the strict complement of the dock above: the SAME sortie aged past sortie_manifest_ttl_seconds names no port at all (the member re-homes, fail-closed) and its manifest is released through the sole deleter, so the roster finally has an end; flags restored in-txn';
 end $$;
 
 -- ════════ BLOCK CMDBUFF (COMMAND-BUFFS, 0205): fleet-wide command-buff fold, DARK then in-txn LIT ══
