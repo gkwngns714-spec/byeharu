@@ -247,6 +247,12 @@
 --       and the ordinal column is still NOT NULL DEFAULT 0 with no NULL rows
 --   (h) THE READOUT CONTRACT: `authenticated` can SELECT the new stamp on combat_encounters, and
 --       location_pressure keeps 0344's client-write lockdown through two column changes
+--   (i) ██ EVERY OUT PARAMETER OF THE AUTHORITY IS ANSWERED ██ — every OUT parameter the catalog
+--       reports for combat_pressure_field is assigned at least twice (the "no answer yet" default and
+--       the authored path); the enemy bar's denominator is pinned to 0347's whole identity; and on
+--       real data every live fight's ceiling is non-zero and equals that identity. THIS BLOCK EXISTS
+--       BECAUSE THIS FILE SHIPPED THE BUG IT CATCHES: the first draft silently dropped
+--       `ceiling_hp := body_hp_nominal * effective_cap;` and CI found it, not the author
 --
 -- WHAT THE SELF-ASSERT CANNOT DO, STATED RATHER THAN IMPLIED. These are STRUCTURAL. They prove the
 -- size has one authority, is derived from the ordinal, and cannot see a kill. They CANNOT prove that
@@ -673,6 +679,19 @@ begin
   -- ── ██ THE WAVE'S SIZE — ASKED, NEVER COMPUTED HERE ██
   -- Both come from the ONE size authority, at two ordinals: the wave that is due now, and the one
   -- after it. Writing the arithmetic here instead would put the owner's banding in the schema twice.
+  -- THE CEILING THE CLIENT'S ENEMY BAR DIVIDES BY (0347's line, restored verbatim). It is the
+  -- EFFECTIVE cap x one body's nominal hp: a denominator left on the base cap would drive the bar
+  -- past 100% the moment the field grew.
+  --
+  -- ⚠ THIS LINE WAS DROPPED IN THIS FILE'S FIRST DRAFT AND ONLY CI CAUGHT IT. Losing it fails
+  -- SILENTLY: `ceiling_hp` keeps the 0 it is initialised to, the step hands the tick
+  -- o_ceiling_hp = 0, and the tick takes its documented fallback —
+  -- greatest(coalesce(e.enemy_integrity_max,0), v_e_before) — so combat_encounters.enemy_integrity_max
+  -- becomes the ACCUMULATED field hp instead of the site's ceiling, and the player's enemy health bar
+  -- reads against a denominator that drifts with damage. Assert (i) refuses the whole CLASS now:
+  -- every OUT parameter of this function must be assigned on the authored path, not just this one.
+  ceiling_hp := body_hp_nominal * effective_cap;
+
   wave_size      := public.combat_wave_size(wave_index,     s.r_growth_every, s.r_wave_ceiling);
   next_wave_size := public.combat_wave_size(wave_index + 1, s.r_growth_every, s.r_wave_ceiling);
 
@@ -1385,5 +1404,101 @@ begin
     raise exception '0350 ASSERT (h) FAIL: a client role can write location_pressure — 0344 established that lockdown by REVOKING it (the 0254 lesson) and renaming a column must not have reopened it';
   end if;
 end $h$;
+
+-- (i) ██ EVERY OUT PARAMETER OF THE AUTHORITY IS ACTUALLY ANSWERED ██
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════
+-- THIS BLOCK EXISTS BECAUSE THIS FILE SHIPPED THE BUG IT CATCHES, AND ONLY CI FOUND IT.
+--
+-- Re-minting combat_pressure_field, the first draft DROPPED one line — `ceiling_hp :=
+-- body_hp_nominal * effective_cap;`. Nothing failed. plpgsql initialises an unassigned OUT parameter
+-- to NULL and this function pre-sets every one of them to a "no answer yet" value in its opening
+-- block, so a dropped assignment does not raise, does not warn, and does not change the row's SHAPE.
+-- It just answers 0 forever. The consequence was three layers down and player-visible:
+--
+--     leaf answers ceiling_hp = 0
+--       -> combat_pressure_step hands the tick o_ceiling_hp = 0
+--         -> the tick takes its documented fallback, greatest(coalesce(e.enemy_integrity_max,0), v_e_before)
+--           -> combat_encounters.enemy_integrity_max becomes the ACCUMULATED field hp
+--             -> the player's enemy health bar divides by a denominator that drifts with damage
+--
+-- DZCOMBAT_PASS_FIELDGROWS caught it, off by 45 in 3,000,000 — and the smallness of that gap is what
+-- makes it dangerous, because it reads like float noise and is in fact a whole broken read path.
+--
+-- SO THE GUARD IS NOT "check ceiling_hp". Fixing the instance would leave the next re-mint free to
+-- drop `population` or `due_at` the same way. The guard is the CLASS: every OUT parameter this
+-- function declares must be assigned at least TWICE in its body — once in the opening "no answer
+-- yet" block, and at least once on the authored path. The names are read from the catalog, not
+-- listed here, so a parameter added later is covered the day it is added and cannot be forgotten.
+do $i$
+declare
+  v_leaf text; v_lraw text; v_missing text := ''; v_checked integer := 0; v_n integer; a text;
+begin
+  select p.prosrc into v_lraw from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'combat_pressure_field';
+  v_leaf := regexp_replace(v_lraw, '--[^' || chr(10) || ']*', '', 'g');
+  if length(v_leaf) < 800 or length(v_leaf) >= length(v_lraw) then
+    raise exception '0350 ASSERT (i) FAIL: the comment strip produced % chars from a % char body', length(v_leaf), length(v_lraw);
+  end if;
+
+  -- THE NAMES COME FROM THE CATALOG. proargmodes 't' is a TABLE (i.e. OUT) column; the single IN
+  -- parameter is excluded by mode, never by name, so this cannot silently stop covering something.
+  for a in
+    select unnest(p.proargnames)
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'combat_pressure_field'
+       and p.proargnames is not null
+    except
+    select 'p_encounter'
+  loop
+    v_checked := v_checked + 1;
+    -- Word-boundary matched on BOTH sides of the name, because `wave_size` is a proper substring of
+    -- `next_wave_size` and a naive count would let one of them cover for the other.
+    select count(*) into v_n
+      from regexp_matches(v_leaf, '(?:^|[^_[:alnum:]])' || a || '[[:space:]]*:=', 'g') m;
+    if v_n < 2 then
+      v_missing := v_missing || a || ' (' || v_n || '), ';
+    end if;
+  end loop;
+
+  -- NON-VACUITY: the sweep must have found the real parameter list. A catalog read that returned
+  -- nothing would otherwise report a clean function while checking none of it.
+  if v_checked < 18 then
+    raise exception '0350 ASSERT (i) FAIL: the OUT-parameter sweep examined only % name(s) (want the leaf''s 18) — it is not reading the catalog and would pass over a function it never looked at', v_checked;
+  end if;
+  if v_missing <> '' then
+    raise exception '0350 ASSERT (i) FAIL: % OUT parameter(s) of public.combat_pressure_field are assigned fewer than twice — %. Every one must be set in the opening "no answer yet" block AND on the authored path. A dropped assignment does NOT raise: the parameter silently keeps its initial value, and this file''s own first draft lost `ceiling_hp := body_hp_nominal * effective_cap;` exactly that way, which turned the player''s enemy health bar into a denominator that drifts with damage',
+      (select count(*) from regexp_matches(v_missing, ',', 'g')), rtrim(v_missing, ', ');
+  end if;
+
+  -- ...AND THE ONE THAT WAS LOST IS PINNED BY ITS WHOLE STATEMENT, the way (d) pins 0347's cap
+  -- arithmetic: an identity, not a substring, so appending to it cannot pass.
+  select count(*) into v_n
+    from regexp_matches(v_leaf, '(?:^|[^_[:alnum:]])ceiling_hp[[:space:]]*:=[[:space:]]*([^;]*);', 'g') m
+   where m[1] not in ('0', 'body_hp_nominal * effective_cap');
+  if v_n <> 0 then
+    raise exception '0350 ASSERT (i) FAIL: % assignment(s) give the enemy bar''s denominator a value that is neither the 0 default nor 0347''s identity (body_hp_nominal * effective_cap). The denominator must be the EFFECTIVE cap times one body''s nominal hp or the bar runs past 100%% the moment the field grows', v_n;
+  end if;
+
+  -- AND, ON REAL DATA, THE AUTHORITY ACTUALLY ANSWERS IT. Structural checks cannot see a runtime 0;
+  -- this one can, and it quantifies over every fight this deploy is touching. It is skipped only when
+  -- there is genuinely nothing to quantify over, and it SAYS so rather than passing quietly.
+  select count(*) into v_n
+    from public.combat_encounters ce
+   where ce.status in ('active', 'retreating')
+     and exists (select 1 from public.location_pressure lp where lp.location_id = ce.location_id);
+  if v_n = 0 then
+    raise notice '0350 (i): no in-flight fight at an authored site, so the ceiling identity was checked STRUCTURALLY only. The disposable-Postgres leg (DZCOMBAT_PASS_FIELDGROWS) is what exercises it on a real fight.';
+  else
+    if exists (
+      select 1 from public.combat_encounters ce
+       cross join lateral public.combat_pressure_field(ce.id) f
+       where ce.status in ('active', 'retreating') and f.authored
+         and (f.ceiling_hp is null or f.ceiling_hp <= 0
+           or abs(f.ceiling_hp - f.body_hp_nominal * f.effective_cap) > 1e-9 * greatest(f.ceiling_hp, 1))) then
+      raise exception '0350 ASSERT (i) FAIL: the authority answers a null, zero or non-identity ceiling for a live fight at an authored site. o_ceiling_hp = 0 makes the tick fall back to the ACCUMULATED field hp, and the enemy bar then divides by a number that moves with damage instead of with the cap';
+    end if;
+    raise notice '0350 (i): % in-flight fight(s) at an authored site all answer ceiling_hp = body_hp_nominal x effective_cap, non-zero', v_n;
+  end if;
+end $i$;
 
 commit;

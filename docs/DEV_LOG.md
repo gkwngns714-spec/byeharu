@@ -116,6 +116,58 @@ must land with it.** The exact delta:
 5. `src/features/combat/combatTypes.ts:54-71` documents the pressure columns; add the new one there and
    fix the line that names `cap_growth_every` (renamed to `growth_every` by this migration).
 
+### ⚠ CI round 1 (PR #408, 43 pass / 2 fail) — the pin caught a REAL defect, and it was mine
+
+Both `disposable-matrix` legs, same assertion, `danger-combat-proof.sql`:
+
+    FIELDGROWS FAIL slot 1: the enemy bar's denominator reads 2999955 but one body's
+    nominal hp (1000000) times the EFFECTIVE cap (3) is 3000000
+
+Off by 45 in 3,000,000 — 0.0015% — which *reads* like float noise from an accumulated sum and is
+not. **The exact-product premise was sound; the engine was wrong.** Established, in this order:
+
+1. **Production says the product is exact.** Read-only on encounter `9855381f`: `enemy_integrity_max`
+   = 2240 and `base_difficulty × enemy_hp_base × pressure_effective_cap` = 10 × 14 × 16 = 2240. No
+   variance, no rounding, no accumulation — so an assert demanding the exact product is right to.
+2. **`process_combat_ticks` is its sole writer** (swept `pg_proc` on prod: one function, two write
+   sites, both `enemy_integrity_max = v_enemy_hp`), and `v_enemy_hp` is the step's `o_ceiling_hp`
+   *unless* the tick takes its documented fallback at `:476` —
+   `greatest(coalesce(e.enemy_integrity_max,0), v_e_before)` — where `v_e_before` is
+   `sum(hp_current)`: accumulated, and damage-bearing.
+3. **Reproduced on a disposable Postgres** with a tick faithful to that ceiling path. Trace:
+   `o_ceiling_hp = 0` on **every** tick. Not null — zero.
+
+**The cause: re-minting `combat_pressure_field`, this slice DROPPED the line
+`ceiling_hp := body_hp_nominal * effective_cap;`.** 0347 had it; the 0350 draft replaced that whole
+region with the wave-size block and lost it. plpgsql does not complain — the OUT parameter simply
+keeps the `0` the function's own "no answer yet" block gave it. The failure is silent and three
+layers deep, and it is **player-visible**: leaf answers 0 → step hands the tick `o_ceiling_hp = 0` →
+the tick falls back to accumulated hp → **the enemy health bar divides by a number that drifts with
+damage instead of by the site's ceiling.**
+
+**Pre-existing or introduced? Introduced, entirely by this slice.** 0347's leaf carries the line;
+`FIELDGROWS` was green on it and is green again now. The assert was never fragile: after the fix it
+passes with `sum(hp_current) = 2,999,820` — a *damaged* field — precisely because the denominator is
+a stable ceiling, which is the property it exists to state.
+
+**Fixed the CLASS, not the instance.** Restoring one line would leave the next re-mint free to drop
+`population` or `due_at` the same way. New **self-assert (i)** reads the OUT-parameter list *from the
+catalog* and requires every one to be assigned at least twice — once in the "no answer yet" block and
+once on the authored path — so a parameter added later is covered the day it is added. It also pins
+the denominator to 0347's whole identity (not a substring — the lesson from (d)), and on real data
+requires every live fight's `ceiling_hp` to be non-zero and equal to that identity. Three new
+mutations prove it red: dropping the line, re-tuning it to `base_cap`, and dropping `population`'s
+assignment. **Nine mutations now, all refused.**
+
+**Two harness lessons, recorded rather than swallowed:**
+- My local behavioural suite went green on the broken build because *it never read the leaf's whole
+  answer*. It now asserts that no OUT parameter comes back NULL and that the step hands the tick a
+  non-zero ceiling equal to the leaf's.
+- My mutation rehearsal reported one defect as "not gated" when it was: a bare `String.replace` hit
+  the same literal inside a **comment** I had just written, so it mutated prose, not code. Mutations
+  are now anchored to a line starting with exactly two spaces. *A rehearsal that can silently mutate
+  nothing reports false green.*
+
 ### In-flight behaviour at apply time (prod is a LIVE ~30-player game)
 
 **Nothing is reset.** A fight sitting at ordinal 7 gets a wave of **3** on its next slot rather than 1 —
