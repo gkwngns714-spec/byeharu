@@ -893,6 +893,7 @@ declare
   v_hp0 double precision; v_hp1 double precision;
   v_x0 double precision[]; v_y0 double precision[]; v_moved int;
   v_arm_engine text; v_pred_x double precision; v_pred_y double precision;
+  v_moved_detail text;
   v_dx double precision; v_dy double precision;
 begin
   select arm_kind, arm_gap, arm_my, arm_foe, arm_speed
@@ -990,14 +991,39 @@ begin
     raise exception 'HOLD FAIL: only % player hull(s) to hold still (want 3) — the stillness assert would be measuring almost nothing', coalesce(array_length(v_x0, 1), 0);
   end if;
   perform pg_temp.cs_tick(v_enc);
+  -- ── ██ ONE ROW PER HULL. THE EARLIER FORM COUNTED PAIRS AND CALLED THEM HULLS. ██ ──────────────
+  -- CI (PR #410) reported `HOLD FAIL: 3 of 3 player hull(s) moved` on a fleet that was holding
+  -- perfectly. The rank came from
+  --     lateral (select row_number() over (order by cu2.id) rn from combat_units cu2
+  --               where … and cu2.id <= cu.id) o
+  -- which is not a rank at all: for the hull ranked k it yields k ROWS, rn = 1..k. So hull 2 was
+  -- also compared against hull 1's snapshot and hull 3 against hulls 1 and 2's, and a formation at
+  -- perfect rest scored 0+1+2 = 3. Reproduced offline against a real PostgreSQL: the shipped query
+  -- returns 3 when NOTHING moved and 6 when all three did — so the 3 CI printed is the signature of
+  -- a fleet that did not move, and the engine's rigid HOLD was never in question.
+  -- The window now runs ONCE over the same `order by id` set the snapshot was taken with, so rn is
+  -- the hull's own index and the count is a count of HULLS. Verified still red on real movement:
+  -- 0 at rest, 1 when one hull moves, 3 when all three do — a surviving per-hull writer, which is
+  -- what this assert exists to catch, is exactly as visible as before.
   select count(*) into v_moved
-    from public.combat_units cu,
-         lateral (select row_number() over (order by cu2.id) rn from public.combat_units cu2
-                   where cu2.encounter_id = v_enc and cu2.side = 'player' and cu2.id <= cu.id) o
-   where cu.encounter_id = v_enc and cu.side = 'player'
-     and (cu.pos_x is distinct from v_x0[o.rn] or cu.pos_y is distinct from v_y0[o.rn]);
+    from (select cu.id, cu.pos_x, cu.pos_y, row_number() over (order by cu.id) as rn
+            from public.combat_units cu
+           where cu.encounter_id = v_enc and cu.side = 'player') z
+   where z.pos_x is distinct from v_x0[z.rn] or z.pos_y is distinct from v_y0[z.rn];
   if v_moved <> 0 then
-    raise exception 'HOLD FAIL: % of 3 player hull(s) moved across a HOLD tick — under 0351 the fleet is ONE body, so a HOLD must leave EVERY hull exactly where the freeze presented it, not merely the witness', v_moved;
+    -- print WHAT moved and BY HOW MUCH: "n hulls moved" alone cannot tell a rigid drift (every hull
+    -- by one identical delta — a mover still running) from a single stray writer.
+    select string_agg(format('%s: (%s, %s) -> (%s, %s), delta %s',
+                             z.rn, v_x0[z.rn], v_y0[z.rn], z.pos_x, z.pos_y,
+                             round(public.osn_distance(v_x0[z.rn], v_y0[z.rn], z.pos_x, z.pos_y)::numeric, 9)),
+                      '; ' order by z.rn)
+      into v_moved_detail
+      from (select cu.id, cu.pos_x, cu.pos_y, row_number() over (order by cu.id) as rn
+              from public.combat_units cu
+             where cu.encounter_id = v_enc and cu.side = 'player') z
+     where z.pos_x is distinct from v_x0[z.rn] or z.pos_y is distinct from v_y0[z.rn];
+    raise exception 'HOLD FAIL: % of % player hull(s) moved across a HOLD tick — under 0351 the fleet is ONE body, so a HOLD must leave EVERY hull exactly where the freeze presented it, not merely the witness. Moved: %. (The fleet''s arm here is ''%'' at gap % against its own reach % and the wave''s %; if every delta below is IDENTICAL and non-zero the rigid mover is still stepping on a hold, and if only some hulls moved a per-hull writer survived 0351.)',
+      v_moved, array_length(v_x0, 1), v_moved_detail, v_arm_engine, v_gap, v_reach, v_foe;
   end if;
   -- ...and the lead sits exactly where the engine's own leaf predicted for the fleet.
   select pos_x, pos_y into v_dx, v_dy from public.combat_units where id = u_cmd;
