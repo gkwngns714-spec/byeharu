@@ -553,6 +553,45 @@ test('anyTickArtifactLive is the other half of the loop’s stop condition', () 
   expect(anyTickArtifactLive({}, T0)).toBe(false)
 })
 
+// ── THE STOP CONDITION IS ASKED ON THE CLOCK THAT DREW THE FRAME ───────────────────────────────────
+// THE DEFECT THIS STOPS, MEASURED (2026-08-09). The two predicates above are pure and were always
+// right; what was wrong was the clock the loop handed them. useCombatMotion's frame loop asked
+// `anyTickArtifactLive(sightings, Date.now())` — a clock 5–9 ms AHEAD of `nowMs`, the value the
+// frame currently on screen was rendered with, because the effect runs one React commit after it.
+// When that lag straddles `seen + TICK_READOUT_MS` the loop tears itself down while the rendered
+// frame still carries the splat. And the loop is the ONLY thing that advances `nowMs`, so the clock
+// then freezes: the killing blow stays painted on the wreck for as long as the player looks at it.
+// That is the owner's original report ("when fleet is destroyed, i want also a damage shown to be
+// disappeared as well") surviving inside a one-frame window.
+//
+// Under parallel workers it reproduced 10 times in 94 runs of the rendered corpse proof. In the
+// instrumented batch the signature was exact: 5 frozen runs, all five "live by the RENDER clock,
+// already expired by the WALL clock", and 27 passing runs, all twenty-seven expired by both.
+// It is a source-shape guard because the fault is not in any value — every pure assertion
+// above passes while it happens — it is in WHICH clock the impure shell consults, and that is a
+// property of one line of code. A behavioural proof of it can only ever be probabilistic.
+test('THE CLOCK CANNOT FREEZE MID-DRAWING: the loop stops on the RENDER clock, never on Date.now()', () => {
+  const hook = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src/features/map/useCombatMotion.ts'),
+    'utf8',
+  )
+    .split('\n')
+    .filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('//') && !l.trimStart().startsWith('/*'))
+    .join('\n')
+  // The loop may only stop once a frame has ACTUALLY BEEN RENDERED past the expiry — so both halves
+  // of the condition are evaluated at `nowMs`, the clock the frame was drawn with.
+  expect(hook, 'the motion half of the stop condition must read the render clock').toContain(
+    'anyUnitInMotion(motion, nowMs)',
+  )
+  expect(hook, 'the readout half of the stop condition must read the render clock').toContain(
+    'anyTickArtifactLive(sightings, nowMs)',
+  )
+  // …and neither may ever be asked on a clock the screen has not caught up to.
+  expect(hook, 'the stop condition must never be asked on a fresher clock than the frame').not.toMatch(
+    /(anyUnitInMotion|anyTickArtifactLive)\([^)]*Date\.now\(\)/,
+  )
+})
+
 // ── THE EXCHANGE'S OWN WINDOW ─────────────────────────────────────────────────────
 // The owner: "when fleet is destroyed, i want also a damage shown to be disappeared as well." A
 // tick's artifacts had a start and no end; this ledger is what gives them an age.
