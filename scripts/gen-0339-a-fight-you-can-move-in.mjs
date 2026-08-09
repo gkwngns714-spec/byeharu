@@ -72,9 +72,20 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // edited exactly two lines inside 0336's spawn text and this file reconstructs that edit from
   // 0338's own hunk rows, so the same is true of it. 0310/0314/0317/0332 own regions this file
   // never reads.
+  // 0346 IS EXEMPTED BY NAME, and its relationship to this file is the strongest form of
+  // disjointness there is: its declare-block anchor IS THIS FILE'S OWN EMITTED TEXT, character for
+  // character — hunk 5's new_t, `v_ring_radius` immediately followed by `v_spawn_slot`. A slice
+  // taken from this file's own HEAD therefore cannot contain it, because the head still carries the
+  // v_formation_extent / v_slot_x / v_slot_y locals this file removes. Its other two tick anchors
+  // (0336's v_ring_radius one-read line and the per-unit combat_unit_decide_move call, on the
+  // `my_min_range` argument 0336 introduced) are likewise absent from every slice below. What 0346
+  // changes is inside combat_spawn_wave_units — the leaf THIS file minted — where it replaces the
+  // placement expression so a body musters at the zone's own city instead of on a ring around the
+  // fight; it keeps this file's (measured extent + range + 1) verbatim as the clearance FLOOR, and
+  // it moves no signature, no ACL and no other line of that leaf.
   guard('process_combat_ticks', '20260618000299',
     new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000336',
-             '20260618000337', '20260618000338']));
+             '20260618000337', '20260618000338', '20260618000346']));
   // 0337 owns the deployed text of the reposition arm inside the mover, and is the slice source.
   guard('command_ship_group_go', '20260618000330', new Set(['20260618000337']));
   // combat_create_encounter has had NO surgeon since its 0301 head — this slice is the first.

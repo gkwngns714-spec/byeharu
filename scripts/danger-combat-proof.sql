@@ -368,6 +368,16 @@ begin
   -- when absent, but the precondition is OWNED here, never inherited) — every damage number in the
   -- pre-0314 blocks stays byte-exact. The RSFEEL block sets its own 0.5 and restores this 0.
   perform public.set_game_config('combat_hit_variance_pct',         '0'::jsonb);
+  -- ── 0346: THIS BLOCK OWNS THE INGRESS DURATION, IT DOES NOT INHERIT IT ────────────────────────
+  -- 0346 makes an enemy body spawn AT its zone's city and travel in over combat_enemy_ingress_ticks
+  -- ticks, arriving on the same engagement boundary it used to be PLACED on. Every geometry,
+  -- closing-tick and first-salvo property in this file is about a body that is already at that
+  -- boundary, so this suite states the precondition it depends on instead of inheriting whatever
+  -- the seed happens to carry (the proofs-never-assert-ambient-defaults law). 0 means "no ingress":
+  -- the spawn takes its degenerate arm and places the body on the boundary directly, which is
+  -- byte-identical to the pre-0346 engine. A block that wants to test the INGRESS itself must set
+  -- this to a positive value for itself and say so.
+  perform public.set_game_config('combat_enemy_ingress_ticks', '0'::jsonb);
   perform public.set_game_config('combat_tick_logging',             'true'::jsonb);
   perform public.set_game_config('combat_event_logging',            'true'::jsonb);   -- so fire events land
   -- 0314: hull_damage must ride EVENT logging, not debug — RSFEEL proves the promotion, so the

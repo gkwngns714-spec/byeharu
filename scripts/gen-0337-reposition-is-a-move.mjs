@@ -84,9 +84,17 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // stated reason (0337:355-361, "UNVERIFIED") it verified and removed. It touches NONE of the
   // retreat arms below that gate — deliberately checked, because 0339 was briefly scoped to remove
   // the retreat feature and that scope was CANCELLED before anything was cut.
+  // 0346 IS EXEMPTED BY NAME. Its three hunks in the tick are 0336's v_ring_radius / v_spawn_slot
+  // declarations (as 0339 later trimmed them), 0336's v_ring_radius one-read line, and the per-unit
+  // combat_unit_decide_move call, anchored on the `my_min_range` argument 0336 introduced. NONE of
+  // that text appears anywhere in this file — checked by grepping this migration for all three
+  // anchors, which returns zero — so 0346 cannot overlap this file's hunks even by accident, quite
+  // apart from the structural argument that none of it exists in the 0299 head sliced below. 0346
+  // moves an enemy body's ORIGIN to the zone's own city and bounds how fast it closes while still
+  // outside the fight; it touches no reposition arm, no retreat arm and no anchor write.
   guard('process_combat_ticks', '20260618000299',
     new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000332', '20260618000336',
-             '20260618000338', '20260618000339']));
+             '20260618000338', '20260618000339', '20260618000346']));
   guard('command_ship_group_go', '20260618000330', new Set(['20260618000339']));
 }
 

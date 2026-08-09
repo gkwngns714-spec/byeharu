@@ -88,8 +88,19 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // `alive_count > 0` site to that loop (its own use is inside combat_spawn_wave_units, a separate
   // function), so assert (d)'s site count here is unaffected. Naming it keeps this gate live for
   // 0340 and after.
+  // 0346 JOINS THE EXEMPTION — by name, never by widening the window. It makes an enemy body MUSTER
+  // AT THE ZONE'S OWN CITY instead of on a ring around the fight, and its three hunks in THIS
+  // function are all in text that 0336 CREATED: the v_ring_radius / v_spawn_slot declarations, the
+  // v_ring_radius one-read line, and the per-unit combat_unit_decide_move call — which 0346 anchors
+  // on the argument line carrying `my_min_range`, an identifier 0336 introduced and which appears
+  // nowhere in the 0299 head. So no slice this file takes from 0299 — the actor-liveness guard at
+  // the TOP of the spatial per-unit loop — can overlap any of them; the disjointness is structural
+  // rather than a judgement. 0346 adds no `alive_count > 0` site to that loop, or anywhere: its own
+  // leaf, combat_sortie_speed, reads no table at all. So assert (d)'s site count here is unaffected.
+  // Naming it keeps this gate live for 0347 and after.
   const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000332', '20260618000336',
-                                         '20260618000337', '20260618000338', '20260618000339']);
+                                         '20260618000337', '20260618000338', '20260618000339',
+                                         '20260618000346']);
   const reHunkRow = /\(\s*\d+\s*,\s*'process_combat_ticks'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000299'
     && !KNOWN_LATER_REWRITERS.has(version(f))

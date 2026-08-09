@@ -78,8 +78,17 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // and 0339 touches no terminal arm, no retreat path and no member loop at all — checked
   // deliberately, because 0339 was briefly scoped to remove the retreat feature and that scope was
   // CANCELLED before anything was cut. Naming it keeps this gate live for 0340 and after.
+  // 0346 JOINS THE EXEMPTION — by name, never by widening the window. Its three hunks in this
+  // function all sit in text that 0336 CREATED (the v_ring_radius / v_spawn_slot declarations, the
+  // v_ring_radius one-read line, and the per-unit combat_unit_decide_move call, anchored on the
+  // `my_min_range` argument 0336 introduced), none of which exists in the 0299 head this file slices
+  // from. THIS FILE'S SLICE IS THE SETTLE ARM'S MEMBER-REPATRIATION LOOP (0299:622-624), and 0346
+  // touches no terminal arm, no retreat path and no member loop: it changes where an enemy body is
+  // PLACED when it is created, and how fast it closes while it is still outside the fight. Naming it
+  // keeps this gate live for 0347 and after.
   const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000317', '20260618000336',
-                                         '20260618000337', '20260618000338', '20260618000339']);
+                                         '20260618000337', '20260618000338', '20260618000339',
+                                         '20260618000346']);
   const reHunkRow = /\(\s*\d+\s*,\s*'process_combat_ticks'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000299'
     && !KNOWN_LATER_REWRITERS.has(version(f))

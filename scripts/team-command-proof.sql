@@ -417,6 +417,16 @@ begin
   select value into v_prev    from public.game_config where key = 'enemy_attack_base';
   select value into v_prev_hp from public.game_config where key = 'enemy_hp_base';
   perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);
+  -- ── 0346: THIS SUITE OWNS THE INGRESS DURATION, IT DOES NOT INHERIT IT ────────────────────────
+  -- 0346 makes an enemy body spawn AT its zone's city and travel in over combat_enemy_ingress_ticks
+  -- ticks, arriving on the same engagement boundary it used to be PLACED on. Every geometry,
+  -- closing-tick and first-salvo property in this file is about a body that is already at that
+  -- boundary, so this suite states the precondition it depends on instead of inheriting whatever
+  -- the seed happens to carry (the proofs-never-assert-ambient-defaults law). 0 means "no ingress":
+  -- the spawn takes its degenerate arm and places the body on the boundary directly, which is
+  -- byte-identical to the pre-0346 engine. A block that wants to test the INGRESS itself must set
+  -- this to a positive value for itself and say so.
+  perform public.set_game_config('combat_enemy_ingress_ticks', '0'::jsonb);
   -- ── 0336: THE LETHAL WAVE HAS TO SURVIVE ITS OWN APPROACH ────────────────────────────────────────
   -- The replacement wave no longer spawns on top of the fleet; it spawns at (the measured player
   -- formation extent + its own weapon range + 1) and CLOSES, with the fleet firing at it every tick of
