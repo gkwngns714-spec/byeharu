@@ -120,7 +120,7 @@ a large fraction of encounters pinned at it.
 
 §4's number is the cap a fight **starts** with, not the cap it keeps. From 0347:
 
-    effective_cap = concurrent_cap + floor(pressure_wave_index / cap_growth_every)
+    effective_cap = concurrent_cap + floor(pressure_wave_index / growth_every)
 
 | site | base cap | growth period | cap after 3 / 6 / 12 slots | ceiling |
 |---|---|---|---|---|
@@ -128,9 +128,11 @@ a large fraction of encounters pinned at it.
 | Reaver | 4 | every 3 slots (108 s) | 5 / 6 / 8 | **none** |
 | Blackden | 6 | every 3 slots (90 s) | 7 / 8 / 10 | **none** |
 
-Both numbers are **columns on the site's own content row** — `location_pressure.cap_growth_every` and
+Both numbers are **columns on the site's own content row** — `location_pressure.growth_every` and
 `.cap_ceiling` — for §4's reason, restated: a growth period computed from `base_difficulty` would make
 that column an overloaded authority all over again. Retuning a site is an `UPDATE` and no deploy.
+(0347 named the period `cap_growth_every`; **0350 renamed it to `growth_every`** because it now governs
+§4c's wave size as well — one owner sentence, one number on the row.)
 
 **`pressure_wave_index` is the SCHEDULED slot ordinal, never a count of arrivals**, and that distinction
 is the whole design. An arrival-driven counter cannot advance while the field sits at its cap, so the cap
@@ -149,6 +151,54 @@ period is too short or a ceiling is needed at that point — and the ceiling is 
 Measure it per site: Blackden reaches slot 3 in 90 s where Snare needs 135 s, so one period is a much
 steeper ramp at the hardest site. That asymmetry is intended (its cadence is the fastest) but it is the
 first thing to check if Blackden becomes unsurvivable before a player can extract.
+
+---
+
+## §4c The WAVE grows — +1 body every 3 scheduled waves (0350)
+
+> *"every 3 wave, i want wave to add one fleet"* — the owner
+> *"only 1 ships are comming out from the city, whereas i specifically told you to add 1 fleet every
+> three rounds..."* — the owner, playing §4b's deployed result
+
+**§4b answered the wrong half of that sentence and this is the other half.** 0347 grew the ceiling while
+every slot still spawned exactly one body, so on a field the player is clearing the ceiling never binds
+and the growth is invisible. Measured on the owner's live fight (encounter `9855381f`, Snare): waves 2–10
+brought **one body each** while `pressure_effective_cap` climbed to 5.
+
+    wave_size = 1 + floor((pressure_wave_index - 1) / growth_every)     -- bounded by wave_size_ceiling
+
+| wave *n* | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **bodies (0350)** | 1 | 1 | 1 | 2 | 2 | 2 | 3 | 3 | 3 | 4 | 4 | 4 |
+| Snare effective cap (0347) | 3 | 3 | 4 | 4 | 4 | 5 | 5 | 5 | 6 | 6 | 6 | 7 |
+
+**The two notches are one slot apart on purpose.** The cap's first notch lands on slot 3 and the wave's
+on slot 4, so the room arrives *before* the bodies that need it — reversing that would clamp the very
+first wave of 2 down to 1 by construction.
+
+**What actually arrives is the CLAMP**: `least(wave_size, effective_cap − population)`, never negative.
+A wave of 3 against one slot of room delivers **1**, not 0. All-or-nothing was rejected because it makes
+a bigger wave *less* likely to land than a small one, and — decisively — because on a full field it would
+land nothing until three enemies **died** to open the whole wave at once, which is the death→pressure
+arrow re-created inside the delivery rule. What did not fit is **lost, never banked**, exactly as §3's
+suppressed slot is. The `wave_spawned` event carries `units` (landed) beside `wave_size` (wanted) so a
+clamped wave is legible rather than indistinguishable from a small one.
+
+**Which number binds, and when.** They never add. On a field the player is clearing, the **wave** is the
+binding number and the player sees 1,1,1,2,2,2,3… On a field the player is not clearing, the **cap** is
+the binding number and the field stays bounded. That is a precedence, not a double-count — which is why
+the cap growth stays (the owner approved it explicitly) rather than being folded away.
+
+**`wave_size_ceiling` is NULL at every site — UNBOUNDED, and that is an open decision.** Same reasoning as
+`cap_ceiling`: the fight is endless by design and the owner has not ruled on a limit. Bounding a site is
+`update public.location_pressure set wave_size_ceiling = 6 where location_id = <site>;` — one `UPDATE`,
+no deploy.
+
+**What falsifies "every 3" for the wave**: bodies-arrived-per-wave against *slots elapsed*, and the
+fraction of waves that arrive **clamped**. A site where most waves are clamped is a site whose cap period
+is too slow for its wave period, not a site whose wave is too big — retune `concurrent_cap` first. Also
+watch time-to-first-shot after a big wave: four bodies leaving the city together share one ingress and
+arrive on four arc slots, so the volley they open with is the real difficulty step, not the count.
 
 ---
 

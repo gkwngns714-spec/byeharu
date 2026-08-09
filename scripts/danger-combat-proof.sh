@@ -69,7 +69,7 @@ SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 # every line above, for the ninth hand-resolved union of this one string: a resolution that takes
 # either side WHOLE drops the other's markers, the local run then never checks for those notices, and
 # the suite prints OVERALL_PASS with entire runtime blocks unverified. Union, always.
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOHOLD DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR DZCOMBAT_PASS_NODIRECTION DZCOMBAT_PASS_ONEANCHOR DZCOMBAT_PASS_SITEORIGIN DZCOMBAT_PASS_PRESSURE DZCOMBAT_PASS_FIELDGROWS"
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOHOLD DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR DZCOMBAT_PASS_NODIRECTION DZCOMBAT_PASS_ONEANCHOR DZCOMBAT_PASS_SITEORIGIN DZCOMBAT_PASS_PRESSURE DZCOMBAT_PASS_FIELDGROWS DZCOMBAT_PASS_WAVEGROWS"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -941,7 +941,7 @@ if [ "$MODE" = "selftest" ]; then
   # OWNER'S OWN WORDS made executable; the third is the one that separates a clock from a kill ladder
   # and it is the reason this block exists rather than a body count being enough.
   grep -q "the site carries growth period" "$SQL" \
-    || fail "harness lacks the FIELDGROWS owned-period premise (pg_temp.pressure_site authors cap_growth_every NULL so every OTHER block stays about the cap; the one block that is about the growth must author the period itself, or it is measuring whatever the seed happened to carry)"
+    || fail "harness lacks the FIELDGROWS owned-period premise (pg_temp.pressure_site authors growth_every NULL so every OTHER block stays about the cap; the one block that is about the cap's growth must author the period itself, or it is measuring whatever the seed happened to carry)"
   grep -q "this arm needs a FULL field" "$SQL" \
     || fail "harness lacks the FIELDGROWS full-field premise — under its cap every due slot delivers a body, the cap never binds, and a growing cap is indistinguishable from a fixed one, so a green run would prove nothing"
   grep -q "must advance on EVERY due slot, whether or not a body arrived" "$SQL" \
@@ -958,12 +958,39 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness lacks the FIELDGROWS stamp assert (combat_encounters.pressure_effective_cap must equal the cap the spawn decision used, on every slot — that stamp is how a readout shows the EFFECTIVE cap without recomputing it, and a stamp that drifts is a second authority)"
   grep -q "the enemy-bar denominator assert below is measured against it" "$SQL" \
     || fail "harness lacks the FIELDGROWS nominal-hp NULL pin (a denominator comparison against NULL is vacuous — the 0313 law)"
-  # ...and the shared staging must OWN the growth period, off, or every block above FIELDGROWS
-  # silently inherits a widening cap and its arrival counts stop meaning what they say.
-  grep -q "cap_growth_every      = excluded.cap_growth_every" "$PRESSURE_LIB" \
-    || fail "pg_temp.pressure_site no longer owns location_pressure.cap_growth_every — after 0347 a site's cap GROWS every third scheduled slot, and a staging helper that leaves the period to the seed hands every cap and arrival assert in this harness a number that widens under it (proofs-never-assert-ambient-defaults, in its content form)"
-  grep -q "THE CAP GROWTH IS OWNED HERE TOO, AND IT IS OWNED \*OFF\*" "$PRESSURE_LIB" \
-    || fail "the shared lib lost the stated REASON it authors the growth period off — the next slice needs to know that exactly one block (DZCOMBAT_PASS_FIELDGROWS) turns the owner's rule on, and where"
+  # ── 0350 THE WAVE ITSELF GROWS, in assert-form. FIELDGROWS above CANNOT catch the defect these
+  # cover: on a FULL field the room never exceeds one slot, so a wave of three and a wave of one are
+  # indistinguishable there — which is exactly why 0347 shipped with every slot spawning a literal 1
+  # and the owner had to say it a second time. Every one of these is RED by construction on the 0347
+  # body.
+  grep -q "own period of 3 and a cap that can never bind" "$SQL" \
+    || fail "harness lacks the WAVEGROWS room premise — the cap must be put out of reach or the block is re-measuring FIELDGROWS instead of the wave, and a wave of three would be clamped to one by the very ceiling it is meant to be independent of"
+  grep -q 'means the WAVE gets bigger, not the ceiling above it' "$SQL" \
+    || fail "harness lacks the WAVEGROWS banding assert (waves 3, 4, 7, 12 must deliver 1, 2, 3, 4 bodies) — the owner's \"every 3 wave, i want wave to add one fleet\", as a body count, and the one assert the deployed 0347 body fails"
+  grep -q "the largest wave this block ever observed brought" "$SQL" \
+    || fail "harness lacks the WAVEGROWS non-vacuity pin — while no wave ever EXCEEDS one body, every other assert in the block is satisfied by the 0347 body that hands the spawner a literal 1"
+  grep -q "a wave of 3 against ONE slot of room delivered" "$SQL" \
+    || fail "harness lacks the WAVEGROWS clamp assert — all-or-nothing would deliver ZERO here and would then land nothing until enough enemies DIED to open the whole wave at once, which is the arrow from a death back into pressure re-created inside the delivery rule"
+  grep -q "the ordinal reads % after a CLAMPED wave" "$SQL" \
+    || fail "harness lacks the WAVEGROWS clamped-slot-is-still-spent assert (a clamp that stalled the schedule would owe bodies a later death could call in)"
+  grep -q "a wave that was cut down by the field must SAY so" "$SQL" \
+    || fail "harness lacks the WAVEGROWS observability assert (the wave_spawned payload must carry what LANDED beside what the wave WANTED, or a clamped wave is indistinguishable from a small one)"
+  grep -q "must arrive on its own arc slots, one body per slot" "$SQL" \
+    || fail "harness lacks the WAVEGROWS distinct-position assert — a multi-body wave that stacked would render as one ship with a bigger number behind it (measured in production before 0338: distinct_enemy_points = 1 on eight consecutive fights)"
+  grep -q "that stamp is the ONLY number a wave clock may announce" "$SQL" \
+    || fail "harness lacks the WAVEGROWS next-wave stamp assert (combat_encounters.pressure_next_wave_size is the client's half of this slice; a stamp that disagrees with the engine is the \"1 ship incoming\" caption over three ships coming out of the city)"
+  grep -q "with NO authored period the slot delivered" "$SQL" \
+    || fail "harness lacks the WAVEGROWS null-period pin — every OTHER block in this harness stages its field through pg_temp.pressure_site on the promise that a NULL period means one body per slot, and that promise is pinned here rather than trusted"
+
+  # ...and the shared staging must OWN the escalation period, off, or every block above FIELDGROWS
+  # silently inherits a widening cap AND a widening wave, and its arrival counts stop meaning what
+  # they say.
+  grep -q "growth_every          = excluded.growth_every" "$PRESSURE_LIB" \
+    || fail "pg_temp.pressure_site no longer owns location_pressure.growth_every — after 0347 a site's cap GROWS every third scheduled slot and after 0350 so does the WAVE, both off one column, and a staging helper that leaves the period to the seed hands every cap and arrival assert in this harness numbers that widen under it (proofs-never-assert-ambient-defaults, in its content form)"
+  grep -q "wave_size_ceiling     = excluded.wave_size_ceiling" "$PRESSURE_LIB" \
+    || fail "pg_temp.pressure_site no longer owns location_pressure.wave_size_ceiling — a block that stages a field must own every threshold that decides how many bodies reach it, not just the period"
+  grep -q "THE ESCALATION IS OWNED HERE TOO, AND IT IS OWNED \*OFF\*" "$PRESSURE_LIB" \
+    || fail "the shared lib lost the stated REASON it authors the escalation period off — the next slice needs to know that exactly TWO blocks (DZCOMBAT_PASS_FIELDGROWS for the cap, DZCOMBAT_PASS_WAVEGROWS for the wave) turn the owner's rule on, and where"
 
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
