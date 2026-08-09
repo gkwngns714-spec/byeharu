@@ -37,7 +37,12 @@ test('THE ENGINE DECIDES WHETHER A SHIP ARRIVES -- the card never does', () => {
   // that has not happened (a full field can lose a hull two seconds before the slot). The card shows
   // the countdown, the ordinal, the population and the STAMPED cap, and states the rule as a rule.
   const code = codeOnly(card)
-  expect(code, 'the cap is shown, never derived').not.toMatch(/concurrent_cap|cap_growth_every/)
+  // 0350 renamed `cap_growth_every` to `growth_every` and made that one column govern the WAVE's size
+  // as well as the field's cap, so this needle widens with it. A card that derived either band
+  // client-side would be a second authority — and the wave size is the number the owner just caught
+  // the game lying about ("only 1 ships are comming out from the city").
+  expect(code, 'the cap and the wave size are shown, never derived')
+    .not.toMatch(/concurrent_cap|growth_every|wave_size_ceiling/)
   // Whitespace-dense so a line break cannot hide a comparison. Both directions of both operands.
   const dense = code.replace(/\s+/g, '')
   for (const bad of [
