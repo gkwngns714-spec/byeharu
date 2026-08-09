@@ -5,6 +5,59 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-09 — A FLEET COMES HOME TOGETHER (`slice-a-fleet-comes-home-together`, migration 0349)
+
+**The owner:** *"when i retreated after my hp was set during combat, 5 ships, 4 of them went to haven
+and 1 to slagwork. WTF?"* — and, on the class: *"Everything is messed up when we make or change one
+thing, spaghetti. What is the point of having law and rules?"*
+
+### The chain, measured against production (read-only)
+
+1. A retreat, an ambush park or a stop leaves the group fleet **`status='idle'`** in open space —
+   `fleet_set_in_space` writes exactly that, and its own comment says why.
+2. `process_mainship_expeditions` (cron jobid 7, **every 30 seconds**) asked "does this ship still
+   have a fleet?" with hand-written IN-lists of `('moving','present','returning')`. **`'idle'` was in
+   none of them**, so a parked fleet read as *no fleet at all* and every member was declared an orphan.
+3. Each orphan went to `nohome_dock_returning_ship`, **per ship**, which resolved a return port from
+   the ship's tagged fleet or its `group_sortie_members` manifest — both `order by updated_at desc
+   limit 1`, **no status filter, no recency filter**.
+4. `group_sortie_members` was never pruned: **77 rows over 23 fleets, 0 of them on a live fleet.** Two
+   fleets destroyed on 2026-07-22 — one recording Haven, one Slagworks — decided where the owner's
+   ships docked **seventeen days later**. The reconciler also fired mid-fight at 23:11:26, docking four
+   ships 21 seconds into a 40-wave battle.
+
+### The fix — two predicates, one knob, no new authority
+
+- **`fleet_is_live(status)`** — the ONE liveness predicate, defined as the **complement of the terminal
+  set** rather than an allow-list, so a status added later reads as LIVE and a future omission can only
+  decline to reconcile a ship, never scatter a fleet. All **six** orphan probes compose it.
+- **`fleet_sortie_still_speaks(status, updated_at)`** — a live fleet always speaks; a concluded one only
+  inside **`sortie_manifest_ttl_seconds` (3600)**. That ONE number governs both the resolver and the
+  new manifest reap, so a row that can still be read is never deleted and a deleted one could never
+  have been read — the seam is removed by construction, not by care.
+- The resolver now orders **live-first with a total tie-break**, and the H1 reuse can no longer
+  re-present a `destroyed` fleet (production carries four such tagged fleets).
+- **The roster finally has an end.** The reap lives in the cron that already exists and composes
+  `group_sortie_release`, so that leaf stays the manifest's sole deleter. All 77 stale rows are
+  snapshotted into `group_sortie_members_retired_0349` before release; the table comment carries the
+  literal restoring INSERT.
+
+**Why a TTL and not "delete at the terminal transition":** the suite says the instant is wrong.
+`team-command-proof.sql` pins a completed sortie's manifest as retained, and BLOCK CAPXP's precondition
+is that manifest — `captain_xp_accrue` (every 5 min) reaches a team fight's ships only through it.
+Deleting at the transition would trade a visible bug for a silent one.
+
+**Proven before/after on real Postgres** (a disposable WASM instance, the deployed 0199 bodies as the
+pre-image): one cron pass over a 5-ship fleet parked idle with two 17-day corpses on the roster sends
+**4 to Haven and 1 to Slagworks** on the head, and leaves all five with their fleet on 0349. New pins
+`IDLEPARK` and `STALEPORT` in BLOCK NOHOME make that permanent — `IDLEPARK` fails on the pre-0349 bodies.
+
+**Deliberately out of scope:** the location fold, and any repair of the owner's already-scattered ships.
+This stops NEW scatterings only. Named follow-up: retire the 0198 dark re-home head and the
+`launch_from_dock_enabled` read with it.
+
+---
+
 ## 2026-08-09 — THE FIGHT YOU CAN READ (`slice-the-fight-you-can-read`, migration 0348 + client)
 
 **The owner:** *"i want a separate tab on map for exploration, which is foldable, at the top, a
