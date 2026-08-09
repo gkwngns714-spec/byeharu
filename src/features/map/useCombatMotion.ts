@@ -95,7 +95,29 @@ export function useCombatMotion(
   useEffect(() => {
     // Nothing on the map is moving and this exchange's drawing has nothing left to change → do not
     // schedule a single frame.
-    if (!anyUnitInMotion(motion, Date.now()) && !anyTickArtifactLive(sightings, Date.now())) return
+    //
+    // ⚠ THE CLOCK HERE IS `nowMs`, NEVER `Date.now()` — and that is the whole correctness argument
+    // of the expiry, not a micro-optimisation. This loop IS the clock the readout is measured
+    // against: once it stops, `nowMs` is frozen at its last value forever, because only this loop
+    // advances it. So the stop condition must be the SAME function of the SAME clock the frame on
+    // screen was drawn with. Asking a fresher clock whether the drawing is still live asks about a
+    // frame that was never rendered.
+    //
+    // MEASURED (2026-08-09 — 10 failures in 94 loaded runs of tests/fightReadout.uispec.ts's corpse
+    // proof): this effect runs 5–9 ms after the commit it belongs to — one React render. When that
+    // lag straddles `seen + TICK_READOUT_MS`, the wall clock says "expired" while the frame on screen
+    // still has the splat on it, so the loop tears down leaving the killing blow painted on the
+    // wreck, permanently. That is exactly the owner's report ("when fleet is destroyed, i want also
+    // a damage shown to be disappeared as well") surviving inside a one-frame window. Reading
+    // `nowMs` makes it unreachable: the loop can only stop after a frame has actually been RENDERED
+    // past the expiry, and while it has not, it schedules another frame — which advances `nowMs`
+    // and produces that frame. The clock cannot freeze before the drawing it bounds is gone.
+    //
+    // It is safe in the other direction too: a stale `nowMs` (the loop has been asleep and a poll
+    // just landed new events) reads as "still live", so the loop STARTS and the first frame
+    // corrects it. The error this clock can make is scheduling one frame too many, never stopping
+    // one frame too early.
+    if (!anyUnitInMotion(motion, nowMs) && !anyTickArtifactLive(sightings, nowMs)) return
     let live = true
     const tick = () => {
       if (!live) return
