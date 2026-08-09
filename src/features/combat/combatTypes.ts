@@ -49,6 +49,26 @@ export interface CombatEncounter {
   // every consumer fails closed (see repositionCourse.ts, the ONE reader).
   reposition_x?: number | null
   reposition_y?: number | null
+  // THE PRESSURE CLOCK, AS THE SERVER KEEPS IT (0344 minted the clock, 0347 the ordinal and the cap).
+  // These three are the whole contract for a reinforcement readout, and none of them is computed here:
+  //   next_reinforcement_at — WHEN the next scheduled slot falls due. Sole writer
+  //     public.combat_pressure_step. A slot that finds the field at its cap is SPENT, not banked, so
+  //     this only ever moves forward.
+  //   pressure_wave_index   — how many scheduled slots have come due at this fight. It advances on
+  //     EVERY slot, including ones that spawned nothing, which is why it is not a count of arrivals.
+  //   pressure_effective_cap — how many enemy bodies the field can hold RIGHT NOW:
+  //     concurrent_cap + floor(pressure_wave_index / cap_growth_every), the owner's "every 3 wave,
+  //     add one fleet". ⚠ A SURFACE MUST SHOW THIS NUMBER AND MUST NEVER DERIVE ONE. It is stamped by
+  //     public.combat_pressure_step from public.combat_pressure_field's own answer, in the same
+  //     statement that makes the spawn decision, so it is the SAME number the engine used. Anything
+  //     that recomputes a cap client-side will say "3 max" while four ships stand on the field.
+  // Optional/nullable because combatApi reads `select('*')`, the same law as the anchor and the
+  // course above: a server that predates the columns simply omits them and every consumer must fail
+  // closed on absence. pressure_effective_cap is additionally null until the fight has evaluated its
+  // first slot — show nothing then, never a guess.
+  next_reinforcement_at?: string | null
+  pressure_wave_index?: number | null
+  pressure_effective_cap?: number | null
 }
 
 export interface CombatUnit {
