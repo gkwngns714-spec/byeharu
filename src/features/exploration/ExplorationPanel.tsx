@@ -66,9 +66,29 @@ export function ExplorationPanel({
     })
   }
 
-  // FAIL CLOSED: render nothing unless the server affirmatively lit the surface. This is the dark
-  // path in production today (exploration_disabled); transport errors collapse to null the same way.
-  if (!isServerLit(result)) return null
+  // ── FAIL CLOSED, IN THREE STATES RATHER THAN TWO ─────────────────────────────────────────────────
+  // This used to be one line — `if (!isServerLit(result)) return null` — which collapsed "the read
+  // has not come back yet" and "the server says this feature is off" into the same blank. That was
+  // right while the panel merely rode a rail (an absent panel is an absent panel), and it is wrong
+  // now that it is a TAB BODY the player has deliberately opened: a tab that opens onto nothing is
+  // indistinguishable from a broken game, which is the silence the owner has objected to before.
+  //
+  //   · result === null   → the read is in flight. Render nothing; a "not available" flashed for
+  //                         200ms and then replaced is a lie the player saw.
+  //   · result.ok false   → the SERVER said so. Say it, in the server's own words through the ONE
+  //                         reject-copy map, never a sentence invented here.
+  //   · result.ok true    → the surface, as before.
+  // The gate itself is unchanged: the client still reads no flag and still never lets a scan through
+  // that the server has not lit.
+  if (result === null) return null
+  if (!isServerLit(result)) {
+    return (
+      <OverlayPanel tone="accent" data-testid="exploration-panel-dark" className="flex min-h-[3.75rem] w-64 max-w-full flex-col text-ink">
+        <p className="text-[11px] font-medium text-accent">Exploration</p>
+        <p className="mt-1 text-[11px] text-ink-muted">{explorationScanErrorMessage('feature_disabled')}</p>
+      </OverlayPanel>
+    )
+  }
 
   return (
     // UI R2: the OverlayPanel primitive owns the chrome (accent tone = the exploration identity;

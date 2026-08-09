@@ -1,11 +1,30 @@
-// COMBAT — the MAP-SIDE combat readout. The fight is a thing happening in SPACE, so its status
-// belongs on the map beside the fleet doing it, not only on the Mission screen (ActiveCombatPanel
-// stays exactly as it is — this is a second VIEW of the same server rows, never a second source).
+import { useEffect, useState } from 'react'
+import type { CombatEncounter, CombatTick, CombatUnit } from '../combat/combatTypes'
+import { selectCombatPhase } from '../combat/combatPhase'
+import {
+  REINFORCEMENT_LABEL,
+  REINFORCEMENT_RULE,
+  hasReinforcementClock,
+  resolveReinforcement,
+} from '../combat/reinforcementClock'
+import { HAUL_AT_STAKE, resolveFightHaul } from '../combat/fightHaul'
+import type { SiteLootEntry } from '../combat/combatApi'
+import { resolveAutoExitLine, type AutoExitSetting } from '../combat/autoExitLine'
+import { resolveRepositionCourse } from '../combat/repositionCourse'
+import { formatM3, holdMeter, type Hold } from '../inventory/hold'
+import { OverlayPanel, overlayAccountClass } from '../../components/ui'
+import { ItemChip } from '../../components/items'
+
+// COMBAT — the FIGHT tab's body. The fight is a thing happening in SPACE, so its status belongs on
+// the map beside the fleet doing it, not only on the Mission screen (ActiveCombatPanel stays exactly
+// as it is — this is a second VIEW of the same server rows, never a second source).
 //
 // PURE PRESENTATION. Every number here is read straight off combat_encounters / combat_units /
-// combat_ticks, which the database owns. This component computes NO combat math: no damage, no hit
-// chance, no power derivation, no outcome prediction. It formats what the server already decided. If
-// a value the player should see is missing, the fix is a server column — never an approximation here.
+// combat_ticks / get_my_hold / item_types, which the database owns. This component computes NO combat
+// math: no damage, no hit chance, no power derivation, no outcome prediction, and — see the wave
+// section below — no prediction of whether a ship will arrive. It formats what the server already
+// decided. If a value the player should see is missing, the fix is a server column, never an
+// approximation here.
 //
 // ── WHAT THIS CARD USED TO SAY, AND WHY IT WAS A LIE ───────────────────────────────────────────────
 // It labelled BOTH sides "Power" and printed `player_power_current` against `enemy_power_current`.
@@ -21,18 +40,25 @@
 // The fix is not a better label for a number nobody can act on. Both sides now show the SAME
 // quantity, the one both sides genuinely have and both bars were already drawing: REMAINING HULL,
 // with the ship count beside it. That is the RS3 read — two health bars — and it is answerable at a
-// glance. Underneath it sits the LAST EXCHANGE from combat_ticks (which now carry live data, since
-// combat_tick_logging was lit): how much you dealt and how much you took in the same three seconds,
-// which is the other half of "am I winning" and the half a static bar cannot show.
+// glance. Underneath it sits the LAST EXCHANGE from combat_ticks: how much you dealt and how much
+// you took in the same three seconds, which is the other half of "am I winning" and the half a static
+// bar cannot show.
 //
-// Mounted from MapScreen over the already-polled `combat` state (useCombat, ~1.5s = the tick
-// cadence), so it needs no new fetch and no new poll.
-import type { CombatEncounter, CombatTick, CombatUnit } from '../combat/combatTypes'
-import { selectCombatPhase, nextWaveText } from '../combat/combatPhase'
-import { resolveAutoExitLine, type AutoExitSetting } from '../combat/autoExitLine'
-import { resolveRepositionCourse } from '../combat/repositionCourse'
-import { RetreatControl } from '../combat/RetreatControl'
-import { OverlayPanel, overlayAccountClass, overlayReachClass } from '../../components/ui'
+// ── ██ TWO DEAD READS DELETED HERE ██ ─────────────────────────────────────────────────────────────
+//   · `Wave {e.wave_number}` in the header. Since 0344 the tick only advances wave_number when the
+//     whole field is EMPTIED, which under a reinforcement clock is rare — so it sat on 1 for entire
+//     fights while ships kept arriving. It is replaced by the thing that actually moves: how many
+//     bodies are standing against the cap the ENGINE stamped.
+//   · the `next_wave_at` countdown (`combatPhase.nextWaveText`, now deleted from that module). 0344
+//     removed the pause that column paced and left the write in place, so it counted down to a moment
+//     at which nothing is scheduled to happen. The pressure clock replaces it — one clock, one leaf,
+//     `combat/reinforcementClock.ts`.
+//
+// ── WHERE IT IS MOUNTED ───────────────────────────────────────────────────────────────────────────
+// The map's FIGHT tab (map/MapOverlayTabs), over the already-polled `combat` state (useCombat, ~1.5s
+// = the tick cadence), so it needs no new poll. It carries NO control: the ONE RetreatControl is
+// pinned in the rail OUTSIDE the tabs, because a way out of a fight that lives behind a fold is a way
+// out the player does not have.
 
 /** One side's live standing, as the server reports it: how many ships are still up and how much
  *  hull they have left. NO "power" — see the header for why the two sides' power columns were never
@@ -92,14 +118,17 @@ function SideBar({
   )
 }
 
-/** The map's live combat card. Renders nothing when no encounter is active — a clean map is the
- *  default (map-UX law #1); combat summons this, exactly like every other panel. */
+/** The map's live combat readout. Renders nothing when no encounter is active — a clean map is the
+ *  default (map-UX law #1); the FIGHT tab then says so itself. */
 export function CombatMapCard({
   encounters,
   units,
   ticks,
   autoExit,
-  onChanged,
+  itemVolumes,
+  holds,
+  siteLoot,
+  nowMs,
 }: {
   encounters: readonly CombatEncounter[]
   units: readonly CombatUnit[]
@@ -109,12 +138,35 @@ export function CombatMapCard({
   /** the 0310 safety line per ENCOUNTER (combatApi.fetchAutoExitByEncounter). Absent/unknown → the
    *  card says nothing about auto-retreat rather than implying there is none. */
   autoExit?: Record<string, AutoExitSetting>
-  /** re-poll after a retreat order lands, so the card shows the new status on the next frame */
-  onChanged: () => void
+  /** `item_types.item_id → volume_m3`, from the existing catalog read. Absent → the haul lists what
+   *  was won and says nothing about how much room it takes. */
+  itemVolumes?: ReadonlyMap<string, number>
+  /** encounter id → that fleet's hold, EXACTLY as `get_my_hold` reports it (0333). Never recomputed
+   *  here. Absent → no cargo line. */
+  holds?: Record<string, Hold>
+  /** location id → what that site drops per enemy destroyed (0348 get_site_loot). Absent → the card
+   *  says nothing about future drops, which is the honest reading of a failed or missing read. */
+  siteLoot?: Record<string, SiteLootEntry[]>
+  /** Test seam ONLY: a fixed clock, so a rendered proof asserts an exact countdown instead of racing
+   *  one. Absent in the app, where the 1s tick below owns the time. */
+  nowMs?: number
 }) {
   // 'active' and 'retreating' are both LIVE: a retreating fleet is still taking fire, and hiding the
   // card at that moment removes the readout exactly when the player most needs it.
   const live = encounters.filter((e) => e.status === 'active' || e.status === 'retreating')
+  // A 1s clock — the house idiom (FleetStatusPanel/ActiveCombatPanel), and it RUNS ONLY WHEN A
+  // COUNTDOWN EXISTS. The wave clock is the only thing on this card that needs the time, so a fight
+  // whose row carries no `next_reinforcement_at` (a pre-0344 server) re-renders nobody: exactly the
+  // rule the fleet readout states for its ETA — "the tick exists exactly when an ETA does".
+  const needsClock = live.some(hasReinforcementClock)
+  const [tick, setTick] = useState(() => Date.now())
+  useEffect(() => {
+    if (!needsClock) return
+    const iv = setInterval(() => setTick(Date.now()), 1000)
+    return () => clearInterval(iv)
+  }, [needsClock])
+  const now = nowMs ?? tick
+
   if (live.length === 0) return null
 
   return (
@@ -131,8 +183,8 @@ export function CombatMapCard({
         // the player wondering why the map shows no ships for a fight that is clearly happening.
         const spatial = mine.some((u) => u.pos_x !== null && u.pos_x !== undefined)
         // The SAME phase the Mission panel shows, from the one shared selector — never re-derived
-        // here. Between waves the server has already zeroed the whole enemy side, so those numbers
-        // are placeholders and the card must say what is happening instead of printing them.
+        // here. While the field is empty the server has already zeroed every enemy number on the row,
+        // so those are placeholders and the card must say what is happening instead of printing them.
         const phase = selectCombatPhase(e)
         // THE LAST EXCHANGE — this fight's newest real tick. `next_wave_incoming` rows carry no
         // exchange, so they are skipped exactly as the Mission panel skips them (one rule, two
@@ -146,27 +198,40 @@ export function CombatMapCard({
         // THE STANDING COURSE — the SAME ONE derivation (combat/repositionCourse) the Mission
         // panel reads, mounted a second time here. Null = no course, and then nothing is said.
         const course = resolveRepositionCourse(e)
+        // THE WAVE CLOCK — the ONE pressure derivation. Null on a server that predates 0344/0347,
+        // and then this section does not render at all.
+        const wave = resolveReinforcement(e, units, e.id, now)
+        // THE HAUL — the ONE reward reader, with catalog volumes folded in by the ONE haul leaf.
+        const haul = resolveFightHaul(e.total_rewards_json, itemVolumes ?? new Map())
+        const hold = holds?.[e.id]
+        const meter = hold && hold.ok ? holdMeter(hold) : null
+        const drops = e.location_id ? siteLoot?.[e.location_id] : undefined
 
         return (
-          // The ONE overlay chrome (OverlayPanel, danger tone) — this card was one of three
-          // hand-rolled skins on the map; "tick" (a server-internal unit) no longer prints.
-          // THE REACH LAW (components/ui/overlayLayout.ts): a flex column whose fight READOUT is an
-          // account — it scrolls and it yields room — and whose Retreat is pinned. In the map's
-          // top-left rail this card, the exploration panel and the fleet readout together are 583px
-          // against a 505px map box the moment a fight starts, so something has to give; the one
-          // thing that may never give is the way out of the fight.
+          // The ONE overlay chrome (OverlayPanel, danger tone). THE REACH LAW
+          // (components/ui/overlayLayout.ts): the whole body is an ACCOUNT — it is information, it
+          // scrolls, and it yields room — because this card no longer carries a control at all.
           <OverlayPanel
             key={e.id}
             tone="danger"
-            className="flex min-h-[4.75rem] w-64 flex-col"
+            className="flex min-h-[4.75rem] w-64 max-w-full flex-col"
             data-testid={`combat-map-card-${e.id}`}
           >
             <div className={overlayAccountClass('flex-1')}>
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex items-center justify-between gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-danger">
                 {phase.label}
               </span>
-              <span className="text-[11px] text-ink-faint">Wave {e.wave_number}</span>
+              {/* HOW FULL THE FIELD IS — the number that actually moves, against the cap the ENGINE
+                  stamped on this row (0347). Never recomputed here; absent → nothing printed. */}
+              {wave && wave.population !== null && wave.cap !== null && (
+                <span className="text-[11px] text-ink-faint" data-testid={`combat-map-field-${e.id}`}>
+                  Field{' '}
+                  <span className="font-mono tabular-nums text-ink">
+                    {wave.population}/{wave.cap}
+                  </span>
+                </span>
+              )}
             </div>
 
             <div className="flex flex-col gap-2.5">
@@ -184,9 +249,7 @@ export function CombatMapCard({
                   <span className="text-xs font-semibold uppercase tracking-wide text-danger">
                     Enemy
                   </span>
-                  {/* null = no countdown here on purpose: this is a 256px corner readout and a
-                      second-by-second number is noise. The Mission panel carries the countdown. */}
-                  <p className="text-[11px] text-warning">{nextWaveText(null)}</p>
+                  <p className="text-[11px] text-warning">The field is clear.</p>
                 </div>
               ) : (
                 <SideBar
@@ -200,10 +263,89 @@ export function CombatMapCard({
               )}
             </div>
 
+            {/* ██ THE NEXT WAVE ██ — the owner's "next wave incoming (wave info)".
+                Four facts and a rule, and NOT a prediction. The engine spawns a body on a due slot
+                only while `population < effective_cap`; both operands are on screen above and here,
+                but the VERDICT is deliberately not computed — see reinforcementClock's header. A
+                field that is full now can lose a hull two seconds before the slot, so "1 ship
+                arriving" and "nothing arrives" are both claims about a future nobody has. */}
+            {wave && (
+              <div className="mt-3 border-t border-edge pt-2" data-testid={`combat-map-wave-${e.id}`}>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                    {REINFORCEMENT_LABEL}
+                  </span>
+                  {wave.slot !== null && (
+                    <span className="text-[11px] text-ink-faint">
+                      wave <span className="font-mono tabular-nums">{wave.slot}</span> so far
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-[11px] text-warning" data-testid={`combat-map-wave-clock-${e.id}`}>
+                  {wave.text}
+                </p>
+                <p className="mt-0.5 text-[10px] text-ink-faint">{REINFORCEMENT_RULE}</p>
+              </div>
+            )}
+
+            {/* ██ THE HAUL ██ — the owner's "loot info… with total cargo space".
+                This is the instrument for the only decision the fight asks. The fight cannot be won
+                (0347's cap grows without bound, deliberately), and a DEFEAT zeroes
+                total_rewards_json outright, so the question is always "one more kill, or leave with
+                this". */}
+            <div className="mt-3 border-t border-edge pt-2" data-testid={`combat-map-haul-${e.id}`}>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                Haul
+              </span>
+              <p className="mt-0.5 flex flex-wrap gap-1">
+                {haul.empty ? (
+                  <span className="text-[11px] text-ink-faint">Nothing won yet.</span>
+                ) : (
+                  haul.entries.map((r) => <ItemChip key={r.id} id={r.id} qty={r.qty} />)
+                )}
+              </p>
+              {haul.m3 !== null && (
+                <p className="mt-0.5 text-[10px] text-ink-faint" data-testid={`combat-map-haul-m3-${e.id}`}>
+                  Takes {formatM3(haul.m3)}
+                  {haul.unmeasured > 0 && ' (plus what has no volume)'}
+                </p>
+              )}
+              {!haul.empty && <p className="mt-0.5 text-[10px] text-warning">{HAUL_AT_STAKE}</p>}
+              {/* TOTAL CARGO SPACE — the server's own numbers (get_my_hold, 0333), formatted by the
+                  ONE hold formatter. Never a client-side sum of per-ship capacities: that fold is
+                  exactly what fleetStatusModel refuses, and this is the authority it points at. */}
+              {meter && (
+                <p className="mt-1 text-[10px] text-ink-muted" data-testid={`combat-map-hold-${e.id}`}>
+                  Fleet hold <span className="font-mono tabular-nums">{meter.label}</span>
+                </p>
+              )}
+              {/* WHAT ONE MORE KILL IS WORTH HERE — the site's own loot table (0348). Quantities are
+                  PER ENEMY DESTROYED, which is the unit the server pays in; nothing is multiplied by
+                  a kill count nobody has. A chance under 1 is stated, because a drop that is not
+                  certain must not read as certain. */}
+              {drops && drops.length > 0 && (
+                <div className="mt-1" data-testid={`combat-map-drops-${e.id}`}>
+                  <p className="text-[10px] text-ink-faint">Each kill here drops</p>
+                  <p className="mt-0.5 flex flex-wrap gap-1">
+                    {drops.map((d) => (
+                      <span key={d.item_id} className="inline-flex items-center gap-0.5">
+                        <ItemChip id={d.item_id} qty={d.quantity} />
+                        {d.drop_chance < 1 && (
+                          <span className="text-[10px] text-ink-faint">
+                            {Math.round(d.drop_chance * 100)}%
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* WHO IS WINNING THIS EXCHANGE — the server's own per-tick damage totals, both ways,
                 from the same three seconds. Two static bars cannot show a rate; this can. */}
             {latest && (
-              <p className="mt-2 text-[11px] text-ink-muted" data-testid={`combat-map-exchange-${e.id}`}>
+              <p className="mt-3 text-[11px] text-ink-muted" data-testid={`combat-map-exchange-${e.id}`}>
                 Last exchange · you dealt{' '}
                 <span className="font-mono tabular-nums text-accent">{Math.round(latest.player_damage)}</span>
                 {' · '}took{' '}
@@ -228,14 +370,11 @@ export function CombatMapCard({
                 sixteenth of a pixel per three-second tick. So the fleet really is moving and the
                 screen cannot show it. The sentence that closes that gap already existed and was
                 already mounted — on the Mission screen (ActiveCombatPanel), which a player fighting
-                on the MAP never opens. They got one transient success toast and then silence, which
-                reads as a dead button.
+                on the MAP never opens.
 
                 This is the SECOND MOUNT of that one sentence, never a second copy of it: the text,
                 the distance and the "is a course even running?" rule all stay inside
-                resolveRepositionCourse. It sits with the auto-exit line — both are one-line
-                statements of what the fight is doing — and above RetreatControl, which keeps its
-                place and its hit area (map-UX law: nothing crowds leaving the fight). */}
+                resolveRepositionCourse. */}
             {course && (
               <p
                 data-testid={`combat-map-reposition-${e.id}`}
@@ -251,20 +390,6 @@ export function CombatMapCard({
               </p>
             )}
 
-            </div>
-            {/* LEAVING IS ONE CLICK, ON THE SCREEN THAT SHOWS THE FIGHT — the ONE retreat control
-                (combat/RetreatControl), the same component the Mission panel mounts. PINNED: the
-                readout above may scroll, this never does. */}
-            <div className={overlayReachClass('mt-3')}>
-            <RetreatControl
-              presenceId={e.presence_id}
-              retreating={phase.isRetreating}
-              onChanged={onChanged}
-              // `block` — the card IS the row, and this button was rendering 24px tall on a phone
-              // while the SAME control 3 inches below it rendered 44px. One control, one hit area.
-              block
-              testId={`combat-map-retreat-${e.id}`}
-            />
             </div>
           </OverlayPanel>
         )

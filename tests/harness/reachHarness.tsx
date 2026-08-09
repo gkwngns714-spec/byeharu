@@ -27,6 +27,8 @@ import { createRoot } from 'react-dom/client'
 import { OverlayPanel, OverlayRail } from '../../src/components/ui'
 import { ExplorationPanel } from '../../src/features/exploration/ExplorationPanel'
 import { CombatMapCard } from '../../src/features/map/CombatMapCard'
+import { MapOverlayTabs } from '../../src/features/map/MapOverlayTabs'
+import type { MapOverlayTabId } from '../../src/features/map/mapOverlayTabModel'
 import { FleetCommandPanel } from '../../src/features/map/FleetCommandPanel'
 import { FleetStatusPanel } from '../../src/features/map/FleetStatusPanel'
 import { ZoneInfoPanel } from '../../src/features/map/ZoneInfoPanel'
@@ -38,6 +40,8 @@ import type { GroupRow, ShipGroupMapEntry } from '../../src/features/command/tea
 import type { UnifiedGroupFleetLite } from '../../src/features/command/teamApi'
 import type { FleetMovement } from '../../src/features/fleets/fleetTypes'
 import type { CombatEncounter, CombatUnit } from '../../src/features/combat/combatTypes'
+import type { SiteLootEntry } from '../../src/features/combat/combatApi'
+import type { Hold } from '../../src/features/inventory/hold'
 
 /** A FIXED clock — an asserted ETA must not depend on when the proof runs. */
 const NOW = Date.parse('2026-08-04T12:00:00.000Z')
@@ -52,6 +56,13 @@ const params = new URLSearchParams(window.location.search)
  * zoneinfo — the bottom-right hub carrying the zone panel and its hunt-site signpost.
  */
 const scenario = params.get('s') ?? 'zone'
+// `?t=` forces the OPEN TAB (explore | fight | fleets | none). Absent, the rail resolves it exactly
+// as the game does. It exists because the tabs made the rail's tallest state a CHOICE rather than an
+// accumulation: proving "the rail fits" now means proving it for EVERY tab, not for whichever one
+// happens to open.
+const tabParam = params.get('t')
+const forcedTab: MapOverlayTabId | null | undefined =
+  tabParam === null ? undefined : tabParam === 'none' ? null : (tabParam as MapOverlayTabId)
 
 const loc = (over: Partial<MapLocation> & Pick<MapLocation, 'id' | 'name' | 'x' | 'y'>): MapLocation =>
   ({
@@ -173,7 +184,13 @@ const ENCOUNTERS: CombatEncounter[] =
           enemy_integrity_current: 180,
           wave_number: 1,
           next_wave_at: null,
-          total_rewards_json: {},
+          // THE PRESSURE CLOCK (0344/0347). A fight in the tallest state the FIGHT tab can reach:
+          // a running countdown, a scheduled ordinal, and a field standing AT its stamped cap —
+          // which is precisely the state the readout must NOT turn into a promise either way.
+          next_reinforcement_at: new Date(NOW + 12_000).toISOString(),
+          pressure_wave_index: 4,
+          pressure_effective_cap: 4,
+          total_rewards_json: { metal: 1115, items: [{ item_id: 'scrap', quantity: 12 }, { item_id: 'pirate_alloy', quantity: 3 }] },
           started_at: new Date(NOW - 30_000).toISOString(),
           retreat_started_at: null,
           ended_at: null,
@@ -190,8 +207,12 @@ const unit = (id: string, side: 'player' | 'enemy'): CombatUnit =>
     unit_type_id: side === 'player' ? null : 'pirate_raider',
     main_ship_id: side === 'player' ? 'ship-sparrow' : null,
     ship_hp: 120,
-    initial_count: 1,
-    alive_count: 1,
+    // A unit row is a STACK. The enemy side stands at FOUR bodies against the encounter's stamped
+    // cap of four — the field exactly AT its limit, which is the state a client-side reading of the
+    // engine's spawn rule would be most tempted to turn into a promise, and therefore the state the
+    // fight tab must be measured in.
+    initial_count: side === 'player' ? 1 : 4,
+    alive_count: side === 'player' ? 1 : 4,
     hp_max: 120,
     hp_current: side === 'player' ? 78 : 90,
     pos_x: 500,
@@ -200,6 +221,34 @@ const unit = (id: string, side: 'player' | 'enemy'): CombatUnit =>
   }) as CombatUnit
 
 const UNITS: CombatUnit[] = scenario === 'fight' ? [unit('u-mine', 'player'), unit('u-theirs', 'enemy')] : []
+
+// ── THE FIGHT TAB'S THREE EXTRA READS ────────────────────────────────────────────────────────────
+// Catalog volumes (item_types), the fleet's hold exactly as get_my_hold reports it (0333), and what
+// the site drops per kill (0348 get_site_loot). All three are what the haul section needs to answer
+// "stay for one more kill, or leave with this", so the harness carries them at their real shape —
+// a proof that renders the section with all of them missing measures a shorter panel than the game's.
+const ITEM_VOLUMES = new Map<string, number>([
+  ['scrap', 0.5],
+  ['pirate_alloy', 0.5],
+  ['weapon_parts', 0.2],
+])
+const HOLDS: Record<string, Hold> = {
+  'enc-1': {
+    ok: true,
+    items: [],
+    usedM3: 22.7,
+    capacityM3: 250,
+    freeM3: 227.3,
+    overCapacity: false,
+  },
+}
+const SITE_LOOT: Record<string, SiteLootEntry[]> = {
+  [SNARE.id]: [
+    { item_id: 'pirate_alloy', quantity: 1, drop_chance: 1 },
+    { item_id: 'scrap', quantity: 1, drop_chance: 1 },
+    { item_id: 'weapon_parts', quantity: 1, drop_chance: 0.25 },
+  ],
+}
 
 // ── THE NOTICES ──────────────────────────────────────────────────────────────────────────────────
 // The owner's live rail carried the close-call line verbatim. A notice is pure text — it is the
@@ -218,33 +267,58 @@ const onHuntSite = (locationId: string) => {
 }
 
 // ── THE TOP-LEFT RAIL — MapScreen.tsx, prop for prop ─────────────────────────────────────────────
-// The account (children) is the NOTICES; the reach is every panel that carries a control. The
-// ExplorationPanel is the REAL one: it is server-lit, and the proof routes its RPC to an {ok:true}
-// envelope so the harness stacks the same four things the owner's live rail stacked.
+// The account (children) is the NOTICES; the reach is the TAB SHELL, which is what MapScreen now
+// mounts there. The three readouts are the REAL components, constructed here with the same props
+// MapScreen gives them — including the ExplorationPanel, which is server-lit and whose RPC the proof
+// routes to an {ok:true} envelope.
+//
+// WHAT CHANGED, AND WHY THE PROOF IS STRONGER FOR IT: the rail used to STACK all three, and the
+// stack was the defect's home. It can no longer stack — at most one body is mounted — so the thing
+// to prove moved with it: every TAB must fit, not just the one that opens by default. `?t=` drives
+// that, and the uispec sweeps all four states (each tab, and none) at every viewport.
 const topLeftRail = (
     <OverlayRail
       slot="top-left"
       className="w-72 max-w-[calc(100vw-5rem)]"
       reach={
-        <>
-          <ExplorationPanel lifecycleKey="harness" mainShipId="ship-sparrow" shipStatus="home" shipSpatialState={null} />
-          <CombatMapCard encounters={ENCOUNTERS} units={UNITS} ticks={[]} autoExit={{}} onChanged={() => {}} />
-          <FleetStatusPanel
-            groups={GROUPS}
-            membership={MEMBERSHIP}
-            positions={POSITIONS}
-            locations={LOCATIONS}
-            movements={MOVEMENTS}
-            unifiedFleets={FLEETS}
-            dangerZones={ZONES}
-            encounters={ENCOUNTERS}
-            units={UNITS}
-            fleetControlEnabled
-            nowMs={NOW}
-            onSelectHuntSite={onHuntSite}
-            onCombatChanged={() => {}}
-          />
-        </>
+        <MapOverlayTabs
+          encounters={ENCOUNTERS}
+          onCombatChanged={() => {}}
+          openTab={forcedTab}
+          explore={
+            <ExplorationPanel lifecycleKey="harness" mainShipId="ship-sparrow" shipStatus="home" shipSpatialState={null} />
+          }
+          fight={
+            <CombatMapCard
+              encounters={ENCOUNTERS}
+              units={UNITS}
+              ticks={[]}
+              autoExit={{}}
+              itemVolumes={ITEM_VOLUMES}
+              holds={HOLDS}
+              siteLoot={SITE_LOOT}
+              nowMs={NOW}
+            />
+          }
+          fleets={
+            <FleetStatusPanel
+              groups={GROUPS}
+              membership={MEMBERSHIP}
+              positions={POSITIONS}
+              locations={LOCATIONS}
+              movements={MOVEMENTS}
+              unifiedFleets={FLEETS}
+              dangerZones={ZONES}
+              encounters={ENCOUNTERS}
+              units={UNITS}
+              fleetControlEnabled
+              combatTickSeconds={3}
+              nowMs={NOW}
+              onSelectHuntSite={onHuntSite}
+              onCombatChanged={() => {}}
+            />
+          }
+        />
       }
     >
       {ambushes.map((text, i) => (

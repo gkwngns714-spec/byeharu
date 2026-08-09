@@ -19,6 +19,7 @@ import { createRoot } from 'react-dom/client'
 import './harness.css'
 import { GalaxyMap } from '../../src/features/map/GalaxyMap'
 import { CombatMapCard } from '../../src/features/map/CombatMapCard'
+import { MapOverlayTabs } from '../../src/features/map/MapOverlayTabs'
 import { OverlayRail } from '../../src/components/ui'
 import {
   ENCOUNTER,
@@ -81,16 +82,37 @@ function Fight({
         combatEvents={events}
         combatEncounters={encounters}
       />
-      {/* The SAME rail slot MapScreen mounts the card in. */}
-      <OverlayRail slot="top-left" className="max-h-[60%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
-        <CombatMapCard
-          encounters={encounters}
-          units={units}
-          ticks={TICKS}
-          autoExit={{ [ENCOUNTER.id]: { enabled: true, pct: 30 } }}
-          onChanged={noop}
-        />
-      </OverlayRail>
+      {/* The SAME rail, and the SAME COMPOSITION, MapScreen mounts the card in: the readout is the
+          FIGHT TAB'S BODY, and the ONE RetreatControl is pinned by the tab shell outside it. The tab
+          is forced open here so the readout is what this harness measures; the shell's own fight row
+          comes with it, which is where "leaving is one click" is now proved.
+
+          The `max-h-[60%] … overflow-y-auto` this call site used to carry is GONE. It was a copy of
+          the cap that put the owner's Hunt button 36px under a hidden fold, and a harness that keeps
+          a stale cap measures a layout the game does not have — the exact failure
+          tests/actionsAreReachable.spec.ts was written to stop, which is why this file is now listed
+          there as a rail call site. The rail bounds itself; the tab body is the account that gives. */}
+      <OverlayRail
+        slot="top-left"
+        className="w-72 max-w-[calc(100vw-5rem)]"
+        reach={
+          <MapOverlayTabs
+            encounters={encounters}
+            onCombatChanged={noop}
+            openTab="fight"
+            explore={null}
+            fleets={null}
+            fight={
+              <CombatMapCard
+                encounters={encounters}
+                units={units}
+                ticks={TICKS}
+                autoExit={{ [ENCOUNTER.id]: { enabled: true, pct: 30 } }}
+              />
+            }
+          />
+        }
+      />
     </div>
   )
 }

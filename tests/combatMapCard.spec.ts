@@ -13,8 +13,11 @@ const mapScreen = src('features/map/MapScreen.tsx')
 
 /** Source with comment lines stripped — so an assertion about what the component RENDERS is not
  *  satisfied by the paragraph that explains what it deliberately does not render. */
+// BLOCK comments go too: a JSX `{/* ... */}` paragraph is the form most of this file's reasoning
+// takes, and a probe that trips over its own justification fails the build for saying the right thing.
 const codeOnly = (text: string) =>
   text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
     .split(/\r?\n/)
     .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
     .join('\n')
@@ -26,6 +29,36 @@ test('the card is mounted on the MAP, over the shell state that is already polle
   for (const prop of ['encounters={combat.encounters}', 'units={combat.units}', 'ticks={combat.ticks}', 'autoExit={combat.autoExit}']) {
     expect(mapScreen, `the card must be fed ${prop} from the shell`).toContain(prop)
   }
+})
+
+test('THE ENGINE DECIDES WHETHER A SHIP ARRIVES -- the card never does', () => {
+  // The spawn rule is `population < effective_cap` and BOTH operands are on the wire, so the client
+  // could compute it. It must not: one rule in two places drifts, and the answer is about a moment
+  // that has not happened (a full field can lose a hull two seconds before the slot). The card shows
+  // the countdown, the ordinal, the population and the STAMPED cap, and states the rule as a rule.
+  const code = codeOnly(card)
+  expect(code, 'the cap is shown, never derived').not.toMatch(/concurrent_cap|cap_growth_every/)
+  // Whitespace-dense so a line break cannot hide a comparison. Both directions of both operands.
+  const dense = code.replace(/\s+/g, '')
+  for (const bad of [
+    'wave.population<', 'wave.population<=', 'wave.population>', 'wave.population>=',
+    '<wave.cap', '<=wave.cap', '>wave.cap', '>=wave.cap',
+  ]) {
+    expect(dense, `the card must not compute the engine's spawn decision (${bad})`).not.toContain(bad)
+  }
+  expect(code, 'and no promise of an arrival').not.toMatch(/arriving|will arrive|incoming ship/i)
+  // The two numbers ARE both printed -- that is the point; the player reads them against the rule.
+  expect(code).toContain('wave.population')
+  expect(code).toContain('wave.cap')
+  expect(code).toContain('REINFORCEMENT_RULE')
+})
+
+test('the DEAD wave counter is gone from the header', () => {
+  // Since 0344 `wave_number` only moves when the whole field is EMPTIED, which under a reinforcement
+  // clock is rare -- it sat on 1 for entire fights. What moves is the field against the cap.
+  const code = codeOnly(card)
+  expect(code, 'wave_number must not be printed here').not.toContain('wave_number')
+  expect(code, 'and the dead next_wave_at clock must not be read').not.toContain('next_wave_at')
 })
 
 test('the ops-side panel is NOT replaced — the map card is a second VIEW, not a move', () => {
@@ -85,13 +118,33 @@ test('the card carries the LAST EXCHANGE and the auto-retreat line, from the ONE
   expect(card).not.toContain('auto_exit_hp_pct')
 })
 
-test('retreat is the ONE shared control, not a second copy of the verb', () => {
-  expect(card).toContain('<RetreatControl')
+test('retreat is the ONE shared control -- and it is no longer inside this readout', () => {
+  // MOVED, and the move is the point. The card is now the FIGHT TAB'S BODY, and a tab can be closed.
+  // A way out of a fight that disappears when the player folds a panel away is a way out they do not
+  // have, so RetreatControl is pinned by the tab shell OUTSIDE the tabs, per live encounter.
+  expect(card, 'the readout carries no control at all now').not.toContain('<RetreatControl')
   // a hand-rolled retreat here would mean two busy flags and two readings of the server reject
   expect(card).not.toContain('requestRetreat')
+  const shell = src('features/map/MapOverlayTabs.tsx')
+  expect(shell, 'the map mounts the shared control in the tab shell').toContain('<RetreatControl')
+  expect(shell).not.toContain('requestRetreat')
   const panel = src('features/combat/ActiveCombatPanel.tsx')
   expect(panel).toContain('<RetreatControl')
   expect(panel).not.toContain('requestRetreat')
+})
+
+test('THE FIGHT TAB is where this readout is mounted, with the reads its haul needs', () => {
+  // Every prop is state the shell already holds -- no second fetch and no second poll for the card.
+  for (const prop of ['itemVolumes={itemVolumes}', 'holds={combat.holds}', 'siteLoot={combat.siteLoot}']) {
+    expect(mapScreen, `the fight tab must be fed ${prop}`).toContain(prop)
+  }
+  // ...and the haul is read through the ONE reader, never by touching the payload's keys inline.
+  expect(card).toContain('resolveFightHaul(e.total_rewards_json')
+  expect(card, 'the payload must never be iterated here').not.toContain("total_rewards_json['")
+  // The cargo numbers are the SERVER's. A client-side sum of per-ship capacities is the exact fold
+  // fleetStatusModel refuses, and get_my_hold is the authority it points at.
+  expect(card).toContain('holdMeter(hold)')
+  expect(card).not.toContain('cargo_capacity_m3')
 })
 
 test('ship counts sum alive_count — a unit row is a STACK, not one ship', () => {

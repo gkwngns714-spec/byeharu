@@ -15,6 +15,7 @@ import { WorldEventsPanel } from '../events/WorldEventsPanel'
 import { TelegraphBanner } from '../combat/TelegraphBanner'
 import { CombatMapCard } from './CombatMapCard'
 import { FleetStatusPanel } from './FleetStatusPanel'
+import { MapOverlayTabs } from './MapOverlayTabs'
 import { ambushEncounterNotices } from './ambushEncounterNotice'
 import { nearMissNotices, NEAR_MISS_MAP_WINDOW_MS } from './nearMissNotice'
 import { distance } from '../../game/movement/travelPreview'
@@ -62,7 +63,7 @@ export function MapScreen() {
       teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups, fleetPositions,
       fleetMovementUnifiedEnabled, unifiedGroupFleets, combatSortieFleets,
       launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
-      miningFields, miningExtractRadius,
+      miningFields, miningExtractRadius, combatTickSeconds, itemVolumes,
       pirateInterceptEnabled, dangerZones, refresh,
     },
     // COMBAT-S4: the shell's already-mounted combat poll (useCombat, ~1.5s — the tick cadence). Its
@@ -359,60 +360,76 @@ export function MapScreen() {
               slot="top-left"
               className="w-72 max-w-[calc(100vw-5rem)]"
               reach={
-                <>
-                  {/* EXPLORATION-P11 — the Scan action; legal only settled in space (server-lit).
-                      It is in `reach` because it has a BUTTON: the law is about controls, not about
-                      which feature a panel belongs to. MINING-P12's persistent panel was REMOVED
-                      from this rail in the clean-map redesign — the extract surface folds into the
-                      double-tap command hub, appearing only when the summon point sits inside a
-                      mining field's range (see the hub below). */}
-                  <ExplorationPanel
-                    lifecycleKey={panelLifecycleKey}
-                    mainShipId={mainShip?.main_ship_id ?? null}
-                    shipStatus={mainShip?.status}
-                    shipSpatialState={null}
-                  />
-                  {/* COMBAT — the fight is a thing happening in SPACE, so its live standing belongs
-                      on the MAP, not only on the ops screen. Reads the shell's already-polled combat
-                      state (no new fetch); renders nothing when nothing is fighting (clean-map law
-                      #1). A SECOND VIEW of the same server rows — ActiveCombatPanel stays the
-                      Mission-side detail. It carries the ONE RetreatControl: leaving a fight is the
-                      most reachable thing on this screen, so it is in `reach` by definition. */}
-                  <CombatMapCard
-                    encounters={combat.encounters}
-                    units={combat.units}
-                    ticks={combat.ticks}
-                    autoExit={combat.autoExit}
-                    onChanged={() => void combat.refresh()}
-                  />
-                  {/* MY FLEETS, ON THE MAP (owner, 2026-08-04, playing: "in map, i want to see
-                      information regarding fleet, where it is, stats, what it is currently doing. I
-                      am in snare but in no fight is occuring, i want also a toggle combat on map…").
+                /* ██ THE TABS (map/mapOverlayTabModel.ts owns the rule) ██
+                   Owner: "i want a separate tab on map for exploration, which is foldable, at the
+                   top, a square shaped one. also for combat, when opened it will show next wave
+                   incoming (wave info), and fleets info".
 
-                      LAST in the stack, which is precisely why it was the victim — and now precisely
-                      why it must be pinned: it carries the one action slot per fleet (into the fight
-                      under its feet, or out of the one it is in). Props only, from reads the shell
-                      already polls: no new fetch, no new poll, no state of its own.
+                   The three readouts that used to STACK here are now three square tabs with AT MOST
+                   ONE BODY MOUNTED, which is what makes this rail's overflow impossible rather than
+                   merely survivable — the stack was 583px against a 505px map box at the owner's own
+                   1440x675, and that is the shape "i can't press hunt" had. The shell owns only
+                   which tab is open; every panel below is still constructed HERE, with the same
+                   props, so nothing about a feature passes through the tab component.
 
-                      The hunt handoff is the SAME one the command panel and the zone panel use —
-                      `handleSelect`, the map's own marker-selection path — so a fleet parked on top
-                      of a fight reaches the EXISTING hunt control by exactly the route a tap on that
-                      site's marker takes. No second hunt path, no new RPC. */}
-                  <FleetStatusPanel
-                    groups={teamGroups}
-                    membership={teamGroupMap}
-                    positions={fleetPositions}
-                    locations={locations}
-                    movements={movements}
-                    unifiedFleets={unifiedGroupFleets}
-                    dangerZones={dangerZones}
-                    encounters={combat.encounters}
-                    units={combat.units}
-                    fleetControlEnabled={fleetControlEnabled}
-                    onSelectHuntSite={(locationId) => handleSelect(locationId)}
-                    onCombatChanged={() => void combat.refresh()}
-                  />
-                </>
+                   The ONE RetreatControl is pinned by the shell OUTSIDE the tabs: a way out of a
+                   fight that lives behind a fold is a way out the player does not have. */
+                <MapOverlayTabs
+                  encounters={combat.encounters}
+                  onCombatChanged={() => void combat.refresh()}
+                  explore={
+                    /* EXPLORATION-P11 — the Scan action; legal only settled in space (server-lit).
+                       MINING-P12's persistent panel was REMOVED from this rail in the clean-map
+                       redesign — the extract surface folds into the double-tap command hub. */
+                    <ExplorationPanel
+                      lifecycleKey={panelLifecycleKey}
+                      mainShipId={mainShip?.main_ship_id ?? null}
+                      shipStatus={mainShip?.status}
+                      shipSpatialState={null}
+                    />
+                  }
+                  fight={
+                    /* COMBAT — the fight is a thing happening in SPACE, so its live standing belongs
+                       on the MAP, not only on the ops screen. Reads the shell's already-polled
+                       combat state; renders nothing when nothing is fighting. A SECOND VIEW of the
+                       same server rows — ActiveCombatPanel stays the Mission-side detail.
+                       `itemVolumes` and the two combat-scoped reads are what turn the haul into the
+                       stay-or-leave decision the fight actually asks. */
+                    <CombatMapCard
+                      encounters={combat.encounters}
+                      units={combat.units}
+                      ticks={combat.ticks}
+                      autoExit={combat.autoExit}
+                      itemVolumes={itemVolumes}
+                      holds={combat.holds}
+                      siteLoot={combat.siteLoot}
+                    />
+                  }
+                  fleets={
+                    /* MY FLEETS, ON THE MAP (owner, 2026-08-04, playing: "in map, i want to see
+                       information regarding fleet, where it is, stats, what it is currently doing").
+                       Props only, from reads the shell already polls: no new fetch, no state of its
+                       own. The hunt handoff is the SAME one the command panel and the zone panel use
+                       — `handleSelect`, the map's own marker-selection path — so a fleet parked on
+                       top of a fight reaches the EXISTING hunt control by exactly the route a tap on
+                       that site's marker takes. No second hunt path, no new RPC. */
+                    <FleetStatusPanel
+                      groups={teamGroups}
+                      membership={teamGroupMap}
+                      positions={fleetPositions}
+                      locations={locations}
+                      movements={movements}
+                      unifiedFleets={unifiedGroupFleets}
+                      dangerZones={dangerZones}
+                      encounters={combat.encounters}
+                      units={combat.units}
+                      fleetControlEnabled={fleetControlEnabled}
+                      combatTickSeconds={combatTickSeconds}
+                      onSelectHuntSite={(locationId) => handleSelect(locationId)}
+                      onCombatChanged={() => void combat.refresh()}
+                    />
+                  }
+                />
               }
             >
               {ambushEncounterNotices({ encounters: combat.encounters, locations }).map((n) => (

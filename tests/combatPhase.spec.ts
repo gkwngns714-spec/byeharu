@@ -8,14 +8,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   selectCombatPhase,
-  nextWaveSeconds,
-  nextWaveText,
   NEXT_WAVE_INCOMING,
   type CombatPhaseInput,
 } from '../src/features/combat/combatPhase'
-
-const NOW = Date.parse('2026-07-27T12:00:00Z')
-const at = (secondsFromNow: number) => new Date(NOW + secondsFromNow * 1000).toISOString()
 
 const row = (over: Partial<CombatPhaseInput> = {}): CombatPhaseInput => ({
   status: 'active',
@@ -80,39 +75,16 @@ test('the phase needs no clock at all — same row, same answer, forever', () =>
   })
 })
 
-// ── the countdown, the one clock-dependent leaf ────────────────────────────────────────────────
-
-test('no recorded next_wave_at → 0 seconds, never NaN', () => {
-  expect(nextWaveSeconds({ next_wave_at: null }, NOW)).toBe(0)
-  expect(nextWaveText(0)).toBe(`${NEXT_WAVE_INCOMING}…`)
-})
-
-test('seconds round UP, so a 2.1s wait never reads as 2s and then stalls', () => {
-  expect(nextWaveSeconds({ next_wave_at: at(2.1) }, NOW)).toBe(3)
-})
-
-test('a live countdown reads with the seconds', () => {
-  expect(nextWaveText(nextWaveSeconds({ next_wave_at: at(3) }, NOW))).toBe(
-    `${NEXT_WAVE_INCOMING} in 3s…`,
-  )
-})
-
-test('once the moment has passed the countdown stops being rendered', () => {
-  // next_wave_at is in the past but the tick has not spawned the wave yet (up to 3s of cron lag).
-  const s = nextWaveSeconds({ next_wave_at: at(-4) }, NOW)
-  expect(s).toBeLessThanOrEqual(0)
-  expect(nextWaveText(s)).toBe(`${NEXT_WAVE_INCOMING}…`)
-})
-
-test('a surface with no clock passes null and still gets the shared phrase', () => {
-  expect(nextWaveText(null)).toBe(`${NEXT_WAVE_INCOMING}…`)
-})
-
-test('the countdown advances with the supplied clock and nothing else', () => {
-  const e = { next_wave_at: at(3) }
-  expect(nextWaveSeconds(e, NOW)).toBe(3)
-  expect(nextWaveSeconds(e, NOW + 1000)).toBe(2)
-})
+// ── THE DEAD CLOCK IS GONE ─────────────────────────────────────────────────────
+//
+// `nextWaveSeconds` / `nextWaveText` counted down to `combat_encounters.next_wave_at`. Migration 0344
+// deleted the wave PAUSE from both arms of the tick (its own deletion list, item 7) and left the tail
+// UPDATE that STAMPS the column (0299:999) standing — so the column is still written and read by
+// NOBODY, and the countdown pointed at a moment when nothing is scheduled to happen.
+//
+// The coverage did not disappear with it: every property those tests held (rounding up, never NaN,
+// the past-due state, advancing only with the supplied clock) now lives in
+// tests/reinforcementClock.spec.ts, against the clock that is real.
 
 // ── ONE AUTHORITY: both surfaces compose it, neither re-derives it ─────────────────────────────
 
@@ -133,7 +105,7 @@ test('the raw phase derivations live in the selector and NOWHERE else', () => {
   // NO-SPAGHETTI: one authority per concept. If either surface re-derives any of these, the two
   // readouts can silently disagree about the same encounter — which is how the map card came to
   // print "ENEMY 0 ships · integrity 0/285" while the Command panel said "Next wave incoming".
-  for (const derivation of ['enemy_integrity_current <= 0', 'next_wave_at']) {
+  for (const derivation of ['enemy_integrity_current <= 0']) {
     expect(selector, `combatPhase.ts must own ${derivation}`).toContain(derivation)
     expect(panel, `ActiveCombatPanel must not re-derive ${derivation}`).not.toContain(derivation)
     expect(card, `CombatMapCard must not re-derive ${derivation}`).not.toContain(derivation)
@@ -146,9 +118,21 @@ test('the raw phase derivations live in the selector and NOWHERE else', () => {
 test('the inter-wave copy is written once and shared', () => {
   expect(selector).toContain(`export const NEXT_WAVE_INCOMING = '${NEXT_WAVE_INCOMING}'`)
   for (const surface of [panel, card]) {
-    expect(surface).toContain('nextWaveText(')
-    // no surface may hard-code the phrase, or the two will drift the day it is reworded
+    // no surface may hard-code the phrase, or the two will drift the day it is reworded. They print
+    // it through `phase.label`, which is asserted below.
     expect(surface).not.toContain(NEXT_WAVE_INCOMING)
+  }
+})
+
+test('THE DEAD COLUMN: no client surface reads next_wave_at any more', () => {
+  // It is still declared on the row type (combatApi reads `select('*')`, so it is still on the wire)
+  // and it is still written by the tick — but nothing may COUNT DOWN to it. A countdown to a moment
+  // at which nothing happens is worse than a frozen number, because it looks alive.
+  expect(selector, 'the selector must not name the dead clock in code').not.toMatch(
+    /^(?!\s*(\/\/|\*)).*next_wave_at/m,
+  )
+  for (const [name, surface] of [['ActiveCombatPanel', panel], ['CombatMapCard', card]] as const) {
+    expect(surface, `${name} must not read next_wave_at`).not.toMatch(/^(?!\s*(\/\/|\*)).*next_wave_at/m)
   }
 })
 
@@ -169,12 +153,18 @@ test('the shared label drives both headers — no surface hard-codes a phase nam
   expect(card).not.toContain("? 'Retreating' :")
 })
 
-test('the map card takes no clock of its own — it shows the phase, not a countdown', () => {
-  // A Date.now() read during render is impure (react-hooks/purity) and a second 1s interval on the
-  // map for a 3-second pause is not worth the re-render; the phase itself needs no clock at all.
-  expect(card).not.toContain('Date.now')
-  expect(card).not.toContain('setInterval')
-  expect(card).toContain('nextWaveText(null)')
+test('the PHASE still needs no clock — and the card’s clock is the house idiom, not a render read', () => {
+  // The phase is a pure function of the row, so no surface has to invent a clock to know it. The card
+  // now carries one — the reinforcement countdown is a real second-by-second number the owner asked
+  // for — and it must be the SAME idiom every other panel uses: lazy initial state plus an interval,
+  // never a `Date.now()` read in the render body (which is impure, react-hooks/purity), and with a
+  // `nowMs` seam so a rendered proof asserts an exact string instead of racing one.
+  const code = card.split(/\r?\n/).filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')
+  expect(code, 'the clock must be lazily initialised state').toContain('useState(() => Date.now())')
+  expect(code, 'and it must tick on an interval, not on render').toContain('setInterval')
+  expect(code, 'a proof must be able to freeze it').toContain('nowMs ?? tick')
+  // the count of raw clock reads is exactly the one inside the lazy initialiser plus the interval body
+  expect((code.match(/Date\.now\(\)/g) ?? []).length, 'no third clock read').toBe(2)
 })
 
 test('the selector stays pure — no React, no clock, no fetch, no combat math', () => {

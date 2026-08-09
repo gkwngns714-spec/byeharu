@@ -6,7 +6,11 @@ import {
   fetchCombatReports,
   fetchCombatUnits,
   fetchRecentTicks,
+  fetchSiteLoot,
+  type SiteLootEntry,
 } from './combatApi'
+import { fetchMyHold } from '../inventory/holdApi'
+import type { Hold } from '../inventory/hold'
 import type { AutoExitSetting } from './autoExitLine'
 import type { CombatEncounter, CombatEvent, CombatReport, CombatTick, CombatUnit } from './combatTypes'
 
@@ -19,6 +23,15 @@ export interface CombatState {
   /** the 0310 auto-retreat setting keyed by ENCOUNTER id; {} while nothing is fighting, and {} on a
    *  failed/pre-0310 read — surfaces must say nothing about the line rather than deny it. */
   autoExit: Record<string, AutoExitSetting>
+  /** what each fighting fleet is CARRYING, keyed by ENCOUNTER id, exactly as `get_my_hold` (0333)
+   *  reports it. The map shell deliberately does not poll the hold; this is fetched ONCE per
+   *  encounter because a hold does not change while a fight is running — only the haul does, and the
+   *  haul is on the encounter row. Missing key = unread, and the surface then says nothing about
+   *  cargo space rather than printing a zero. */
+  holds: Record<string, Hold>
+  /** what each fighting SITE drops per enemy destroyed (0348), keyed by LOCATION id. Site content is
+   *  static, so it is fetched once per location per session. Missing key = unread. */
+  siteLoot: Record<string, SiteLootEntry[]>
   refresh: () => Promise<void>
 }
 
@@ -45,9 +58,16 @@ export function useCombat(pollMs = 1500): CombatState {
   const [units, setUnits] = useState<CombatUnit[]>([])
   const [reports, setReports] = useState<CombatReport[]>([])
   const [autoExit, setAutoExit] = useState<Record<string, AutoExitSetting>>({})
+  const [holds, setHolds] = useState<Record<string, Hold>>({})
+  const [siteLoot, setSiteLoot] = useState<Record<string, SiteLootEntry[]>>({})
   const inFlight = useRef(false)
   const seq = useRef(0)
   const applied = useRef(0)
+  // The two ONCE-PER-KEY reads. They are refs, not state, because they are a record of what has
+  // already been ASKED — including keys that came back unreadable, so a failing read is retried by
+  // the next mount rather than hammered every 1.5s.
+  const askedHold = useRef<Set<string>>(new Set())
+  const askedLoot = useRef<Set<string>>(new Set())
 
   const refresh = useCallback(async () => {
     if (inFlight.current) return // a cycle is already out; the next tick will pick up its result
@@ -74,6 +94,54 @@ export function useCombat(pollMs = 1500): CombatState {
       setUnits(uts)
       setReports(reps)
       setAutoExit(ae)
+
+      // ── THE TWO ONCE-PER-KEY READS ────────────────────────────────────────────────────────────
+      // Deliberately AFTER the state above and outside the sequence guard's all-or-nothing set: they
+      // are slow-moving facts (a fleet's hold does not change mid-fight; a site's loot table is
+      // content), so they must never delay or invalidate a hull bar. Each key is asked at most once
+      // per mount, so a fight of any length adds exactly one request per fleet and one per site.
+      const holdTargets = encs
+        .map((e) => ({
+          encounterId: e.id,
+          // The PROBE SHIP: get_my_hold is ship-addressed and resolves the FLEET behind it
+          // (mainship_resolve_fleet, 0210), so any one of this fight's own player hulls answers for
+          // the whole hold. The same idiom useAssetLedger uses — reading per SHIP would double-count.
+          shipId: uts.find((u) => u.encounter_id === e.id && u.side === 'player' && u.main_ship_id)
+            ?.main_ship_id ?? null,
+        }))
+        .filter((t) => t.shipId !== null && !askedHold.current.has(t.encounterId))
+      for (const t of holdTargets) askedHold.current.add(t.encounterId)
+      if (holdTargets.length > 0) {
+        const rows = await Promise.all(holdTargets.map((t) => fetchMyHold(t.shipId)))
+        setHolds((prev) => {
+          const next = { ...prev }
+          holdTargets.forEach((t, i) => {
+            const h = rows[i]
+            // Only a SUCCESSFUL read lands. `ok:false` is "we could not read it", and storing that
+            // would let the surface print a 0/0 hold it cannot defend.
+            if (h.ok) next[t.encounterId] = h
+          })
+          return next
+        })
+      }
+
+      const lootTargets = [
+        ...new Set(encs.map((e) => e.location_id).filter((id): id is string => typeof id === 'string')),
+      ].filter((id) => !askedLoot.current.has(id))
+      for (const id of lootTargets) askedLoot.current.add(id)
+      if (lootTargets.length > 0) {
+        const rows = await Promise.all(lootTargets.map((id) => fetchSiteLoot(id)))
+        setSiteLoot((prev) => {
+          const next = { ...prev }
+          lootTargets.forEach((id, i) => {
+            const r = rows[i]
+            // null = unreadable (no 0348 on this server, or a transport error). Leaving the key
+            // ABSENT is what makes the surface say nothing, which is different from "drops nothing".
+            if (r !== null) next[id] = r
+          })
+          return next
+        })
+      }
     } catch {
       /* transient read error; next poll retries */
     } finally {
@@ -98,5 +166,5 @@ export function useCombat(pollMs = 1500): CombatState {
     }
   }, [refresh, pollMs])
 
-  return { encounters, events, ticks, units, reports, autoExit, refresh }
+  return { encounters, events, ticks, units, reports, autoExit, holds, siteLoot, refresh }
 }

@@ -66,7 +66,13 @@ test('the rail bounds itself to the map box and never scrolls — the cap is not
 
 /** Every `<OverlayRail … >` opening tag in a file, as raw text. */
 function railTags(source: string): string[] {
-  return [...source.matchAll(/<OverlayRail\b[\s\S]*?>/g)].map((m) => m[0])
+  // COMMENTS STRIPPED FIRST. The rule is about what a call site PASSES, never about what it says. A
+  // rail whose props are clean can still carry a paragraph explaining why the rail's overflow is now
+  // impossible, and a naive substring probe would fail the build on its own documentation. This is
+  // the `codeOnly` idiom tests/combatMapCard.spec.ts already uses, and the same coupling the SQL
+  // self-asserts strip `--` for: a probe must never trip over the prose that justifies it.
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*$/gm, '')
+  return [...code.matchAll(/<OverlayRail\b[\s\S]*?>/g)].map((m) => m[0])
 }
 
 /** Every file that mounts a rail — src AND the test harnesses, because a harness that hand-copies a
@@ -78,6 +84,11 @@ const RAIL_CALL_SITES = [
   'src/features/map/GalaxyMap.tsx',
   'tests/harness/reachHarness.tsx',
   'tests/harness/fleetinfoHarness.tsx',
+  // ADDED with the tabs: fightHarness mounted the map's rail with a hand-copied
+  // `max-h-[60%] … overflow-y-auto` for months. It measured a layout the game does not have, which
+  // is precisely the failure the comment above describes — and it was not on this list, so nothing
+  // caught it.
+  'tests/harness/fightHarness.tsx',
 ]
 
 for (const file of RAIL_CALL_SITES) {
@@ -112,6 +123,7 @@ for (const file of RAIL_CALL_SITES) {
 // The ONLY things left in an account region are the ambush and near-miss notices, which are pure
 // text. If a notice ever grows a button it moves too — and this test is where that gets caught.
 const ACTION_PANELS = [
+  'MapOverlayTabs',
   'ExplorationPanel',
   'CombatMapCard',
   'FleetStatusPanel',
@@ -177,27 +189,58 @@ test('ONE hunt call site in the whole client survives the fix', () => {
   expect(hits.length, 'the hunt RPC name may appear only in its one wrapper').toBeGreaterThan(0)
 })
 
-test('THE YIELD ORDER is declared, and every squeezable panel floors at its own control', () => {
-  // Pressure must land on the least urgent information first, and no panel may ever be squeezed
-  // past its own pinned row. Both halves are one class string per panel, so both are greppable —
-  // and a silent reorder (or a dropped floor) is the exact regression that would put a button back
-  // under the fold without any test noticing.
-  const rank = (file: string, name: string) => {
-    const m = /shrink-\[(\d+)\]/.exec(read(file))
-    expect(m, `${name} must declare its yield priority`).not.toBeNull()
-    return Number(m![1])
-  }
-  const exploration = rank('src/features/exploration/ExplorationPanel.tsx', 'ExplorationPanel')
-  const combat = rank('src/features/map/CombatMapCard.tsx', 'CombatMapCard')
-  expect(exploration, 'the discoveries list must yield before the fight readout does').toBeGreaterThan(combat)
+test('AT MOST ONE TAB BODY IS EVER MOUNTED - the stack cannot come back', () => {
+  // STRONGER THAN THE YIELD ORDER IT REPLACES. The old rule ranked three simultaneously-mounted
+  // panels so that pressure landed on the least urgent one first; it made the overflow SURVIVABLE.
+  // The tabs make it IMPOSSIBLE: the rail holds the tab bar, the pinned fight row, and ONE body.
+  // A yield order between panels that can never be on screen together is a rule about nothing, so
+  // the assertion moved to the invariant that now does the work.
+  const model = read('src/features/map/mapOverlayTabModel.ts')
+  const shell = read('src/features/map/MapOverlayTabs.tsx')
 
+  // The model can only ever name ONE open tab (a single id, or null) - not a set.
+  expect(model).toMatch(/export function pressTab\(open: MapOverlayTabId \| null, pressed: MapOverlayTabId\): MapOverlayTabId \| null/)
+  expect(model, 'pressing another tab replaces the open one; it never adds to it').toContain(
+    'return open === pressed ? null : pressed',
+  )
+  // ...and the shell renders exactly one body from it, by a chain of ternaries over that one id.
+  expect(shell).toMatch(
+    /const body =\s*open === 'explore' \? explore : open === 'fight' \? fight : open === 'fleets' \? fleets : null/,
+  )
+  expect(shell, 'one body element, rendered once').toMatch(/\{body\}/)
+  expect((shell.match(/\{body\}/g) ?? []).length, 'the body may be rendered in exactly one place').toBe(1)
+
+  // The two PINNED rows are pinned, and the body is the only thing that may give way.
+  expect(shell, 'the tab bar is all control - it never shrinks').toMatch(/data-testid="map-tabbar"/)
+  expect(shell).toMatch(/className="flex shrink-0 items-center gap-1 p-1"/)
+  expect(shell, 'the fight row is pinned too - it carries the way out').toMatch(/shrink-0 flex-col gap-2"/)
+
+  // Each body still floors at its own pinned content, so the squeeze can never eat a control.
   for (const [file, name] of [
     ['src/features/exploration/ExplorationPanel.tsx', 'ExplorationPanel'],
     ['src/features/map/CombatMapCard.tsx', 'CombatMapCard'],
     ['src/features/map/FleetStatusPanel.tsx', 'FleetStatusPanel'],
   ] as const) {
-    expect(read(file), `${name} must floor at its own pinned control`).toMatch(/min-h-\[[0-9.]+rem\]/)
+    expect(read(file), `${name} must floor at its own pinned content`).toMatch(/min-h-\[[0-9.]+rem\]/)
   }
+})
+
+test('THE WAY OUT OF A FIGHT IS NOT IN A TAB', () => {
+  // The whole reason a fold is safe. A tab can be closed; a fight cannot be paused. So the ONE
+  // RetreatControl is mounted by the shell, per live encounter, above the body and outside it - and
+  // the readout that used to carry it now carries no control at all.
+  const shell = read('src/features/map/MapOverlayTabs.tsx')
+  expect(shell).toContain('<RetreatControl')
+  expect(
+    shell.indexOf('<RetreatControl'),
+    'the fight row renders before the body, so no body can squeeze it',
+  ).toBeLessThan(shell.indexOf('map-tab-body-'))
+  expect(read('src/features/map/CombatMapCard.tsx'), 'the fight readout must not mount one too').not.toContain(
+    '<RetreatControl',
+  )
+  // ...and a closed fight tab is never silent: the pinned row states the phase in words.
+  expect(shell).toContain('{phase.label}')
+  expect(shell, 'and the tab itself carries a live dot').toContain('map-tab-fight-live')
 })
 
 test('RetreatControl owns its own touch floor — the two map mounts cannot disagree again', () => {

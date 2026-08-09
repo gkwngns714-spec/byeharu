@@ -11,6 +11,7 @@ import {
   fetchPirateInterceptEnabled,
 } from '../../lib/catalog'
 import { getActiveMiningFields } from '../mining/miningApi'
+import { fetchItemCatalog } from '../modules/modulesApi'
 import type { MiningField } from '../mining/miningTypes'
 import { fetchDangerZones, type DangerZoneLite } from './pirateApi'
 import {
@@ -116,6 +117,16 @@ export interface GalaxyMapData {
   // fetched ONCE per session alongside `locations`, not on the movement/ship poll.
   miningFields: MiningField[]
   miningExtractRadius: number
+  // HOW LONG A COMBAT ROUND IS — `game_config.combat_tick_seconds`, the knob the engine's own tick
+  // reads (`coalesce(cfg_num('combat_tick_seconds'), 3)`, every re-create of process_combat_ticks).
+  // It rides the SAME once-per-session fetchGameConfig() batch as the mining radius; NULL when the
+  // row is missing or unreadable, and every surface then states the cadence without a number rather
+  // than inventing one (the retreatCountdown law).
+  combatTickSeconds: number | null
+  // ITEM VOLUMES — `item_types.item_id -> volume_m3`, from the ONE catalog read
+  // (modules/modulesApi.fetchItemCatalog). Static reference data, fetched once with the world. Empty
+  // map on a failed read, which reads downstream as "no volume known" and prints nothing — never 0.
+  itemVolumes: ReadonlyMap<string, number>
   // PIRATE INTERCEPT (prototype): the runtime gate (read once with the other static flags) + the
   // active danger_zones read (get_danger_zones), gated on the RUNTIME flag — dark → zero extra reads,
   // [] zones, byte-identical to today (the same gating discipline as fleetMovementUnifiedEnabled's
@@ -173,6 +184,8 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   timedDockingEnabled: false,
   miningFields: [],
   miningExtractRadius: DEFAULT_MINING_EXTRACT_RADIUS,
+  combatTickSeconds: null,
+  itemVolumes: new Map<string, number>(),
   pirateInterceptEnabled: false,
   dangerZones: [],
 }
@@ -189,6 +202,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     timedDockingEnabled: boolean
     miningFields: MiningField[]
     miningExtractRadius: number
+    combatTickSeconds: number | null
+    itemVolumes: ReadonlyMap<string, number>
     pirateInterceptEnabled: boolean
   } | null>(null)
   // M2 review fix: the last SUCCESSFULLY-read groups list. A failed poll re-serves this instead of
@@ -205,11 +220,14 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         // are static reference reads (fields are migration-seeded; the radius is a game_config
         // tunable), not per-poll dynamic state.
         // PIRATE INTERCEPT (prototype): the runtime gate rides the SAME once-per-session static batch.
-        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, miningFields, gameConfig, pirateInterceptEnabled] =
+        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, miningFields, gameConfig, pirateInterceptEnabled, itemCatalog] =
           await Promise.all([
             fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetMovementUnifiedEnabled(),
             fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(), fetchTimedDockingEnabled(),
             getActiveMiningFields(), fetchGameConfig(), fetchPirateInterceptEnabled(),
+            // ITEM VOLUMES ride the static batch for the same reason the mining radius does: catalog
+            // reference data, read once, never per poll. `null` on a failed read -> an empty map.
+            fetchItemCatalog(),
           ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
@@ -222,10 +240,21 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
           }
         }
         const miningExtractRadius = gameConfig.mining_extract_radius ?? DEFAULT_MINING_EXTRACT_RADIUS
+        // NO FALLBACK, on purpose. A missing knob means the client does not know how long a round
+        // is, and DEFAULT_MINING_EXTRACT_RADIUS's own header says why a disagreeing fallback is
+        // worse than none: it is a second, wrong authority that only appears when something is
+        // already going wrong. Absent -> the surface says "every round" and no number.
+        const rawTick = gameConfig.combat_tick_seconds
+        const combatTickSeconds =
+          typeof rawTick === 'number' && Number.isFinite(rawTick) && rawTick > 0 ? rawTick : null
+        const itemVolumes = new Map<string, number>()
+        for (const row of itemCatalog ?? []) {
+          if (Number.isFinite(row.volume_m3) && row.volume_m3 > 0) itemVolumes.set(row.item_id, row.volume_m3)
+        }
         staticRef.current = {
           locations, meta, mainshipSendEnabled, fleetMovementUnifiedEnabled,
           launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
-          miningFields, miningExtractRadius, pirateInterceptEnabled,
+          miningFields, miningExtractRadius, combatTickSeconds, itemVolumes, pirateInterceptEnabled,
         }
       }
 
@@ -313,6 +342,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         timedDockingEnabled: staticRef.current.timedDockingEnabled,
         miningFields: staticRef.current.miningFields,
         miningExtractRadius: staticRef.current.miningExtractRadius,
+        combatTickSeconds: staticRef.current.combatTickSeconds,
+        itemVolumes: staticRef.current.itemVolumes,
         pirateInterceptEnabled: staticRef.current.pirateInterceptEnabled,
         dangerZones,
       })

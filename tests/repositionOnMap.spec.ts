@@ -145,22 +145,32 @@ test('the Mission panel keeps its mount — the map is a second VIEW, not a move
   expect(panel).toContain('combat-panel-reposition')
 })
 
-test('leaving the fight is not crowded: RetreatControl stays last and stays reachable', () => {
-  // Map-UX law — nothing may displace or shrink the one control that stops the fight. The course
-  // line is a single 11px paragraph above it, in the same corner card.
-  expect(card).toContain('<RetreatControl')
+test('leaving the fight is OUT of the readout entirely -- and out of the tabs', () => {
+  // REPOINTED, and to the strongest form this property has had.
+  //
+  // The rule was always "nothing may displace or shrink the one control that stops the fight". It
+  // was first enforced by ORDERING (retreat last in the card), then by THE REACH LAW (retreat in the
+  // card's pinned region, outside its own scroll box). Both of those protected it from the CARD.
+  // Neither could protect it from the card being CLOSED, which is exactly what the map's tabs made
+  // possible: at most one readout is mounted, so a fight tab the player has folded away would have
+  // taken the way out with it.
+  //
+  // So the control left the card. It is pinned by the tab shell, OUTSIDE the tabs, per live
+  // encounter -- reachable whichever tab is open, and reachable when none is.
   const code = codeOnly(card)
+  expect(card, 'the readout must not mount a retreat control of its own').not.toContain('<RetreatControl')
+  expect(code, 'and it must not grow a second copy of the verb either').not.toContain('requestRetreat')
+  // The course line survives, in the card.
+  expect(code).toContain('{course.text}')
+  // The ONE mount that replaces it, in the shell, outside the tab body.
+  const shell = src('features/map/MapOverlayTabs.tsx')
+  const shellCode = codeOnly(shell)
+  expect(shellCode, 'the tab shell mounts the one retreat control').toContain('<RetreatControl')
+  expect(shellCode, 'and it is the shared component, never a re-implementation').not.toContain('requestRetreat')
+  // Pinned BEFORE the body: the tab body is the only region that may shrink, and the fight row is
+  // rendered above it, so no pressure from a readout can ever reach the control.
   expect(
-    code.indexOf('{course.text}'),
-    'the course line must sit above the retreat control, never after it',
-  ).toBeLessThan(code.indexOf('<RetreatControl'))
-  // Still the card's final element, with its spacing untouched — REPOINTED to the stronger property
-  // (THE REACH LAW, 2026-08-08). The `mt-3` moved off the control onto the PINNED wrapper that holds
-  // it: the readout above is now an account that scrolls and yields room under pressure, while this
-  // row is `overlayReachClass` — never scrolled, never shrunk, never squeezed past its own height.
-  // "Stays reachable" used to be a claim about source ordering; it is now a claim the layout
-  // enforces, measured at four viewports in tests/actionsAreReachable.uispec.ts.
-  expect(code).toMatch(/overlayReachClass\('mt-3'\)[\s\S]*<RetreatControl[\s\S]*<\/OverlayPanel>/)
-  // …and the one place it must never sit: inside the card's own scroll region.
-  expect(code.indexOf('overlayAccountClass')).toBeLessThan(code.indexOf('overlayReachClass'))
+    shellCode.indexOf('<RetreatControl'),
+    'the fight row must be rendered before the tab body it must never be squeezed by',
+  ).toBeLessThan(shellCode.indexOf('map-tab-body-'))
 })
