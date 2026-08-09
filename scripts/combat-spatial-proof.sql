@@ -93,24 +93,38 @@
 --                                  AFTER it. The old form asserted the location centre; after 0336
 --                                  that is simply false, and the "within one move_speed of the
 --                                  centre" bound it had degraded to would now pass for free.
---   COMBATSPATIAL_PASS_KITE      — the armed escort's DERIVED arm is 'kite' (it is inside its own
---                                  range and outside the wave's), and it retreats — distance
---                                  increases, and never past its own frozen weapon range.
---   COMBATSPATIAL_PASS_CLOSE     — the DERIVED arm of BOTH the lead and the fallback escort is
---                                  'close' (each is outside its own range), and both advance.
---   COMBATSPATIAL_PASS_FIRE      — tick 1's player missile_salvo count equals the DERIVED count of
---                                  player hulls whose PRE-MOVE distance was inside their own frozen
---                                  weapon range (1: the armed escort — the lead now opens the fight
---                                  out of reach, which is 0336's whole point); the pirate does NOT
---                                  fire tick 1, and the derivation shows why: every player hull is
---                                  at least er+1 away from it.
---   COMBATSPATIAL_PASS_DAMAGE    — the pirate's hp_current fell below its frozen hp_max after tick 1
---                                  (it took real damage the same tick it spawned).
---   COMBATSPATIAL_PASS_HOLD      — after the approach, the fallback escort's DERIVED arm is 'hold'
---                                  (inside its own range AND inside the wave's), and one more tick
---                                  leaves its position BYTE-IDENTICAL — HOLD never touches
---                                  pos_x/pos_y. Non-vacuous by construction: the same hull was
---                                  proven to be in CLOSE, and moving, on every tick before this one.
+--   ⛔ COMBATSPATIAL_PASS_KITE IS GONE FROM THIS FILE, AND IT WAS MOVED, NOT DROPPED (0351).
+--     It asserted that the armed escort's own DERIVED arm was 'kite' while other hulls closed. Under
+--     0351 the fleet is ONE actor with ONE reach, so two hulls can no longer be in two arms at once,
+--     and the kite arm needs wave_reach < gap <= fleet_reach while a LANDED pirate hit needs
+--     gap <= wave_reach. Those are disjoint, so KITE and SCREEN cannot both be witnessed in one
+--     fixture. SCREEN stays here (0351 explicitly preserves the aggro screen); the kite witness now
+--     lives in danger-combat-proof.sql as DZCOMBAT_PASS_FLEETKITE, whose fixtures already have the
+--     player out-ranging the wave.
+--   COMBATSPATIAL_PASS_CLOSE     — the FLEET's DERIVED arm is 'close' (its point, its shortest gun),
+--                                  the lead advances, and ALL THREE hulls move by the IDENTICAL
+--                                  delta at the fleet's own speed. The old engine moved the armed
+--                                  escort AWAY on this tick while the other two closed, so equal
+--                                  deltas cannot hold on it at any tuning.
+--   COMBATSPATIAL_PASS_FIRE      — tick 1's player missile_salvo count equals the DERIVED ALL-OR-NONE
+--                                  fleet count, which here is ZERO: the fleet opens at gap 7 against
+--                                  a fleet reach of 1. The old engine fired exactly once (the armed
+--                                  escort, on its own 3.642 chord inside its own gun 5), and the
+--                                  premise that keeps that chord in range is asserted above so this
+--                                  0-vs-1 really does discriminate the two engines. The pirate does
+--                                  not fire either, and the derivation shows why: it measures to the
+--                                  FLEET POINT now, which is further away than the chord it used to.
+--   COMBATSPATIAL_PASS_DAMAGE    — nothing is damaged on tick 1 (nobody is in reach), and the wave's
+--                                  hp_current FALLS on the arrival tick, which is DERIVED from the
+--                                  engine's own recurrence ceil((gap - fleet reach) / fleet speed)
+--                                  rather than counted to a literal. The old engine damaged it on
+--                                  tick 1, so its hp would already be down when this asserts equal.
+--   COMBATSPATIAL_PASS_HOLD      — the FLEET arrives in exactly the derived number of closing ticks,
+--                                  its arm is 'hold' taken from combat_unit_decide_move ITSELF with
+--                                  the fleet's own arguments, and one more tick leaves ALL THREE
+--                                  hulls BYTE-IDENTICAL — under 0351 a HOLD is true of the whole
+--                                  formation or of none of it. The old engine's hulls arrive on
+--                                  different ticks, so two of them are still moving here.
 --   COMBATSPATIAL_PASS_SCREEN    — once the wave can reach a player at all: a pirate-sourced
 --                                  missile_salvo event exists, an ESCORT's hp fell, and the LEAD's
 --                                  hp is UNCHANGED — the S1 aggro-tier screening (escorts before the
@@ -175,6 +189,34 @@ language sql stable as $$
      where u.id = p_unit and f.id = p_foe
   ) d;
 $$;
+
+-- ── THE ONE AUTHORITY IN THIS HARNESS FOR "WHAT ARM IS THE FLEET IN" (0351) ─────────────────────
+-- 0351 made the fleet ONE ACTOR: the player side acquires, measures, fires AND MOVES from one point
+-- (its 0315-elected lead), with one reach (its SHORTEST gun over living hulls) and one speed (its
+-- slowest living hull). So "which arm is this player ship in" stopped being a question about a ship.
+-- The engine asks it ONCE, about the fleet, and applies the answer to every hull as one rigid delta.
+-- This composes combat_fleet_actor — the engine's OWN authority, not a copy of it — and then applies
+-- combat_unit_decide_move's case ladder to the fleet's three values, exactly as the tick does.
+-- cs_arm ABOVE SURVIVES AND IS STILL CORRECT FOR AN ENEMY BODY, which 0351 deliberately did not fold
+-- (an enemy is one hull and keeps its own circle). Two functions because there are now two kinds of
+-- actor, not because one is a spare copy of the other.
+create or replace function pg_temp.cs_fleet_arm(p_enc uuid, p_foe uuid)
+returns table(arm_kind text, arm_gap double precision, arm_my double precision,
+              arm_foe double precision, arm_speed double precision)
+language sql stable as $
+  select case when d.gap is null or d.reach is null or d.foe_max is null then 'unknown'
+              when d.gap > d.reach   then 'close'
+              when d.gap > d.foe_max then 'kite'
+              else 'hold' end,
+         d.gap, d.reach, d.foe_max, d.speed
+  from (
+    select public.osn_distance(a.x, a.y, f.pos_x, f.pos_y) as gap,
+           a.reach, a.speed,
+           (select max((w->>'range')::double precision) from jsonb_array_elements(f.weapons_json) w) as foe_max
+      from public.combat_fleet_actor(p_enc) a, public.combat_units f
+     where f.id = p_foe
+  ) d;
+$;
 
 -- ── THE ONE AUTHORITY IN THIS HARNESS FOR "ADVANCE ONE TICK" ─────────────────────────────────────
 -- The clock rewind and the cron leaf belong together: a rewind without the call advances nothing, a
@@ -534,7 +576,12 @@ declare
   v_hp_cmd0 double precision; v_hp_arm0 double precision; v_hp_bare0 double precision;
   v_enemy_hpmax double precision; v_enemy_hpcur double precision;
   v_exp_fire int;
-  v_arm_cmd text; v_arm_arm text; v_arm_bare text;
+  -- 0351: the FLEET's one arm, and the per-hull deltas that must all be equal to it.
+  v_fl_arm text; v_fl_gap double precision; v_fl_reach double precision;
+  v_fl_foe double precision; v_fl_speed double precision;
+  v_dx_cmd double precision; v_dy_cmd double precision;
+  v_dx_arm double precision; v_dy_arm double precision;
+  v_dx_bare double precision; v_dy_bare double precision;
 begin
   select coalesce(e.engagement_x, l.x), coalesce(e.engagement_y, l.y), l.base_difficulty, l.x, l.y
     into v_anchor_x, v_anchor_y, v_diff, v_site_x, v_site_y
@@ -585,14 +632,23 @@ begin
   if not (v_d_arm0 > v_er_pred) then
     raise exception 'TICK1 FAIL premise: the escort chord % is not outside the wave''s own reach % — 0336 guarantees at least range+1, so this world is not the one 0336 builds', v_d_arm0, v_er_pred;
   end if;
+  -- 0351: the armed escort's chord is still INSIDE its own gun, and that is now the whole point —
+  -- it would have fired on tick 1 under the per-hull gate and must not under the fleet gate. Keeping
+  -- this premise is what makes COMBATSPATIAL_PASS_FIRE's "0, not 1" a real discrimination between
+  -- the two engines rather than an accident of a world where nobody could reach anyway.
   if not (v_d_arm0 < v_r_arm) then
-    raise exception 'TICK1 FAIL premise: the escort chord % is not inside the armed escort''s own % reach — it would CLOSE instead of KITE and the KITE witness would be testing the wrong arm', v_d_arm0, v_r_arm;
+    raise exception 'TICK1 FAIL premise: the escort chord % is not inside the armed escort''s own % reach — under the OLD per-hull gate it would have fired on tick 1, and without that the fleet-gate assert below cannot tell the two engines apart', v_d_arm0, v_r_arm;
   end if;
   if not (v_d_bare0 > v_r_bare) then
     raise exception 'TICK1 FAIL premise: the fallback escort''s chord % is not outside its own % reach — it would not CLOSE and the approach would never start', v_d_bare0, v_r_bare;
   end if;
+  -- 0351: the fleet's reach is the SHORTEST gun, so the fallback range IS the fleet's reach, and it
+  -- must stay at or under the wave's so the approach terminates in a true HOLD. A fleet that
+  -- out-ranges the wave comes to rest at its own kite edge and never holds — which is exactly why
+  -- this suite no longer witnesses a kite at all (see the header; the witness moved to
+  -- danger-combat-proof).
   if not (v_r_bare <= v_er_pred) then
-    raise exception 'TICK1 FAIL premise: the fallback range % exceeds the wave''s reach % — a hull that out-ranges the enemy comes to rest at its own kite edge and NEVER reaches HOLD, so the HOLD witness could never arrive', v_r_bare, v_er_pred;
+    raise exception 'TICK1 FAIL premise: the fleet''s shortest gun % exceeds the wave''s reach % — the fleet would come to rest at its own kite edge and NEVER reach HOLD, so the HOLD witness could never arrive', v_r_bare, v_er_pred;
   end if;
   if not (v_d_cmd0 > v_r_cmd) then
     raise exception 'TICK1 FAIL premise: the lead''s distance % is not outside its own % reach — the lead is the second CLOSE witness and would be in another arm', v_d_cmd0, v_r_cmd;
@@ -634,88 +690,109 @@ begin
   end if;
   raise notice 'COMBATSPATIAL_PASS_ENEMY ok: 1 synthetic pirate (side=enemy, unit_type_id=pirate_synthetic) standing exactly on combat_formation_point(anchor, ring % + its own range % + 1, slot 0, the 0338 arrival phase toward its own city) = %,%', v_ring, v_r_en, v_ex, v_ey;
 
-  -- ── THE DERIVED ARMS, one per witness, taken from the frozen PRE-MOVE snapshot. Each is the
-  --    non-vacuity guard for the movement asserted immediately after it. ─────────────────────────
-  -- ██ DERIVED FROM THE PRE-MOVE SNAPSHOT, WHICH IS WHAT THIS COMMENT ALWAYS CLAIMED ██
-  -- These three used pg_temp.cs_arm(unit, foe), which reads the LIVE combat_units rows — and
-  -- pg_temp.cs_tick() has already run by this line. So the "derived arm" described a hypothetical
-  -- decision taken from the POST-move world, while the engine's real decision was taken from the
-  -- frozen PRE-move one, and the failure message beside it printed the PRE-move distance. The two
-  -- happened to agree until the geometry moved, which is the definition of passing by luck.
-  -- 0339 moved it: a site fight now stands off its site so the wave arrives on a real bearing, the
-  -- armed escort's chord changed, and it KITES to its own range edge — after which a post-move
-  -- re-derivation reads 'close' (gap 4.23 -> ~5.0 against a reach of exactly 5, the boundary again).
-  -- The fix is to ask the question the engine asked, of the world the engine asked it about. This is
-  -- combat_unit_decide_move's own case ladder (0234:242-246) over the values already frozen above —
-  -- no new rule, and every unit here carries exactly one weapon, so min and max range coincide.
-  v_arm_cmd  := case when v_d_cmd0  > v_r_cmd  then 'close' when v_d_cmd0  > v_r_en then 'kite' else 'hold' end;
-  v_arm_arm  := case when v_d_arm0  > v_r_arm  then 'close' when v_d_arm0  > v_r_en then 'kite' else 'hold' end;
-  v_arm_bare := case when v_d_bare0 > v_r_bare then 'close' when v_d_bare0 > v_r_en then 'kite' else 'hold' end;
-
-  -- ── KITE: the armed escort is inside its own reach and outside the wave's, so it retreats — and
-  --    never past its own range edge (0234's kite step is capped at my_range - dist). ────────────
-  if v_arm_arm is distinct from 'kite' then
-    raise exception 'TICK1 FAIL KITE: the armed escort''s derived arm is ''%'' , not ''kite'' (pre-move distance %, its own reach %, the wave''s reach %) — the witness is not in the arm this assert names', v_arm_arm, v_d_arm0, v_r_arm, v_r_en;
+  -- ── THE FLEET'S ARM — ONE ANSWER FOR THE WHOLE FORMATION (0351) ──────────────────────────────
+  -- WHAT THIS REGION USED TO PROTECT: that each hull independently derived its own arm from its own
+  -- position and its own weapon, and that three hulls could therefore be in three different arms on
+  -- one tick — the armed escort KITING on its chord of 3.642 while the lead and the fallback escort
+  -- CLOSED. WHAT IT PROTECTS NOW: that there is exactly ONE arm, taken at the fleet's own point with
+  -- the fleet's own reach, and that every hull receives the SAME delta. The old per-hull derivation
+  -- is not repointed, it is DELETED — under one actor it is not a weaker question, it is the wrong
+  -- one.
+  -- WHY THIS FAILS THE OLD ENGINE: it asserts three identical deltas on a tick where the old engine
+  -- moved the armed escort AWAY from the wave while moving the other two TOWARD it. Opposite
+  -- directions cannot be equal, so no tuning makes the old engine pass this.
+  select arm_kind, arm_gap, arm_my, arm_foe, arm_speed
+    into v_fl_arm, v_fl_gap, v_fl_reach, v_fl_foe, v_fl_speed
+    from pg_temp.cs_fleet_arm(v_enc, u_en);
+  if v_fl_arm = 'unknown' then
+    raise exception 'TICK1 FAIL FLEET: the fleet arm is ''unknown'' (gap %, fleet reach %, wave reach %) — a NULL in combat_fleet_actor would make every assert below vacuous', v_fl_gap, v_fl_reach, v_fl_foe;
   end if;
-  v_d_arm1 := public.osn_distance((select pos_x from public.combat_units where id = u_arm),
-                                  (select pos_y from public.combat_units where id = u_arm), v_ex, v_ey);
-  if v_d_arm1 is null or v_d_arm1 <= v_d_arm0 then
-    raise exception 'TICK1 FAIL KITE: armed escort distance did not increase (%->%)', v_d_arm0, v_d_arm1; end if;
-  if v_d_arm1 > v_r_arm + 0.001 then
-    raise exception 'TICK1 FAIL KITE: armed escort retreated past its own frozen % range (dist %)', v_r_arm, v_d_arm1; end if;
-  raise notice 'COMBATSPATIAL_PASS_KITE ok: armed escort derived arm ''kite'' and retreated (dist %->%), staying within its own frozen % weapon range', v_d_arm0, v_d_arm1, v_r_arm;
 
-  -- ── CLOSE: BOTH hulls that are outside their own reach advance — the fallback escort AND the
-  --    lead, which after 0336 is the FURTHEST player hull from the wave rather than the nearest. ──
-  if v_arm_bare is distinct from 'close' then
-    raise exception 'TICK1 FAIL CLOSE: the fallback escort''s derived arm is ''%'' , not ''close'' (pre-move distance %, its own reach %) — the witness is not in the arm this assert names', v_arm_bare, v_d_bare0, v_r_bare;
+  -- THE FLEET POINT IS THE LEAD, AND THAT IS ASSERTED, NOT ASSUMED. Every distance below is measured
+  -- from it, so if the engine ever stood the fleet somewhere else this block must fail rather than
+  -- quietly measure from a point the gate does not use.
+  if abs(v_fl_gap - v_d_cmd0) > 1e-9 then
+    raise exception 'TICK1 FAIL FLEET: the fleet''s gap to the wave is % but the LEAD''s own distance is % — combat_fleet_actor is not standing the fleet on its elected lead, so the circle the player sees is not the one the gate uses', v_fl_gap, v_d_cmd0;
   end if;
-  if v_arm_cmd is distinct from 'close' then
-    raise exception 'TICK1 FAIL CLOSE: the lead''s derived arm is ''%'' , not ''close'' (pre-move distance %, its own reach %) — after 0336 the lead opens the fight out of reach and must advance', v_arm_cmd, v_d_cmd0, v_r_cmd;
+  -- THE FLEET'S REACH IS THE SHORTEST GUN IN IT, not the lead's own and not the longest.
+  if abs(v_fl_reach - least(v_r_cmd, v_r_arm, v_r_bare)) > 1e-9 then
+    raise exception 'TICK1 FAIL FLEET: the fleet''s reach is % but the shortest gun on the field is % — a max() or a lead-only reach would draw a circle claiming reach the fleet does not have', v_fl_reach, least(v_r_cmd, v_r_arm, v_r_bare);
+  end if;
+
+  -- ── CLOSE: the FLEET is outside its own reach, so the WHOLE FORMATION advances — rigidly. ─────
+  if v_fl_arm is distinct from 'close' then
+    raise exception 'TICK1 FAIL CLOSE: the fleet''s derived arm is ''%'' , not ''close'' (fleet gap %, fleet reach %, wave reach %) — the witness is not in the arm this assert names', v_fl_arm, v_fl_gap, v_fl_reach, v_fl_foe;
   end if;
   v_d_bare1 := public.osn_distance((select pos_x from public.combat_units where id = u_bare),
                                    (select pos_y from public.combat_units where id = u_bare), v_ex, v_ey);
   v_d_cmd1  := public.osn_distance((select pos_x from public.combat_units where id = u_cmd),
                                    (select pos_y from public.combat_units where id = u_cmd), v_ex, v_ey);
-  if v_d_bare1 is null or v_d_bare1 >= v_d_bare0 then
-    raise exception 'TICK1 FAIL CLOSE: fallback escort distance did not decrease (%->%)', v_d_bare0, v_d_bare1; end if;
+  v_d_arm1  := public.osn_distance((select pos_x from public.combat_units where id = u_arm),
+                                   (select pos_y from public.combat_units where id = u_arm), v_ex, v_ey);
   if v_d_cmd1 is null or v_d_cmd1 >= v_d_cmd0 then
-    raise exception 'TICK1 FAIL CLOSE: lead distance did not decrease (%->%)', v_d_cmd0, v_d_cmd1; end if;
-  raise notice 'COMBATSPATIAL_PASS_CLOSE ok: both out-of-reach hulls advanced — fallback escort %->%, lead %->%', v_d_bare0, v_d_bare1, v_d_cmd0, v_d_cmd1;
+    raise exception 'TICK1 FAIL CLOSE: the lead''s distance did not decrease (%->%) — the fleet is in CLOSE and its point IS the lead, so the lead must have advanced', v_d_cmd0, v_d_cmd1; end if;
+  -- ── RIGID: one order, one body. Every hull's DELTA must be the same vector, not merely the same
+  --    sign — that is what makes the formation survive the journey instead of being reconciled.
+  v_dx_cmd  := (select pos_x from public.combat_units where id = u_cmd)  - v_cmd_x0;
+  v_dy_cmd  := (select pos_y from public.combat_units where id = u_cmd)  - v_cmd_y0;
+  v_dx_arm  := (select pos_x from public.combat_units where id = u_arm)  - v_arm_x0;
+  v_dy_arm  := (select pos_y from public.combat_units where id = u_arm)  - v_arm_y0;
+  v_dx_bare := (select pos_x from public.combat_units where id = u_bare) - v_bare_x0;
+  v_dy_bare := (select pos_y from public.combat_units where id = u_bare) - v_bare_y0;
+  if abs(v_dx_cmd) + abs(v_dy_cmd) < 1e-12 then
+    raise exception 'TICK1 FAIL CLOSE: the fleet''s delta is (%, %) — a zero delta would make the equality below pass for a formation that never moved', v_dx_cmd, v_dy_cmd;
+  end if;
+  if abs(v_dx_arm - v_dx_cmd) > 1e-9 or abs(v_dy_arm - v_dy_cmd) > 1e-9
+     or abs(v_dx_bare - v_dx_cmd) > 1e-9 or abs(v_dy_bare - v_dy_cmd) > 1e-9 then
+    raise exception 'TICK1 FAIL CLOSE: the hulls moved by DIFFERENT deltas — lead (%, %), armed escort (%, %), fallback escort (%, %). 0351 decides one step at the fleet point and applies it to every hull, so a formation that reconciles three separate decisions is the per-hull mover this slice deleted',
+      v_dx_cmd, v_dy_cmd, v_dx_arm, v_dy_arm, v_dx_bare, v_dy_bare;
+  end if;
+  -- and the step is the FLEET's speed, capped by the gap — the mover's own close arm.
+  if abs(sqrt(v_dx_cmd*v_dx_cmd + v_dy_cmd*v_dy_cmd) - least(v_fl_speed, v_fl_gap)) > 1e-9 then
+    raise exception 'TICK1 FAIL CLOSE: the formation moved % this tick but the fleet''s own speed capped by the gap is % — the step is not the one combat_unit_decide_move hands back for the fleet', sqrt(v_dx_cmd*v_dx_cmd + v_dy_cmd*v_dy_cmd), least(v_fl_speed, v_fl_gap);
+  end if;
+  raise notice 'COMBATSPATIAL_PASS_CLOSE ok: the FLEET''s derived arm is ''close'' (gap % against its own reach %) and all three hulls moved by the identical delta (%, %) — one order, one body, at the fleet''s own speed %', v_fl_gap, v_fl_reach, v_dx_cmd, v_dy_cmd, v_fl_speed;
 
-  -- ── FIRE: the tick-1 player salvo count is DERIVED, not typed. A hull fires when its PRE-MOVE
-  --    distance is within its own frozen reach (0299's gate), and each of these hulls carries
-  --    exactly one weapon, so the count is exactly the number of hulls that satisfy it. After 0336
-  --    that is the armed escort alone: the lead now opens the fight outside its own range, which is
-  --    precisely the behaviour change this migration ships. ───────────────────────────────────────
-  v_exp_fire := (case when v_d_cmd0  <= v_r_cmd  then 1 else 0 end)
-              + (case when v_d_arm0  <= v_r_arm  then 1 else 0 end)
-              + (case when v_d_bare0 <= v_r_bare then 1 else 0 end);
-  if v_exp_fire < 1 then
-    raise exception 'TICK1 FAIL FIRE: the derivation expects ZERO player salvos on tick 1 — nothing would damage the wave and PASS_DAMAGE would be vacuous';
+  -- ── FIRE: tick 1 is SILENT ON BOTH SIDES, and that is derived, not typed. ─────────────────────
+  -- WHAT THIS PROTECTED: that the tick-1 player salvo count equalled the number of hulls whose OWN
+  -- pre-move distance was inside their OWN reach — one, the armed escort on its 3.642 chord.
+  -- WHAT IT PROTECTS NOW: that the count is the ALL-OR-NONE fleet count. A hull no longer has a
+  -- distance of its own for firing purposes, so the count is 3 when the fleet point is inside the
+  -- fleet reach and 0 when it is not. Here the fleet opens at % of a reach of %, so it is 0.
+  -- WHY THIS FAILS THE OLD ENGINE: the old engine fired exactly once on this tick. 0 <> 1.
+  v_exp_fire := (case when v_fl_gap <= v_fl_reach then 3 else 0 end);
+  if v_fl_gap <= v_fl_reach then
+    raise exception 'TICK1 FAIL FIRE: the fleet opens INSIDE its own reach (gap % <= reach %) — this scenario is engineered for an approach, and a fleet born in range would prove nothing about the gate', v_fl_gap, v_fl_reach;
   end if;
   select count(*) into n_player_fire from public.combat_events
     where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'player';
   if n_player_fire <> v_exp_fire then
-    raise exception 'TICK1 FAIL FIRE: % player missile_salvo events on tick 1, derivation expects % (pre-move distances %/%/% against own reaches %/%/%)', n_player_fire, v_exp_fire, v_d_cmd0, v_d_arm0, v_d_bare0, v_r_cmd, v_r_arm, v_r_bare;
+    raise exception 'TICK1 FAIL FIRE: % player missile_salvo events on tick 1, derivation expects % (fleet gap % against fleet reach % — under 0351 every hull fires together or none does; a count of 1 is the per-hull gate this slice deleted, firing on an escort''s own chord)', n_player_fire, v_exp_fire, v_fl_gap, v_fl_reach;
   end if;
-  -- and the wave fired NOTHING: 0336 stands it at least its own range + 1 from every player hull,
-  -- so the nearest hull is outside its reach by construction. Derived, then asserted.
-  if least(v_d_cmd0, v_d_arm0, v_d_bare0) <= v_r_en then
-    raise exception 'TICK1 FAIL FIRE: the nearest player hull is % from the wave, inside its own % reach — 0336''s spawn invariant (range + 1 from EVERY player ship) does not hold in this world', least(v_d_cmd0, v_d_arm0, v_d_bare0), v_r_en;
+  -- and the wave fired NOTHING: it measures to the FLEET POINT now, which is further than the chord
+  -- it used to measure to, so 0336's spawn clearance is if anything stronger. Derived, then asserted.
+  if v_fl_gap <= v_r_en then
+    raise exception 'TICK1 FAIL FIRE: the fleet point is % from the wave, inside its own % reach — the wave would open fire on the spawn tick and this assert would be testing the wrong world', v_fl_gap, v_r_en;
   end if;
   select count(*) into n from public.combat_events
     where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'pirate';
-  if n <> 0 then raise exception 'TICK1 FAIL FIRE: pirate fired % time(s) on tick 1 (want 0 — every player hull is outside its % reach at spawn)', n, v_r_en; end if;
-  raise notice 'COMBATSPATIAL_PASS_FIRE ok: tick 1 — % player missile_salvo event(s), exactly the derived in-reach count; the wave fired nothing (nearest player hull % against its own % reach)', n_player_fire, least(v_d_cmd0, v_d_arm0, v_d_bare0), v_r_en;
+  if n <> 0 then raise exception 'TICK1 FAIL FIRE: pirate fired % time(s) on tick 1 (want 0 — the fleet point is % outside its % reach)', n, v_fl_gap, v_r_en; end if;
+  raise notice 'COMBATSPATIAL_PASS_FIRE ok: tick 1 — % player missile_salvo event(s), exactly the derived all-or-none fleet count (gap % against fleet reach %); the wave fired nothing either', n_player_fire, v_fl_gap, v_fl_reach;
 
-  -- ── DAMAGE: the pirate's hp_current fell below its frozen hp_max (it took real damage tick 1). ─────
+  -- ── DAMAGE: nobody was in reach, so NOBODY took damage. ───────────────────────────────────────
+  -- WHAT THIS PROTECTED: that the pirate's hp fell on tick 1. WHAT IT PROTECTS NOW: the exact
+  -- opposite, and for a stated reason — under one actor the fleet opens the fight out of reach, so a
+  -- tick-1 hit is now evidence that something still fires on a hull's own distance. The POSITIVE
+  -- damage witness moves to the arrival tick, which the approach block derives from the engine's own
+  -- recurrence rather than counting to a number.
+  -- WHY THIS FAILS THE OLD ENGINE: the old engine damaged the pirate on tick 1, so hp_current would
+  -- be below hp_max here and this raises.
   select hp_max, hp_current into v_enemy_hpmax, v_enemy_hpcur from public.combat_units where id = u_en;
-  if v_enemy_hpcur >= v_enemy_hpmax then
-    raise exception 'TICK1 FAIL DAMAGE: pirate hp_current (%) is not below hp_max (%)', v_enemy_hpcur, v_enemy_hpmax; end if;
-  raise notice 'COMBATSPATIAL_PASS_DAMAGE ok: pirate hp_current % fell below its frozen hp_max % after tick 1', v_enemy_hpcur, v_enemy_hpmax;
+  if v_enemy_hpcur is distinct from v_enemy_hpmax then
+    raise exception 'TICK1 FAIL DAMAGE: the pirate took damage on the spawn tick (hp % of %) while the whole fleet was outside its own reach — some path is still firing on a hull''s own distance', v_enemy_hpcur, v_enemy_hpmax;
+  end if;
 
-  -- sanity: no player ship has taken damage yet (the wave could not reach anybody this tick).
+  -- sanity: no player ship has taken damage yet either (the wave could not reach the fleet point).
   select count(*) into n from public.combat_units
     where encounter_id = v_enc and side = 'player'
       and ((id = u_cmd  and hp_current is distinct from v_hp_cmd0)
@@ -724,137 +801,157 @@ begin
   if n <> 0 then raise exception 'TICK1 FAIL: a player ship took damage before the wave was ever in range (want 0)'; end if;
 end $$;
 
--- ════════ THE APPROACH + HOLD: the fallback escort closes, then comes to rest inside both reaches ══
--- 0336 makes the opening tick of every fight an approach, so HOLD is no longer something a hull is
--- BORN in — it is where a hull ARRIVES. This block walks the fallback escort in, one guarded CLOSE
--- step at a time (the number of steps is run out against the MEASURED gap and the MEASURED frozen
--- move_speed, never typed in), and only then asserts the property HOLD actually names: a unit inside
--- its own range whose target is inside its target's range does not move at all.
-do $$
+-- ════════ THE APPROACH, THE ARRIVAL AND THE HOLD — the FLEET closes, then comes to rest ═════════
+-- WHAT THIS PROTECTED: that ONE HULL (the fallback escort, the only one whose own gun was shorter
+-- than the wave's reach) closed on its own distance and came to rest inside both reaches, while the
+-- other two hulls were doing something else entirely.
+-- WHAT IT PROTECTS NOW: that the WHOLE FORMATION closes as one body, arrives on the tick the
+-- engine's own recurrence predicts, and then stands COMPLETELY still — every hull byte-identical,
+-- not just the witness. The arrival tick is DERIVED from the fleet's gap and the fleet's speed, never
+-- counted to a literal: a hard-coded tick index is the fixture assumption that has cost this repo CI
+-- rounds before.
+-- WHY THIS FAILS THE OLD ENGINE: under the per-hull mover the three hulls arrive on three different
+-- ticks and the two escorts are still moving when the fallback one stops, so the all-hulls stillness
+-- assert raises; and the derived arrival tick is computed off the LEAD's gap of 7, where the old
+-- engine's fallback escort was closing from its chord of 3.642 — a different number of ticks.
+--
+-- ⛔ THIS SUITE NO LONGER WITNESSES A KITE, AND THAT IS STRUCTURAL, NOT AN OVERSIGHT. Under 0351 a
+--    fleet has ONE reach, so the kite arm needs wave_reach < gap <= fleet_reach while a landed pirate
+--    hit needs gap <= wave_reach. Those two are disjoint: if the fleet out-ranges the wave it parks
+--    at its own edge and the wave can NEVER reach it (COMBATSPATIAL_PASS_SCREEN dies), and if it does
+--    not, the kite band is EMPTY. The old fixture got both at once only because two hulls with
+--    different guns were in different arms on the same tick — exactly what 0351 deleted. SCREEN is
+--    kept here because the aggro screen is a property 0351 explicitly preserves; the KITE witness
+--    MOVED to danger-combat-proof.sql (DZCOMBAT_PASS_FLEETKITE), whose kite-band fixtures already
+--    have the player out-ranging the wave. It was repointed, not dropped.
+do $
 declare
   v_enc  uuid := (select v from cspatial where k='v_enc');
+  u_cmd  uuid := (select v from cspatial where k='u_cmd');
+  u_arm  uuid := (select v from cspatial where k='u_arm');
   u_bare uuid := (select v from cspatial where k='u_bare');
   u_en   uuid := (select v from cspatial where k='u_en');
-  v_arm_bare text; v_gap double precision; v_gap_after double precision;
-  v_speed double precision;
-  v_steps int := 0;
-  v_x0 double precision; v_y0 double precision; v_x1 double precision; v_y1 double precision;
+  v_arm_kind text; v_gap double precision; v_gap_after double precision;
+  v_reach double precision; v_foe double precision; v_speed double precision;
+  v_steps int := 0; v_pred_steps int;
+  v_hp0 double precision; v_hp1 double precision;
+  v_x0 double precision[]; v_y0 double precision[]; v_moved int;
   v_arm_engine text; v_pred_x double precision; v_pred_y double precision;
+  v_dx double precision; v_dy double precision;
 begin
-  select move_speed into v_speed from public.combat_units where id = u_bare;
+  select arm_kind, arm_gap, arm_my, arm_foe, arm_speed
+    into v_arm_kind, v_gap, v_reach, v_foe, v_speed from pg_temp.cs_fleet_arm(v_enc, u_en);
   if v_speed is null or v_speed <= 0 then
-    raise exception 'HOLD FAIL: the fallback escort''s frozen move_speed is % — it can never close and this block would spin', v_speed;
+    raise exception 'HOLD FAIL: the fleet''s frozen speed is % — it can never close and this block would spin', v_speed;
+  end if;
+  if v_arm_kind is distinct from 'close' then
+    raise exception 'HOLD FAIL: the fleet''s arm is ''%'' before any closing tick (gap %, fleet reach %, wave reach %) — this block measures an APPROACH and there is none', v_arm_kind, v_gap, v_reach, v_foe;
   end if;
 
-  -- walk it in. Every step is guarded to be genuinely in CLOSE before the tick runs, and to have
-  -- actually shortened the gap after it — so this loop can never quietly become a no-op.
+  -- ── THE ARRIVAL TICK, DERIVED FROM THE ENGINE'S OWN RECURRENCE ──────────────────────────────────
+  -- The close arm steps least(speed, dist) toward the target each tick, and the wave is PARKED, so
+  -- the gap falls by exactly the fleet's speed until it is inside the fleet's reach. The number of
+  -- closing ticks is therefore ceil((gap - reach) / speed) — computed from the three values the
+  -- engine itself will use, never typed in. If a retune changes any of them this number follows.
+  v_pred_steps := ceil((v_gap - v_reach) / v_speed)::int;
+  if v_pred_steps < 1 then
+    raise exception 'HOLD FAIL: the derived approach is % tick(s) (gap %, fleet reach %, speed %) — the fleet is already in reach and would prove nothing about arriving', v_pred_steps, v_gap, v_reach, v_speed;
+  end if;
+
   loop
-    select arm_kind, arm_gap into v_arm_bare, v_gap from pg_temp.cs_arm(u_bare, u_en);
-    exit when v_arm_bare = 'hold';
+    select arm_kind, arm_gap into v_arm_kind, v_gap from pg_temp.cs_fleet_arm(v_enc, u_en);
+    exit when v_arm_kind = 'hold';
     v_steps := v_steps + 1;
-    if v_steps > 24 then
-      raise exception 'HOLD FAIL: the fallback escort is still ''%'' after % closing ticks (gap %, its own reach and the wave''s are both meant to be above it) — the approach does not converge at this tuning', v_arm_bare, v_steps, v_gap;
+    if v_steps > v_pred_steps + 2 then
+      raise exception 'HOLD FAIL: the fleet is still ''%'' after % closing ticks but the engine''s own recurrence predicted % (gap %, reach %, speed %) — the approach does not converge the way the mover says it must', v_arm_kind, v_steps, v_pred_steps, v_gap, v_reach, v_speed;
     end if;
-    if v_arm_bare is distinct from 'close' then
-      raise exception 'HOLD FAIL: the fallback escort''s derived arm is ''%'' mid-approach (gap %) — it is neither closing nor arrived, so the approach is not the one this block measures', v_arm_bare, v_gap;
+    if v_arm_kind is distinct from 'close' then
+      raise exception 'HOLD FAIL: the fleet''s arm is ''%'' mid-approach (gap %) — it is neither closing nor arrived, so the approach is not the one this block measures', v_arm_kind, v_gap;
     end if;
     perform pg_temp.cs_tick(v_enc);
-    select arm_gap into v_gap_after from pg_temp.cs_arm(u_bare, u_en);
+    select arm_gap into v_gap_after from pg_temp.cs_fleet_arm(v_enc, u_en);
     if v_gap_after is null or v_gap_after >= v_gap then
-      raise exception 'HOLD FAIL: a closing tick did not shorten the gap (%->%) — the CLOSE arm stopped moving before arriving', v_gap, v_gap_after;
+      raise exception 'HOLD FAIL: a closing tick did not shorten the fleet''s gap (%->%) — the CLOSE arm stopped moving before arriving', v_gap, v_gap_after;
     end if;
   end loop;
 
-  -- ARRIVED: derived arm is 'hold', i.e. inside its own reach AND inside the wave's. Non-vacuous by
-  -- construction — the same hull was proven to be in CLOSE, and to have moved, on every tick above.
-  select arm_gap into v_gap from pg_temp.cs_arm(u_bare, u_en);
-  if v_steps < 1 then
-    raise exception 'HOLD FAIL: the fallback escort was already in HOLD before any closing tick — it would have been born in range and this witness would prove nothing about arriving';
+  -- THE APPROACH TOOK THE NUMBER OF TICKS THE ENGINE'S OWN RULE PREDICTS. Not "about right".
+  if v_steps <> v_pred_steps then
+    raise exception 'HOLD FAIL: the fleet arrived in % closing tick(s) but the mover''s own recurrence ceil((gap - reach) / speed) predicts % — the tick is not stepping the fleet at the fleet''s speed', v_steps, v_pred_steps;
   end if;
-  -- AND THE STILLNESS MUST NOT BE A CORPSE'S. 0317's actor-liveness guard skips a dead row entirely,
-  -- and a concluded encounter is not ticked at all — either way the hull would sit byte-identically
-  -- still and pass the assert below without ever having been in HOLD. Both are pinned first.
-  perform 1 from public.combat_units where id = u_bare and alive_count > 0 and hp_current > 0;
-  if not found then
-    raise exception 'HOLD FAIL: the holding hull is not alive — a corpse never moves, so its stillness would prove nothing about the HOLD arm';
+  select arm_gap into v_gap from pg_temp.cs_fleet_arm(v_enc, u_en);
+
+  -- ── COMBATSPATIAL_PASS_DAMAGE, RELOCATED TO WHERE DAMAGE IS NOW POSSIBLE ────────────────────────
+  -- Tick 1 is silent under one actor (the fleet opens out of reach), so the positive damage witness
+  -- belongs here — on the arrival the recurrence above just derived, not on a literal tick index.
+  select hp_current into v_hp0 from public.combat_units where id = u_en;
+  perform pg_temp.cs_tick(v_enc);
+  select hp_current into v_hp1 from public.combat_units where id = u_en;
+  if v_hp1 is null or v_hp0 is null then
+    raise exception 'HOLD FAIL DAMAGE: the wave''s hp is NULL (%->%) — the comparison would be vacuous', v_hp0, v_hp1;
   end if;
+  if v_hp1 >= v_hp0 then
+    raise exception 'HOLD FAIL DAMAGE: the wave took no damage on the arrival tick (hp %->%) at fleet gap % inside the fleet''s own reach % — the fleet is in range and every one of its guns should have fired', v_hp0, v_hp1, v_gap, v_reach;
+  end if;
+  raise notice 'COMBATSPATIAL_PASS_DAMAGE ok: the wave''s hp_current fell %->% on the DERIVED arrival tick (after exactly % closing ticks, = ceil((gap - fleet reach) / fleet speed)) — nothing was hit before the fleet was in range, and everything was after', v_hp0, v_hp1, v_steps;
+
+  -- ARRIVED: the fleet's arm is 'hold' — inside its own reach AND inside the wave's.
   if (select status from public.combat_encounters where id = v_enc) is distinct from 'active' then
     raise exception 'HOLD FAIL: the encounter is no longer active — an unticked fight leaves every position untouched and the stillness below would be vacuous';
   end if;
-  select pos_x, pos_y into v_x0, v_y0 from public.combat_units where id = u_bare;
+  perform 1 from public.combat_units where id = u_cmd and alive_count > 0 and hp_current > 0;
+  if not found then
+    raise exception 'HOLD FAIL: the fleet''s lead is not alive — a corpse never moves, so its stillness would prove nothing about the HOLD arm';
+  end if;
 
-  -- ── ASK THE ENGINE, DO NOT MIRROR IT ────────────────────────────────────────────────────────────
-  -- cs_arm above is a hand-written copy of the mover's arm rule, and a copy can drift from the thing
-  -- it copies. That is exactly the failure this block hit in CI: it reported "the holding hull moved"
-  -- while printing a BYTE-IDENTICAL before/after, because the server renders at
-  -- extra_float_digits = 0 (15 significant digits) and the move was smaller than that.
-  -- The mover's arms are: dist > my_range -> close ; dist > target_range -> kite ; else hold. A hull
-  -- inside its OWN reach but outside its target's is therefore in KITE, and its step is
-  -- least(speed, my_range - dist), which VANISHES as dist approaches my_range from below. Measured
-  -- against the DEPLOYED function: a gap of 4.9999999999 against a reach of 5 moves the hull 1e-10,
-  -- and a true HOLD (inside BOTH reaches) returns the position bit-identically. So that is a real
-  -- move in a real arm, invisible at 15 digits — the assert was right, and a mirror that says "hold"
-  -- there is what was wrong.
-  -- The arm is therefore taken from combat_unit_decide_move ITSELF, with exactly the arguments the
-  -- tick passes it (0336: the hull's SHORTEST gun as its own reach, the target's LONGEST as the
-  -- threat), and the predicted point is pinned against what the tick actually wrote.
+  -- ── ASK THE ENGINE, DO NOT MIRROR IT — with the FLEET's arguments ───────────────────────────────
+  -- cs_fleet_arm is a hand-written copy of the mover's case ladder and a copy can drift. The arm is
+  -- therefore taken from combat_unit_decide_move ITSELF, composed with exactly what 0351's tick hands
+  -- it: the fleet's point, the fleet's reach, the fleet's speed, the target's position and the
+  -- target's LONGEST gun. Then the predicted point is pinned against what the tick actually wrote to
+  -- the LEAD — which, because the fleet's point IS the lead, is the fleet's own new position.
+  -- Under the OLD engine this call was made per hull with per-hull arguments, so this prediction
+  -- would name a different point than the tick wrote and the pin below raises.
   select m.action, m.new_x, m.new_y into v_arm_engine, v_pred_x, v_pred_y
-    from public.combat_units u, public.combat_units f,
+    from public.combat_fleet_actor(v_enc) a, public.combat_units f,
          lateral public.combat_unit_decide_move(
-           -- THROUGH THE FREEZE, exactly as the tick does. This is a FACT ABOUT THE CODE, not a
-           -- theory: process_combat_ticks never hands the mover the table's doubles. It builds a
-           -- jsonb snapshot of the population first (jsonb_build_object('pos_x', cu2.pos_x, ...))
-           -- and reads every mover argument back out of THAT. So a prediction made from the raw
-           -- columns is predicting a different call than the one the engine makes.
-           -- WHAT I VERIFIED, AND WHAT I DID NOT: CI failed here printing a tick-write and a
-           -- prediction that were IDENTICAL at display precision, so they differ below it. The
-           -- server runs at extra_float_digits = 0 (fifteen significant digits) — but a spot check
-           -- against production showed a 15-digit coordinate round-tripping through jsonb EXACTLY,
-           -- so "the round-trip is always lossy" is NOT established and is not claimed here. What is
-           -- established is the call path. Routing the prediction through the same freeze makes this
-           -- an exact model of what the engine does either way, with no tolerance and no epsilon; if
-           -- the round-trip is exact for these values the pin is unchanged, and if it is not, the
-           -- pin is now right. CI is what decides, and it is cheap to be right for both reasons.
-           (to_jsonb(u.pos_x)#>>'{}')::double precision, (to_jsonb(u.pos_y)#>>'{}')::double precision,
-           coalesce((select min((w->>'range')::double precision) from jsonb_array_elements(u.weapons_json) w), 0),
-           coalesce(u.move_speed, 0),
+           (to_jsonb(a.x)#>>'{}')::double precision, (to_jsonb(a.y)#>>'{}')::double precision,
+           coalesce(a.reach, 0), coalesce(a.speed, 0),
            (to_jsonb(f.pos_x)#>>'{}')::double precision, (to_jsonb(f.pos_y)#>>'{}')::double precision,
            coalesce((select max((w->>'range')::double precision) from jsonb_array_elements(f.weapons_json) w), 0)) m
-   where u.id = u_bare and f.id = u_en;
+   where f.id = u_en;
   if v_arm_engine is null then
-    raise exception 'HOLD FAIL: the engine mover returned no arm for the holding hull — a NULL arm would make every comparison below vacuous';
+    raise exception 'HOLD FAIL: the engine mover returned no arm for the fleet — a NULL arm would make every comparison below vacuous';
   end if;
   if v_arm_engine is distinct from 'hold' then
-    raise exception 'HOLD FAIL: the ENGINE says % where this block derived hold (gap %, own reach %, wave reach %) — either the harness mirror has drifted from combat_unit_decide_move, or the hull is inside its own reach but outside the wave''s, which is KITE with a vanishing step and not stillness at all',
-      v_arm_engine, v_gap, (select arm_my from pg_temp.cs_arm(u_bare, u_en)), (select arm_foe from pg_temp.cs_arm(u_bare, u_en));
+    raise exception 'HOLD FAIL: the ENGINE says ''%'' where this block derived hold (fleet gap %, fleet reach %, wave reach %) — either pg_temp.cs_fleet_arm has drifted from combat_unit_decide_move, or the fleet is inside its own reach but outside the wave''s, which is KITE with a vanishing step and not stillness at all', v_arm_engine, v_gap, v_reach, v_foe;
   end if;
 
-  perform pg_temp.cs_tick(v_enc);
-  select pos_x, pos_y into v_x1, v_y1 from public.combat_units where id = u_bare;
-  if v_x0 is null or v_y0 is null or v_x1 is null or v_y1 is null then
-    raise exception 'HOLD FAIL: the fallback escort has a NULL coordinate (pre %,% / post %,%) — an unpositioned unit cannot prove it stood still', v_x0, v_y0, v_x1, v_y1;
+  -- snapshot EVERY hull, then tick, then require every one of them to be byte-identical.
+  select array_agg(pos_x order by id), array_agg(pos_y order by id) into v_x0, v_y0
+    from public.combat_units where encounter_id = v_enc and side = 'player';
+  if array_length(v_x0, 1) is null or array_length(v_x0, 1) < 3 then
+    raise exception 'HOLD FAIL: only % player hull(s) to hold still (want 3) — the stillness assert would be measuring almost nothing', coalesce(array_length(v_x0, 1), 0);
   end if;
-  -- the tick wrote exactly what the engine own leaf predicted...
-  if v_x1 is distinct from v_pred_x or v_y1 is distinct from v_pred_y then
-    raise exception 'HOLD FAIL: the tick wrote (%, %) where combat_unit_decide_move predicted (%, %) — the tick is not composing the mover it is supposed to',
-      to_char(v_x1, 'FM999999990.999999999999999999'), to_char(v_y1, 'FM999999990.999999999999999999'),
+  perform pg_temp.cs_tick(v_enc);
+  select count(*) into v_moved
+    from public.combat_units cu,
+         lateral (select row_number() over (order by cu2.id) rn from public.combat_units cu2
+                   where cu2.encounter_id = v_enc and cu2.side = 'player' and cu2.id <= cu.id) o
+   where cu.encounter_id = v_enc and cu.side = 'player'
+     and (cu.pos_x is distinct from v_x0[o.rn] or cu.pos_y is distinct from v_y0[o.rn]);
+  if v_moved <> 0 then
+    raise exception 'HOLD FAIL: % of 3 player hull(s) moved across a HOLD tick — under 0351 the fleet is ONE body, so a HOLD must leave EVERY hull exactly where the freeze presented it, not merely the witness', v_moved;
+  end if;
+  -- ...and the lead sits exactly where the engine's own leaf predicted for the fleet.
+  select pos_x, pos_y into v_dx, v_dy from public.combat_units where id = u_cmd;
+  if v_dx is distinct from v_pred_x or v_dy is distinct from v_pred_y then
+    raise exception 'HOLD FAIL: the tick left the lead at (%, %) where combat_unit_decide_move predicted (%, %) for the FLEET — the tick is not composing the mover with the fleet''s own arguments',
+      to_char(v_dx, 'FM999999990.999999999999999999'), to_char(v_dy, 'FM999999990.999999999999999999'),
       to_char(v_pred_x, 'FM999999990.999999999999999999'), to_char(v_pred_y, 'FM999999990.999999999999999999');
   end if;
-  -- ...and for the HOLD arm that prediction is the hull's own position, unchanged — but unchanged AS
-  -- THE FREEZE SEES IT. The mover's hold arm returns its p_my_x argument verbatim, and that argument
-  -- came through the jsonb snapshot, so a holding hull is rewritten with the round-trip of itself.
-  -- The comparison is therefore against that round-trip and is still EXACT: no tolerance, no epsilon.
-  -- Rendered at full scale so a sub-display-precision move can never again read as no move at all.
-  if v_x1 is distinct from (to_jsonb(v_x0)#>>'{}')::double precision
-     or v_y1 is distinct from (to_jsonb(v_y0)#>>'{}')::double precision then
-    raise exception 'HOLD FAIL: the holding hull moved (%, % -> %, %; the freeze round-trip of the start point is %, %) — a HOLD must leave the position exactly as the freeze presented it (rendered at full scale: the server prints only 15 significant digits, which is how a vanishing KITE step once read as no move at all)',
-      to_char(v_x0, 'FM999999990.999999999999999999'), to_char(v_y0, 'FM999999990.999999999999999999'),
-      to_char(v_x1, 'FM999999990.999999999999999999'), to_char(v_y1, 'FM999999990.999999999999999999'),
-      to_char((to_jsonb(v_x0)#>>'{}')::double precision, 'FM999999990.999999999999999999'),
-      to_char((to_jsonb(v_y0)#>>'{}')::double precision, 'FM999999990.999999999999999999');
-  end if;
-  raise notice 'COMBATSPATIAL_PASS_HOLD ok: the fallback escort closed over % guarded CLOSE tick(s) at its frozen speed %, arrived at gap % — inside its own reach and inside the wave''s — and its position is BYTE-IDENTICAL across the next tick (HOLD never touches pos_x/pos_y)', v_steps, v_speed, v_gap;
-end $$;
+  raise notice 'COMBATSPATIAL_PASS_HOLD ok: the FLEET closed over % guarded CLOSE tick(s) — exactly the ceil((gap - reach) / speed) the mover''s own rule predicts — arrived at gap % inside both reaches, and ALL THREE hulls are byte-identical across the next tick (a HOLD never touches pos_x/pos_y, and under 0351 that is true of the whole formation or of none of it)', v_steps, v_gap;
+end $;
 
 -- ════════ SCREEN: the wave can now reach a player — the aggro-tier screen must hold ════════════════
 do $$
