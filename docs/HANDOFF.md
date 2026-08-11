@@ -1,6 +1,6 @@
-# Session Handoff — historical snapshot 2026-07-12, **current state refreshed 2026-08-04**
+# Session Handoff — historical snapshot 2026-07-12, **current state refreshed 2026-08-11**
 
-> # ⚠ READ **§0 — CURRENT STATE (2026-08-04)** FIRST. Everything from §1 onward is the 2026-07-12 snapshot.
+> # ⚠ READ **§0 — CURRENT STATE (2026-08-11)** FIRST. Everything from §1 onward is the 2026-07-12 snapshot.
 >
 > §0 is the live handoff. §1 (machine setup) and §4–§5 (dev-method laws, process) are still accurate and
 > still worth reading. **§2, §3, §0.05 and §0.1 are historical** — superseded, kept so the record survives.
@@ -10,32 +10,109 @@
 
 ---
 
-## 0. CURRENT STATE (verified 2026-08-04)
+## 0. CURRENT STATE (verified 2026-08-11)
+
+> **This §0 was rewritten 2026-08-11 because it was FALSE, not merely stale.** It had been left
+> claiming `main` head `38cf7e1`, highest migration `0340` and production head `0340` — eleven
+> migrations and five days behind. Every line below was re-verified against git and the GitHub API on
+> 2026-08-11 by the person writing it, and the evidence (commit sha, run id, file path) is written
+> beside each claim. **Anything not re-verified is labelled UNVERIFIED rather than asserted.**
 
 ### Repo
 
-| | |
-|---|---|
-| `main` head | **`38cf7e1`** (*"0340 — stats have one authority"*, PR #394) |
-| Highest migration on `main` | **`0340`** (`20260618000340_stats_have_one_authority.sql`), **325** migration files |
-| **Production migration head** | **`0340`** — `main` and production are IN SYNC |
-| Frontend on GitHub Pages | **Current with `main`** — `pages.yml` ran green on `38cf7e1`. |
-| CI on `main` head | **All green** — 12 runs on the merge commit, 0 failures. |
-| Open PRs | **3.** #163 (project map, open by design) · **#396** `346d3800` and **#397** `4d037817`, both green and both **held at an owner gate** — see below. |
+| | | how it was verified (2026-08-11) |
+|---|---|---|
+| `main` head | **`03215ba`** (`03215ba9e7e4c5bb3b807022ee12e00d7b593a31`) — *"Merge pull request #410 … slice-the-fight-you-can-follow"* | `git rev-parse origin/main` after `git fetch` |
+| Highest migration on `main` | **`0351`** — `supabase/migrations/20260618000351_the_fleet_fires_as_one.sql`; **333** migration files | directory listing of `supabase/migrations/` on `03215ba` |
+| **Production migration head** | **`0351`** — deployed **2026-08-09T17:30:56Z** | *Deploy Supabase migrations* run **`31326599709`** on `main` @ `03215ba`, status `success`; its log reads `Applying migration 20260618000351_the_fleet_fires_as_one.sql...` then `Finished supabase db push.` |
+| Frontend on GitHub Pages | **Current with `main`** | *Deploy to GitHub Pages* run **`31326599722`** on `03215ba`, `success` |
+| CI on `main` head | **11 green, 1 RED** — see the flaky-proof note below | `gh run list --branch main`: 12 runs on `03215ba`, all `success` except run **`31326599667`** |
+| Open PRs | **3.** **#163** (project map, open by design) · **#396** (owner-gated) · **#411** (conflicting) | `gh pr list --state open` |
 
-**⚠ Two green PRs are deliberately NOT merged. Do not merge either without explicit owner authorization.**
+**Migration numbers `0341`, `0342` and `0345` are absent from `main`.** `0341` is held on the branch of
+**closed** PR #397 (`slice-fights-you-can-keep-up-with`, still carries
+`20260618000341_fights_you_can_keep_up_with.sql`); `0342` is held on open PR #396's branch
+(`20260618000342_the_shop_stops_selling_the_deep_scan_array.sql`). `0345` was **not found on `main` nor
+on any ref fetched into this worktree** — 0344's header refers to "the aggregate arm's existence (0345)"
+as future work, so the number appears to have been planned and never authored. *(All three checked with
+`git ls-tree -r --name-only <ref> -- supabase/migrations`.)*
 
-| PR | head | what it is | why it is held |
-|---|---|---|---|
-| **#396** | `346d3800` | Dormant stats tell the truth + migration **`0342`** withdrawing the Deep-scan array from all three shops | Awaiting authorization on this exact head. Its first head (`4d10230`) was **rejected at review** — see the lesson below. |
-| **#397** | `4d037817` | Migration **`0341`** — banded wave ramp (1 body per 5 danger) + all cooldowns doubled | Explicitly outside the current authorization. Balance effect recorded, not approved. |
-
-> **`0341` is reserved by #397's branch even though it is unmerged.** #396 therefore uses **`0342`**.
 > Derive the next migration number from **every ref**, not from `main` or production alone —
 > `git ls-tree -r --name-only <branch> -- supabase/migrations`. A duplicate version is not a git
 > conflict: both files land, `schema_migrations` keys on the VERSION, and the loser is recorded
 > already-applied and **silently skipped** on production. `scripts/check-migration-versions.mjs` now
 > runs inside `build` and catches collisions *within a branch*, but it cannot see across branches.
+
+### ⚠ TWO OPEN FACTS, RECORDED SO THEY ARE NOT LOST (verified 2026-08-11)
+
+**(a) `main` currently sits on a RED proof, and the evidence says the ASSERT is flaky — not the code.**
+The `DANGER-ZONE COMBAT` disposable proof (`scripts/danger-combat-proof.sql`) **failed** on `main` head
+`03215ba` in run **`31326599667`** (2026-08-09T17:30:56Z). The failure:
+
+```
+scripts/danger-combat-proof.sql:6857: ERROR:  FLEETKITE FAIL: on retreat tick 4 the formation moved
+0.499999999999865 but combat_unit_decide_move's kite step at the FLEET's arguments is
+least(speed 0.5, reach 5 - gap 5.00000000000015) = -1.49213974509621e-13
+— the retreat is not being decided at the fleet point
+```
+
+That is a **floating-point exactness assert**: `gap` came back as `5.00000000000015` instead of `5`, so
+`reach - gap` went negative by 1.5e-13 and the block declared a failure the engine had not committed.
+**The identical tree passed twice, minutes earlier:** commit `8f81b41` and the merge commit `03215ba`
+have the **same tree** (`git diff --stat 8f81b41 03215ba` is empty; both are tree
+`dcc5aca2be33ee8a6e47d5d6718059b2a9429c3d`), and on that tree the same workflow ran **`31326337950`**
+(push, `success`, 17:25:05Z) and **`31326339939`** (pull_request, `success`, 17:25:07Z) before failing at
+17:30:56Z. Same code, same proof, two passes and one fail ⇒ **a flaky harness assert, not a code
+regression.** *What is NOT verified: the exact tolerance fix. The `FLEETKITE` block needs an epsilon on
+its exactness comparison; nobody has written it yet. Until then `main` shows a red check.*
+
+**(b) PR #411 is CONFLICTING against `main` and needs both a rebase and a real fixture fix.**
+`gh pr view 411` reports `mergeable: CONFLICTING`, `mergeStateStatus: DIRTY`, last updated
+2026-08-09T15:11:12Z — i.e. **before** 0350 and 0351 landed. Its branch
+(`slice-a-sortie-knows-where-home-is`) carries `…0348`, `…0349`, then jumps to
+`20260618000352_a_sortie_knows_where_home_is.sql`, so it was cut when `main` still ended at `0349`.
+Its `disposable-matrix` is also genuinely red, and **not** for a numbering reason — run
+**`31320410428`**:
+
+```
+scripts/fleetgo-proof.sql:2138: ERROR:  new row for relation "fleets"
+violates check constraint "fleets_group_fleet_has_anchor"
+FAIL: real-chain FLEET-GO proof failed
+```
+
+The fixture inserts a group fleet without the anchor the constraint now requires. **A rebase alone will
+not make it green** — the fixture has to be fixed. *(The rest of #411's checks are green: `build`,
+`frontend-tests`, `rendered-ui`, `selftest` and the other 20 `disposable-matrix` legs all pass.)*
+
+### Open PRs — verified state 2026-08-11
+
+| PR | state | what it is | disposition |
+|---|---|---|---|
+| **#163** | OPEN | PROJECTMAP standalone 3D codebase map (`feat-project-map`) | **Open by design** — intentionally never merged to `main` |
+| **#396** | OPEN, **`mergeable: CONFLICTING`** | Dormant stats tell the truth + migration **`0342`** withdrawing the Deep-scan array from all three shops. Head is now `6693394` (`669339492d00847c1e0e1e78fc55965b52d9ca6e`), not the `346d3800` this file used to name | **Still held at an owner gate** *and* it no longer merges cleanly — it has sat since 2026-08-04 while eleven migrations landed. Needs owner authorization **and** a rebase. |
+| **#411** | OPEN, **`mergeable: CONFLICTING`** | Migration **`0352`** — *"a sortie knows where home is"* | Conflicting since 0351 landed; red fixture. See (b) above. |
+
+**PR #397 is CLOSED — closed 2026-08-08T14:15:30Z** (`gh pr view 397`). This file previously listed it
+as an open, owner-gated PR; that was wrong. It was closed *deliberately*: migration **0344** deletes the
+kill-driven escalation outright, and #397's banded ramp (`ceil(v_danger/5)`) was rejected because a ramp
+that fires every fifth kill is still a ramp. `0344`'s own header (`…0344_killing_well_is_not_punished.sql`)
+states that reasoning.
+
+### ⚠ `docs/TARGET_CAPACITY_RULING.md` is PENDING DELETION — do not delete it yet
+
+`docs/COMBAT_OWNER_DIRECTIVES_CONTRACT.md:844-849` schedules that file for deletion (its capacity model
+is superseded by D5: capacity is per SHIP from WEAPON COUNT, not from a captain-level unlock table). The
+same instruction says what must happen **first**, and it has not happened: its **two trailing standing
+owner rulings must be re-homed verbatim** into `docs/COMBAT_DESIGN_LAWS.md` —
+
+1. **"Rejected: a player-configurable combat-speed control"** — it carries the **anti-kite invariant**
+   (`20260618000316:754-762`), which the contract calls load-bearing for Q2.
+2. **"Rejected: a fleet-level range slider"** — range stays a property of weapon and content choices.
+
+**Verified 2026-08-11: `docs/COMBAT_DESIGN_LAWS.md` DOES NOT EXIST yet** (`ls docs/` — no such file), so
+there is nowhere to re-home them to. Deleting `TARGET_CAPACITY_RULING.md` today would destroy two owner
+rulings on subjects that are *not* superseded. Create the laws file, move both sections verbatim, and
+only then delete.
 
 ### THE LESSON OF 2026-08-04 — a disabled button is not a rule
 
@@ -109,6 +186,9 @@ denied for function` — raised only for a function that **exists** — while a 
 - **`repair_credits_per_hp` is `0` (repair is FREE) — the owner's call, and explicitly TEMPORARY**, pending the loot economy. Restoring a price is one `npm run knob:set` call; 0335 made `0` mean free, while null/negative still fail closed.
 - **A DEV_LOG entry can be flatly wrong, not just stale.** The `0336` entry shipped carrying a **verbatim copy of the `slice-hunting-is-findable` body** — it described a client-only slice and said *"no migration"* about a migration. Rewritten 2026-08-04 from the deployed migration header. When recording several slices at once, the copy-paste risk is the entry BODY, not just the deploy line.
 - **`docs/DEV_LOG.md` has no entries for migrations `0273`–`0302`** — the typed-zone platform and the combat overhaul. Detail lives in the migration headers and PR bodies.
+- **The dev log went four migrations blind between 2026-08-08 and 2026-08-09, and it was found on 2026-08-11.** `0344`, `0346`, `0347` and `0351` all shipped **and deployed** with **no `DEV_LOG.md` entry at all** — only their migration headers and PR bodies recorded them. All four were written on 2026-08-11 from those two sources. **Still missing, verified by grepping `^## ` over `DEV_LOG.md` against the merged-PR list:** migration **`0343`** (PR #398, *one way to die*), and the client-only PRs **#399** (*one fleet, one shape*) and **#402** (*the fight reads true*). They were out of the scope of the 2026-08-11 correction and are named here so they are not lost a second time. *The pattern: entries get skipped when several slices land in one day.*
+- **`docs/HANDOFF.md` §0 itself was FALSE for five days**, not merely stale — it asserted `main` head `38cf7e1` / migration `0340` / prod `0340` while `main` was `03215ba` and production was on `0351`, and it listed a PR closed on 2026-08-08 as open and owner-gated. Corrected 2026-08-11. **A §0 that is not re-verified becomes an actively misleading document, because it is written in the voice of something that was checked.** Re-verify it — `git rev-parse origin/main`, the migrations directory listing, `gh run list --workflow=deploy-migrations.yml`, `gh pr list --state all` — before trusting a single line of it.
+- **The "What is LIVE right now" table below stops at `0338`.** Everything from `0343` onward (`0343` wreck authority, `0344` time-driven pressure, `0346` city ingress, `0347` growing field, `0348`–`0351`) is **deployed to production** but is described only in `DEV_LOG.md` and the migration headers, not in that table. Read the dev log, not the table, for the current combat engine.
 - **A log entry can outlive the state it describes.** The `0306` entry sat at the top of `DEV_LOG.md` reading *"NOT DEPLOYED — PR open"* for a day **after** it was merged and applied to production, and PR #336 shipped with no entry at all. Both corrected 2026-07-31. The entry is written when the work lands; **the deploy line has to be revisited when it actually deploys**, or the newest doc in the repo becomes the most misleading one. *(This bites fast: the first version of this very §0 said the 14 PR closes were "blocked, not performed" — true when written, false twenty minutes later. **Re-read §0 against reality before trusting it**, and it is cheap to re-verify: `gh pr list`, `git rev-parse origin/main`, and the malformed-uuid prod probe.)*
 - **`tools/projectmap` drifts silently and nothing warns you.** As of **2026-08-04 it is 215 commits behind `main`** — it is drawing a codebase that no longer exists. (For scale: on 2026-07-31 it was 54 commits / **34 migrations** behind `main` — it was drawing a codebase that no longer existed (`266→300` migrations, `743→817` nodes after the refresh).) Nothing in CI checks this. Refresh it after any game change: merge `origin/main` in, then `npm run scan` + `npm run wip` in `tools/projectmap`, commit `public/graph.json` + `public/wip.json`, push. `npm run live` is the third leg but writes gitignored `public/live.json`, so it never ships.
 - **Six docked-test copies remain** (`0210:178-186`, `0210:299-303`, `0231:1069-1073`, `0231:1486-1501`, `0297:126-131`) — all read-side projections, named as an explicit non-goal by `0306` rather than silently skipped. They now have `fleet_docked_location` to fold onto.

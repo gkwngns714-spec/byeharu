@@ -5,6 +5,96 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-09 — THE FLEET FIRES AS ONE (`slice-the-fight-you-can-follow`, migration 0351)
+
+> **Written 2026-08-11, late.** This slice shipped and deployed on 2026-08-09 with no entry in this
+> log. Written from the migration's own header (`supabase/migrations/20260618000351_the_fleet_fires_as_one.sql`)
+> and PR **#410**'s body — nothing here is inferred from anywhere else.
+
+**The owner, about the same shape twice:** *"my fleet range shape in blue is weird."* then *"the fleet
+range shape is like a cloud, make it circle."* And separately: *"i want fires to be 5s."*
+
+**The blue shape was a cloud because the RULE was a cloud.** The map drew the fleet's reach as the union
+of one disc per living hull (`src/features/map/combatActors.ts:198`), and that drawing was **honest** —
+the engine's fire gate measured every hull from its own position against its own gun. Four ships means
+four overlapping circles, and no amount of redrawing turns that into one circle.
+
+**The old shape is not the answer either, and the header says why.** The reach used to be a single
+circle on the fleet's elected lead carrying the fleet's **longest** gun. Measured on a real encounter it
+enclosed **2 of 6** enemies that were legitimately shootable — escorts stand forward of the lead and
+each fires from where it stands. Going back to it would restore a circle that lies.
+
+### So the rule changed, not the picture
+
+The owner's own standing law is that **the fleet is ONE actor**. One actor has one position and one
+reach — and once the fire gate measures from the fleet's own point against the fleet's own range, one
+circle genuinely **is** the set of things it may shoot.
+
+- **The one point** is the fleet's elected lead (0315's election, `aggro_priority` highest, ties by
+  lowest id) — the same hull the map already draws the fleet glyph on, so **the guns and the glyph
+  cannot disagree**. `combat_encounters.engagement_x/y` was considered and **rejected**: measured
+  read-only on production encounter `9855381f`, the anchor sat 21.2–22.0 units from all five player
+  hulls. Firing from there would be a *third* position, not one actor.
+- **The one reach** is the **shortest** gun over the living hulls, so nothing drawn is out of reach.
+  The header reads 0336's shipped defect rather than rediscovering it: the lesson is not "never
+  aggregate", it is that **the gate and the mover must aggregate the same way** — 0336's bug existed
+  precisely because they did not. Both now take `min`.
+- **The mover had to move too, or the fight deadlocks.** If the gate measured from the fleet point
+  while each hull still closed until *it* was in range, they would stop in different places
+  (`spatial_formation_ring_radius` 6 against a player reach of 5) and the formation would halt
+  believing itself in range, never firing.
+- **The enemy side is deliberately NOT folded.** An enemy is one hull and keeps its own circle, its own
+  range and its own position, because *"how many are still shooting"* is the player's central read of a
+  fight. What changed for it is only what it measures **to** — the fleet's point rather than whichever
+  hull happens to be nearest. `v_target_id` still names the hull that absorbs the damage, so 0301's
+  aggro screening (escorts shield the lead) is untouched.
+
+**What it costs the player, stated plainly in the header:** a fleet's reach is its shortest gun, so
+fitting a **longer**-ranged gun buys power but no extra reach. That is the honest price of being one
+actor, and it can only ever remove reach a hull had, never grant reach none had. **On production today
+it is a no-op** — every player weapon in every live fight is `basic_player_weapon` at range 5, so
+min = max = 5.
+
+### And the guns fire every 5 seconds
+
+`cooldown_seconds` → **5** on both weapon rows and both fallback knobs, **on both sides**. The header
+states the consequence rather than burying it: under a 3-second tick this is really a **6-second**
+cadence (fire at t=0, ready at t=5, t=3 is not ready, t=6 fires). Every weapon previously fired *every*
+tick, so this **exactly halves both sides' rate of fire** — the largest change in feel in the set. A
+fight already running keeps its old 2-second cooldown, because `weapons_json` is a snapshot taken at
+encounter creation and rewriting live rows would change a running fight's rhythm.
+
+### The proof, and what it caught
+
+**Executed on real Postgres, not asserted:** 40 enemies staged — **24 inside the circle, 16 outside, and
+the engine refuses to fire on all 16.** Eleven proof blocks were repointed onto the one-actor model
+(`KITE · CLOSE · FIRE · DAMAGE · HOLD · SCREEN · CLOSURE · LEAD · SHORTGUN · RANGEINVARIANT ·
+CFALLBACK_PASS_DAMAGE`), each stating what it protected, what it protects now, and why it fails the old
+engine. `KITE` **moved** to `danger-combat-proof` as `FLEETKITE` and was labelled as a move in three
+places rather than quietly dropped. `CFALLBACK` now asserts the rule (`reach = least(fallback, catalog)`)
+instead of an anecdote — which matters beyond the test, because **47 production hulls carry no weapon at
+all**.
+
+**A hard syntax error was found in this branch's own earlier commit** (`6d7cb2d`): a lone `$` used as a
+dollar-quote delimiter in four places. PostgreSQL rejects that at *parse* time, so the whole
+combat-spatial suite would have died before one assert ran — and the `.sh` selftest is a grep gate, so it
+was green on it.
+
+### DEPLOYED
+
+**Merged as PR #410 and applied to production 2026-08-09.** *Deploy Supabase migrations* run
+**`31326599709`** on `main` @ `03215ba`, `success`: `Applying migration 20260618000351_the_fleet_fires_as_one.sql...`
+→ `Finished supabase db push.` at 2026-08-09T17:31:59Z. **Production migration head is `0351`.**
+*(Verified 2026-08-11 by reading the deploy log.)*
+
+> ⚠ **The `DANGER-ZONE COMBAT` proof is RED on this merge commit** — run **`31326599667`**,
+> `FLEETKITE FAIL`, a floating-point exactness assert (kite step `-1.49e-13`). The **identical tree**
+> passed twice minutes earlier (runs `31326337950` and `31326339939` on commit `8f81b41`, whose tree is
+> byte-identical to `03215ba`). Flaky assert, not a code regression — but `main` currently shows a red
+> check and the epsilon fix has not been written. See `docs/HANDOFF.md` §0.
+
+---
+
 ## 2026-08-09 — THE WAVE ITSELF GROWS (`slice-the-wave-itself-grows`, migration 0350)
 
 **The owner, twice:** *"every 3 wave, i want wave to add one fleet"* — and then, playing 0347's
@@ -382,9 +472,182 @@ modelling range/cooldown as registry stats, and 0340:512-515 names the shipped d
 375x667 and 1440x675, now swept across all four tab states · `eslint` 26 problems, byte-identical to
 the pre-slice baseline (same files, same counts — this slice adds none).
 
-**NOT verified: migration 0348 has not been applied anywhere.** No Docker and no psql on this
-machine, so `supabase start` cannot run; CI's disposable-Postgres matrix is the gate and it has not
-run yet. Nothing about 0348 should be described as proven until it does.
+**~~NOT verified: migration 0348 has not been applied anywhere.~~ — CORRECTED 2026-08-11. THAT LINE
+IS FALSE, AND IT WAS FALSE WITHIN THE HOUR.** It was true only of the machine it was written on (no
+Docker, no psql, so `supabase start` could not run locally). **0348 IS DEPLOYED TO PRODUCTION.** The
+*Deploy Supabase migrations* run **`31306625731`** on `main` (PR #405's merge, 2026-08-09T09:44:19Z)
+completed `success`, and its log reads `Applying migration 20260618000348_the_site_says_what_it_drops.sql...`
+then `Finished supabase db push.` at 2026-08-09T09:45:15Z.
+
+> **The lesson, which is the same one this log has now learned three times:** a "not verified" line is
+> written about a *moment*, and the moment ends when CI runs. Like the deploy line, it has to be
+> revisited when the thing actually happens — otherwise the newest doc in the repo is the one telling
+> the biggest lie. *(Verified 2026-08-11 by reading the deploy log, not by trusting a green tick.)*
+
+---
+
+## 2026-08-09 — THE FIELD GROWS (`slice-the-field-grows`, migration 0347)
+
+> **Written 2026-08-11, late.** Shipped and deployed 2026-08-09 with no entry here. Written from
+> `supabase/migrations/20260618000347_the_field_grows.sql`'s header and PR **#404**'s body only.
+
+**The owner:** *"every 3 wave, i want wave to add one fleet"* — and when the consequence for the field's
+concurrent cap was put to him: *"yes, cap should grow. go ahead."*
+
+0344 had just made pressure a clock: a due slot spawns exactly one body while the field is under its
+site's cap, a suppressed slot is lost rather than banked, and there is no arrow from an enemy death back
+into pressure. **All three survive this migration untouched.** What changes is one number — the cap the
+clock measures the field against is no longer the site row's constant:
+
+    effective_cap = base_cap + floor(pressure_wave_index / cap_growth_every)   -- cap_growth_every seeded 3
+
+### The trap this file exists to avoid, and it was the first design
+
+The obvious counter is *"how many bodies have ARRIVED"*. It is wrong, and wrong in exactly the way the
+owner had already rejected three times. Follow it on a full field: at cap → nothing arrives → the
+counter cannot reach the next increase → **an enemy must die to free a slot** → an arrival happens → the
+counter moves → the cap grows. That is an indirect arrow from a death back into pressure, re-created
+inside the very number meant to be independent of it — the header calls it *"[PR #397] wearing a third
+costume"*.
+
+**So the counter counts SLOTS, not bodies.** `pressure_wave_index` advances on every scheduled slot,
+spawned or suppressed, and it is advanced by the same arithmetic in the same statement that moves the
+clock — one quantity, `slots_due`, one UPDATE. The worked example the owner was shown, on a site whose
+base cap is 3 and whose field is full:
+
+    slot 1 -> cap 3 -> suppressed        slot 4 -> cap 4 -> suppressed
+    slot 2 -> cap 3 -> suppressed        slot 5 -> cap 4 -> suppressed
+    slot 3 -> cap 4 -> SPAWNS            slot 6 -> cap 5 -> SPAWNS
+
+After six slots the counter reads **6** and exactly **two** bodies have arrived; an arrival-driven
+counter would read 2 and the cap would still be 3. `DZCOMBAT_PASS_FIELDGROWS` asserts that gap as a
+number. The name is deliberate — `pressure_wave_index`, **not** `arrivals` and **not** `waves_cleared`;
+a self-assert fails the deploy if the authority ever names the old scalar again.
+
+### What it means for a player
+
+A long fight no longer plateaus at the site's authored floor. Stand at Snare long enough and the field
+that may hold 3 enemies at once will hold 4, then 5 — **driven by the clock, never by how well you are
+killing.** `combat_pressure_field(p_encounter)` was minted as the one authority for those numbers so the
+readout slice could compose it instead of minting a rival, and it returns **`base_cap` and
+`effective_cap` separately** — a single column named `cap` is the "says 3 max while four ships stand"
+bug encoded into the return type. `enemy_integrity_max` now uses the *effective* cap, or a grown field
+would push the enemy bar past 100%.
+
+**Unbounded, deliberately and visibly.** `base_cap + floor(index/3)` has no ceiling, matching the
+owner's standing law (*"the whole point of this game is never to win, but exit appropriately"*).
+`location_pressure.cap_ceiling` is seeded NULL at every site and the apply raises a NOTICE naming each
+site and its ceiling, so the deploy log records the unbounded state instead of burying it. Capping a
+site later is one UPDATE and no deploy. Inventing a number the owner has not ruled on would be a balance
+decision smuggled in as an implementation detail. **No knob switches the growth off** — deliberately.
+
+Every fight already running starts at ordinal **0**. Deriving an ordinal from elapsed time was
+explicitly rejected: it would hand a long fight a cap jump for slots it fought under rules that had no
+growth.
+
+### Found and deliberately NOT repaired here
+
+`has_table_privilege('authenticated','public.combat_encounters','UPDATE')` is **TRUE** on production —
+Supabase's project-default `GRANT ALL` from 0014, never revoked, currently inert behind an RLS policy
+set with no UPDATE policy. Asserting it absent would have aborted this deploy (the 0254 mistake), and
+revoking it is a privilege change to the central combat table that does not belong in a slice about a
+cap. Recorded in assert (h). **It wants its own slice.**
+
+### DEPLOYED
+
+**Merged as PR #404 and applied to production 2026-08-09.** *Deploy Supabase migrations* run
+**`31303727255`**, `success`: `Applying migration 20260618000347_the_field_grows.sql...` →
+`Finished supabase db push.` at 2026-08-09T08:32:34Z. *(Verified 2026-08-11 from the deploy log.)*
+
+> **0347 was then partly superseded the same day.** Playing the deployed result, the owner said *"only 1
+> ships are comming out from the city, whereas i specifically told you to add 1 fleet every three
+> rounds"* — and he was right: 0347 grew the **ceiling**, while every scheduled slot still spawned one
+> body. **0350** grew the wave itself. 0347's cap growth stays, by explicit owner approval, and the two
+> compose by clamp. See the 0350 entry above.
+
+---
+
+## 2026-08-09 — THEY COME FROM THE CITY (`slice-they-come-from-the-city`, migration 0346)
+
+> **Written 2026-08-11, late.** Shipped and deployed 2026-08-09 with no entry here. Written from
+> `supabase/migrations/20260618000346_they_come_from_the_city.sql`'s header and PR **#403**'s body only.
+
+**The owner, for the second time:** *"when a wave start, i want ships to appear from the city."* And
+earlier, about reinforcements: *"once an enemy fleet is destroyed, it should come out from snare, not on
+a blank space."*
+
+**A repeated instruction is not a clarification.** It is evidence that something already built says the
+opposite — and the standing law is to find that thing and delete it, not soften it.
+
+**What said the opposite, named.** 0338 introduced `combat_wave_arrival_phase` and chose, in its own
+words, *"THE ORIGIN IS A BEARING, NEVER A POSITION. Spawning the wave AT the city would be a forty-unit,
+forty-tick walk before anyone fired."* 0339 carried that choice forward as the one placement expression.
+The net effect the owner rejected twice: **a raider materialised just outside the player's weapon range,
+merely FACING the city. It never came from it.** After this migration no expression anywhere in the
+schema originates an enemy body on a ring around the fight.
+
+### The model: one origin, one destination, and a phase between them
+
+    origin      = THE CITY. Always. The only spawn position there is.
+    destination = the current lawful engagement boundary (0336's measured-extent clearance ring,
+                  at this body's own slot, on 0338's city bearing) — recomputed EVERY tick.
+    between     = INGRESS, a movement phase of a fixed number of TICKS, clamped on arrival.
+
+0338's bearing is **not an alternate origin any more — it is geometry**, saying which way the destination
+lies, which is all it ever did. That is why this is one rule and not two: no predicate anywhere chooses
+between "from the city" and "on the bearing".
+
+### Why a fixed number of TICKS and not a faster speed
+
+The implementer first built an approach **speed**, and had it green. Its own proof survey then produced
+the fact that killed it: **the ambush corridors the harness actually drives are 105, 217, 362, 547 and
+619 units** from the site the encounter resolves to — not the 22–51 units of a zone span, because an
+ambush fires wherever a leg crosses a zone and the fixtures launch from Haven Reach. At a raider's real
+speed (1.0–1.6 per 3-second tick) 51.5 units is 154 seconds against a ~130-second average fight, and 217
+units is 651 seconds. A ×4 speed multiplier bounded the zone cases to ~32 s but left the corridors at
+54–155 ticks — 0338's walk, re-created. **The distance was the problem, so the fix had to make distance
+stop mattering.** The implementation was torn out and rebuilt as fixed time-to-contact.
+
+`combat_enemy_ingress_ticks = 6`, i.e. **18 seconds**, and it is a `game_config` row with a written
+description, not a literal. Chosen so it is long enough to **watch** (the client polls ~1.5 s and
+interpolates, so it reads as a continuous run-in, not a snap), shorter than every site's reinforcement
+cadence (Snare 45 s, Reaver 36 s, Blackden 30 s) so a body always lands before the next is due, and
+~14% of the average fight so the fight is fought, not waited out.
+
+**The clamp — not the speed — is the safety property.** `combat_unit_decide_move` was verified *not* to
+clamp at the band on its own, so the clamp lives in the speed argument: step =
+distance-to-boundary ÷ remaining ingress ticks, never crossing. 0336's clearance was a spawn-time
+property and is now enforced every tick.
+
+**No firing exception.** Inbound raiders use the normal gate — distance ≤ range, lock, cooldown. An
+inbound pirate outside range simply cannot shoot.
+
+**`combat_spawn_wave_units` itself was NOT deleted, and must not be** — it is the schema's only inserter
+of an enemy row and `combat_pressure_step` is its only caller (verified read-only against production
+with a comment-stripped catalog sweep, not assumed). This slice changed **where** it originates a body,
+not how many authorities exist.
+
+### What it means for a player
+
+Enemies now **come out of the city and fly in**, taking about 18 seconds to reach you from anywhere —
+from the far corner of a zone or from 600 units down an ambush corridor, the same 18 seconds. Every
+fight already running is untouched: two nullable, default-less columns, catalog-only, no backfill; every
+body standing in a fight right now reads NULL, is not ingressing, and behaves exactly as before.
+
+**Executed, not asserted:** the boundary was proven equal to 0336's ring value-for-value over 8 bearings
+× 4 slots, and the real recurrence was driven through the real deployed mover from **22.5 and 619 units**
+and proven monotone, never overshooting, landing exactly, in the **same tick count from both**. That
+execution caught a real bug — **`by` is a reserved word in Postgres** — which would have aborted the
+deploy.
+
+**Stated gap, named rather than faked:** no behavioural block yet proves the real tick walks a real body
+from a real city over 6 ticks; a self-assert cannot open a fight. That block needs the disposable leg.
+
+### DEPLOYED
+
+**Merged as PR #403 and applied to production 2026-08-09.** *Deploy Supabase migrations* run
+**`31287547541`**, `success`: `Applying migration 20260618000346_they_come_from_the_city.sql...` →
+`Finished supabase db push.` at 2026-08-09T01:06:17Z. *(Verified 2026-08-11 from the deploy log.)*
 
 ---
 
@@ -449,6 +712,127 @@ cropping its last panel with no cue.
 **Proof:** `tsc -b` clean · `vite build` clean · spec suite **2005 passed** · rendered UI proofs
 **158 passed**. `eslint` reports 24 errors / 2 warnings — **identical to the pre-change baseline**
 (worldeditor/ranking/shop react-hooks + harness fast-refresh); pre-existing and untouched.
+
+## 2026-08-08 — KILLING WELL IS NOT PUNISHED (`slice-killing-well-is-not-punished`, migration 0344)
+
+> **Written 2026-08-11, late.** Shipped and deployed 2026-08-08 with no entry here. Written from
+> `supabase/migrations/20260618000344_killing_well_is_not_punished.sql`'s header and PR **#400**'s body
+> only.
+
+**The owner, three times:** *"I told you that it will be not +1 fleets when fleet is destroyed."*
+
+**It was literally true in the deployed engine.** One integer, `v_danger`, meant five things at once,
+and it began with the player's own kill count:
+
+    v_danger := 1 + e.waves_cleared + floor(v_secs_inside / danger_time_divisor_seconds)
+
+      BODY COUNT    v_enemy_count := least(enemy_synthetic_max_units, greatest(1, v_danger))
+      ENEMY HP      ... * (1 + v_danger * enemy_hp_danger_scale)       [3 sites]
+      ENEMY DAMAGE  ... * (1 + v_danger * enemy_attack_danger_scale)   [3 sites]
+      LOOT METAL    ... * (1 + reward_danger_scale * v_danger)         [2 sites]
+      LOOT ITEMS    pirate_loot_for_wave(v_wave_num, v_danger)         [2 sites]
+
+**Measured firing on production, read-only, not inferred:** Snare encounter `520a35c0` ran wave → bodies
+→ wave HP of 1→1→203, 2→2→319, 3→3→427, 4→4→505, 5→5→545, 6→6→587, then pinned at the 6-body cap while
+HP climbed to 1036 — **5.1× harder, purely because the player kept winning.** `953fe570` is the same
+shape (223 → 957); on the aggregate arm, Reaver `6b6f5ff0` ran danger 1 → 19 and wave HP 362 → 2860.
+
+**Deleted, not softened.** The whole `v_danger` concept and all its reference sites across both arms;
+both HP factors; both attack factors; both reward factors; both `pirate_loot_for_wave` calls; the
+`next_wave_at` pause; and `projectile_count = greatest(1, v_danger)` on `laser_burst` — the escalation
+*rendered on screen*, found only by simulating the surgery and re-scanning. Also deleted: the
+`v_resolver_engaged` branch that selected between **two live wave sizers** per invocation (it had stepped
+a live fight 18× mid-flight — Reaver `7f56967e`: wave 13→14, units 1→6, HP 123→2213, fleet died), and
+the `game_config` rows nothing reads after it — *the migration header counts **six**, PR #400's body
+says **five**; the two sources disagree and neither was re-checked against the live catalog here.* The
+values of the two drop-rate knobs were **copied into `location_loot.drop_chance` first** — migrated, not
+lost. **PR #397 tried to soften this same ramp** (`ceil(v_danger/5)`) and
+was closed the same day: a ramp that fires every fifth kill is still a ramp, and a knob that multiplies
+the term by zero preserves the mechanism. After this migration there is no expression in the engine from
+which the old behaviour can be recovered by writing a value anywhere.
+
+### What replaces it: one pressure authority, and it is a CLOCK
+
+`public.combat_pressure_step` is the one place that decides whether another enemy exists. It reads the
+**site** (`locations.base_difficulty` and the authored `location_pressure` row), the **clock**
+(`combat_encounters.next_reinforcement_at`, which only it advances) and the **field** (how many enemy
+bodies are standing right now, against the site's cap) — **and nothing else.** Not `waves_cleared`, not
+`wave_number`, not a wipe, not a death, not a kill count.
+
+    on a due slot:  population < cap  -> spawn exactly ONE body
+                    population >= cap -> spawn NOTHING
+                    the clock then skips past EVERY slot already elapsed, in one expression
+
+Cadence and cap are **rows**, one per site, in `public.location_pressure` — Snare 45 s / 3, Reaver
+36 s / 4, Blackden 30 s / 6. They are rows and not a formula deliberately: `cap = round(base_difficulty/N)`
+would make `base_difficulty` a fourth overloaded authority, which is the exact disease this slice removes.
+
+**The three rules are structural, not conventional.** No death→spawn arrow: both `if … <= 0 then <spawn>`
+branches are gone and an assert fails the deploy if either string returns. Missed reinforcements are lost
+and never banked: an assert requires the authority's body to contain **zero `loop` keywords**, because a
+loop is how banking would be written. Cadence cannot shorten with elapsed presence: an assert requires the
+authority to name `waves_cleared`, `wave_number`, `danger`, `secs_inside` **zero** times.
+
+### What it means for a player
+
+**How hard a fight is now comes from the SITE, and only the site.** A body's HP, attack, range and speed
+are `base_difficulty` times the base knob, with the danger factor deleted — so Snare's body is 140
+nominal HP where the head's wave-1 body was 224, and the site's whole ceiling is 3 × 140 = 420 against
+the head's measured wave-3 total of 427. Clearing waves no longer buys you a harder enemy. Enemies now
+arrive on a clock, and a slot that finds the field full is simply spent.
+
+**Loot is now paid per enemy destroyed, from rows.** The metal multiplier (a loiter-and-kill lever) and
+`pirate_loot_for_wave`'s hard-coded depth ladder (wave ≥ 3 / 5 / 8 / 10, with **no site term at all**, so
+a tier-3 site paid a tier-1 site's items) are both deleted. Adding loot to a site is now an INSERT, never
+a function edit. **All seven items the deleted ladder could produce are still produced**, by rows, at
+sites whose tier justifies them — Snare scrap/pirate_alloy; Reaver adds weapon_parts and the
+captain_memory_shard at its old rate; Blackden adds engine_parts, repair_parts and the blueprint_fragment.
+The ladder put engine_parts at wave 8 and repair_parts at wave 10, and depth ≥ 8 measured 5 deaths to 1
+extraction: **11 engine_parts were ever earned and 1 banked; 8 repair_parts earned and 0 banked.** They
+are now authored at the tier-3 site, where a player can actually leave with them.
+
+> ⚠ **An earlier version of this migration claimed that sentence while carrying only five of the seven.**
+> That was a blocking defect, not a documentation slip: `captain_memory_shard` and `blueprint_fragment`
+> are config-gated drops inside the same function, `pirate_loot_for_wave` is their **only** producer in
+> the entire database, and dropping them would have left 5 captain recruit recipes and 2 hull build
+> recipes permanently unsatisfiable on a live game holding zero of either. A self-assert now fails the
+> deploy on the whole class if any future slice disconnects a faucet a recipe depends on.
+
+**The income compensation, applied here, with its arithmetic stated honestly.** Against all 57 logged
+payouts the counterfactual reproduced every one with 0 mismatches, and deleting the danger term takes the
+total from 1852 to 939 — **a 49.3% cut**. So `reward_metal_base` goes 10 → 20 **in this migration**, so
+the slice does not quietly halve the metal faucet for ~30 live players. The part it would be dishonest to
+leave out: 2 × 939 = 1878, not 1852 (1.4%, rounding) — **and the payout EVENT changed**, from wave-clear
+to per-kill. On the measured average fight the head paid ~5 times; under the new cadence a ~130-second
+Snare fight sees arrivals at 0/45/90 s, so ~3–4 payments. Same order, and that is as far as the
+measurement goes: **the per-fight total under the new cadence is UNMEASURED and must be read off
+production.** It is not reasoned into place.
+
+### Consequences the header names rather than hides
+
+- **The client still printed "Danger N"** (`ActiveCombatPanel.tsx:99-101`) and would now read a constant
+  1 on every live fight. A stale label, not a lie about the engine, and owned by the client slice.
+- **`resolve_location_encounter`, `encounter_runtime_state` and the `encounter_resolver_enabled` flag
+  become ENGINE-DEAD** — the tick's only call to the resolver is deleted, so the 0258–0272
+  authored-encounter/elite programme is disconnected from the engine. Intended under the new
+  architecture (content moves to `location_pressure` / `location_loot`), but it **deserves its own
+  explicit retirement slice** rather than arriving as a side effect.
+- **Stated debt, not a discovery for the next CI round:** `multipirate-lifecycle-proof.sql` and
+  `spatial-sticky-mode-proof.sql` are entirely about the wave lifecycle this slice deletes. Their dead
+  writes were removed; their lifecycle blocks are **not re-premised and would be RED if run**. Neither
+  workflow fires on this branch and the triggers were deliberately not widened; each file carries a
+  header naming the exact re-premise needed.
+
+**The harness was swept as a CLASS, in one pass**, and a repo-wide guard (`tp_assert_no_kill_escalation`)
+now runs over every `scripts/*.sql` so kill-driven escalation cannot creep back one file at a time.
+
+### DEPLOYED
+
+**Merged as PR #400 and applied to production 2026-08-08.** *Deploy Supabase migrations* run
+**`31271776635`**, `success`: `Applying migration 20260618000344_killing_well_is_not_punished.sql...` →
+`Finished supabase db push.` at 2026-08-08T18:24:37Z. *(Verified 2026-08-11 from the deploy log.)*
+
+---
 
 ## 2026-08-04 — HUNT FROM WHERE YOU STAND (`slice-hunt-from-where-you-stand`, client-only)
 
