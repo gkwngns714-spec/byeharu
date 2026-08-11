@@ -187,7 +187,21 @@ export function ActiveCombatPanel({
               </span>
             )}
           </SectionLabel>
-          <p className="text-sm text-warning/90" data-testid="combat-panel-wave-clock">{wave.text}</p>
+          <p className="text-sm text-warning/90" data-testid="combat-panel-wave-clock">
+            {wave.text}
+            {/* THE SIZE, AND ONLY THE SIZE (0350). The wave itself grows now — one more body every
+                few slots — so a clock that says only "in 12s" hides the number the owner asked for
+                ("only 1 ships are comming out from the city"). It is the ENGINE's stamp, never a
+                band recomputed here, and it is still not a verdict: how many of them fit is the
+                rule's business, stated below. */}
+            {wave.waveSize !== null && (
+              <span data-testid="combat-panel-wave-size">
+                {' · '}
+                <span className="font-mono tabular-nums">{wave.waveSize}</span>
+                {wave.waveSize === 1 ? ' ship' : ' ships'}
+              </span>
+            )}
+          </p>
           <p className="mt-1 text-xs text-ink-faint">{REINFORCEMENT_RULE}</p>
         </div>
       )}

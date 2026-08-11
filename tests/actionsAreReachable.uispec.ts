@@ -327,7 +327,8 @@ test('THE PINNED ROW STAYS A SIGNAL, NOT A SECOND READOUT — no field count, no
   const text = await page.getByTestId('map-fight-row-enc-1').innerText()
   expect(text).toMatch(/Next wave in \d+s/)
   expect(text, 'the field count belongs to the card').not.toMatch(/4\/4|Field/i)
-  expect(text, 'the rule is stated once, on the card').not.toMatch(/under its limit/i)
+  // 0350 corrected the rule's wording (the wave itself grows now), so the needle follows it.
+  expect(text, 'the rule is stated once, on the card').not.toMatch(/has room for/i)
   expect(text, 'a countdown states time, never an outcome').not.toMatch(/arriv|nothing comes|no ship|1 ship/i)
 })
 
@@ -340,7 +341,7 @@ test('THE FIGHT TAB CARRIES THE WAVE CLOCK AND THE HAUL — the two the owner as
   // computation would be most tempted to promise (or deny) an arrival.
   const wave = await page.getByTestId('combat-map-wave-enc-1').innerText()
   expect(wave).not.toMatch(/arriv|nothing comes|no ship|1 ship/i)
-  expect(wave, 'the rule is stated as a rule').toMatch(/under its limit/i)
+  expect(wave, 'the rule is stated as a rule').toMatch(/has room for/i)
   // The haul: what is carried, what it takes up, and how full the hold is.
   await expect(page.getByTestId('combat-map-haul-enc-1')).toContainText('Haul')
   await expect(page.getByTestId('combat-map-haul-m3-enc-1')).toContainText('7.5')

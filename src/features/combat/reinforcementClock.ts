@@ -21,6 +21,11 @@ import type { CombatUnit } from './combatTypes'
 //                           the same statement that made the spawn decision (0347). A surface SHOWS
 //                           this number and never derives one, or it says "3 max" while four ships
 //                           stand on the field.
+//   pressure_next_wave_size how many bodies the NEXT scheduled wave brings (0350 — the wave ITSELF
+//                           grows now, one more body every `growth_every` slots; before it, every
+//                           slot delivered exactly one). STAMPED by the same one statement, and read
+//                           the same way: SHOWN, never derived. `growth_every` is deliberately not
+//                           on the wire, so a client cannot recompute the band even by accident.
 //
 // ── ██ WHAT THIS DELIBERATELY DOES NOT SAY: WHETHER A SHIP IS COMING ██ ────────────────────────────
 // The engine's rule is `arriving := status='active' and slots_due > 0 and population < effective_cap`
@@ -38,10 +43,14 @@ import type { CombatUnit } from './combatTypes'
 //      "nothing arrives" is a claim about the future, and a slot that finds the field at its cap is
 //      SPENT, NOT BANKED — the player would be told a ship is owed that will never come.
 //
+// The wave's SIZE is not that kind of claim and is reported (0350). It is fully determined by the
+// ordinal and the site row, the engine STAMPS it, and it says nothing about whether the field will
+// have room — so "the next wave is 3 ships" cannot go stale the way "3 ships arriving" would.
+//
 // So this leaf reports only facts that cannot be wrong: the countdown, the ordinal, the population,
-// and the cap the engine itself used. The RULE relating the last two is stated once, as a rule
-// (REINFORCEMENT_RULE below) — always true, never stale — and the player reads the two numbers
-// against it. What is DRAWN is the rule.
+// the cap the engine itself used, and the size of the wave it has scheduled. The RULE relating the
+// size to the room is stated once, as a rule (REINFORCEMENT_RULE below) — always true, never stale —
+// and the player reads the numbers against it. What is DRAWN is the rule.
 //
 // FAIL CLOSED. combatApi reads `select('*')`, so a server that predates 0344/0347 simply omits these
 // columns; absent or unparseable → this returns null and every surface says nothing about
@@ -56,6 +65,7 @@ export interface ReinforcementInput {
   next_reinforcement_at?: string | null
   pressure_wave_index?: number | null
   pressure_effective_cap?: number | null
+  pressure_next_wave_size?: number | null
 }
 
 export interface ReinforcementView {
@@ -72,13 +82,19 @@ export interface ReinforcementView {
   cap: number | null
   /** how many scheduled slots have come due at this fight. Not a count of arrivals. */
   slot: number | null
+  /** how many bodies the next scheduled wave brings, straight off the engine's stamp
+   *  (`pressure_next_wave_size`, 0350); null until the fight has evaluated its first slot.
+   *  NEVER DERIVED — the band is `1 + floor(ordinal / growth_every)` and `growth_every` is not on
+   *  the wire, deliberately. It is a SIZE, not a promise of arrival: what lands is this against the
+   *  room the field has, which is the RULE's job to state and not a number's. */
+  waveSize: number | null
 }
 
 /** The mechanic, stated ONCE, as a mechanic. It is true at every instant, so it can never go stale
  *  the way a per-slot verdict would. Every surface that shows the field prints this and no surface
  *  predicts an arrival. */
 export const REINFORCEMENT_RULE =
-  'A wave brings one more ship only while the field is under its limit. A wave that finds it full is spent, not saved.'
+  'A wave brings as many ships as the field has room for. What does not fit is spent, not saved.'
 
 /** The heading both surfaces use for this section, so the fight is described in one vocabulary — and
  *  it is the owner's own word ("next wave incoming"), which is also the engine's: the ordinal this
@@ -139,6 +155,7 @@ export function resolveReinforcement(
 
   const cap = finiteOrNull(encounter.pressure_effective_cap)
   const slot = finiteOrNull(encounter.pressure_wave_index)
+  const waveSize = finiteOrNull(encounter.pressure_next_wave_size)
 
   return {
     seconds,
@@ -148,6 +165,7 @@ export function resolveReinforcement(
     population: fieldPopulation(units, encounterId),
     cap,
     slot,
+    waveSize,
   }
 }
 

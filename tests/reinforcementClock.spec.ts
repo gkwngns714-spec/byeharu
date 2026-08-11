@@ -37,6 +37,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   next_reinforcement_at: at(12),
   pressure_wave_index: 4,
   pressure_effective_cap: 4,
+  pressure_next_wave_size: 2,
   ...over,
 })
 
@@ -104,6 +105,36 @@ test('a cap the fight has not evaluated yet is NULL — show nothing, never a gu
   }
 })
 
+// ── THE WAVE'S SIZE IS SHOWN, NEVER DERIVED (0350) ───────────────────────────────────────────────
+
+test('the next wave’s SIZE is the ENGINE’s stamp, passed straight through', () => {
+  // 0350: the wave itself grows — 1 + floor(ordinal / growth_every), stamped onto
+  // combat_encounters.pressure_next_wave_size by public.combat_pressure_step. Before it, every slot
+  // delivered exactly one body no matter how high the ceiling climbed, which is the defect the owner
+  // caught ("only 1 ships are comming out from the city").
+  expect(resolveReinforcement(row({ pressure_next_wave_size: 3 }), [], ENC, NOW)!.waveSize).toBe(3)
+  expect(resolveReinforcement(row({ pressure_next_wave_size: 1 }), [], ENC, NOW)!.waveSize).toBe(1)
+})
+
+test('a size the fight has not evaluated yet is NULL — show nothing, never a guess', () => {
+  // The stamp is NULL until this fight's first slot has been evaluated, and on any pre-0350 server
+  // the column is simply absent from `select('*')`. Same fail-closed law as the cap.
+  for (const bad of [null, undefined, Number.NaN]) {
+    expect(resolveReinforcement(row({ pressure_next_wave_size: bad }), [], ENC, NOW)!.waveSize).toBeNull()
+  }
+  const { pressure_next_wave_size: _dropped, ...preServer } = row()
+  expect(resolveReinforcement(preServer, [], ENC, NOW)!.waveSize).toBeNull()
+})
+
+test('the size is READ, never re-banded — the ordinal cannot be used to compute it', () => {
+  // The band needs `growth_every`, which is deliberately NOT on the wire. A leaf that derived the
+  // size from the ordinal would be a second authority saying "1 ship" while three come out of the
+  // city, so a stamp of 2 at ordinal 9 is reported as 2 and the ordinal is never consulted.
+  const v = resolveReinforcement(row({ pressure_wave_index: 9, pressure_next_wave_size: 2 }), [], ENC, NOW)!
+  expect(v.slot).toBe(9)
+  expect(v.waveSize).toBe(2)
+})
+
 test('the ordinal is the SCHEDULED slot count, passed through as-is', () => {
   expect(resolveReinforcement(row({ pressure_wave_index: 6 }), [], ENC, NOW)!.slot).toBe(6)
   expect(resolveReinforcement(row({ pressure_wave_index: 0 }), [], ENC, NOW)!.slot).toBe(0)
@@ -155,13 +186,34 @@ test('the view carries NO verdict about the next slot — only the two operands 
   expect(v.population).toBe(4)
   expect(v.cap).toBe(4)
   // Nothing in the shape is a verdict. If a field like this is ever added, this is where it fails.
-  expect(Object.keys(v).sort()).toEqual(['cap', 'population', 'seconds', 'slot', 'text'])
+  // waveSize is a SIZE, not a verdict: it is what the engine scheduled, not what will land.
+  expect(Object.keys(v).sort()).toEqual(['cap', 'population', 'seconds', 'slot', 'text', 'waveSize'])
   expect(v.text, 'the clock states time, never an outcome').not.toMatch(/arriv|spawn|nothing|full|ship/i)
 })
 
+test('a wave BIGGER than the room left is still reported at its own size, with no verdict', () => {
+  // The engine clamps on delivery — `least(wave_size, room)` — and a client that clamped too would
+  // be a second copy of that decision, deciding it against a field that will have changed by the
+  // slot. The readout states the scheduled size and the room; the rule relates them.
+  const units = [unit({ side: 'enemy', alive_count: 4 })]
+  const v = resolveReinforcement(row({ pressure_effective_cap: 4, pressure_next_wave_size: 3 }), units, ENC, NOW)!
+  expect(v.waveSize).toBe(3)
+  expect(v.population).toBe(4)
+  expect(v.cap).toBe(4)
+  expect(v.text).toBe('Next wave in 12s')
+})
+
 test('the RULE is stated once, as a rule — true at every instant, so it can never go stale', () => {
-  expect(REINFORCEMENT_RULE).toContain('under its limit')
+  // ██ 0350 CORRECTED THIS SENTENCE. ██ It used to read "A wave brings one more ship only while the
+  // field is under its limit…", and the first clause became FALSE the day the wave itself started
+  // growing: a wave brings as many bodies as its band says, clamped by the room. The needles below
+  // pin the corrected wording, and the refusal below pins that the old clause cannot come back.
+  expect(REINFORCEMENT_RULE).toBe(
+    'A wave brings as many ships as the field has room for. What does not fit is spent, not saved.',
+  )
+  expect(REINFORCEMENT_RULE).toContain('room for')
   expect(REINFORCEMENT_RULE).toContain('spent, not saved')
+  expect(REINFORCEMENT_RULE, 'the pre-0350 claim of ONE ship per wave is gone').not.toMatch(/one more ship|under its limit/i)
   // It is a general statement, not a reading of any particular row.
   expect(REINFORCEMENT_RULE).not.toMatch(/\d/)
   expect(REINFORCEMENT_LABEL).toBe('Next wave')
@@ -203,6 +255,24 @@ test('every surface that speaks about the next wave reads it through this leaf a
     // …and none of them may assemble a schedule from the cadence instead of reading the stamp.
     expect(codeOnly(surface), `${rel} must not invent a schedule`).not.toMatch(/reinforcement_interval|wave_interval/)
   }
+})
+
+test('no surface — and not the leaf itself — ever names the band’s period', () => {
+  // 0350 renamed `cap_growth_every` to `growth_every` and made that one column govern the WAVE's
+  // size as well as the field's cap. It is not on the wire, deliberately: the ONLY honest client
+  // answer is the engine's stamp, and anything that named the period would be recomputing the band.
+  for (const rel of [...WAVE_SURFACES, 'features/combat/reinforcementClock.ts']) {
+    expect(codeOnly(src(rel)), `${rel} must not re-band the wave size`)
+      .not.toMatch(/cap_growth_every|growth_every|wave_size_ceiling/)
+  }
+})
+
+test('the panel prints the wave’s SIZE beside the countdown, from the stamp', () => {
+  // The size is the number the owner caught the game lying about ("only 1 ships are comming out from
+  // the city"), so the surface that owns the wave section says it — reading the leaf, never a band.
+  const panel = codeOnly(src('features/combat/ActiveCombatPanel.tsx'))
+  expect(panel, 'the panel shows the scheduled size').toContain('wave.waveSize')
+  expect(panel, 'and reads it from the leaf, not the row').not.toContain('pressure_next_wave_size')
 })
 
 test('the RULE is printed by the two surfaces that show the field, and the pinned row stays a signal', () => {
