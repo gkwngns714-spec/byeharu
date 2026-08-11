@@ -49,19 +49,27 @@ export interface CombatEncounter {
   // every consumer fails closed (see repositionCourse.ts, the ONE reader).
   reposition_x?: number | null
   reposition_y?: number | null
-  // THE PRESSURE CLOCK, AS THE SERVER KEEPS IT (0344 minted the clock, 0347 the ordinal and the cap).
-  // These three are the whole contract for a reinforcement readout, and none of them is computed here:
+  // THE PRESSURE CLOCK, AS THE SERVER KEEPS IT (0344 minted the clock, 0347 the ordinal and the cap,
+  // 0350 the WAVE's own size). These four are the whole contract for a reinforcement readout, and
+  // none of them is computed here:
   //   next_reinforcement_at — WHEN the next scheduled slot falls due. Sole writer
   //     public.combat_pressure_step. A slot that finds the field at its cap is SPENT, not banked, so
   //     this only ever moves forward.
   //   pressure_wave_index   — how many scheduled slots have come due at this fight. It advances on
   //     EVERY slot, including ones that spawned nothing, which is why it is not a count of arrivals.
   //   pressure_effective_cap — how many enemy bodies the field can hold RIGHT NOW:
-  //     concurrent_cap + floor(pressure_wave_index / cap_growth_every), the owner's "every 3 wave,
-  //     add one fleet". ⚠ A SURFACE MUST SHOW THIS NUMBER AND MUST NEVER DERIVE ONE. It is stamped by
+  //     concurrent_cap + floor(pressure_wave_index / growth_every), the owner's "every 3 wave,
+  //     add one fleet" (0350 renamed that column from cap_growth_every — it now governs both
+  //     notches). ⚠ A SURFACE MUST SHOW THIS NUMBER AND MUST NEVER DERIVE ONE. It is stamped by
   //     public.combat_pressure_step from public.combat_pressure_field's own answer, in the same
   //     statement that makes the spawn decision, so it is the SAME number the engine used. Anything
   //     that recomputes a cap client-side will say "3 max" while four ships stand on the field.
+  //   pressure_next_wave_size — how many bodies the NEXT scheduled wave brings (0350):
+  //     1 + floor(pressure_wave_index / growth_every), bounded by the site's wave_size_ceiling when
+  //     one is authored. A STAMP written by the same one statement, for the same reason: the band is
+  //     the engine's answer and a client that recomputed it would say "1 ship" while three came out
+  //     of the city — which is exactly the lie the owner caught. It is a SIZE, never a promise of
+  //     arrival: what lands is least(this, the room left on the field).
   // Optional/nullable because combatApi reads `select('*')`, the same law as the anchor and the
   // course above: a server that predates the columns simply omits them and every consumer must fail
   // closed on absence. pressure_effective_cap is additionally null until the fight has evaluated its
@@ -69,6 +77,7 @@ export interface CombatEncounter {
   next_reinforcement_at?: string | null
   pressure_wave_index?: number | null
   pressure_effective_cap?: number | null
+  pressure_next_wave_size?: number | null
 }
 
 export interface CombatUnit {
